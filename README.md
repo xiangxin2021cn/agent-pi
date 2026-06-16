@@ -1,6 +1,12 @@
 # Agent π
 
-Agent π is a Windows-first desktop agent application derived from the Craft Agents OSS codebase and adapted for the Agent Pi workspace, model, output, and release flow.
+![Agent π brand logo](docs/assets/agent-pi-logo.png)
+
+Agent π is a Windows-first desktop agent application adapted for the Agent Pi workspace, model, output, and release flow.
+
+## Brand
+
+Agent π uses the green-blue `Always π AI Studio` identity shown above. The desktop app icon, in-app header marks, viewer logo, bundled branding resources, and Windows installer icon are all generated from `Logo (F).png` so the installed app and GitHub release page present one consistent brand.
 
 ## Download
 
