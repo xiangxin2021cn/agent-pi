@@ -1610,6 +1610,7 @@ export default function App() {
   const linkInterceptor = useLinkInterceptor({
     openFileExternal: async (path) => {
       try {
+        // eslint-disable-next-line craft-links/no-direct-file-open -- this is the link interceptor's explicit external-open fallback
         await window.electronAPI.openFile(path)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -1648,6 +1649,7 @@ export default function App() {
       }
     },
     readFile: (path) => window.electronAPI.readFile(path),
+    readFilePreview: (path) => window.electronAPI.readFilePreview(path),
     readFileDataUrl: (path) => window.electronAPI.readFileDataUrl(path),
     readFileBinary: (path) => window.electronAPI.readFileBinary(path),
   })
@@ -2151,9 +2153,22 @@ function FilePreviewRenderer({
           content={state.content ?? ''}
           filePath={state.filePath}
           variant={isPlanFile ? 'plan' : 'response'}
+          error={state.error}
         />
       )
     }
+
+    case 'office':
+      return (
+        <DocumentFormattedMarkdownOverlay
+          isOpen
+          onClose={onClose}
+          content={state.content ?? ''}
+          filePath={state.filePath}
+          variant="response"
+          error={state.error}
+        />
+      )
 
     case 'json': {
       // JSONPreviewOverlay expects parsed data, not a raw string.

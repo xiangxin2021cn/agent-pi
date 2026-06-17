@@ -47,11 +47,11 @@ describe('conversation-summary helpers', () => {
   })
 
   it('formats transferred-session context as a hidden one-shot block', () => {
-    expect(buildTransferredSessionContext('Keep the remote workspace aligned.')).toBe(`<session_transfer_summary>
-This session was transferred from another workspace. The original conversation was summarized before transfer.
-Use the summary below as prior context for the next turn.
+    expect(buildTransferredSessionContext('Keep the remote workspace aligned.')).toBe(`<session_carryover_context>
+This session is continuing from prior conversation context after a workspace transfer or model/runtime handoff.
+Use the context below as prior memory for the next turn.
 
 Keep the remote workspace aligned.
-</session_transfer_summary>`)
+</session_carryover_context>`)
   })
 })

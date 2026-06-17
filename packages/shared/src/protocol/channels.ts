@@ -81,6 +81,7 @@ export const RPC_CHANNELS = {
   },
   file: {
     READ: 'file:read',
+    READ_PREVIEW: 'file:readPreview',
     READ_DATA_URL: 'file:readDataUrl',
     READ_PREVIEW_DATA_URL: 'file:readPreviewDataUrl',
     READ_BINARY: 'file:readBinary',

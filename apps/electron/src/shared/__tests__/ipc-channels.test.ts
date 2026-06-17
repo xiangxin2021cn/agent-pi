@@ -88,6 +88,7 @@ const EXPECTED_CHANNELS: string[] = [
   'file:readAttachment',
   'file:readBinary',
   'file:readDataUrl',
+  'file:readPreview',
   'file:readPreviewDataUrl',
   'file:readUserAttachment',
   'file:storeAttachment',

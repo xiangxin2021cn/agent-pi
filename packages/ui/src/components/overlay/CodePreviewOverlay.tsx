@@ -19,8 +19,10 @@ export interface CodePreviewOverlayProps {
   onClose: () => void
   /** The code content to display */
   content: string
-  /** File path for language detection and display */
-  filePath: string
+  /** File path for language detection and display. Only pass real openable paths. */
+  filePath?: string
+  /** Header title shown when there is no real file path to open. */
+  title?: string
   /** Language for syntax highlighting (auto-detected if not provided) */
   language?: string
   /** Mode: 'read' or 'write' */
@@ -46,6 +48,7 @@ export function CodePreviewOverlay({
   onClose,
   content,
   filePath,
+  title,
   language,
   mode = 'read',
   startLine = 1,
@@ -75,6 +78,7 @@ export function CodePreviewOverlay({
         variant: mode === 'write' ? 'amber' : 'blue',
       }}
       filePath={filePath}
+      title={filePath ? undefined : title}
       subtitle={subtitle}
       error={error ? { label: mode === 'write' ? 'Write Failed' : 'Read Failed', message: error } : undefined}
       embedded={embedded}

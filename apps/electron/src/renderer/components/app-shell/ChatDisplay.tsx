@@ -137,8 +137,8 @@ interface ChatDisplayProps {
   // Model selection
   currentModel: string
   onModelChange: (model: string, connection?: string) => void
-  // Connection selection (locked after first message)
-  /** Callback when LLM connection changes (only works when session is empty) */
+  // Connection selection
+  /** Callback for pre-message connection changes */
   onConnectionChange?: (connectionSlug: string) => void
   /** Ref for the input, used for external focus control */
   textareaRef?: React.RefObject<RichTextInputHandle>
@@ -2092,7 +2092,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             isOpen={true}
             onClose={handleCloseOverlay}
             content={overlayState.content}
-            filePath="response.md"
+            title="Response Markdown"
             language="markdown"
             mode="read"
             theme={isDark ? 'dark' : 'light'}

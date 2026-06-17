@@ -188,10 +188,19 @@ export class PiAgent extends BaseAgent {
   private lastSubprocessError: string | null = null;
   private subprocessErrorRepeatCount = 0;
   private static readonly MAX_IDENTICAL_SUBPROCESS_ERRORS = 3;
+  private abortFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly ABORT_FALLBACK_KILL_MS = 5_000;
 
   private resetSubprocessErrorDedup(): void {
     this.lastSubprocessError = null;
     this.subprocessErrorRepeatCount = 0;
+  }
+
+  private clearAbortFallbackTimer(): void {
+    if (this.abortFallbackTimer) {
+      clearTimeout(this.abortFallbackTimer);
+      this.abortFallbackTimer = null;
+    }
   }
 
   // Ring buffer of recent subprocess stderr. Always on (independent of CRAFT_DEBUG)
@@ -1692,6 +1701,7 @@ export class PiAgent extends BaseAgent {
   private handleSubprocessExit(code: number | null, signal: string | null): void {
     this.debug(`Pi subprocess exited: code=${code}, signal=${signal}`);
 
+    this.clearAbortFallbackTimer();
     this.subprocess = null;
     this.readline = null;
     this.resetSubprocessErrorDedup();
@@ -1923,6 +1933,12 @@ export class PiAgent extends BaseAgent {
     options?: ChatOptions
   ): AsyncGenerator<AgentEvent> {
     let message = messageParam;
+    if (this.abortFallbackTimer) {
+      this.debug('Previous Pi turn was aborted; restarting subprocess before next prompt');
+      this.clearAbortFallbackTimer();
+      await this.killSubprocessGracefully(1_500);
+    }
+
     // Reset state for new turn
     this._isProcessing = true;
     this.abortReason = undefined;
@@ -2291,6 +2307,22 @@ export class PiAgent extends BaseAgent {
 
     // For other reasons, send abort to subprocess
     this.send({ type: 'abort' });
+    this.scheduleAbortFallbackKill(reason);
+  }
+
+  private scheduleAbortFallbackKill(reason: AbortReason): void {
+    this.clearAbortFallbackTimer();
+    const child = this.subprocess;
+    if (!child) return;
+
+    this.abortFallbackTimer = setTimeout(() => {
+      this.abortFallbackTimer = null;
+      if (this.subprocess !== child) return;
+      this.debug(`Pi subprocess still alive ${PiAgent.ABORT_FALLBACK_KILL_MS}ms after abort (${reason}); restarting runtime`);
+      void this.killSubprocessGracefully(1_500).catch((error) => {
+        this.debug(`Abort fallback restart failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }, PiAgent.ABORT_FALLBACK_KILL_MS);
   }
 
   /**
@@ -2375,6 +2407,7 @@ export class PiAgent extends BaseAgent {
    * Used before an idle runtime restart so we don't leave transient children behind.
    */
   private async killSubprocessGracefully(timeoutMs = 2_000): Promise<void> {
+    this.clearAbortFallbackTimer();
     const child = this.subprocess;
     if (!child) {
       this.killSubprocess();
@@ -2435,6 +2468,7 @@ export class PiAgent extends BaseAgent {
    * Kill the subprocess and clean up resources.
    */
   private killSubprocess(): void {
+    this.clearAbortFallbackTimer();
     if (this.readline) {
       this.readline.close();
       this.readline = null;

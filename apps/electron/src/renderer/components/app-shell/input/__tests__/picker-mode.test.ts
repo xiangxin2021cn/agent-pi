@@ -37,7 +37,8 @@ describe('derivePickerMode', () => {
   })
 
   // -------------------------------------------------------------------------
-  // The #727 regression: switcher must win over locked-single on empty session
+  // The #727 regression plus Agent Pi handoff: switcher wins over locked-single
+  // whenever another connection exists.
   // -------------------------------------------------------------------------
 
   test('empty session + ≥2 connections + single-model pi_compat default → switcher (#727)', () => {
@@ -46,6 +47,18 @@ describe('derivePickerMode', () => {
         input({
           connectionDefaultModel: 'mistral-7b',
           isEmptySession: true,
+          connectionCount: 2,
+        }),
+      ),
+    ).toBe('switcher')
+  })
+
+  test('non-empty session + ≥2 connections + single-model pi_compat default → switcher', () => {
+    expect(
+      derivePickerMode(
+        input({
+          connectionDefaultModel: 'mistral-7b',
+          isEmptySession: false,
           connectionCount: 2,
         }),
       ),
@@ -77,16 +90,16 @@ describe('derivePickerMode', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Mid-session lock preserved: switcher off, locked-single still rendered
+  // Single configured connection: no alternate connection to show.
   // -------------------------------------------------------------------------
 
-  test('non-empty session + single-model pi_compat default → locked-single (lock preserved)', () => {
+  test('non-empty session + single-model pi_compat default + only 1 connection → locked-single', () => {
     expect(
       derivePickerMode(
         input({
           connectionDefaultModel: 'mistral-7b',
           isEmptySession: false,
-          connectionCount: 5,
+          connectionCount: 1,
         }),
       ),
     ).toBe('locked-single')
@@ -110,7 +123,7 @@ describe('derivePickerMode', () => {
   // Flat list: the unremarkable "list models for the active connection" case
   // -------------------------------------------------------------------------
 
-  test('non-empty session + multi-model connection → flat', () => {
+  test('non-empty session + multi-model connection + ≥2 connections → switcher', () => {
     expect(
       derivePickerMode(
         input({
@@ -119,7 +132,7 @@ describe('derivePickerMode', () => {
           connectionCount: 3,
         }),
       ),
-    ).toBe('flat')
+    ).toBe('switcher')
   })
 
   test('empty session + only 1 multi-model connection → flat', () => {
@@ -147,10 +160,10 @@ describe('derivePickerMode', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Boundary: connectionCount > 1 vs == 1 on an empty session
+  // Boundary: connectionCount > 1 vs == 1
   // -------------------------------------------------------------------------
 
-  test('connectionCount=2 on empty session triggers switcher (lower bound for >1)', () => {
+  test('connectionCount=2 triggers switcher (lower bound for >1)', () => {
     expect(
       derivePickerMode(
         input({ connectionDefaultModel: 'm', isEmptySession: true, connectionCount: 2 }),

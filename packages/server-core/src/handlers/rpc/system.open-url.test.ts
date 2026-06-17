@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { CLIENT_OPEN_EXTERNAL } from '@craft-agent/server-core/transport'
+import { CLIENT_OPEN_EXTERNAL, CLIENT_OPEN_PATH, CLIENT_SHOW_IN_FOLDER } from '@craft-agent/server-core/transport'
 import type { RpcServer, HandlerFn, RequestContext } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { registerSystemCoreHandlers } from './system'
@@ -50,9 +50,11 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
   registerSystemCoreHandlers(server, deps)
 
   const openUrl = handlers.get(RPC_CHANNELS.shell.OPEN_URL)
-  if (!openUrl) {
-    throw new Error('OPEN_URL handler not registered')
-  }
+  const openFile = handlers.get(RPC_CHANNELS.shell.OPEN_FILE)
+  const showInFolder = handlers.get(RPC_CHANNELS.shell.SHOW_IN_FOLDER)
+  if (!openUrl) throw new Error('OPEN_URL handler not registered')
+  if (!openFile) throw new Error('OPEN_FILE handler not registered')
+  if (!showInFolder) throw new Error('SHOW_IN_FOLDER handler not registered')
 
   const ctx: RequestContext = {
     clientId: 'client-1',
@@ -60,7 +62,7 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
     webContentsId: 101,
   }
 
-  return { openUrl, ctx, invokeClientCalls, pushCalls }
+  return { openUrl, openFile, showInFolder, ctx, invokeClientCalls, pushCalls }
 }
 
 describe('registerSystemCoreHandlers OPEN_URL', () => {
@@ -146,6 +148,28 @@ describe('registerSystemCoreHandlers OPEN_URL', () => {
     await expect(openUrl(ctx, 'not a url')).rejects.toThrow(
       /^Failed to open URL: URL blocked\. URL is malformed and cannot be parsed\./,
     )
+  })
+})
+
+describe('registerSystemCoreHandlers local file paths', () => {
+  it('rejects relative openFile paths before they reach the client shell', async () => {
+    const { openFile, ctx, invokeClientCalls } = createTestHarness()
+
+    await expect(openFile(ctx, 'response.md')).rejects.toThrow(
+      /^Failed to open file: Only absolute file paths are allowed/,
+    )
+
+    expect(invokeClientCalls.find((call) => call.channel === CLIENT_OPEN_PATH)).toBeUndefined()
+  })
+
+  it('rejects relative showInFolder paths before they reach the client shell', async () => {
+    const { showInFolder, ctx, invokeClientCalls } = createTestHarness()
+
+    await expect(showInFolder(ctx, 'response.md')).rejects.toThrow(
+      /^Failed to show in folder: Only absolute file paths are allowed/,
+    )
+
+    expect(invokeClientCalls.find((call) => call.channel === CLIENT_SHOW_IN_FOLDER)).toBeUndefined()
   })
 })
 

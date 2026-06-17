@@ -24,7 +24,7 @@ interface AgentStub {
   isProcessing: () => boolean
   updateRuntimeConfig: jest.Mock
   dispose: () => void
-  disposeForRestart?: () => Promise<void>
+  disposeForRestart?: jest.Mock<() => Promise<void>>
 }
 
 function createAgentStub(opts: {
@@ -226,5 +226,46 @@ describe('refreshConnectionRuntime', () => {
         }
       }
     }
+  })
+})
+
+describe('SessionManager cleanup', () => {
+  let tmpRoot: string
+  let sm: SessionManager
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'sm-cleanup-'))
+    sm = new SessionManager()
+  })
+
+  afterEach(async () => {
+    await sm.cleanup()
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it('disposes active backend runtimes and pool servers on shutdown', async () => {
+    const agent = createAgentStub()
+    agent.disposeForRestart = jest.fn(async () => {})
+    const managed = injectSession(sm, 'active', tmpRoot, 'slug-A', agent) as unknown as {
+      agent: AgentStub | null
+      poolServer?: { stop: jest.Mock<() => Promise<void>> }
+      mcpPool?: { disconnectAll: jest.Mock<() => Promise<void>> }
+      autoRetryTimer?: ReturnType<typeof setTimeout>
+    }
+    const stop = jest.fn(async () => {})
+    const disconnectAll = jest.fn(async () => {})
+    managed.poolServer = { stop }
+    managed.mcpPool = { disconnectAll }
+    managed.autoRetryTimer = setTimeout(() => {}, 10_000)
+
+    await sm.cleanup()
+
+    expect(agent.disposeForRestart).toHaveBeenCalledTimes(1)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(disconnectAll).toHaveBeenCalledTimes(1)
+    expect(managed.agent).toBeNull()
+    expect(managed.poolServer).toBeUndefined()
+    expect(managed.mcpPool).toBeUndefined()
+    expect(managed.autoRetryTimer).toBeUndefined()
   })
 })

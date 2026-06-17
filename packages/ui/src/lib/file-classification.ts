@@ -7,7 +7,7 @@
  */
 
 /** Preview types that map to specific overlay components */
-export type FilePreviewType = 'image' | 'code' | 'markdown' | 'json' | 'text' | 'pdf'
+export type FilePreviewType = 'image' | 'code' | 'markdown' | 'json' | 'text' | 'pdf' | 'office'
 
 export interface FileClassification {
   /** The preview type, or null if no in-app preview is available */
@@ -64,15 +64,20 @@ const TEXT_EXTENSIONS = new Set([
 /** PDF files — rendered in PDFPreviewOverlay via embedded viewer */
 const PDF_EXTENSIONS = new Set(['pdf'])
 
+/** Office files — rendered as bounded Markdown previews in-app */
+const OFFICE_EXTENSIONS = new Set([
+  'xlsx', 'xls', 'xlsm',
+  'docx', 'doc',
+  'pptx', 'ppt',
+  'rtf',
+])
+
 /**
  * External-only file extensions — recognized as file links but opened externally.
  * These are included in FILE_EXTENSIONS_PATTERN so linkify.ts detects them as file paths,
  * but classifyFile() returns canPreview: false so they route to the system opener.
  */
 const EXTERNAL_EXTENSIONS = new Set([
-  'xlsx', 'xls', 'xlsm',   // Spreadsheets
-  'docx', 'doc',             // Word documents
-  'pptx', 'ppt',             // Presentations
   'zip', 'tar', 'gz', 'rar', '7z',  // Archives
   'dmg', 'pkg', 'exe', 'msi',       // Installers
   'mp3', 'wav', 'flac', 'aac',      // Audio
@@ -107,6 +112,7 @@ export function classifyFile(filePath: string): FileClassification {
   if (CODE_EXTENSIONS.has(ext))     return { type: 'code', canPreview: true }
   if (TEXT_EXTENSIONS.has(ext))     return { type: 'text', canPreview: true }
   if (PDF_EXTENSIONS.has(ext))      return { type: 'pdf', canPreview: true }
+  if (OFFICE_EXTENSIONS.has(ext))   return { type: 'office', canPreview: true }
 
   return { type: null, canPreview: false }
 }
@@ -123,5 +129,6 @@ export const FILE_EXTENSIONS_PATTERN = [
   ...JSON_EXTENSIONS,
   ...TEXT_EXTENSIONS,
   ...PDF_EXTENSIONS,
+  ...OFFICE_EXTENSIONS,
   ...EXTERNAL_EXTENSIONS,
 ].join('|')

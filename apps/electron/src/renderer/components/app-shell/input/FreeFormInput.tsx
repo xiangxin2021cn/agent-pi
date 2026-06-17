@@ -237,9 +237,9 @@ export interface FreeFormInputProps {
    */
   enableCompactModelPicker?: boolean
   // Connection selection (hierarchical connection → model selector)
-  /** Current LLM connection slug (locked after first message) */
+  /** Current LLM connection slug */
   currentConnection?: string
-  /** Callback when connection changes (only works when session is empty) */
+  /** Callback for pre-message connection changes */
   onConnectionChange?: (connectionSlug: string) => void
   /** When true, the session's locked connection has been removed */
   connectionUnavailable?: boolean
@@ -347,7 +347,7 @@ export function FreeFormInput({
 
   // Decide which of the four picker UIs to render. The `switcher` branch
   // wins over `locked-single` so users with a single-model pi_compat default
-  // can still reach the connection list on a fresh session (#727).
+  // can still reach the connection list when other connections exist (#727).
   const pickerMode = derivePickerMode({
     connectionUnavailable,
     connectionDefaultModel,
@@ -1128,12 +1128,36 @@ export function FreeFormInput({
     e.stopPropagation()
   }
 
-  // Helper to read a File using FileReader API
+  const getAttachmentType = (file: File, fileName: string): FileAttachment['type'] => {
+    if (file.type.startsWith('image/')) return 'image'
+    if (file.type === 'application/pdf') return 'pdf'
+    if (file.type.includes('text') || fileName.match(/\.(txt|md|json|js|ts|tsx|py|css|html)$/i)) return 'text'
+    if (file.type.includes('officedocument') || fileName.match(/\.(docx?|xlsx?|pptx?)$/i)) return 'office'
+    return 'unknown'
+  }
+
+  // Helper to read a File using FileReader API. Files selected from disk keep a
+  // real absolute path; non-image attachments can be stored from that path in
+  // the main process, avoiding renderer-side base64 copies of large Excel/Office
+  // files.
   const readFileAsAttachment = async (file: File, overrideName?: string): Promise<FileAttachment | null> => {
     // Capture the absolute OS path at attach time. Works for <input type="file"> and
     // OS drag-drop; returns null for clipboard paste and web-drag (no disk origin).
     // When null, the draft layer falls back to persisting content inline (Track C).
     const realPath = hasElectronAPI ? window.electronAPI.getFilePath?.(file) ?? null : null
+    const fileName = overrideName || file.name
+    const type = getAttachmentType(file, fileName)
+    const mimeType = file.type || 'application/octet-stream'
+
+    if (realPath && type !== 'image') {
+      return {
+        type,
+        path: realPath,
+        name: fileName,
+        mimeType,
+        size: file.size,
+      }
+    }
 
     return new Promise((resolve) => {
       const reader = new FileReader()
@@ -1148,15 +1172,6 @@ export function FreeFormInput({
           binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)))
         }
         const base64 = btoa(binary)
-
-        let type: FileAttachment['type'] = 'unknown'
-        const fileName = overrideName || file.name
-        if (file.type.startsWith('image/')) type = 'image'
-        else if (file.type === 'application/pdf') type = 'pdf'
-        else if (file.type.includes('text') || fileName.match(/\.(txt|md|json|js|ts|tsx|py|css|html)$/i)) type = 'text'
-        else if (file.type.includes('officedocument') || fileName.match(/\.(docx?|xlsx?|pptx?)$/i)) type = 'office'
-
-        const mimeType = file.type || 'application/octet-stream'
 
         // For text files, decode the ArrayBuffer as UTF-8 text
         let text: string | undefined
@@ -1826,6 +1841,7 @@ export function FreeFormInput({
               onThinkingLevelChange={onThinkingLevelChange}
               isEmptySession={isEmptySession}
               connectionUnavailable={connectionUnavailable}
+              disabled={isProcessing}
               contextStatus={contextStatus}
             />
           )}
@@ -2060,10 +2076,12 @@ export function FreeFormInput({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
+                    disabled={isProcessing}
                     className={cn(
                       "input-toolbar-btn inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
                       modelDropdownOpen && "bg-foreground/5",
                       connectionUnavailable && "text-destructive",
+                      isProcessing && "opacity-50 cursor-not-allowed hover:bg-transparent",
                     )}
                   >
                     {connectionUnavailable ? (
@@ -2156,7 +2174,7 @@ export function FreeFormInput({
                   )
                 })()
               ) : pickerMode === 'switcher' ? (
-                /* Hierarchical view: Provider → Connection → Models (empty session with multiple connections — lets the user switch BEFORE the first message locks the connection) */
+                /* Hierarchical view: Provider → Connection → Models */
                 connectionsByProvider.map(([providerName, connections], index) => (
                   <React.Fragment key={providerName}>
                     {/* Provider group label */}
@@ -2201,8 +2219,10 @@ export function FreeFormInput({
                                   <StyledDropdownMenuItem
                                     key={modelId}
                                     onSelect={() => {
-                                      // If selecting a different connection, update both connection and model
-                                      if (!isCurrentConnection && onConnectionChange) {
+                                      // Pre-start connection changes still use the lightweight command.
+                                      // Started sessions switch via onModelChange so the backend can
+                                      // rebuild runtime and preserve carryover context in one operation.
+                                      if (isEmptySession && !isCurrentConnection && onConnectionChange) {
                                         onConnectionChange(conn.slug)
                                       }
                                       // Always pass connection with model for proper persistence

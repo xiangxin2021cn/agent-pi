@@ -53,6 +53,7 @@ interface CompactModelSelectorProps {
   onThinkingLevelChange?: (level: ThinkingLevel) => void
   isEmptySession?: boolean
   connectionUnavailable?: boolean
+  disabled?: boolean
   contextStatus?: {
     isCompacting?: boolean
     inputTokens?: number
@@ -69,6 +70,7 @@ export function CompactModelSelector({
   onThinkingLevelChange,
   isEmptySession = false,
   connectionUnavailable = false,
+  disabled = false,
   contextStatus,
 }: CompactModelSelectorProps) {
   const { t } = useTranslation()
@@ -156,13 +158,13 @@ export function CompactModelSelector({
   const handlePickSwitcherModel = React.useCallback(
     (connSlug: string, modelId: string) => {
       const isCurrentConnection = effectiveConnection === connSlug
-      if (!isCurrentConnection && onConnectionChange) {
+      if (isEmptySession && !isCurrentConnection && onConnectionChange) {
         onConnectionChange(connSlug)
       }
       onModelChange(modelId, connSlug)
       setOpen(false)
     },
-    [onModelChange, onConnectionChange, effectiveConnection],
+    [onModelChange, onConnectionChange, effectiveConnection, isEmptySession],
   )
 
   return (
@@ -170,6 +172,7 @@ export function CompactModelSelector({
       <DrawerTrigger asChild>
         <button
           type="button"
+          disabled={disabled}
           aria-label={connectionUnavailable
             ? t('common.unavailable')
             : `${t('common.model')}: ${currentModelDisplayName}`}
@@ -178,6 +181,7 @@ export function CompactModelSelector({
             connectionUnavailable
               ? 'bg-destructive/10 text-destructive'
               : 'bg-foreground/5 text-foreground/70',
+            disabled && 'opacity-50 cursor-not-allowed',
           )}
           style={{ '--shadow-color': 'var(--foreground-rgb)' } as React.CSSProperties}
         >

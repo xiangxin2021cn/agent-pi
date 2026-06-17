@@ -44,5 +44,5 @@ export async function generateConversationSummary(
 }
 
 export function buildTransferredSessionContext(summary: string): string {
-  return `<session_transfer_summary>\nThis session was transferred from another workspace. The original conversation was summarized before transfer.\nUse the summary below as prior context for the next turn.\n\n${summary}\n</session_transfer_summary>`;
+  return `<session_carryover_context>\nThis session is continuing from prior conversation context after a workspace transfer or model/runtime handoff.\nUse the context below as prior memory for the next turn.\n\n${summary}\n</session_carryover_context>`;
 }

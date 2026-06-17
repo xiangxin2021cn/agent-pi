@@ -141,6 +141,7 @@ import {
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
+import agentPiBrandLogo from "@/assets/agent-pi-brand-logo.png"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -2204,7 +2205,7 @@ function AppShellContent({
       {/* === OUTER LAYOUT: Unified Panel Stack | Right Sidebar === */}
       <div
         ref={shellRef}
-        className="flex items-stretch relative"
+        className="agent-pi-workbench flex items-stretch relative"
         style={{
           height: '100%',
           paddingRight: isAutoCompact ? 0 : PANEL_EDGE_INSET,
@@ -2218,12 +2219,12 @@ function AppShellContent({
             <div
               ref={sidebarRef}
               style={{ width: sidebarWidth }}
-              className="h-full font-sans relative"
+              className="agent-pi-sidebar-glass h-full font-sans relative overflow-hidden"
               data-focus-zone="sidebar"
               tabIndex={sidebarFocused ? 0 : -1}
               onKeyDown={handleSidebarKeyDown}
             >
-            <div className="flex h-full flex-col select-none">
+            <div className="relative z-[1] flex h-full flex-col select-none">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
                 {/* New Session Button - Gmail-style, with context menu for "Open in New Window" */}
@@ -2236,7 +2237,7 @@ function AppShellContent({
                             <Button
                               variant="ghost"
                               onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
-                              className="w-full justify-start gap-2 py-[7px] px-2 text-[13px] font-normal rounded-[6px] shadow-minimal bg-background"
+                              className="agent-pi-new-chat-button w-full justify-start gap-2 py-[7px] px-2 text-[13px] font-normal rounded-[6px]"
                               data-tutorial="new-chat-button"
                             >
                               <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
@@ -2495,6 +2496,14 @@ function AppShellContent({
                 />
                 {/* Agent Tree: Hierarchical list of agents */}
                 {/* Agents section removed */}
+                </div>
+                <div className="agent-pi-sidebar-brand mx-3 mb-4 mt-2 shrink-0" aria-label="Agent Pi">
+                  <img
+                    src={agentPiBrandLogo}
+                    alt="Agent Pi"
+                    draggable={false}
+                    className="agent-pi-sidebar-brand-image"
+                  />
                 </div>
               </div>
 

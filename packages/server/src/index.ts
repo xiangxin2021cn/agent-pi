@@ -243,7 +243,7 @@ const instance = await (async () => {
         try {
           await sessionManager.flushAllSessions()
         } finally {
-          sessionManager.cleanup()
+          await sessionManager.cleanup()
         }
       },
       cleanupClientResources: cleanupSessionFileWatchForClient,

@@ -78,6 +78,8 @@ export function DocumentFormattedMarkdownOverlay({
   isStreaming = false,
   openAnnotationRequest,
 }: DocumentFormattedMarkdownOverlayProps) {
+  const hasContent = content.trim().length > 0
+
   return (
     <FullscreenOverlayBase
       isOpen={isOpen}
@@ -85,7 +87,7 @@ export function DocumentFormattedMarkdownOverlay({
       filePath={filePath}
       typeBadge={typeBadge}
       copyContent={content}
-      error={error ? { label: 'Write Failed', message: error } : undefined}
+      error={error ? { label: 'Preview Issue', message: error } : undefined}
     >
       {/* Content wrapper — min-h-full for vertical centering within FullscreenOverlayBase's scroll container.
           Scrolling and gradient fade mask are handled by FullscreenOverlayBase. */}
@@ -103,7 +105,11 @@ export function DocumentFormattedMarkdownOverlay({
           {/* Content area */}
           <div className="px-10 pt-8 pb-8">
             <div className="text-sm">
-              {messageId && onAddAnnotation ? (
+              {!hasContent ? (
+                <div className="rounded-[8px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
+                  No preview content was returned for this file.
+                </div>
+              ) : messageId && onAddAnnotation ? (
                 <AnnotatableMarkdownDocument
                   content={content}
                   sessionId={sessionId}

@@ -302,6 +302,13 @@ export interface ElectronAPI {
 
   // File operations
   readFile(path: string): Promise<string>
+  /** Read a size-bounded text/Office preview for in-app file preview overlays. */
+  readFilePreview(path: string): Promise<{
+    content: string
+    truncated: boolean
+    originalSize: number
+    previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
+  }>
   /** Read a file as binary data (Uint8Array) */
   readFileBinary(path: string): Promise<Uint8Array>
   /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */

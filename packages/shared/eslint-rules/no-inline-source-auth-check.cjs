@@ -52,10 +52,12 @@ module.exports = {
     ]
 
     const filename = context.filename || context.getFilename()
-    const basename = filename.split('/').pop() || ''
+    const normalizedFilename = filename.replace(/\\/g, '/')
+    const basename = normalizedFilename.split('/').pop() || ''
 
-    // Allow in specific files
-    if (allowedFiles.includes(basename)) {
+    // Allow in specific files and tests. The rule is meant to protect
+    // production filtering logic, not fixtures that assert raw auth state.
+    if (allowedFiles.includes(basename) || normalizedFilename.includes('/__tests__/')) {
       return {}
     }
 
@@ -73,6 +75,14 @@ module.exports = {
             node.object.property.type === 'Identifier' &&
             node.object.property.name === 'config'
           ) {
+            if (
+              node.parent &&
+              ((node.parent.type === 'AssignmentExpression' && node.parent.left === node) ||
+                node.parent.type === 'UpdateExpression')
+            ) {
+              return
+            }
+
             context.report({
               node,
               messageId: 'useIsSourceUsable',

@@ -671,7 +671,7 @@ export function getDefaultModelForConnection(providerType: LlmProviderType, piAu
  * Resolve the effective LLM connection slug from available fallbacks.
  *
  * Single source of truth for the fallback chain used everywhere in the UI:
- *   1. Explicit session connection (locked after first message)
+ *   1. Explicit session connection
  *   2. Workspace-level default override
  *   3. Global default (isDefault flag on a connection)
  *   4. First available connection

@@ -90,7 +90,7 @@ import { registerCoreRpcHandlers, cleanupSessionFileWatchForClient } from '@craf
 import type { PlatformServices } from '../runtime/platform'
 import { createElectronPlatform } from './platform'
 import type { HandlerDeps } from './handlers/handler-deps'
-import { bootstrapServer, releaseServerLock } from '@craft-agent/server-core/bootstrap'
+import { bootstrapServer, releaseServerLock, type ServerInstance } from '@craft-agent/server-core/bootstrap'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@craft-agent/messaging-gateway'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@craft-agent/server-core/model-fetchers'
@@ -218,6 +218,7 @@ const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || APP_DEEPLINK_SCHEME
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
+let serverInstance: ServerInstance<SessionManager> | null = null
 let browserPaneManager: BrowserPaneManager | null = null
 let oauthFlowStore: OAuthFlowStore | null = null
 let moduleSink: EventSink | null = null
@@ -733,6 +734,7 @@ app.whenReady().then(async () => {
       })
 
       // Capture module-level references for before-quit cleanup and deep-link handlers
+      serverInstance = instance
       sessionManager = instance.sessionManager
       oauthFlowStore = instance.oauthFlowStore
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
@@ -1044,6 +1046,16 @@ app.whenReady().then(async () => {
       await createInitialWindows()
     }
 
+    const smokeQuitAfterMs = Number(process.env.AGENT_PI_SMOKE_QUIT_AFTER_MS ?? 0)
+    if (Number.isFinite(smokeQuitAfterMs) && smokeQuitAfterMs > 0) {
+      mainLog.info(`[smoke] Scheduling app quit in ${smokeQuitAfterMs}ms`)
+      const timer = setTimeout(() => {
+        mainLog.info('[smoke] Quit timer fired')
+        app.quit()
+      }, smokeQuitAfterMs)
+      timer.unref?.()
+    }
+
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
     // Skip in thin-client mode — credentials are managed by the remote server.
@@ -1210,34 +1222,69 @@ app.on('before-quit', async (event) => {
     } catch (error) {
       mainLog.error('Failed to flush sessions:', error)
     }
-    // Clean up SessionManager resources (file watchers, timers, etc.)
-    sessionManager.cleanup()
+    // Clean up SessionManager resources and active backend runtimes
+    try {
+      await sessionManager.cleanup()
+    } catch (err) {
+      mainLog.error('Failed to clean up SessionManager:', err)
+    }
 
     // Clean up browser pane instances
     if (browserPaneManager) {
-      browserPaneManager.destroyAll()
+      try {
+        browserPaneManager.destroyAll()
+      } catch (err) {
+        mainLog.error('[browser-pane] destroyAll failed:', err)
+      }
     }
 
     // Clean up OAuth flow store (stop periodic cleanup timer)
     if (oauthFlowStore) {
-      oauthFlowStore.dispose()
+      try {
+        oauthFlowStore.dispose()
+        oauthFlowStore = null
+      } catch (err) {
+        mainLog.error('[oauth] flow store dispose failed:', err)
+      }
     }
 
     // Stop all model refresh timers
-    getModelRefreshService().stopAll()
+    try {
+      getModelRefreshService().stopAll()
+    } catch (err) {
+      mainLog.error('[model-refresh] stopAll failed:', err)
+    }
 
     // Stop messaging gateways so the WhatsApp worker subprocess exits cleanly.
     if (messagingHandle) {
       try {
         await messagingHandle.dispose()
+        messagingHandle = null
       } catch (err) {
         mainLog.error('[messaging] dispose failed:', err)
       }
     }
 
+    // Stop the embedded RPC server and bootstrap-owned resources. SessionManager
+    // has already been cleaned above; Electron does not pass bootstrap a
+    // cleanupSessionManager callback, so this mainly closes the WS server and
+    // releases bootstrap-owned timers/stores.
+    if (serverInstance) {
+      try {
+        await serverInstance.stop()
+        serverInstance = null
+      } catch (err) {
+        mainLog.error('[server] embedded server stop failed:', err)
+      }
+    }
+
     // Clean up power manager (release power blocker)
-    const { cleanup: cleanupPowerManager } = await import('./power-manager')
-    cleanupPowerManager()
+    try {
+      const { cleanup: cleanupPowerManager } = await import('./power-manager')
+      cleanupPowerManager()
+    } catch (err) {
+      mainLog.error('[power-manager] cleanup failed:', err)
+    }
 
     // Release the server lock file so the next launch doesn't see a stale PID.
     // This must happen regardless of the exit path (normal quit or update quit).

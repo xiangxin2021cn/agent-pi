@@ -1,22 +1,308 @@
-import { readFile, writeFile, unlink, mkdir, readdir, stat } from 'fs/promises'
-import { isAbsolute, join, resolve, dirname, parse as parsePath } from 'path'
+import { copyFile, open, readFile, writeFile, unlink, mkdir, readdir, stat } from 'fs/promises'
+import { basename, extname, isAbsolute, join, resolve, dirname, parse as parsePath } from 'path'
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
 import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
+import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { MarkItDown } from 'markitdown-js'
+import xlsx, { type WorkBook, type WorkSheet } from 'xlsx'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 
+const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls'])
+const OFFICE_PREVIEW_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
+const TEXT_PREVIEW_MAX_BYTES = 1 * 1024 * 1024
+const SPREADSHEET_PREVIEW_MAX_BYTES = 50 * 1024 * 1024
+const OFFICE_PREVIEW_CONVERT_MAX_BYTES = 12 * 1024 * 1024
+const OFFICE_PREVIEW_TIMEOUT_MS = 20_000
+const PATH_BACKED_ATTACHMENT_MAX_BYTES = 250 * 1024 * 1024
+const SPREADSHEET_MAX_DECLARED_ROWS = 20_000
+const SPREADSHEET_MAX_DECLARED_COLS = 200
+const SPREADSHEET_MAX_DECLARED_CELLS = 500_000
+const SPREADSHEET_MAX_TOTAL_DECLARED_CELLS = 1_000_000
+const SPREADSHEET_SAMPLE_SHEETS = 8
+const SPREADSHEET_SAMPLE_ROWS = 12
+const SPREADSHEET_SAMPLE_COLS = 8
+const SPREADSHEET_CELL_TEXT_LIMIT = 160
+
+interface SpreadsheetCellRef {
+  address: string
+  row: number
+  col: number
+  text: string
+}
+
+interface SpreadsheetSheetSummary {
+  name: string
+  declaredRange: string
+  declaredRows: number
+  declaredCols: number
+  declaredCells: number
+  populatedCells: number
+  sampleRows: string[][]
+}
+
+interface SpreadsheetPreviewResult {
+  textContent: string
+  fullConversionAllowed: boolean
+  reason?: string
+}
+
+interface FilePreviewReadResult {
+  content: string
+  truncated: boolean
+  originalSize: number
+  previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
+}
+
+function clampCellText(value: unknown): string {
+  const text = value == null ? '' : String(value).replace(/\s+/g, ' ').trim()
+  if (text.length <= SPREADSHEET_CELL_TEXT_LIMIT) return text
+  return `${text.slice(0, SPREADSHEET_CELL_TEXT_LIMIT)}...`
+}
+
+function isSpreadsheetPath(filePath: string): boolean {
+  return SPREADSHEET_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+function isOfficePreviewPath(filePath: string): boolean {
+  return OFFICE_PREVIEW_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = units[0]
+  for (let i = 1; value >= 1024 && i < units.length; i += 1) {
+    value /= 1024
+    unit = units[i]
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
+}
+
+async function readUtf8Prefix(filePath: string, maxBytes: number): Promise<string> {
+  const handle = await open(filePath, 'r')
+  try {
+    const buffer = Buffer.allocUnsafe(maxBytes)
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0)
+    return buffer.subarray(0, bytesRead).toString('utf-8')
+  } finally {
+    await handle.close()
+  }
+}
+
+function truncateTextPreview(content: string, originalSize: number, maxBytes = TEXT_PREVIEW_MAX_BYTES): { content: string; truncated: boolean } {
+  if (Buffer.byteLength(content, 'utf-8') <= maxBytes) {
+    return { content, truncated: false }
+  }
+
+  const truncated = Buffer.from(content, 'utf-8').subarray(0, maxBytes).toString('utf-8')
+  return {
+    content: `${truncated}\n\n---\nPreview truncated at ${formatBytes(maxBytes)} of ${formatBytes(originalSize)}. Open externally for the full file.`,
+    truncated: true,
+  }
+}
+
+function buildMetadataPreview(filePath: string, size: number, reason: string): string {
+  return [
+    `# File preview: ${basename(filePath)}`,
+    '',
+    reason,
+    '',
+    `- Path: ${filePath}`,
+    `- Size: ${formatBytes(size)}`,
+  ].join('\n')
+}
+
+function buildPathBackedAttachment(filePath: string, size: number): FileAttachment {
+  return {
+    type: getFileType(filePath),
+    path: filePath,
+    name: basename(filePath),
+    mimeType: getMimeType(filePath),
+    size,
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function decodeDeclaredRange(ref: string | undefined): { rows: number; cols: number; cells: number } {
+  if (!ref) return { rows: 0, cols: 0, cells: 0 }
+  try {
+    const range = xlsx.utils.decode_range(ref)
+    const rows = Math.max(0, range.e.r - range.s.r + 1)
+    const cols = Math.max(0, range.e.c - range.s.c + 1)
+    return { rows, cols, cells: rows * cols }
+  } catch {
+    return { rows: 0, cols: 0, cells: 0 }
+  }
+}
+
+function getSheetCellRefs(worksheet: WorkSheet): SpreadsheetCellRef[] {
+  const refs: SpreadsheetCellRef[] = []
+  for (const address of Object.keys(worksheet)) {
+    if (address.startsWith('!')) continue
+    let decoded: { r: number; c: number }
+    try {
+      decoded = xlsx.utils.decode_cell(address)
+    } catch {
+      continue
+    }
+    const cell = worksheet[address] as { v?: unknown; w?: unknown } | undefined
+    const text = clampCellText(cell?.w ?? cell?.v)
+    if (!text) continue
+    refs.push({ address, row: decoded.r, col: decoded.c, text })
+  }
+  refs.sort((a, b) => (a.row - b.row) || (a.col - b.col))
+  return refs
+}
+
+function buildSheetSampleRows(cellRefs: SpreadsheetCellRef[]): string[][] {
+  const sampleRows: string[][] = []
+  const rowIds: number[] = []
+  const colIds: number[] = []
+
+  for (const ref of cellRefs) {
+    if (!rowIds.includes(ref.row)) {
+      if (rowIds.length >= SPREADSHEET_SAMPLE_ROWS) continue
+      rowIds.push(ref.row)
+    }
+    if (!colIds.includes(ref.col)) {
+      if (colIds.length >= SPREADSHEET_SAMPLE_COLS) continue
+      colIds.push(ref.col)
+    }
+  }
+
+  rowIds.sort((a, b) => a - b)
+  colIds.sort((a, b) => a - b)
+  const byPosition = new Map<string, string>()
+  for (const ref of cellRefs) {
+    if (rowIds.includes(ref.row) && colIds.includes(ref.col)) {
+      byPosition.set(`${ref.row}:${ref.col}`, ref.text)
+    }
+  }
+
+  for (const row of rowIds) {
+    sampleRows.push(colIds.map(col => byPosition.get(`${row}:${col}`) ?? ''))
+  }
+  return sampleRows
+}
+
+function markdownTable(headers: string[], rows: string[][]): string {
+  const escape = (value: string) => value.replace(/\|/g, '\\|')
+  return [
+    `| ${headers.map(escape).join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+    ...rows.map(row => `| ${row.map(escape).join(' | ')} |`),
+  ].join('\n')
+}
+
+export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook, filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+  const sheetSummaries: SpreadsheetSheetSummary[] = []
+  let totalDeclaredCells = 0
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName]
+    if (!worksheet) continue
+    const declaredRange = worksheet['!ref'] || ''
+    const declared = decodeDeclaredRange(declaredRange)
+    const cellRefs = getSheetCellRefs(worksheet)
+    totalDeclaredCells += declared.cells
+    sheetSummaries.push({
+      name: sheetName,
+      declaredRange,
+      declaredRows: declared.rows,
+      declaredCols: declared.cols,
+      declaredCells: declared.cells,
+      populatedCells: cellRefs.length,
+      sampleRows: buildSheetSampleRows(cellRefs),
+    })
+  }
+
+  const oversizedSheets = sheetSummaries.filter(sheet =>
+    sheet.declaredRows > SPREADSHEET_MAX_DECLARED_ROWS ||
+    sheet.declaredCols > SPREADSHEET_MAX_DECLARED_COLS ||
+    sheet.declaredCells > SPREADSHEET_MAX_DECLARED_CELLS
+  )
+  const fullConversionAllowed = oversizedSheets.length === 0 && totalDeclaredCells <= SPREADSHEET_MAX_TOTAL_DECLARED_CELLS
+  const reason = fullConversionAllowed
+    ? undefined
+    : `Workbook has oversized declared ranges (${oversizedSheets.length} sheet(s), ${totalDeclaredCells.toLocaleString()} declared cells).`
+
+  const summaryRows = sheetSummaries.map(sheet => [
+    sheet.name,
+    sheet.declaredRange || '(none)',
+    sheet.declaredRows.toLocaleString(),
+    sheet.declaredCols.toLocaleString(),
+    sheet.populatedCells.toLocaleString(),
+  ])
+
+  const parts: string[] = [
+    `# Spreadsheet attachment preview: ${originalName}`,
+    '',
+    fullConversionAllowed
+      ? 'This is a bounded spreadsheet preview generated during attachment storage. For full analysis, read the original workbook path with spreadsheet-specific tooling.'
+      : `Full spreadsheet-to-Markdown conversion was skipped because it is unsafe for foreground attachment storage. ${reason}`,
+    '',
+    `Original file: ${filePath}`,
+    '',
+    '## Sheets',
+    '',
+    markdownTable(['Sheet', 'Declared range', 'Declared rows', 'Declared cols', 'Populated cells'], summaryRows),
+  ]
+
+  for (const sheet of sheetSummaries.slice(0, SPREADSHEET_SAMPLE_SHEETS)) {
+    if (sheet.sampleRows.length === 0) continue
+    const width = Math.max(...sheet.sampleRows.map(row => row.length))
+    const headers = Array.from({ length: width }, (_, index) => `Col ${index + 1}`)
+    parts.push('', `## Sample: ${sheet.name}`, '', markdownTable(headers, sheet.sampleRows))
+  }
+
+  if (sheetSummaries.length > SPREADSHEET_SAMPLE_SHEETS) {
+    parts.push('', `[${sheetSummaries.length - SPREADSHEET_SAMPLE_SHEETS} additional sheet(s) omitted from preview.]`)
+  }
+
+  return {
+    textContent: parts.join('\n'),
+    fullConversionAllowed,
+    reason,
+  }
+}
+
+export function createSpreadsheetMarkdownPreview(filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+  const workbook = xlsx.readFile(filePath, {
+    cellDates: true,
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+  })
+
+  return createSpreadsheetMarkdownPreviewFromWorkbook(workbook, filePath, originalName)
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
+  RPC_CHANNELS.file.READ_PREVIEW,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
   RPC_CHANNELS.file.READ_BINARY,
@@ -46,6 +332,98 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         deps.platform.logger.error('readFile error:', path, message)
       }
       throw new Error(`Failed to read file: ${message}`)
+    }
+  })
+
+  // Read a size-bounded preview for in-app file overlays. This avoids loading
+  // huge text/Office files into renderer memory just because a user clicked a link.
+  server.handle(RPC_CHANNELS.file.READ_PREVIEW, async (ctx, path: string): Promise<FilePreviewReadResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+
+      if (isSpreadsheetPath(safePath)) {
+        if (info.size > SPREADSHEET_PREVIEW_MAX_BYTES) {
+          return {
+            content: buildMetadataPreview(
+              safePath,
+              info.size,
+              `Spreadsheet is too large for foreground preview (${formatBytes(info.size)} > ${formatBytes(SPREADSHEET_PREVIEW_MAX_BYTES)}).`
+            ),
+            truncated: true,
+            originalSize: info.size,
+            previewKind: 'spreadsheet',
+          }
+        }
+
+        const preview = createSpreadsheetMarkdownPreview(safePath, basename(safePath))
+        return {
+          content: preview.textContent,
+          truncated: !preview.fullConversionAllowed,
+          originalSize: info.size,
+          previewKind: 'spreadsheet',
+        }
+      }
+
+      if (isOfficePreviewPath(safePath)) {
+        if (info.size > OFFICE_PREVIEW_CONVERT_MAX_BYTES) {
+          return {
+            content: buildMetadataPreview(
+              safePath,
+              info.size,
+              `Office document is too large for safe foreground conversion (${formatBytes(info.size)} > ${formatBytes(OFFICE_PREVIEW_CONVERT_MAX_BYTES)}).`
+            ),
+            truncated: true,
+            originalSize: info.size,
+            previewKind: 'office',
+          }
+        }
+
+        const markitdown = new MarkItDown()
+        const result = await withTimeout(markitdown.convert(safePath), OFFICE_PREVIEW_TIMEOUT_MS, 'Office preview conversion')
+        const textContent = result?.textContent?.trim()
+        if (!textContent) {
+          return {
+            content: buildMetadataPreview(safePath, info.size, 'Office conversion returned no readable text.'),
+            truncated: true,
+            originalSize: info.size,
+            previewKind: 'office',
+          }
+        }
+
+        const preview = truncateTextPreview(textContent, info.size)
+        return {
+          content: preview.content,
+          truncated: preview.truncated,
+          originalSize: info.size,
+          previewKind: 'office',
+        }
+      }
+
+      if (info.size > TEXT_PREVIEW_MAX_BYTES) {
+        const content = await readUtf8Prefix(safePath, TEXT_PREVIEW_MAX_BYTES)
+        return {
+          content: `${content}\n\n---\nPreview truncated at ${formatBytes(TEXT_PREVIEW_MAX_BYTES)} of ${formatBytes(info.size)}. Open externally for the full file.`,
+          truncated: true,
+          originalSize: info.size,
+          previewKind: 'text',
+        }
+      }
+
+      return {
+        content: await readFile(safePath, 'utf-8'),
+        truncated: false,
+        originalSize: info.size,
+        previewKind: 'text',
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('readFilePreview error:', path, message)
+      throw new Error(`Failed to read file preview: ${message}`)
     }
   })
 
@@ -167,18 +545,18 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   // previous user-initiated OS-picker / Finder-drag attach, so the path implies consent.
   // NOT exposed to agent code — no equivalent MCP tool. Kept separate from readFileAttachment
   // on purpose to preserve the agent-facing read's narrow trust boundary.
-  const USER_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
   server.handle(RPC_CHANNELS.file.READ_USER_ATTACHMENT, async (_ctx, path: string) => {
     try {
       if (!path || typeof path !== 'string' || !isAbsolute(path)) return null
+      const formatCheck = validatePathFormat(path)
+      if (!formatCheck.valid) return null
       const info = await stat(path).catch(() => null)
       if (!info || !info.isFile()) return null
-      if (info.size > USER_ATTACHMENT_MAX_BYTES) {
-        deps.platform.logger.warn(`[readUserAttachment] file exceeds ${USER_ATTACHMENT_MAX_BYTES} bytes, skipping: ${path}`)
+      if (info.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
+        deps.platform.logger.warn(`[readUserAttachment] file exceeds ${PATH_BACKED_ATTACHMENT_MAX_BYTES} bytes, skipping: ${path}`)
         return null
       }
-      const attachment = readFileAttachment(path)
-      if (!attachment) return null
+      const attachment = buildPathBackedAttachment(path, info.size)
       try {
         const thumbBuffer = await deps.platform.imageProcessor.process(path, {
           resize: { width: 200, height: 200 },
@@ -210,7 +588,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Store an attachment to disk and generate thumbnail/markdown conversion
+  // Store an attachment to disk and generate thumbnail/markdown preview data.
   // This is the core of the persistent file attachment system
   server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
     // Track files we've written for cleanup on error
@@ -359,51 +737,90 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         // Text files - save as UTF-8
         await writeFile(storedPath, attachment.text, 'utf-8')
         filesToCleanup.push(storedPath)
+      } else if (attachment.path && isAbsolute(attachment.path)) {
+        const formatCheck = validatePathFormat(attachment.path)
+        if (!formatCheck.valid) {
+          throw new Error(formatCheck.reason ?? 'Invalid attachment path')
+        }
+        const sourceInfo = await stat(attachment.path).catch(() => null)
+        if (!sourceInfo || !sourceInfo.isFile()) {
+          throw new Error(`Attachment source file not found: ${attachment.path}`)
+        }
+        if (sourceInfo.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
+          throw new Error(`Attachment too large (${formatBytes(sourceInfo.size)} > ${formatBytes(PATH_BACKED_ATTACHMENT_MAX_BYTES)})`)
+        }
+        await copyFile(attachment.path, storedPath)
+        finalSize = sourceInfo.size
+        filesToCleanup.push(storedPath)
       } else {
-        throw new Error('Attachment has no content (neither base64 nor text)')
+        throw new Error('Attachment has no content or readable source path')
       }
 
-      // 2. Generate thumbnail (images only — PDFs/Office get icon fallback)
+      // 2. Generate thumbnail for images only. Do not ask the image pipeline to
+      // inspect Office/PDF binaries on the foreground attachment RPC path.
       let thumbnailPath: string | undefined
       let thumbnailBase64: string | undefined
-      const thumbFileName = `${id}_thumb.png`
-      const thumbPath = join(attachmentsDir, thumbFileName)
-      try {
-        const pngBuffer = await deps.platform.imageProcessor.process(storedPath, {
-          resize: { width: 200, height: 200 },
-          format: 'png',
-        })
-        await writeFile(thumbPath, pngBuffer)
-        thumbnailPath = thumbPath
-        thumbnailBase64 = pngBuffer.toString('base64')
-        filesToCleanup.push(thumbPath)
-      } catch (thumbError) {
-        // Thumbnail generation failed (non-image or corrupt) — icon fallback
-        deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
+      if (attachment.type === 'image') {
+        const thumbFileName = `${id}_thumb.png`
+        const thumbPath = join(attachmentsDir, thumbFileName)
+        try {
+          const pngBuffer = await deps.platform.imageProcessor.process(storedPath, {
+            resize: { width: 200, height: 200 },
+            format: 'png',
+          })
+          await writeFile(thumbPath, pngBuffer)
+          thumbnailPath = thumbPath
+          thumbnailBase64 = pngBuffer.toString('base64')
+          filesToCleanup.push(thumbPath)
+        } catch (thumbError) {
+          // Thumbnail generation failed (corrupt/unsupported image) — icon fallback
+          deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
+        }
       }
 
-      // 3. Convert Office files to markdown (for sending to Claude)
-      // This is required for Office files - Claude can't read raw Office binary
+      // 3. Convert Office files to markdown/preview metadata. Attachment storage
+      // must remain reliable even if conversion fails: the original file path is
+      // enough for the agent to inspect with dedicated tools later.
       let markdownPath: string | undefined
       if (attachment.type === 'office') {
         const mdFileName = `${id}_${safeName}.md`
         const mdPath = join(attachmentsDir, mdFileName)
         try {
-          const markitdown = new MarkItDown()
-          const result = await markitdown.convert(storedPath)
-          if (!result || !result.textContent) {
+          let textContent: string | undefined
+          const storedInfo = await stat(storedPath)
+          if (isSpreadsheetPath(storedPath) && storedInfo.size > SPREADSHEET_PREVIEW_MAX_BYTES) {
+            textContent = buildMetadataPreview(
+              storedPath,
+              storedInfo.size,
+              `Spreadsheet is too large for safe foreground conversion (${formatBytes(storedInfo.size)} > ${formatBytes(SPREADSHEET_PREVIEW_MAX_BYTES)}).`
+            )
+          } else if (isSpreadsheetPath(storedPath)) {
+            const preview = createSpreadsheetMarkdownPreview(storedPath, attachment.name)
+            textContent = preview.textContent
+            if (!preview.fullConversionAllowed) {
+              deps.platform.logger.warn(`Spreadsheet full conversion skipped for "${attachment.name}": ${preview.reason}`)
+            }
+          } else if (storedInfo.size > OFFICE_PREVIEW_CONVERT_MAX_BYTES) {
+            textContent = buildMetadataPreview(
+              storedPath,
+              storedInfo.size,
+              `Office document is too large for safe foreground conversion (${formatBytes(storedInfo.size)} > ${formatBytes(OFFICE_PREVIEW_CONVERT_MAX_BYTES)}).`
+            )
+          } else {
+            const markitdown = new MarkItDown()
+            const result = await withTimeout(markitdown.convert(storedPath), OFFICE_PREVIEW_TIMEOUT_MS, 'Office attachment conversion')
+            textContent = result?.textContent
+          }
+          if (!textContent) {
             throw new Error('Conversion returned empty result')
           }
-          await writeFile(mdPath, result.textContent, 'utf-8')
+          await writeFile(mdPath, textContent, 'utf-8')
           markdownPath = mdPath
           filesToCleanup.push(mdPath)
-          deps.platform.logger.info(`Converted Office file to markdown: ${mdPath}`)
+          deps.platform.logger.info(`Created Office markdown preview: ${mdPath}`)
         } catch (convertError) {
-          // Conversion failed - throw so user knows the file can't be processed
-          // Claude can't read raw Office binary, so a failed conversion = unusable file
           const errorMsg = convertError instanceof Error ? convertError.message : String(convertError)
-          deps.platform.logger.error('Office to markdown conversion failed:', errorMsg)
-          throw new Error(`Failed to convert "${attachment.name}" to readable format: ${errorMsg}`)
+          deps.platform.logger.warn(`Office markdown preview failed for "${attachment.name}", keeping stored original only: ${errorMsg}`)
         }
       }
 

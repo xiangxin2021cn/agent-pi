@@ -130,7 +130,15 @@ try {
 
     # Extract and install using robocopy for better file handle management
     Write-Host "Extracting Bun..."
-    Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
+    try {
+        Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
+    } catch {
+        Write-Host "Expand-Archive failed, retrying with tar: $_" -ForegroundColor Yellow
+        tar -xf "$TempDir\$BunDownload.zip" -C $TempDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "tar extraction failed with exit code $LASTEXITCODE"
+        }
+    }
 
     # Unblock in temp first (before copy)
     Unblock-File -Path "$TempDir\$BunDownload\bun.exe" -ErrorAction SilentlyContinue
@@ -198,7 +206,10 @@ Write-Host "Staging SDK native binary as claude-agent-sdk-binary alias..."
 $AliasDest = "$ElectronDir\node_modules\@anthropic-ai\claude-agent-sdk-binary"
 Remove-Item -Recurse -Force $AliasDest -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $AliasDest | Out-Null
-Copy-Item -Recurse -Force "$SdkBinSource\*" $AliasDest
+$robocopySdkResult = robocopy $SdkBinSource $AliasDest /E /R:5 /W:3 /NP
+if ($LASTEXITCODE -ge 8) {
+    throw "robocopy failed while staging SDK native binary with exit code $LASTEXITCODE"
+}
 
 $BinPath = "$AliasDest\claude.exe"
 if (-not (Test-Path $BinPath)) {
@@ -222,7 +233,10 @@ if (-not (Test-Path $RgSource) -or -not (Test-Path "$RgSource\bin\rg.exe")) {
 Write-Host "Copying @vscode/ripgrep..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@vscode" | Out-Null
 Remove-Item -Recurse -Force "$ElectronDir\node_modules\@vscode\ripgrep" -ErrorAction SilentlyContinue
-Copy-Item -Recurse -Force $RgSource "$ElectronDir\node_modules\@vscode\"
+$robocopyRgResult = robocopy $RgSource "$ElectronDir\node_modules\@vscode\ripgrep" /E /R:5 /W:3 /NP
+if ($LASTEXITCODE -ge 8) {
+    throw "robocopy failed while staging @vscode/ripgrep with exit code $LASTEXITCODE"
+}
 
 # 6. Copy network interceptor sources (for Pi subprocess; Claude no longer
 #    uses --preload — see Phase 2 in plans/sdk-uplift-plan.md).

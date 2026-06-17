@@ -1,4 +1,3 @@
-import { resolve } from 'path'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
@@ -237,9 +236,8 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
   server.handle(RPC_CHANNELS.shell.OPEN_FILE, async (ctx, path: string) => {
     try {
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
-      const absolutePath = resolve(expanded)
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(expanded, getWorkspaceAllowedDirs(workspaceId))
       const result = await requestClientOpenPath(server, ctx.clientId, safePath)
       if (result.error) throw new Error(result.error)
     } catch (error) {
@@ -252,9 +250,8 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
   server.handle(RPC_CHANNELS.shell.SHOW_IN_FOLDER, async (ctx, path: string) => {
     try {
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
-      const absolutePath = resolve(expanded)
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(expanded, getWorkspaceAllowedDirs(workspaceId))
       await requestClientShowInFolder(server, ctx.clientId, safePath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'

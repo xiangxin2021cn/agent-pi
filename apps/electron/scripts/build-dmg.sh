@@ -182,6 +182,13 @@ echo "  Native binary: $((BIN_SIZE / 1024 / 1024)) MB"
 #    moved out in 0.2.113. Search service still needs the binary directly.)
 RG_SOURCE="$ROOT_DIR/node_modules/@vscode/ripgrep"
 require_path "$RG_SOURCE" "@vscode/ripgrep" "Run 'bun install' and 'bun pm trust @vscode/ripgrep' first."
+if [ ! -f "$RG_SOURCE/bin/rg" ]; then
+    echo "macOS ripgrep binary missing — running @vscode/ripgrep postinstall for this target..."
+    (
+        cd "$ROOT_DIR"
+        node node_modules/@vscode/ripgrep/lib/postinstall.js --force
+    )
+fi
 require_path "$RG_SOURCE/bin/rg" "ripgrep binary" "@vscode/ripgrep postinstall did not run."
 echo "Copying @vscode/ripgrep..."
 mkdir -p "$ELECTRON_DIR/node_modules/@vscode"

@@ -62,6 +62,13 @@ interface TextPreview {
   error?: string
 }
 
+interface OfficePreview {
+  type: 'office'
+  filePath: string
+  content: string | null
+  error?: string
+}
+
 export type FilePreviewState =
   | ImagePreview
   | PDFPreview
@@ -69,6 +76,7 @@ export type FilePreviewState =
   | MarkdownPreview
   | JSONPreview
   | TextPreview
+  | OfficePreview
 
 // ── Hook options ───────────────────────────────────────────────────────────────
 // Callbacks injected by App.tsx so the hook doesn't depend on window.electronAPI directly.
@@ -82,6 +90,13 @@ interface LinkInterceptorOptions {
   showInFolder: (path: string) => Promise<void>
   /** Read file as UTF-8 text (for code, markdown, json, text previews) */
   readFile: (path: string) => Promise<string>
+  /** Read a size-bounded text or Office preview for in-app previews */
+  readFilePreview: (path: string) => Promise<{
+    content: string
+    truncated?: boolean
+    originalSize?: number
+    previewKind?: 'text' | 'spreadsheet' | 'office' | 'binary'
+  }>
   /** Read file as data URL (for image previews) */
   readFileDataUrl: (path: string) => Promise<string>
   /** Read file as binary (Uint8Array) for PDF previews via react-pdf */
@@ -157,9 +172,10 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     // For text-based files: read content first, then show overlay with content ready.
     // Local filesystem reads are near-instant — no loading state needed.
     try {
-      const content = await optionsRef.current.readFile(path)
+      const preview = await optionsRef.current.readFilePreview(path)
       const state = buildInitialTextState(type, path)
-      setPreviewState({ ...state, content } as FilePreviewState)
+      const emptyPreviewError = getEmptyPreviewError(path, preview.content, preview.originalSize)
+      setPreviewState({ ...state, content: preview.content, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to read file'
       const state = buildInitialTextState(type, path)
@@ -237,8 +253,30 @@ function buildInitialTextState(type: FilePreviewType, path: string): FilePreview
       return { type: 'json', filePath: path, content: null }
     case 'text':
       return { type: 'text', filePath: path, content: null }
+    case 'office':
+      return { type: 'office', filePath: path, content: null }
     default:
       // Should never happen — image/pdf are handled before this function is called
       return { type: 'text', filePath: path, content: null }
   }
+}
+
+function getEmptyPreviewError(path: string, content: string, originalSize?: number): string | undefined {
+  if (content.trim().length > 0 || !originalSize || originalSize <= 0) {
+    return undefined
+  }
+
+  return `Preview returned no readable content for a non-empty file (${formatBytes(originalSize)}): ${path}`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = units[0]
+  for (let i = 1; value >= 1024 && i < units.length; i += 1) {
+    value /= 1024
+    unit = units[i]
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
 }

@@ -845,9 +845,9 @@ interface ManagedSession {
   sharedId?: string
   // Model to use for this session (overrides global config if set)
   model?: string
-  // LLM connection slug for this session (locked after first message)
+  // LLM connection slug for this session. Idle sessions can rebuild runtime on connection changes.
   llmConnection?: string
-  // Whether the connection is locked (cannot be changed after first agent creation)
+  // Whether a concrete connection has been resolved for this session.
   connectionLocked?: boolean
   // Thinking level for this session ('off', 'think', 'max')
   thinkingLevel?: ThinkingLevel
@@ -3208,7 +3208,7 @@ export class SessionManager implements ISessionManager {
    * Creates the appropriate backend agent based on LLM connection.
    *
    * Provider resolution order:
-   * 1. session.llmConnection (locked after first message)
+   * 1. session.llmConnection (session-level connection)
    * 2. workspace.defaults.defaultLlmConnection
    * 3. global defaultLlmConnection
    * 4. fallback: no connection configured
@@ -4502,7 +4502,8 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Set the LLM connection for a session.
-   * Can only be changed before the first message is sent (connection is locked after).
+   * Lightweight pre-message connection selection. Started idle sessions switch
+   * connection through updateSessionModel() so runtime handoff stays atomic.
    * This determines which LLM provider/backend will be used for this session.
    */
   async setSessionConnection(sessionId: string, connectionSlug: string): Promise<void> {
@@ -4512,7 +4513,7 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    // Only allow changing connection before first message (session hasn't started)
+    // This command only covers the pre-start selector path.
     if (managed.messages && managed.messages.length > 0) {
       sessionLog.warn(`setSessionConnection: cannot change connection after session has started (${sessionId})`)
       throw new Error('Cannot change connection after session has started')
@@ -5202,12 +5203,15 @@ export class SessionManager implements ISessionManager {
   /**
    * Update the model for a session
    * Pass null to clear the session-specific model (will use global config)
-   * @param connection - Optional LLM connection slug (only applied if not already locked)
+   * @param connection - Optional LLM connection slug. If the session is idle,
+   * cross-connection switches are allowed and rebuild the backend runtime.
    */
   async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void> {
     sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, connection=${connection}`)
     const managed = this.sessions.get(sessionId)
     if (managed) {
+      await this.ensureMessagesLoaded(managed)
+
       const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
       const currentConnection = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
       const requestedConnection = connection ? resolveSessionConnection(connection, undefined) : null
@@ -5218,15 +5222,8 @@ export class SessionManager implements ISessionManager {
         throw new Error(`LLM connection not found: ${connection}`)
       }
 
-      if (isChangingConnection && managed.connectionLocked) {
-        if (!connectionAllowsModel(currentConnection, model)) {
-          throw new Error('Cannot switch to that model because this session is locked to a different LLM connection. Pick a model from the current connection or start a new session.')
-        }
-        throw new Error('Cannot change LLM connection after the session has started. Pick a model from the current connection or start a new session.')
-      }
-
-      if (isChangingConnection && managed.messages.length > 0) {
-        throw new Error('Cannot change LLM connection after the session has started. Pick a model from the current connection or start a new session.')
+      if (managed.isProcessing || managed.agent?.isProcessing()) {
+        throw new Error('Cannot change model while the session is running. Stop the current response first, then switch models.')
       }
 
       const targetConnection = requestedConnection ?? currentConnection
@@ -5234,19 +5231,39 @@ export class SessionManager implements ISessionManager {
         throw new Error('Selected model is not configured on the active LLM connection.')
       }
 
-      managed.model = model ?? undefined
-      // Also update connection if provided and not already locked
-      if (connection && !managed.connectionLocked) {
+      const switchCarryoverContext = isChangingConnection
+        ? this.buildRuntimeSwitchCarryoverContext(
+            managed,
+            currentConnection?.name ?? currentConnectionSlug ?? 'previous connection',
+            requestedConnection?.name ?? connection ?? 'new connection',
+          )
+        : null
+
+      if (isChangingConnection) {
+        if (managed.agent) {
+          await this.disposeManagedAgentRuntime(managed, 'llm connection changed')
+        }
+
         managed.llmConnection = connection
+        managed.connectionLocked = true
+        managed.sdkSessionId = undefined
+        managed.branchFromSdkSessionId = undefined
+        managed.branchFromSdkCwd = undefined
+        managed.branchFromSdkTurnId = undefined
+
+        if (switchCarryoverContext) {
+          managed.transferredSessionSummary = switchCarryoverContext
+          managed.transferredSessionSummaryApplied = false
+        }
       }
-      // Persist to disk (include connection if it was updated)
-      const updates: { model?: string; llmConnection?: string } = { model: model ?? undefined }
-      if (connection && !managed.connectionLocked) {
-        updates.llmConnection = connection
-      }
-      await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
+
+      managed.model = model ?? undefined
+
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+
       // Update agent model if it already exists (takes effect on next query)
-      if (managed.agent) {
+      if (managed.agent && !isChangingConnection) {
         // Fallback chain: session model > workspace default > connection default
         const sessionConn = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
         const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel!
@@ -5257,8 +5274,42 @@ export class SessionManager implements ISessionManager {
       }
       // Notify renderer of the model change
       this.sendEvent({ type: 'session_model_changed', sessionId, model }, managed.workspace.id)
+      if (isChangingConnection && connection) {
+        this.sendEvent({
+          type: 'connection_changed',
+          sessionId,
+          connectionSlug: connection,
+          supportsBranching: resolveSupportsBranching(managed),
+        }, managed.workspace.id)
+      }
       sessionLog.info(`Session ${sessionId} model updated to: ${model ?? '(global config)'}`)
     }
+  }
+
+  private buildRuntimeSwitchCarryoverContext(
+    managed: ManagedSession,
+    previousConnectionName: string,
+    nextConnectionName: string,
+  ): string | null {
+    const messages = managed.messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && !m.isIntermediate)
+      .slice(-12)
+
+    if (messages.length === 0) return null
+
+    const formatted = messages.map((message) => {
+      const role = message.role === 'user' ? 'User' : 'Assistant'
+      const content = message.content.length > 1200
+        ? `${message.content.slice(0, 1200)}...[truncated]`
+        : message.content
+      return `[${role}]: ${content}`
+    }).join('\n\n')
+
+    return [
+      `The user switched this existing conversation from ${previousConnectionName} to ${nextConnectionName}.`,
+      'Continue from the prior conversation below. Preserve decisions, constraints, open tasks, project paths, and current working assumptions.',
+      formatted,
+    ].join('\n\n')
   }
 
   /**
@@ -5513,17 +5564,9 @@ export class SessionManager implements ISessionManager {
     this.remoteBpms.delete(sessionId)
     this.browserHostByCanvas.delete(sessionId)
 
-    // Dispose agent to clean up ConfigWatchers, event listeners, MCP connections
-    if (managed.agent) {
-      managed.agent.dispose()
-    }
-
-    // Stop pool server (HTTP MCP server for external SDK subprocesses)
-    if (managed.poolServer) {
-      managed.poolServer.stop().catch(err => {
-        sessionLog.warn(`Failed to stop pool server for ${sessionId}: ${err instanceof Error ? err.message : err}`)
-      })
-    }
+    // Dispose agent/runtime to clean up SDK subprocesses, ConfigWatchers,
+    // event listeners, MCP connections, and pool servers.
+    await this.disposeManagedAgentRuntime(managed, 'delete session')
 
     // Cancel any pending source-activation auto-retry timer (craft-agents-oss#804).
     if (managed.autoRetryTimer) {
@@ -8180,8 +8223,24 @@ export class SessionManager implements ISessionManager {
    * Clean up all resources held by the SessionManager.
    * Should be called on app shutdown to prevent resource leaks.
    */
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     sessionLog.info('Cleaning up resources...')
+
+    // Dispose all active backend runtimes first. This stops Pi/Claude SDK
+    // subprocesses, MCP pool servers, and source transports before timers and
+    // watchers are torn down.
+    await Promise.all([...this.sessions.values()].map(async (managed) => {
+      try {
+        if (managed.autoRetryTimer) {
+          clearTimeout(managed.autoRetryTimer)
+          managed.autoRetryTimer = undefined
+        }
+        managed.autoRetryPending = undefined
+        await this.disposeManagedAgentRuntime(managed, 'session manager shutdown')
+      } catch (error) {
+        sessionLog.warn(`Failed to dispose runtime for ${managed.id} during shutdown: ${error instanceof Error ? error.message : error}`)
+      }
+    }))
 
     // Stop all ConfigWatchers (file system watchers)
     for (const [path, watcher] of this.configWatchers) {

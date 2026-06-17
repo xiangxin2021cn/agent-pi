@@ -15,6 +15,14 @@ import {
   generateMessageId
 } from '../helpers'
 
+const MAX_RENDERER_TOOL_RESULT_CHARS = 200_000
+
+function clampToolResult(result: string | undefined): string {
+  if (!result) return ''
+  if (result.length <= MAX_RENDERER_TOOL_RESULT_CHARS) return result
+  return `${result.slice(0, MAX_RENDERER_TOOL_RESULT_CHARS)}\n\n[Truncated for renderer memory: ${result.length.toLocaleString()} chars total]`
+}
+
 /**
  * Handle tool_start - create or update tool message
  *
@@ -77,16 +85,17 @@ export function handleToolResult(
   event: ToolResultEvent
 ): SessionState {
   const { session, streaming } = state
+  const result = clampToolResult(event.result)
 
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
-  const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(event.result || '')
+  const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(result)
 
   if (toolIndex !== -1) {
     // Detect "persisted output" - SDK marks as error but data was actually saved successfully
     const isPersistedOutput = inferredError && (
-      event.result?.includes('Output has been saved to') ||
-      event.result?.includes('Full output saved to')
+      result.includes('Output has been saved to') ||
+      result.includes('Full output saved to')
     )
 
     const effectiveIsError = isPersistedOutput ? false : inferredError
@@ -99,7 +108,7 @@ export function handleToolResult(
 
     // Update existing tool message
     let updatedSession = updateMessageAt(session, toolIndex, {
-      toolResult: event.result,
+      toolResult: result,
       toolStatus: newToolStatus,
       isError: effectiveIsError,
       errorCode: isPersistedOutput ? 'response_too_large' : undefined,
@@ -139,8 +148,8 @@ export function handleToolResult(
 
   // Detect "persisted output" - SDK marks as error but data was actually saved successfully
   const isPersistedOutput = inferredError && (
-    event.result?.includes('Output has been saved to') ||
-    event.result?.includes('Full output saved to')
+    result.includes('Output has been saved to') ||
+    result.includes('Full output saved to')
   )
 
   const effectiveIsError = isPersistedOutput ? false : inferredError
@@ -152,7 +161,7 @@ export function handleToolResult(
     timestamp: event.timestamp ?? Date.now(),
     toolUseId: event.toolUseId,
     toolName: event.toolName,
-    toolResult: event.result,
+    toolResult: result,
     toolStatus: effectiveIsError ? 'error' : 'completed',
     isError: effectiveIsError,
     errorCode: isPersistedOutput ? 'response_too_large' : undefined,

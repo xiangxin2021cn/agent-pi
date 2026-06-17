@@ -33,6 +33,26 @@ export interface ChatPageProps {
   sessionId: string
 }
 
+function isAbsoluteOrHomePath(path: string): boolean {
+  return (
+    path.startsWith('/') ||
+    path.startsWith('\\') ||
+    path.startsWith('~/') ||
+    path.startsWith('~\\') ||
+    /^[A-Za-z]:[\\/]/.test(path)
+  )
+}
+
+function joinPathForOpen(baseDir: string, relativePath: string): string {
+  const cleanedBase = baseDir.replace(/[\\/]+$/, '')
+  const cleanedPath = relativePath.replace(/^[.][\\/]/, '')
+  return `${cleanedBase}/${cleanedPath}`
+}
+
+function lastPathSeparatorIndex(path: string): number {
+  return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+}
+
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const { t } = useTranslation()
   // Diagnostic: mark when component runs
@@ -281,11 +301,46 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   }, [sessionId, onAttachmentsChange])
 
   // Session model change handler - persists per-session model and connection
-  const handleModelChange = React.useCallback((model: string, connection?: string) => {
-    if (activeWorkspaceId) {
-      window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, connection)
+  const handleModelChange = React.useCallback(async (model: string, connection?: string) => {
+    if (!activeWorkspaceId) return
+
+    const currentConnectionSlug = resolveEffectiveConnectionSlug(
+      session?.llmConnection,
+      workspaceDefaultLlmConnection,
+      llmConnections,
+    )
+    const targetConnectionSlug = connection ?? currentConnectionSlug
+    const isChangingConnection = Boolean(
+      targetConnectionSlug &&
+      currentConnectionSlug &&
+      targetConnectionSlug !== currentConnectionSlug,
+    )
+
+    if (session?.isProcessing) {
+      toast.error(t('chat.modelSwitchBlockedRunning'))
+      return
     }
-  }, [sessionId, activeWorkspaceId])
+
+    if (isChangingConnection && session && session.messages.length > 0) {
+      const currentName = llmConnections.find(c => c.slug === currentConnectionSlug)?.name ?? currentConnectionSlug
+      const targetName = llmConnections.find(c => c.slug === targetConnectionSlug)?.name ?? targetConnectionSlug
+      const confirmed = window.confirm(t('chat.modelSwitchConfirm', {
+        current: currentName,
+        next: targetName,
+      }))
+      if (!confirmed) return
+    }
+
+    try {
+      await window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, connection)
+      if (isChangingConnection) {
+        toast.success(t('chat.modelSwitchComplete'))
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('chat.modelSwitchFailed'), { description: message })
+    }
+  }, [sessionId, activeWorkspaceId, session, workspaceDefaultLlmConnection, llmConnections, t])
 
   // Session connection change handler - can only change before first message
   const handleConnectionChange = React.useCallback(async (connectionSlug: string) => {
@@ -334,24 +389,22 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       // Resolve bare relative paths against session working directory,
       // or workspace root as a fallback when workingDirectory is not set.
       const resolved = (() => {
-        if (path.startsWith('/') || path.startsWith('~/')) return path
+        if (isAbsoluteOrHomePath(path)) return path
 
         const baseDir = workingDirectory || activeWorkspace?.rootPath
         if (!baseDir) return path
 
-        const cleanedBase = baseDir.replace(/\/+$/, '')
-        const cleanedPath = path.replace(/^\.\//, '')
-        return `${cleanedBase}/${cleanedPath}`
+        return joinPathForOpen(baseDir, path)
       })()
 
       // Smart fallback for missing files in AI output:
       // if the exact path doesn't exist, search nearby for same basename
       // (e.g. markdown/linkify.test.ts -> markdown/__tests__/linkify.test.ts).
-      if (resolved.startsWith('/')) {
-        const lastSlash = resolved.lastIndexOf('/')
-        if (lastSlash > 0 && lastSlash < resolved.length - 1) {
-          const parentDir = resolved.slice(0, lastSlash)
-          const fileName = resolved.slice(lastSlash + 1)
+      if (isAbsoluteOrHomePath(resolved)) {
+        const lastSeparator = lastPathSeparatorIndex(resolved)
+        if (lastSeparator > 0 && lastSeparator < resolved.length - 1) {
+          const parentDir = resolved.slice(0, lastSeparator)
+          const fileName = resolved.slice(lastSeparator + 1)
           try {
             const matches = await window.electronAPI.searchFiles(parentDir, fileName)
             const files = matches.filter((m) => m.type === 'file' && m.name === fileName)

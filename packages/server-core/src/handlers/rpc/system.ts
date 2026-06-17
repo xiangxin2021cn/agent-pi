@@ -1,4 +1,3 @@
-import { resolve } from 'path'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
@@ -335,10 +334,8 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
   server.handle(RPC_CHANNELS.shell.OPEN_FILE, async (ctx, path: string) => {
     assertLocalWorkspace(ctx, 'Open file')
     try {
-      // Expand ~ before resolve() — resolve() treats ~ as a literal path component
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
-      const absolutePath = resolve(expanded)
-      const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(ctx.workspaceId))
+      const safePath = await validateFilePath(expanded, getWorkspaceAllowedDirs(ctx.workspaceId))
       const result = await requestClientOpenPath(server, ctx.clientId, safePath)
       if (result.error) throw new Error(result.error)
     } catch (error) {
@@ -352,8 +349,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     assertLocalWorkspace(ctx, 'Show in folder')
     try {
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
-      const absolutePath = resolve(expanded)
-      const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(ctx.workspaceId))
+      const safePath = await validateFilePath(expanded, getWorkspaceAllowedDirs(ctx.workspaceId))
       await requestClientShowInFolder(server, ctx.clientId, safePath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
