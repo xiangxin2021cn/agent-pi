@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
-import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
+import { getSessionAttachmentsPath, getSessionOutputPathFromSessionPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
@@ -120,6 +120,33 @@ function buildMetadataPreview(filePath: string, size: number, reason: string): s
     `- Path: ${filePath}`,
     `- Size: ${formatBytes(size)}`,
   ].join('\n')
+}
+
+export function getSessionArtifactAllowedDirs(
+  sessionManager: Pick<HandlerDeps['sessionManager'], 'getSessions' | 'getSessionPath'>,
+  workspaceId?: string | null,
+): string[] {
+  const dirs = new Set<string>()
+
+  for (const session of sessionManager.getSessions(workspaceId ?? undefined)) {
+    const sessionPath = sessionManager.getSessionPath(session.id)
+    if (!sessionPath) continue
+
+    dirs.add(sessionPath)
+    if (session.workingDirectory) {
+      dirs.add(session.workingDirectory)
+    }
+    dirs.add(getSessionOutputPathFromSessionPath(sessionPath, session.workingDirectory))
+  }
+
+  return Array.from(dirs)
+}
+
+function getAllowedDirsForFileRequest(deps: HandlerDeps, workspaceId?: string | null): string[] {
+  return [
+    ...getWorkspaceAllowedDirs(workspaceId),
+    ...getSessionArtifactAllowedDirs(deps.sessionManager, workspaceId),
+  ]
 }
 
 function buildPathBackedAttachment(filePath: string, size: number): FileAttachment {
@@ -320,7 +347,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       const content = await readFile(safePath, 'utf-8')
       return content
     } catch (error) {
@@ -340,7 +367,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_PREVIEW, async (ctx, path: string): Promise<FilePreviewReadResult> => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       const info = await stat(safePath)
       if (!info.isFile()) {
         throw new Error('Path is not a file')
@@ -432,7 +459,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_DATA_URL, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       const buffer = await readFile(safePath)
       const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
 
@@ -464,7 +491,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL, async (ctx, path: string, maxSize = 64) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       const size = Number.isFinite(maxSize) ? Math.max(16, Math.min(256, Math.floor(maxSize))) : 64
       const preview = await deps.platform.imageProcessor.process(safePath, {
         resize: { width: size, height: size },
@@ -484,7 +511,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       const buffer = await readFile(safePath)
       // Return as Uint8Array (serializes to ArrayBuffer over IPC)
       return new Uint8Array(buffer)
@@ -514,7 +541,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
       // Use shared utility that handles file type detection, encoding, etc.
       const attachment = await readFileAttachment(safePath)
       if (!attachment) return null
