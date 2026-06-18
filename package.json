@@ -1,6 +1,6 @@
 {
   "name": "agent-pi",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "license": "Apache-2.0",
   "description": "Agent Pi desktop agent application",
   "type": "module",

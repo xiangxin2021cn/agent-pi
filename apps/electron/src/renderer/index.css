@@ -385,19 +385,20 @@
 
 .agent-pi-sidebar-brand {
   position: relative;
-  height: 108px;
+  height: 124px;
   overflow: hidden;
   border-radius: 8px;
   background:
     linear-gradient(
       145deg,
-      color-mix(in oklab, var(--background) 82%, var(--success) 18%),
-      color-mix(in oklab, var(--background) 88%, var(--info) 12%)
+      color-mix(in oklab, white 92%, var(--success) 8%),
+      color-mix(in oklab, white 90%, var(--info) 10%)
     );
   border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
   box-shadow:
     var(--shadow-minimal),
     inset 0 1px 0 color-mix(in oklab, var(--background) 76%, transparent);
+  padding: 8px;
 }
 
 .agent-pi-sidebar-brand::after {
@@ -406,9 +407,9 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, color-mix(in oklab, white 46%, transparent), transparent 42%),
-    linear-gradient(120deg, transparent 20%, color-mix(in oklab, var(--success) 16%, transparent) 52%, transparent 82%);
-  opacity: 0.7;
+    linear-gradient(180deg, color-mix(in oklab, white 34%, transparent), transparent 50%),
+    linear-gradient(120deg, transparent 28%, color-mix(in oklab, var(--success) 10%, transparent) 58%, transparent 86%);
+  opacity: 0.38;
 }
 
 .agent-pi-sidebar-brand-image {
@@ -416,9 +417,8 @@
   z-index: 1;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center 47%;
-  transform: scale(1.04);
+  object-fit: contain;
+  object-position: center;
   user-select: none;
 }
 
