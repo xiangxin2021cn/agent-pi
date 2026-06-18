@@ -53,6 +53,8 @@ Agent π 适合这些场景：
 
 ## 开发
 
+长期演进规划见 [Agentic Orchestrator 路线图](docs/AGENTIC_ORCHESTRATOR_ROADMAP.md)。该路线图用于后续实验分支，不改变当前 Windows 发版通道。
+
 安装依赖：
 
 ```bash
