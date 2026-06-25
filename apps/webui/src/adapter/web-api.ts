@@ -104,6 +104,7 @@ export function createWebApi(options: WebApiOptions): {
 
     // File dialogs
     openFileDialog: webFilePicker,
+    openAttachmentDialog: () => Promise.resolve({ attachments: [], skippedCount: 0, truncated: false, maxFiles: 0 }),
     openFolderDialog: () => Promise.resolve(null), // not possible in browser
 
     // System info

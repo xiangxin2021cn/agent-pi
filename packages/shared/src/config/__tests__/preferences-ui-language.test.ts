@@ -124,15 +124,16 @@ describe('preferences.uiLanguage', () => {
     it('is idempotent — does not rewrite the file when value is unchanged', () => {
       const { configDir, prefsFile } = setupDir();
       try {
+        const prefsFileLiteral = JSON.stringify(prefsFile);
         const r = runScript(configDir, `
           import { setPersistedUiLanguage } from '${PREFS_MODULE}';
           import { statSync } from 'fs';
           setPersistedUiLanguage('hu');
-          const first = statSync('${prefsFile}').mtimeMs;
+          const first = statSync(${prefsFileLiteral}).mtimeMs;
           const start = Date.now();
           while (Date.now() - start < 30) {}
           setPersistedUiLanguage('hu');
-          const second = statSync('${prefsFile}').mtimeMs;
+          const second = statSync(${prefsFileLiteral}).mtimeMs;
           console.log(JSON.stringify({ first, second }));
         `);
         expect(r.exitCode).toBe(0);
@@ -156,6 +157,52 @@ describe('preferences.uiLanguage', () => {
         expect(raw.name).toBe('Alice');
         expect(raw.timezone).toBe('Europe/Budapest');
         expect(raw.uiLanguage).toBe('hu');
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('resolveTitleLanguageName', () => {
+    it('returns undefined when no UI language is persisted', () => {
+      const { configDir } = setupDir();
+      try {
+        const r = runScript(configDir, `
+          import { resolveTitleLanguageName } from '${PREFS_MODULE}';
+          console.log(JSON.stringify({ value: resolveTitleLanguageName() ?? null }));
+        `);
+        expect(r.exitCode).toBe(0);
+        expect(JSON.parse(r.stdout)).toEqual({ value: null });
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    });
+
+    it('returns the native name for a persisted UI language', () => {
+      const { configDir, prefsFile } = setupDir();
+      try {
+        writeRawPrefs(prefsFile, { uiLanguage: 'zh-Hans' });
+        const r = runScript(configDir, `
+          import { resolveTitleLanguageName } from '${PREFS_MODULE}';
+          console.log(JSON.stringify({ value: resolveTitleLanguageName() ?? null }));
+        `);
+        expect(r.exitCode).toBe(0);
+        expect(JSON.parse(r.stdout)).toEqual({ value: '简体中文' });
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    });
+
+    it('honors an explicit English UI language', () => {
+      const { configDir, prefsFile } = setupDir();
+      try {
+        writeRawPrefs(prefsFile, { uiLanguage: 'en' });
+        const r = runScript(configDir, `
+          import { resolveTitleLanguageName } from '${PREFS_MODULE}';
+          console.log(JSON.stringify({ value: resolveTitleLanguageName() ?? null }));
+        `);
+        expect(r.exitCode).toBe(0);
+        expect(JSON.parse(r.stdout)).toEqual({ value: 'English' });
       } finally {
         rmSync(configDir, { recursive: true, force: true });
       }

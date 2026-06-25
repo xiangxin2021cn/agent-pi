@@ -332,6 +332,15 @@ export interface FileAttachment {
   thumbnailBase64?: string
 }
 
+export type AttachmentDialogMode = 'files' | 'folders'
+
+export interface AttachmentDialogResult {
+  attachments: FileAttachment[]
+  skippedCount: number
+  truncated: boolean
+  maxFiles: number
+}
+
 export interface SessionFile {
   name: string
   path: string
@@ -362,6 +371,23 @@ export interface SessionOutputDirectory {
 export interface PromoteSessionFileResult {
   outputDirectory: string
   outputPath: string
+}
+
+export interface CreateFileMemorySourceOptions {
+  name?: string
+  sourceSlug?: string
+  chunkSize?: number
+  overlap?: number
+  autoEnable?: boolean
+}
+
+export interface CreateFileMemorySourceResult {
+  sourceSlug: string
+  sourceConfigPath?: string
+  manifestPath?: string
+  chunkCount?: number
+  validationText: string
+  activated: boolean
 }
 
 export interface FileSearchResult {

@@ -115,6 +115,15 @@ export function setPersistedUiLanguage(code: LanguageCode): void {
 }
 
 /**
+ * Native-language name to request for AI-generated session titles, or
+ * `undefined` to let the model follow the conversation's own language.
+ */
+export function resolveTitleLanguageName(): string | undefined {
+  const code = getPersistedUiLanguage();
+  return code ? LOCALE_REGISTRY[code]?.nativeName : undefined;
+}
+
+/**
  * Format preferences for inclusion in system prompt
  */
 export function formatPreferencesForPrompt(): string {

@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
+import { toast } from 'sonner'
 import { Command as CommandPrimitive } from 'cmdk'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -74,7 +75,7 @@ import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingD
 import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
-import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
+import type { AttachmentDialogMode, FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
@@ -567,6 +568,7 @@ export function FreeFormInput({
 
   const [isDraggingOver, setIsDraggingOver] = React.useState(false)
   const [loadingCount, setLoadingCount] = React.useState(0)
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false)
   const [sourceDropdownOpen, setSourceDropdownOpen] = React.useState(false)
   const [isFocused, setIsFocused] = React.useState(false)
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
@@ -1080,9 +1082,36 @@ export function FreeFormInput({
   }
 
   // File attachment handlers
-  const handleAttachClick = () => {
+  const handleAttachClick = async (mode: AttachmentDialogMode = 'files') => {
     if (disabled) return
-    fileInputRef.current?.click()
+    const canUseNativeAttachmentDialog =
+      hasElectronAPI &&
+      window.electronAPI.getRuntimeEnvironment?.() === 'electron' &&
+      typeof window.electronAPI.openAttachmentDialog === 'function'
+
+    if (!canUseNativeAttachmentDialog) {
+      if (mode === 'files') fileInputRef.current?.click()
+      return
+    }
+
+    setLoadingCount(prev => prev + 1)
+    try {
+      const result = await window.electronAPI.openAttachmentDialog(mode)
+      if (result.attachments.length > 0) {
+        setAttachments(prev => [...prev, ...result.attachments])
+      }
+
+      if (result.truncated) {
+        toast.warning(t('chat.attachDialogTruncated', { count: result.attachments.length, max: result.maxFiles }))
+      } else if (result.skippedCount > 0) {
+        toast.warning(t('chat.attachDialogSkipped', { count: result.skippedCount }))
+      }
+    } catch (error) {
+      console.error('[FreeFormInput] Failed to open attachment dialog:', error)
+      fileInputRef.current?.click()
+    } finally {
+      setLoadingCount(prev => Math.max(0, prev - 1))
+    }
   }
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1845,19 +1874,32 @@ export function FreeFormInput({
               contextStatus={contextStatus}
             />
           )}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? t("chat.filesCount", { count: attachments.length })
-              : t("chat.attach")
-            }
-            isExpanded={false}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
-            onClick={handleAttachClick}
-            tooltip={t("chat.attachFilesTooltip")}
-            disabled={disabled}
-          />
+          <DropdownMenu open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <FreeFormInputContextBadge
+                icon={<Paperclip className="h-4 w-4" />}
+                label={attachments.length > 0
+                  ? t("chat.filesCount", { count: attachments.length })
+                  : t("chat.attach")
+                }
+                isExpanded={false}
+                hasSelection={attachments.length > 0}
+                showChevron={false}
+                isOpen={attachmentMenuOpen}
+                disabled={disabled}
+              />
+            </DropdownMenuTrigger>
+            <StyledDropdownMenuContent align="start" minWidth="min-w-44">
+              <StyledDropdownMenuItem onClick={() => void handleAttachClick('files')}>
+                <Paperclip className="h-4 w-4" />
+                <span>{t('chat.attachFilesAction')}</span>
+              </StyledDropdownMenuItem>
+              <StyledDropdownMenuItem onClick={() => void handleAttachClick('folders')}>
+                <Icon_Folder className="h-4 w-4" />
+                <span>{t('chat.attachFolderAction')}</span>
+              </StyledDropdownMenuItem>
+            </StyledDropdownMenuContent>
+          </DropdownMenu>
           {onSourcesChange && (
             <div className="relative shrink min-w-0">
               <FreeFormInputContextBadge
@@ -1945,19 +1987,32 @@ export function FreeFormInput({
           {!compactMode && (
           <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
           {/* 1. Attach Files Badge */}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? t("chat.filesCount", { count: attachments.length })
-              : t("chat.attachFiles")
-            }
-            isExpanded={isEmptySession}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
-            onClick={handleAttachClick}
-            tooltip={t("chat.attachFilesTooltip")}
-            disabled={disabled}
-          />
+          <DropdownMenu open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <FreeFormInputContextBadge
+                icon={<Paperclip className="h-4 w-4" />}
+                label={attachments.length > 0
+                  ? t("chat.filesCount", { count: attachments.length })
+                  : t("chat.attachFiles")
+                }
+                isExpanded={isEmptySession}
+                hasSelection={attachments.length > 0}
+                showChevron={true}
+                isOpen={attachmentMenuOpen}
+                disabled={disabled}
+              />
+            </DropdownMenuTrigger>
+            <StyledDropdownMenuContent align="start" minWidth="min-w-44">
+              <StyledDropdownMenuItem onClick={() => void handleAttachClick('files')}>
+                <Paperclip className="h-4 w-4" />
+                <span>{t('chat.attachFilesAction')}</span>
+              </StyledDropdownMenuItem>
+              <StyledDropdownMenuItem onClick={() => void handleAttachClick('folders')}>
+                <Icon_Folder className="h-4 w-4" />
+                <span>{t('chat.attachFolderAction')}</span>
+              </StyledDropdownMenuItem>
+            </StyledDropdownMenuContent>
+          </DropdownMenu>
 
           {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (

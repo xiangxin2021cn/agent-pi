@@ -165,7 +165,7 @@ function assembleResources(config: ServerBuildConfig): void {
 
   // MCP servers
   console.log('  Copying MCP servers...');
-  for (const server of ['session-mcp-server', 'bridge-mcp-server']) {
+  for (const server of ['session-mcp-server', 'file-memory-mcp-server', 'bridge-mcp-server']) {
     const src = join(srcResources, server);
     if (existsSync(src)) {
       cpSync(src, join(destResources, server), { recursive: true });
@@ -178,6 +178,13 @@ function assembleResources(config: ServerBuildConfig): void {
     const destSessionServer = join(destResources, 'session-mcp-server');
     mkdirSync(destSessionServer, { recursive: true });
     copyFileSync(sessionServerDist, join(destSessionServer, 'index.js'));
+  }
+
+  const fileMemoryServerDist = join(config.rootDir, 'packages', 'file-memory-mcp-server', 'dist', 'index.js');
+  if (existsSync(fileMemoryServerDist)) {
+    const destFileMemoryServer = join(destResources, 'file-memory-mcp-server');
+    mkdirSync(destFileMemoryServer, { recursive: true });
+    copyFileSync(fileMemoryServerDist, join(destFileMemoryServer, 'index.js'));
   }
 }
 
@@ -359,7 +366,7 @@ function copyProductionDeps(config: ServerBuildConfig): void {
   // messaging-whatsapp-worker is intentionally OMITTED: Baileys and its transitive deps
   // are bundled directly into packages/messaging-whatsapp-worker/dist/worker.cjs by
   // scripts/build-wa-worker.ts — pulling them into node_modules would duplicate the tree.
-  const SERVER_PACKAGES = ['server', 'server-core', 'shared', 'core', 'session-tools-core', 'session-mcp-server', 'messaging-gateway'];
+  const SERVER_PACKAGES = ['server', 'server-core', 'shared', 'core', 'session-tools-core', 'session-mcp-server', 'file-memory-mcp-server', 'messaging-gateway'];
 
   const allImports = new Set<string>();
   for (const pkg of SERVER_PACKAGES) {
@@ -460,6 +467,7 @@ function copyWorkspacePackages(config: ServerBuildConfig): void {
     'core',
     'session-tools-core',
     'session-mcp-server',
+    'file-memory-mcp-server',
     'messaging-gateway',
     'messaging-whatsapp-worker',
   ];

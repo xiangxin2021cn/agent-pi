@@ -3,7 +3,7 @@ import { basename, extname, isAbsolute, join, resolve, dirname, parse as parsePa
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
-import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type AttachmentDialogMode, type AttachmentDialogResult, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, getSessionOutputPathFromSessionPath, validateSessionId } from '@craft-agent/shared/sessions'
@@ -31,6 +31,46 @@ const SPREADSHEET_SAMPLE_SHEETS = 8
 const SPREADSHEET_SAMPLE_ROWS = 12
 const SPREADSHEET_SAMPLE_COLS = 8
 const SPREADSHEET_CELL_TEXT_LIMIT = 160
+const ATTACHMENT_DIALOG_MAX_FILES = 250
+const ATTACHMENT_DIALOG_MAX_DIRECTORIES = 1_000
+const ATTACHMENT_DIALOG_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+  'vendor',
+  'coverage',
+  '.turbo',
+  'out',
+])
+
+const ATTACHMENT_DIALOG_FILTERS = [
+  { name: 'All Files', extensions: ['*'] },
+  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'] },
+  { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'txt', 'md', 'rtf'] },
+  { name: 'Code', extensions: ['js', 'ts', 'tsx', 'jsx', 'py', 'json', 'css', 'html', 'xml', 'yaml', 'yml', 'sh', 'sql', 'go', 'rs', 'rb', 'php', 'java', 'c', 'cpp', 'h', 'swift', 'kt'] },
+]
+
+export function buildAttachmentDialogSpec(mode: AttachmentDialogMode = 'files') {
+  if (mode === 'folders') {
+    return {
+      title: 'Attach folder',
+      properties: ['openDirectory', 'multiSelections'],
+    }
+  }
+
+  return {
+    title: 'Attach files',
+    properties: ['openFile', 'multiSelections'],
+    filters: ATTACHMENT_DIALOG_FILTERS,
+  }
+}
 
 interface SpreadsheetCellRef {
   address: string
@@ -149,13 +189,223 @@ function getAllowedDirsForFileRequest(deps: HandlerDeps, workspaceId?: string | 
   ]
 }
 
-function buildPathBackedAttachment(filePath: string, size: number): FileAttachment {
+function buildPathBackedAttachment(filePath: string, size: number, name = basename(filePath)): FileAttachment {
   return {
     type: getFileType(filePath),
     path: filePath,
-    name: basename(filePath),
+    name,
     mimeType: getMimeType(filePath),
     size,
+  }
+}
+
+function shouldSkipFolderAttachmentEntry(name: string, isDirectory: boolean): boolean {
+  if (name.startsWith('.')) return true
+  return isDirectory && ATTACHMENT_DIALOG_SKIP_DIRS.has(name)
+}
+
+interface AttachmentDialogCollection {
+  attachments: FileAttachment[]
+  skippedCount: number
+  truncated: boolean
+}
+
+export async function collectAttachmentDialogFiles(
+  selectedPaths: string[],
+  options: { maxFiles?: number; maxDirectories?: number } = {},
+): Promise<AttachmentDialogCollection> {
+  const maxFiles = options.maxFiles ?? ATTACHMENT_DIALOG_MAX_FILES
+  const maxDirectories = options.maxDirectories ?? ATTACHMENT_DIALOG_MAX_DIRECTORIES
+  const attachments: FileAttachment[] = []
+  const seen = new Set<string>()
+  let skippedCount = 0
+  let truncated = false
+  let visitedDirectories = 0
+
+  const addFile = async (filePath: string, displayName?: string): Promise<void> => {
+    if (attachments.length >= maxFiles) {
+      truncated = true
+      return
+    }
+
+    const resolved = resolve(filePath)
+    if (seen.has(resolved)) return
+    seen.add(resolved)
+
+    const info = await stat(resolved).catch(() => null)
+    if (!info || !info.isFile()) {
+      skippedCount += 1
+      return
+    }
+
+    if (info.size === 0 || info.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
+      skippedCount += 1
+      return
+    }
+
+    attachments.push(buildPathBackedAttachment(resolved, info.size, displayName))
+  }
+
+  for (const selectedPath of selectedPaths) {
+    const selectedInfo = await stat(selectedPath).catch(() => null)
+    if (!selectedInfo) {
+      skippedCount += 1
+      continue
+    }
+
+    if (selectedInfo.isFile()) {
+      await addFile(selectedPath)
+      continue
+    }
+
+    if (!selectedInfo.isDirectory()) {
+      skippedCount += 1
+      continue
+    }
+
+    const rootPath = resolve(selectedPath)
+    const rootName = basename(rootPath)
+    const queue: Array<{ dir: string; relDir: string }> = [{ dir: rootPath, relDir: '' }]
+
+    while (queue.length > 0) {
+      if (attachments.length >= maxFiles) {
+        truncated = true
+        break
+      }
+
+      if (visitedDirectories >= maxDirectories) {
+        truncated = true
+        break
+      }
+
+      const current = queue.shift()!
+      visitedDirectories += 1
+
+      const entries = await readdir(current.dir, { withFileTypes: true }).catch(() => {
+        skippedCount += 1
+        return []
+      })
+
+      for (const entry of entries) {
+        if (attachments.length >= maxFiles) {
+          truncated = true
+          break
+        }
+
+        if (entry.isSymbolicLink()) {
+          skippedCount += 1
+          continue
+        }
+
+        const isDirectory = entry.isDirectory()
+        if (shouldSkipFolderAttachmentEntry(entry.name, isDirectory)) {
+          skippedCount += 1
+          continue
+        }
+
+        const relativePath = current.relDir ? `${current.relDir}/${entry.name}` : entry.name
+        const fullPath = join(current.dir, entry.name)
+
+        if (isDirectory) {
+          queue.push({ dir: fullPath, relDir: relativePath })
+        } else if (entry.isFile()) {
+          await addFile(fullPath, `${rootName}/${relativePath}`)
+        } else {
+          skippedCount += 1
+        }
+      }
+    }
+  }
+
+  return { attachments, skippedCount, truncated }
+}
+
+async function prepareImageAttachmentBuffer(
+  initialBuffer: Buffer,
+  attachment: Pick<FileAttachment, 'mimeType' | 'size'>,
+  deps: HandlerDeps,
+): Promise<{ buffer: Buffer; wasResized: boolean; resizedBase64?: string }> {
+  let decoded = initialBuffer
+  let wasResized = false
+
+  const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
+  const imageSize = imageInspection.status === 'ok'
+    ? { width: imageInspection.width, height: imageInspection.height }
+    : null
+
+  let shouldResize = false
+  let targetSize: { width: number; height: number } | undefined
+
+  if (imageInspection.status === 'processor_unavailable') {
+    deps.platform.logger.warn('Image processing unavailable while validating attachment:', imageInspection.error?.message ?? 'unknown error')
+    if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+      throw new Error('Image processing is unavailable, so oversized images cannot be validated or resized automatically. Please attach a smaller image.')
+    }
+  } else if (imageInspection.status === 'invalid_image') {
+    throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
+  } else {
+    const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
+
+    shouldResize = validation.needsResize ?? false
+    targetSize = validation.suggestedSize
+
+    if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
+      const maxDim = IMAGE_LIMITS.MAX_DIMENSION
+      const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
+      targetSize = {
+        width: Math.floor(imageSize!.width * scale),
+        height: Math.floor(imageSize!.height * scale),
+      }
+      shouldResize = true
+      deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
+    } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
+      shouldResize = true
+      deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
+    } else if (!validation.valid) {
+      throw new Error(validation.error)
+    }
+  }
+
+  if (shouldResize) {
+    const isPhoto = attachment.mimeType === 'image/jpeg'
+
+    if (targetSize) {
+      deps.platform.logger.info(`Resizing image from ${imageSize!.width}x${imageSize!.height} to ${targetSize.width}x${targetSize.height}`)
+      try {
+        decoded = await deps.platform.imageProcessor.process(decoded, {
+          resize: { width: targetSize.width, height: targetSize.height },
+          format: isPhoto ? 'jpeg' : 'png',
+          quality: isPhoto ? IMAGE_LIMITS.JPEG_QUALITY_HIGH : undefined,
+        })
+        wasResized = true
+
+        if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+          decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
+          if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+            throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
+          }
+        }
+      } catch (resizeError) {
+        deps.platform.logger.error('Image resize failed:', resizeError)
+        const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
+        throw new Error(`Image too large (${imageSize!.width}x${imageSize!.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
+      }
+    } else {
+      const result = await resizeImageForAPI(decoded, { isPhoto })
+      if (!result) {
+        throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
+      }
+      decoded = result.buffer
+      wasResized = true
+    }
+
+    deps.platform.logger.info(`Image resized: ${attachment.size} -> ${decoded.length} bytes (${Math.round((1 - decoded.length / attachment.size) * 100)}% reduction)`)
+  }
+
+  return {
+    buffer: decoded,
+    wasResized,
+    resizedBase64: wasResized ? decoded.toString('base64') : undefined,
   }
 }
 
@@ -537,6 +787,46 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     return result.canceled ? [] : result.filePaths
   })
 
+  // Open native attachment dialog for selecting files or folders. Windows native
+  // dialogs cannot reliably show files when openDirectory is mixed with openFile,
+  // so the renderer chooses an explicit mode before opening the picker.
+  // expanded into ordinary path-backed file attachments with hard caps so a
+  // mis-click on a project root cannot flood the composer.
+  server.handle(RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG, async (ctx, mode?: AttachmentDialogMode): Promise<AttachmentDialogResult> => {
+    const result = await requestClientOpenFileDialog(server, ctx.clientId, buildAttachmentDialogSpec(mode))
+
+    if (result.canceled) {
+      return {
+        attachments: [],
+        skippedCount: 0,
+        truncated: false,
+        maxFiles: ATTACHMENT_DIALOG_MAX_FILES,
+      }
+    }
+
+    const collected = await collectAttachmentDialogFiles(result.filePaths)
+
+    for (const attachment of collected.attachments) {
+      if (attachment.type !== 'image') continue
+      try {
+        const thumbBuffer = await deps.platform.imageProcessor.process(attachment.path, {
+          resize: { width: 200, height: 200 },
+          format: 'png',
+        })
+        attachment.thumbnailBase64 = thumbBuffer.toString('base64')
+      } catch {
+        // Image thumbnail is optional; attachment storage validates the image later.
+      }
+    }
+
+    return {
+      attachments: collected.attachments,
+      skippedCount: collected.skippedCount,
+      truncated: collected.truncated,
+      maxFiles: ATTACHMENT_DIALOG_MAX_FILES,
+    }
+  })
+
   // Read file and return as FileAttachment with Quick Look thumbnail
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
     try {
@@ -666,96 +956,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${decoded.length})`)
         }
 
-        // For images: validate and resize if needed for Claude API compatibility
         if (attachment.type === 'image') {
-          const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
-          const imageSize = imageInspection.status === 'ok'
-            ? { width: imageInspection.width, height: imageInspection.height }
-            : null
-
-          // Determine if we should resize
-          let shouldResize = false
-          let targetSize: { width: number; height: number } | undefined
-
-          if (imageInspection.status === 'processor_unavailable') {
-            deps.platform.logger.warn('Image processing unavailable while validating attachment:', imageInspection.error?.message ?? 'unknown error')
-            if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-              throw new Error('Image processing is unavailable, so oversized images cannot be validated or resized automatically. Please attach a smaller image.')
-            }
-          } else if (imageInspection.status === 'invalid_image') {
-            throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
-          } else {
-            // Validate image for Claude API
-            const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
-
-            shouldResize = validation.needsResize ?? false
-            targetSize = validation.suggestedSize
-
-            if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
-              // Image exceeds 8000px limit - calculate resize to fit within limits
-              const maxDim = IMAGE_LIMITS.MAX_DIMENSION
-              const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
-              targetSize = {
-                width: Math.floor(imageSize!.width * scale),
-                height: Math.floor(imageSize!.height * scale),
-              }
-              shouldResize = true
-              deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
-            } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
-              // File >5MB — try resize+compress instead of rejecting
-              shouldResize = true
-              deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
-            } else if (!validation.valid) {
-              throw new Error(validation.error)
-            }
-          }
-
-          // If resize is needed (either recommended or required), do it now
-          if (shouldResize) {
-            const isPhoto = attachment.mimeType === 'image/jpeg'
-
-            if (targetSize) {
-              // Dimension-exceeded: resize to specific target dimensions
-              deps.platform.logger.info(`Resizing image from ${imageSize!.width}x${imageSize!.height} to ${targetSize.width}x${targetSize.height}`)
-              try {
-                decoded = await deps.platform.imageProcessor.process(decoded, {
-                  resize: { width: targetSize.width, height: targetSize.height },
-                  format: isPhoto ? 'jpeg' : 'png',
-                  quality: isPhoto ? IMAGE_LIMITS.JPEG_QUALITY_HIGH : undefined,
-                })
-                wasResized = true
-                finalSize = decoded.length
-
-                // Re-validate final size after resize
-                if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-                  decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
-                  finalSize = decoded.length
-                  if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-                    throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
-                  }
-                }
-              } catch (resizeError) {
-                deps.platform.logger.error('Image resize failed:', resizeError)
-                const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
-                throw new Error(`Image too large (${imageSize!.width}x${imageSize!.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
-              }
-            } else {
-              // Size-exceeded or optimal resize — use shared utility for full pipeline
-              const result = await resizeImageForAPI(decoded, { isPhoto })
-              if (!result) {
-                throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
-              }
-              decoded = result.buffer
-              wasResized = true
-              finalSize = decoded.length
-            }
-
-            deps.platform.logger.info(`Image resized: ${attachment.size} -> ${finalSize} bytes (${Math.round((1 - finalSize / attachment.size) * 100)}% reduction)`)
-
-            // Store resized base64 to return to renderer
-            // This is used when sending to Claude API instead of original large base64
-            resizedBase64 = decoded.toString('base64')
-          }
+          const prepared = await prepareImageAttachmentBuffer(decoded, attachment, deps)
+          decoded = prepared.buffer
+          wasResized = prepared.wasResized
+          finalSize = decoded.length
+          resizedBase64 = prepared.resizedBase64
         }
 
         await writeFile(storedPath, decoded)
@@ -776,8 +982,16 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         if (sourceInfo.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
           throw new Error(`Attachment too large (${formatBytes(sourceInfo.size)} > ${formatBytes(PATH_BACKED_ATTACHMENT_MAX_BYTES)})`)
         }
-        await copyFile(attachment.path, storedPath)
         finalSize = sourceInfo.size
+        if (attachment.type === 'image') {
+          const prepared = await prepareImageAttachmentBuffer(await readFile(attachment.path), attachment, deps)
+          await writeFile(storedPath, prepared.buffer)
+          wasResized = prepared.wasResized
+          finalSize = prepared.buffer.length
+          resizedBase64 = prepared.resizedBase64
+        } else {
+          await copyFile(attachment.path, storedPath)
+        }
         filesToCleanup.push(storedPath)
       } else {
         throw new Error('Attachment has no content or readable source path')

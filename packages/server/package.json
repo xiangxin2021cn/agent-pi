@@ -1,6 +1,6 @@
 {
   "name": "@craft-agent/server",
-  "version": "0.10.6",
+  "version": "0.10.9",
   "description": "Standalone headless Agent Pi server (Bun runtime)",
   "type": "module",
   "main": "src/index.ts",

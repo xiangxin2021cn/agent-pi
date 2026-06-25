@@ -503,6 +503,25 @@ export function copySessionServer(config: BuildConfig): void {
 }
 
 /**
+ * Copy File Memory MCP Server to packaged app resources.
+ */
+export function copyFileMemoryServer(config: BuildConfig): void {
+  const { rootDir, electronDir } = config;
+
+  const source = join(rootDir, 'packages', 'file-memory-mcp-server', 'dist', 'index.js');
+  const dest = join(electronDir, 'resources', 'file-memory-mcp-server', 'index.js');
+
+  if (!existsSync(source)) {
+    console.warn(`Warning: File memory MCP server not found at ${source}. File memory sources will not work.`);
+    return;
+  }
+
+  console.log('Copying File Memory MCP Server...');
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(source, dest);
+}
+
+/**
  * Map our Platform type to koffi's directory naming convention.
  * koffi uses: darwin_arm64, darwin_x64, linux_x64, win32_x64, etc.
  */
@@ -579,12 +598,15 @@ export function buildMcpServers(config: BuildConfig): void {
 
   const sessionDir = join(rootDir, 'packages', 'session-mcp-server');
   const sessionOut = join(sessionDir, 'dist', 'index.js');
+  const fileMemoryDir = join(rootDir, 'packages', 'file-memory-mcp-server');
+  const fileMemoryOut = join(fileMemoryDir, 'dist', 'index.js');
   const piDir = join(rootDir, 'packages', 'pi-agent-server');
   const piOut = join(piDir, 'dist', 'index.js');
 
   console.log('Building MCP servers...');
 
   mkdirSync(join(sessionDir, 'dist'), { recursive: true });
+  mkdirSync(join(fileMemoryDir, 'dist'), { recursive: true });
 
   execSync(
     `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs`,
@@ -593,6 +615,15 @@ export function buildMcpServers(config: BuildConfig): void {
 
   if (!existsSync(sessionOut)) {
     throw new Error(`Session MCP server output not found at ${sessionOut}`);
+  }
+
+  execSync(
+    `bun build ${join(fileMemoryDir, 'src', 'index.ts')} --outfile ${fileMemoryOut} --target node --format cjs`,
+    { cwd: rootDir, stdio: 'inherit', shell: true }
+  );
+
+  if (!existsSync(fileMemoryOut)) {
+    throw new Error(`File memory MCP server output not found at ${fileMemoryOut}`);
   }
 
   // Pi agent server uses --target=bun --format=esm because its Pi SDK deps are ESM-only.
@@ -639,10 +670,14 @@ export function verifyMcpServersExist(config: BuildConfig): void {
   const { electronDir } = config;
 
   const sessionPath = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
+  const fileMemoryPath = join(electronDir, 'resources', 'file-memory-mcp-server', 'index.js');
   const piPath = join(electronDir, 'resources', 'pi-agent-server', 'index.js');
 
   if (!existsSync(sessionPath)) {
     throw new Error(`Session MCP server not found at ${sessionPath}`);
+  }
+  if (!existsSync(fileMemoryPath)) {
+    throw new Error(`File memory MCP server not found at ${fileMemoryPath}`);
   }
   if (!existsSync(piPath)) {
     console.warn(`Warning: Pi agent server not found at ${piPath}. Pi SDK sessions will not work.`);

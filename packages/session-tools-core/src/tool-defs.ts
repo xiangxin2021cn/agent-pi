@@ -22,6 +22,7 @@ import { handleConfigValidate } from './handlers/config-validate.ts';
 import { handleSkillValidate } from './handlers/skill-validate.ts';
 import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
 import { handleSourceTest } from './handlers/source-test.ts';
+import { handleFileMemorySourceCreate } from './handlers/file-memory-source-create.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -72,6 +73,15 @@ export const SourceTestSchema = z.object({
     .describe(
       'Automatically enable and activate the source in the current session on successful validation. Defaults to true. Pass false to keep pure validation behavior.'
     ),
+});
+
+export const FileMemorySourceCreateSchema = z.object({
+  filePath: z.string().describe('Absolute path, or path relative to the session working directory, for a text/Markdown/JSON file to index as one read-only MCP source'),
+  name: z.string().optional().describe('Display name for the source. Defaults to the file name.'),
+  sourceSlug: z.string().optional().describe('Optional source slug. If omitted, a file-memory-* slug is generated.'),
+  chunkSize: z.number().min(1000).max(12000).optional().describe('Approximate characters per chunk. Defaults to 3000.'),
+  overlap: z.number().min(0).max(2000).optional().describe('Characters of overlap between chunks. Defaults to 300.'),
+  autoEnable: z.boolean().optional().describe('Validate, enable, and activate the source after creation. Defaults to true.'),
 });
 
 export const SourceOAuthTriggerSchema = z.object({
@@ -280,6 +290,18 @@ Returns validation result with specific error messages if invalid.`,
 6. **Auto-enable** (default): If validation passes, flip \`enabled: true\` in config (if needed) and activate the source in the running session so its tools become available without a restart.
 
 Pass \`autoEnable: false\` to keep pure validation behavior (no config or session mutations).`,
+
+  file_memory_source_create: `Create a read-only file memory MCP source from a local text artifact.
+
+Use this when the user wants a specific file, parsed artifact, tender excerpt, specification extract, or generated Markdown/JSON/TXT output to become a selectable source for future evidence lookup.
+
+**What it does:**
+1. Reads a file inside the current working directory/session/workspace.
+2. Builds a local chunk manifest under the workspace \`file-memory/\` folder.
+3. Creates a stdio MCP source under the workspace \`sources/\` folder.
+4. Runs \`source_test\` so the source can be enabled and activated when possible.
+
+This first version indexes text-like artifacts. For PDF, Excel, scanned documents, or images, extract them first with the existing document skills/tools, then call this tool on the generated Markdown/JSON/TXT file.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -532,6 +554,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
   { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
   { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: SourceTestSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
+  { name: 'file_memory_source_create', description: TOOL_DESCRIPTIONS.file_memory_source_create, inputSchema: FileMemorySourceCreateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleFileMemorySourceCreate },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },

@@ -4,7 +4,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
 import { join, basename } from "path";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
@@ -29,6 +29,10 @@ const MAIN_PROCESS_ALIAS: Record<string, string> = {
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
+const SESSION_RESOURCE_OUTPUT = join(ELECTRON_DIR, "resources/session-mcp-server/index.js");
+const FILE_MEMORY_SERVER_DIR = join(ROOT_DIR, "packages/file-memory-mcp-server");
+const FILE_MEMORY_SERVER_OUTPUT = join(FILE_MEMORY_SERVER_DIR, "dist/index.js");
+const FILE_MEMORY_RESOURCE_OUTPUT = join(ELECTRON_DIR, "resources/file-memory-mcp-server/index.js");
 // Pi agent server path (subprocess for Pi SDK sessions)
 const PI_AGENT_SERVER_DIR = join(ROOT_DIR, "packages/pi-agent-server");
 const PI_AGENT_SERVER_OUTPUT = join(PI_AGENT_SERVER_DIR, "dist/index.js");
@@ -225,8 +229,10 @@ async function buildMcpServers(): Promise<void> {
 
   // Ensure dist directories exist
   const sessionDistDir = join(SESSION_SERVER_DIR, "dist");
+  const fileMemoryDistDir = join(FILE_MEMORY_SERVER_DIR, "dist");
   const piDistDir = join(PI_AGENT_SERVER_DIR, "dist");
   if (!existsSync(sessionDistDir)) mkdirSync(sessionDistDir, { recursive: true });
+  if (!existsSync(fileMemoryDistDir)) mkdirSync(fileMemoryDistDir, { recursive: true });
   if (!existsSync(piDistDir)) mkdirSync(piDistDir, { recursive: true });
 
   // Build session MCP server (esbuild, packages external — deps resolve from root node_modules)
@@ -241,7 +247,30 @@ async function buildMcpServers(): Promise<void> {
     console.error("❌ Session MCP server build failed:", sessionResult.error);
     process.exit(1);
   }
+  const sessionResourceDir = join(ELECTRON_DIR, "resources/session-mcp-server");
+  if (!existsSync(sessionResourceDir)) mkdirSync(sessionResourceDir, { recursive: true });
+  copyFileSync(SESSION_SERVER_OUTPUT, SESSION_RESOURCE_OUTPUT);
   console.log("✅ Session MCP server built");
+
+  const fileMemoryResult = await runEsbuild(
+    "packages/file-memory-mcp-server/src/index.ts",
+    "packages/file-memory-mcp-server/dist/index.js",
+    {},
+    { packagesExternal: true }
+  );
+
+  if (!fileMemoryResult.success) {
+    console.error("❌ File Memory MCP server build failed:", fileMemoryResult.error);
+    process.exit(1);
+  }
+  if (!existsSync(FILE_MEMORY_SERVER_OUTPUT)) {
+    console.error("❌ File Memory MCP server output not found at", FILE_MEMORY_SERVER_OUTPUT);
+    process.exit(1);
+  }
+  const fileMemoryResourceDir = join(ELECTRON_DIR, "resources/file-memory-mcp-server");
+  if (!existsSync(fileMemoryResourceDir)) mkdirSync(fileMemoryResourceDir, { recursive: true });
+  copyFileSync(FILE_MEMORY_SERVER_OUTPUT, FILE_MEMORY_RESOURCE_OUTPUT);
+  console.log("✅ File Memory MCP server built");
 
   // Build Pi agent server with bun (not esbuild) because its Pi SDK deps are ESM-only.
   // esbuild with packages:external leaves them as require() calls which fail at runtime.
@@ -335,7 +364,7 @@ async function runEsbuild(
 }
 
 // Build Pi agent server using bun instead of esbuild.
-// The Pi SDK (@mariozechner/pi-coding-agent) is ESM-only, and esbuild with
+// The Pi SDK (@earendil-works/pi-coding-agent) is ESM-only, and esbuild with
 // packages:external leaves ESM imports as require() calls that fail at runtime.
 // Bun's bundler handles ESM→ESM bundling correctly.
 async function buildPiAgentServer(): Promise<{ success: boolean; error?: string }> {

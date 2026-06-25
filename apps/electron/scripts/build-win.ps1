@@ -255,6 +255,59 @@ foreach ($dep in @("interceptor-common.ts", "feature-flags.ts", "interceptor-req
     }
 }
 
+# 6a. Build and stage helper servers into Electron resources.
+# electron-builder includes apps/electron/resources/**, so stale helper bundles here
+# would ship even when package dist files were rebuilt.
+Write-Host "Building and staging helper servers..."
+Push-Location $RootDir
+try {
+    bun build "$RootDir\packages\session-mcp-server\src\index.ts" --outfile "$RootDir\packages\session-mcp-server\dist\index.js" --target node --format cjs
+    if ($LASTEXITCODE -ne 0) { throw "Session MCP server build failed" }
+
+    bun build "$RootDir\packages\file-memory-mcp-server\src\index.ts" --outfile "$RootDir\packages\file-memory-mcp-server\dist\index.js" --target node --format cjs
+    if ($LASTEXITCODE -ne 0) { throw "File memory MCP server build failed" }
+
+    bun build "$RootDir\packages\pi-agent-server\src\index.ts" --outfile "$RootDir\packages\pi-agent-server\dist\index.js" --target bun --format esm --external koffi
+    if ($LASTEXITCODE -ne 0) { throw "Pi agent server build failed" }
+} finally {
+    Pop-Location
+}
+
+$SessionResourceDir = "$ElectronDir\resources\session-mcp-server"
+$FileMemoryResourceDir = "$ElectronDir\resources\file-memory-mcp-server"
+$PiResourceDir = "$ElectronDir\resources\pi-agent-server"
+New-Item -ItemType Directory -Force -Path $SessionResourceDir, $FileMemoryResourceDir, $PiResourceDir | Out-Null
+
+Copy-Item -Force "$RootDir\packages\session-mcp-server\dist\index.js" "$SessionResourceDir\index.js"
+Copy-Item -Force "$RootDir\packages\file-memory-mcp-server\dist\index.js" "$FileMemoryResourceDir\index.js"
+Copy-Item -Force "$RootDir\packages\pi-agent-server\dist\index.js" "$PiResourceDir\index.js"
+
+$KoffiSource = "$RootDir\node_modules\koffi"
+if (-not (Test-Path $KoffiSource)) {
+    Write-Host "WARNING: koffi not found in node_modules. Pi SDK sessions may not work." -ForegroundColor Yellow
+} else {
+    $KoffiDest = "$PiResourceDir\node_modules\koffi"
+    if (Test-Path $KoffiDest) {
+        Remove-Item -Recurse -Force $KoffiDest
+    }
+    New-Item -ItemType Directory -Force -Path $KoffiDest | Out-Null
+    foreach ($entry in @("package.json", "index.js", "indirect.js", "index.d.ts", "lib")) {
+        $src = "$KoffiSource\$entry"
+        if (Test-Path $src) {
+            Copy-Item -Recurse -Force $src "$KoffiDest\"
+        }
+    }
+
+    $NativeSource = "$KoffiSource\build\koffi\win32_x64"
+    $NativeDest = "$KoffiDest\build\koffi\win32_x64"
+    if (Test-Path $NativeSource) {
+        New-Item -ItemType Directory -Force -Path $NativeDest | Out-Null
+        Copy-Item -Recurse -Force "$NativeSource\*" $NativeDest
+    } else {
+        Write-Host "WARNING: koffi win32_x64 native binary not found." -ForegroundColor Yellow
+    }
+}
+
 # 6. Build Electron app
 Write-Host "Building Electron app..."
 

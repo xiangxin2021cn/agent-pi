@@ -757,7 +757,7 @@ Event adapter:
 
 - 主进程 `PiAgent` spawn `pi-agent-server` 子进程。
 - 使用 stdin/stdout JSONL 协议。
-- 子进程内封装 `@mariozechner/pi-coding-agent` 和 `@mariozechner/pi-ai`。
+- 子进程内封装 `@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai`。
 - 这样隔离 Pi SDK ESM、heavy deps 和 Electron bundling 问题。
 
 JSONL 消息类型包括:

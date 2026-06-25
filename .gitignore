@@ -8,7 +8,9 @@ dist
 .build
 apps/electron/release
 .release-artifacts/
+craft-agents-oss-0.10.4/
 apps/electron/resources/session-mcp-server/
+apps/electron/resources/file-memory-mcp-server/
 apps/electron/resources/pi-agent-server/
 
 # code coverage

@@ -181,7 +181,9 @@ import type {
   Session,
   UnreadSummary,
   CreateSessionOptions,
+  AttachmentDialogMode,
   FileAttachment,
+  AttachmentDialogResult,
   SendMessageOptions,
   SessionEvent,
   PermissionResponseOptions,
@@ -198,6 +200,8 @@ import type {
   SessionFile,
   SessionOutputDirectory,
   PromoteSessionFileResult,
+  CreateFileMemorySourceOptions,
+  CreateFileMemorySourceResult,
   OAuthResult,
   McpToolsResult,
   GitBashStatus,
@@ -316,6 +320,7 @@ export interface ElectronAPI {
   /** Read an image file as a size-bounded preview data URL for lightweight thumbnail rendering. */
   readFilePreviewDataUrl(path: string, maxSize?: number): Promise<string>
   openFileDialog(): Promise<string[]>
+  openAttachmentDialog(mode?: AttachmentDialogMode): Promise<AttachmentDialogResult>
   readFileAttachment(path: string): Promise<FileAttachment | null>
   /** Re-read a user-attached file by absolute path (bypasses workspace-dir validation).
    *  Used only by draft hydration for paths the user explicitly picked via OS dialog / drag. */
@@ -453,6 +458,7 @@ export interface ElectronAPI {
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionOutputDirectory(sessionId: string): Promise<SessionOutputDirectory | null>
   promoteSessionFile(sessionId: string, filePath: string, requestedName?: string): Promise<PromoteSessionFileResult>
+  createFileMemorySource(sessionId: string, filePath: string, options?: CreateFileMemorySourceOptions): Promise<CreateFileMemorySourceResult>
   getSessionNotes(sessionId: string): Promise<string>
   setSessionNotes(sessionId: string, content: string): Promise<void>
   watchSessionFiles(sessionId: string): Promise<void>
