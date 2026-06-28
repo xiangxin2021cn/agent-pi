@@ -158,6 +158,7 @@ Current implementation slice:
 - Requests that explicitly ask to create, save, export, or convert an output file add a required file-output criterion; if the turn produces no verifiable file path evidence, the audit fails before any reviewer can mark it complete.
 - Source/read file paths no longer satisfy requested output-file evidence; the audit requires a path from a writing, editing, export, conversion, or explicit output field.
 - When a formal output directory is available, requested output files must be written under `outputFolderPath`; files written elsewhere fail the audit before reviewer approval.
+- Output-specific fields such as `destination_path` and `target_path` are also verified on disk, so a reviewer cannot pass an export whose file was never created.
 - Consecutive audits with the same missing criteria stop in `needs_review` instead of burning the remaining retry budget on the same failure.
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.

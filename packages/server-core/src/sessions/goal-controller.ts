@@ -96,6 +96,7 @@ export class GoalController {
       ])
       for (const path of extractOutputFilePaths(message, inputPaths, resultPaths)) {
         outputFileEvidencePaths.add(path)
+        paths.add(path)
       }
       for (const path of paths) {
         fileEvidencePaths.add(path)

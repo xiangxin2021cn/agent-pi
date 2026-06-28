@@ -483,6 +483,59 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept reviewer pass when destination output file evidence is missing on disk', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '导出最终 PDF 文件'),
+        message('t1', 'tool', 'exported', {
+          toolName: 'Export',
+          toolStatus: 'completed',
+          toolInput: { destination_path: '/tmp/final-report.pdf' },
+        }),
+        message('a1', 'assistant', 'PDF 已导出。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({ exists: false, readable: false }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The requested PDF export is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Referenced file was not found: /tmp/final-report.pdf')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'Export',
+        detail: '/tmp/final-report.pdf',
+      })
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_missing',
+        detail: '/tmp/final-report.pdf',
+      })
+    }
+  })
+
   test('records user attachments as source file evidence without satisfying output file evidence', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
