@@ -70,6 +70,7 @@ import {
   type SessionMetadata,
   type SessionStatus,
   type SessionHeader,
+  type SessionGoalState,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -98,6 +99,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
+import { GoalController } from './goal-controller'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -833,6 +835,8 @@ interface ManagedSession {
   hasUnread?: boolean
   // Per-session source selection (slugs of enabled sources)
   enabledSourceSlugs?: string[]
+  // Application-level goal audit state. Omitted/off means legacy completion behavior.
+  goalState?: SessionGoalState
   // Labels applied to this session (additive tags, many-per-session)
   labels?: string[]
   // Working directory for this session (used by agent for bash commands)
@@ -1165,6 +1169,7 @@ export class SessionManager implements ISessionManager {
    * subprocess can race the resulting `chat` against the still-pending update.
    */
   private agentRefreshLocks: Map<string, Promise<void>> = new Map()
+  private goalController = new GoalController()
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
@@ -2037,6 +2042,7 @@ export class SessionManager implements ISessionManager {
       if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
       if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
       if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
+      if (managed.goalState === undefined) managed.goalState = stored.goalState
       if (managed.sharedUrl === undefined) managed.sharedUrl = stored.sharedUrl
       if (managed.sharedId === undefined) managed.sharedId = stored.sharedId
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
@@ -2506,6 +2512,7 @@ export class SessionManager implements ISessionManager {
       managed.lastReadMessageId = storedSession.lastReadMessageId
       managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
       managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
+      managed.goalState = storedSession.goalState
       managed.sharedUrl = storedSession.sharedUrl
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading
@@ -2830,6 +2837,7 @@ export class SessionManager implements ISessionManager {
       sessionStatus: options?.sessionStatus,
       labels: options?.labels,
       isFlagged: options?.isFlagged,
+      goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
     })
@@ -2917,6 +2925,7 @@ export class SessionManager implements ISessionManager {
       thinkingLevel: defaultThinkingLevel,
       systemPromptPreset: options?.systemPromptPreset,
       enabledSourceSlugs: defaultEnabledSourceSlugs,
+      goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
       branchFromMessageId: validatedBranch?.sourceMessageId,
@@ -6528,6 +6537,48 @@ export class SessionManager implements ISessionManager {
       if (doneBpm) {
         await doneBpm.clearVisualsForSession(sessionId)
         doneBpm.unbindAllForSession(sessionId)
+      }
+
+      const goalDecision = this.goalController.onTurnStopped(managed.goalState, {
+        messages: managed.messages,
+        turnStartFinalMessageId,
+        stoppedReason: reason,
+      })
+      if (goalDecision.action !== 'skip') {
+        managed.goalState = goalDecision.goalState
+        this.sendEvent({
+          type: 'goal_audit_started',
+          sessionId,
+          goalId: goalDecision.goalState.id,
+          iteration: goalDecision.result.iteration,
+          mode: goalDecision.goalState.mode,
+        }, managed.workspace.id)
+        this.sendEvent({
+          type: 'goal_audit_result',
+          sessionId,
+          goalId: goalDecision.goalState.id,
+          result: goalDecision.result,
+          goalState: goalDecision.goalState,
+        }, managed.workspace.id)
+
+        if (goalDecision.action === 'complete') {
+          this.sendEvent({
+            type: 'goal_completed',
+            sessionId,
+            goalId: goalDecision.goalState.id,
+            goalState: goalDecision.goalState,
+          }, managed.workspace.id)
+        } else {
+          this.sendEvent({
+            type: 'goal_needs_review',
+            sessionId,
+            goalId: goalDecision.goalState.id,
+            goalState: goalDecision.goalState,
+            reason: goalDecision.action === 'continue'
+              ? 'Auto-improve is not enabled in this phase.'
+              : goalDecision.reason,
+          }, managed.workspace.id)
+        }
       }
 
       // No queue - emit complete to UI (include tokenUsage and hasUnread for state updates)

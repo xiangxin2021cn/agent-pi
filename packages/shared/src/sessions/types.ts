@@ -40,6 +40,8 @@ export const SESSION_PERSISTENT_FIELDS = [
   'sharedUrl', 'sharedId',
   // Plan execution
   'pendingPlanExecution',
+  // Goal audit loop
+  'goalState',
   // Archive
   'isArchived', 'archivedAt',
   // Branching
@@ -73,6 +75,69 @@ export type SessionStatus = string;
  * These are the default statuses but users can add/remove custom ones
  */
 export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled';
+
+export type SessionGoalMode = 'off' | 'check_only' | 'auto_improve' | 'strict_work';
+
+export type SessionGoalStatus =
+  | 'idle'
+  | 'running'
+  | 'auditing'
+  | 'improving'
+  | 'passed'
+  | 'needs_review'
+  | 'failed'
+  | 'cancelled';
+
+export type SessionGoalCriterionKind =
+  | 'deliverable'
+  | 'evidence'
+  | 'format'
+  | 'test'
+  | 'coverage'
+  | 'user_constraint'
+  | 'safety';
+
+export interface SessionGoalCriterion {
+  id: string;
+  text: string;
+  kind: SessionGoalCriterionKind;
+  required: boolean;
+}
+
+export interface SessionGoalAuditEvidence {
+  type: 'message' | 'file' | 'tool' | 'test' | 'system';
+  label: string;
+  detail?: string;
+}
+
+export interface SessionGoalAuditResult {
+  iteration: number;
+  status: 'pass' | 'fail' | 'uncertain';
+  summary: string;
+  missingCriteria: string[];
+  correctivePrompt?: string;
+  evidence: SessionGoalAuditEvidence[];
+  createdAt: number;
+}
+
+export interface SessionGoalState {
+  id: string;
+  objective: string;
+  mode: SessionGoalMode;
+  status: SessionGoalStatus;
+  createdAt: number;
+  updatedAt: number;
+  iteration: number;
+  maxIterations: number;
+  criteria: SessionGoalCriterion[];
+  auditHistory: SessionGoalAuditResult[];
+  budgets?: {
+    maxExtraTurns?: number;
+    maxExtraInputTokens?: number;
+    maxExtraOutputTokens?: number;
+    maxWallClockMs?: number;
+  };
+}
 
 /**
  * Session token usage tracking
@@ -162,6 +227,8 @@ export interface SessionConfig {
     /** Whether execution has already been dispatched from the UI. */
     executionDispatched?: boolean;
   };
+  /** Optional application-level goal audit state for work-session completion checks. */
+  goalState?: SessionGoalState;
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
   /** Whether this session is archived */
@@ -285,6 +352,8 @@ export interface SessionHeader {
     /** Whether execution has already been dispatched from the UI. */
     executionDispatched?: boolean;
   };
+  /** Optional application-level goal audit state for work-session completion checks. */
+  goalState?: SessionGoalState;
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
   /** Whether this session is archived */
@@ -379,6 +448,8 @@ export interface SessionMetadata {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean;
+  /** Optional application-level goal audit state for work-session completion checks. */
+  goalState?: SessionGoalState;
   /** Token usage statistics (from JSONL header, available without loading messages) */
   tokenUsage?: SessionTokenUsage;
   /** When true, session is hidden from session list (e.g., mini edit sessions) */

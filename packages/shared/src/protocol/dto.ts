@@ -18,6 +18,11 @@ import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
+  SessionGoalAuditResult,
+  SessionGoalMode,
+  SessionGoalState,
+} from '../sessions/types'
+import type {
   AuthRequest as SharedAuthRequest,
   CredentialInputMode as SharedCredentialInputMode,
   CredentialAuthRequest as SharedCredentialAuthRequest,
@@ -73,6 +78,7 @@ export interface Session {
   sharedId?: string
   model?: string
   llmConnection?: string
+  goalState?: SessionGoalState
   thinkingLevel?: ThinkingLevel
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   lastFinalMessageId?: string
@@ -126,6 +132,8 @@ export interface CreateSessionOptions {
   workingDirectory?: string | 'user_default' | 'none'
   model?: string
   llmConnection?: string
+  /** Optional application-level goal audit state. Omitted/`off` keeps legacy completion behavior. */
+  goalState?: SessionGoalState
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
   sessionStatus?: SessionStatus
@@ -215,6 +223,10 @@ export type SessionEvent =
   | { type: 'auth_request'; sessionId: string; message: Message; request: SharedAuthRequest }
   | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
   | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
+  | { type: 'goal_audit_started'; sessionId: string; goalId: string; iteration: number; mode: SessionGoalMode }
+  | { type: 'goal_audit_result'; sessionId: string; goalId: string; result: SessionGoalAuditResult; goalState: SessionGoalState }
+  | { type: 'goal_completed'; sessionId: string; goalId: string; goalState: SessionGoalState }
+  | { type: 'goal_needs_review'; sessionId: string; goalId: string; goalState: SessionGoalState; reason: string }
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
   | { type: 'working_directory_error'; sessionId: string; error: string }

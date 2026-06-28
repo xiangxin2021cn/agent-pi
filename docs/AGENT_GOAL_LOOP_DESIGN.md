@@ -1,0 +1,423 @@
+# Agent Goal Loop Design
+
+Status: design draft  
+Scope: Agent Pi session execution quality control
+
+## Why This Exists
+
+Current agent execution is mostly SDK-terminal-event driven. When Claude Agent SDK or Pi emits a terminal `complete` event, Agent Pi treats the turn as finished unless there is a queued user message or an error path. This is correct for chat streaming, but weak for real work tasks: the model can decide that it is done even when the requested deliverable is missing, shallow, unverified, or below the expected quality bar.
+
+The product problem is not "the model needs a longer prompt". The root problem is that "task achieved" is not represented as an application-level state. It is currently inferred from the model's stop condition.
+
+Codex-style goal behavior is useful here because it separates:
+
+- model stop: the provider finished one turn
+- task completion: the requested objective has been checked against success criteria
+- continuation decision: the application decides whether to exit, retry, ask the user, or mark needs-review
+
+## Current Code Evidence
+
+The stable insertion point is the session layer, not the provider backends.
+
+- `packages/shared/src/agent/base-agent.ts`
+  - `BaseAgent.chat()` prepares skill/source/file mention context, then delegates to provider-specific `chatImpl()`.
+  - It does not know whether a task outcome is acceptable.
+
+- `packages/shared/src/agent/backend/claude/event-adapter.ts`
+  - Claude SDK result messages are mapped into Agent Pi events.
+  - `complete` is emitted from SDK result handling.
+
+- `packages/shared/src/agent/backend/pi/event-adapter.ts`
+  - Pi `agent_end` is mapped into Agent Pi `complete`.
+
+- `packages/server-core/src/sessions/SessionManager.ts`
+  - `sendMessage()` runs `for await (const event of agent.chat(...))`.
+  - On `event.type === 'complete'`, it calls `onProcessingStopped(sessionId, 'complete')`.
+  - `onProcessingStopped()` sends the final UI `complete` when `managed.messageQueue.length === 0`.
+
+This means the correct control boundary is between "provider turn ended" and "UI session is complete".
+
+## Product Principle
+
+Agent Pi should not force every casual conversation through a heavy audit loop. The goal loop should apply to work tasks where completion quality matters:
+
+- file generation or formal outputs
+- code changes
+- long-form writing
+- document analysis
+- data extraction or tabulation
+- tasks with explicit requirements, constraints, or acceptance criteria
+
+For normal chat, Q&A, brainstorming, or exploratory conversation, the default should stay lightweight.
+
+## Proposed Modes
+
+1. Off
+   - Current behavior.
+   - Provider `complete` ends the turn.
+
+2. Check Only
+   - After provider `complete`, Agent Pi runs a lightweight goal audit.
+   - The app shows pass/fail/needs-review, but does not auto-run another turn.
+
+3. Auto Improve
+   - After provider `complete`, Agent Pi audits the result.
+   - If the result fails and limits are not exceeded, Agent Pi starts an internal improvement turn.
+   - The final UI `complete` is delayed until the audit passes or the loop stops with a clear reason.
+
+4. Strict Work
+   - Same as Auto Improve, but with stronger artifact and evidence checks.
+   - Intended for code, enterprise documents, tenders, contracts, financial tables, and other high-certainty workflows.
+
+## Goal State
+
+Add an application-level goal state to the session. This should be persisted so the app can recover after crash/restart.
+
+```ts
+interface SessionGoalState {
+  id: string
+  objective: string
+  mode: 'off' | 'check_only' | 'auto_improve' | 'strict_work'
+  status: 'idle' | 'running' | 'auditing' | 'improving' | 'passed' | 'needs_review' | 'failed' | 'cancelled'
+  createdAt: number
+  updatedAt: number
+  iteration: number
+  maxIterations: number
+  criteria: GoalCriterion[]
+  auditHistory: GoalAuditResult[]
+  budgets?: {
+    maxExtraTurns?: number
+    maxExtraInputTokens?: number
+    maxExtraOutputTokens?: number
+    maxWallClockMs?: number
+  }
+}
+
+interface GoalCriterion {
+  id: string
+  text: string
+  kind: 'deliverable' | 'evidence' | 'format' | 'test' | 'coverage' | 'user_constraint' | 'safety'
+  required: boolean
+}
+
+interface GoalAuditResult {
+  iteration: number
+  status: 'pass' | 'fail' | 'uncertain'
+  summary: string
+  missingCriteria: string[]
+  correctivePrompt?: string
+  evidence: GoalAuditEvidence[]
+  createdAt: number
+}
+```
+
+## Event Model
+
+Add provider-agnostic session events. These are app events, not Claude/Pi SDK events.
+
+- `goal_started`
+- `goal_audit_started`
+- `goal_audit_result`
+- `goal_retry_started`
+- `goal_completed`
+- `goal_needs_review`
+- `goal_cancelled`
+
+These events let the UI show a visible "Goal" card: objective, checklist, current iteration, pass/fail reasons, and what the agent is improving.
+
+## Runtime Architecture
+
+Introduce a `GoalController` owned by `SessionManager`.
+
+Responsibilities:
+
+1. Detect whether a user turn should create or continue a goal.
+2. Build or update acceptance criteria.
+3. Observe turn events and final assistant output.
+4. Audit completion after provider `complete`.
+5. Decide whether to emit final UI `complete`, continue internally, or stop with needs-review.
+
+The provider backends should remain thin:
+
+- ClaudeAgent continues to emit normalized `AgentEvent`.
+- PiAgent continues to emit normalized `AgentEvent`.
+- SessionManager remains the orchestration point.
+
+## Where To Hook
+
+The most stable hook is inside `SessionManager.onProcessingStopped()`.
+
+Current simplified behavior:
+
+```ts
+if (managed.messageQueue.length > 0) {
+  this.processNextQueuedMessage(sessionId)
+} else {
+  this.sendEvent({ type: 'complete', sessionId, ... })
+}
+```
+
+Proposed behavior:
+
+```ts
+if (managed.messageQueue.length > 0) {
+  this.processNextQueuedMessage(sessionId)
+  return
+}
+
+const goalDecision = await goalController.onTurnComplete(managed)
+
+if (goalDecision.action === 'continue') {
+  this.processInternalGoalRetry(sessionId, goalDecision.prompt)
+  return
+}
+
+this.sendEvent({ type: 'complete', sessionId, ... })
+```
+
+This preserves current queue semantics and only changes the final no-queue exit path.
+
+## Internal Retry Must Not Look Like User Input
+
+Do not implement auto-improvement by calling `sendMessage()` with a fake visible user message such as "please continue improving". That would pollute conversation history and confuse users.
+
+Preferred implementation:
+
+1. Extract the shared "run one agent turn" logic out of `sendMessage()`.
+2. Keep `sendMessage()` responsible for creating real user messages.
+3. Add an internal goal retry path that calls the shared turn runner without creating a `role: user` message.
+4. Persist a compact `role: info` or future `role: goal` message for transparency, but send the actual corrective instruction as internal control context.
+
+This requires a small refactor, but it keeps history honest.
+
+## Audit Strategy
+
+The audit should be layered. Do cheap deterministic checks first, then use an LLM reviewer only when needed.
+
+### Deterministic Checks
+
+- Did the turn produce a final assistant message?
+- Did any required output file actually get created?
+- Did formal output land in `outputFolderPath` when requested?
+- Did tool calls fail without a later corrective action?
+- Did requested tests/build/typechecks run?
+- Did referenced files exist?
+- For markdown/doc/pdf output, is the file non-empty and readable?
+- For code tasks, is `git diff --check` clean?
+
+These checks are cheap and should not burn model tokens.
+
+### LLM Review
+
+Use `agent.runMiniCompletion()` or `agent.queryLlm()` with a structured JSON prompt to judge:
+
+- whether all acceptance criteria are satisfied
+- whether key constraints were ignored
+- whether the answer is superficial or missing deliverables
+- whether another improvement turn is likely useful
+
+The reviewer should be allowed to return `uncertain`. In `uncertain`, default to `needs_review` in Check Only mode and a single cautious retry in Auto Improve mode.
+
+### Artifact-Aware Review
+
+For high-certainty document work, feed the reviewer a bounded evidence summary:
+
+- final assistant response
+- output file list
+- relevant tool success/failure summary
+- final artifact excerpts
+- explicit source/evidence references when available
+
+Do not feed entire large documents into every audit. This keeps token cost controlled.
+
+## Corrective Prompt Shape
+
+The retry prompt should be terse and operational:
+
+```text
+<system-reminder>
+Goal audit failed after iteration 1.
+
+Objective:
+...
+
+Missing required criteria:
+1. ...
+2. ...
+
+Corrective action:
+- Fix only the missing items.
+- Re-open or verify affected files before claiming completion.
+- Update or create the required formal output.
+- Do not ask the user unless blocked by missing input or permission.
+</system-reminder>
+```
+
+The corrective prompt should not introduce new scope. It should only move the current task toward the original goal.
+
+## Stop Conditions
+
+The loop must stop when any of these is true:
+
+- audit passes
+- user stops or sends a new message
+- max iterations reached
+- budget exceeded
+- auth/permission/human input is required
+- repeated same failure occurs twice
+- reviewer returns low confidence and cannot produce a concrete corrective prompt
+- provider/tool error makes further retry unsafe
+
+When stopped without pass, show `needs_review` or `failed`, not `complete`.
+
+## UI Behavior
+
+Minimal UI:
+
+- A compact Goal card above or near the active turn.
+- Shows objective, mode, iteration, checklist, and audit status.
+- User controls:
+  - Turn goal loop off for this session
+  - Run one more improvement
+  - Accept as done
+  - Edit acceptance criteria
+
+Do not hide the loop. Users should understand why the agent keeps running.
+
+## Settings
+
+Recommended default:
+
+- Normal chat: Off
+- Work sessions: Check Only
+- File/code/formal output tasks: Auto Improve, max 2 retries
+- Strict Work: user opt-in or workspace preset
+
+Workspace setting:
+
+- `goalLoop.defaultMode`
+- `goalLoop.maxIterations`
+- `goalLoop.reviewerModel`
+- `goalLoop.strictArtifactChecks`
+- `goalLoop.requireOutputFolderForDeliverables`
+
+Session override should be visible in the input toolbar or session info panel.
+
+## Relationship To Existing Features
+
+### update_plan
+
+`update_plan` remains a progress display tool. It is not a completion gate.
+
+Goal loop can use plan state as audit evidence, but it should not assume a completed checklist proves the actual deliverable is good.
+
+### SubmitPlan
+
+`SubmitPlan` remains an execution approval gate for safe/explore mode.
+
+Goal loop starts after execution begins and checks whether the accepted task was actually completed.
+
+### Prompt Optimizer
+
+Prompt optimization can improve the first instruction, but it cannot guarantee completion.
+
+Goal loop should consume optimized prompts as the objective seed, not replace the runtime audit.
+
+### Artifact Registry
+
+Goal loop becomes much stronger when paired with an artifact registry:
+
+- file created
+- file promoted
+- file indexed
+- file reviewed
+- file exported
+- file opened successfully
+
+Until that exists, the first version can use output folder scans and event summaries.
+
+## Phased Implementation
+
+### Phase 1: Goal State And Passive Audit
+
+- Add `SessionGoalState` types.
+- Persist goal state in session header/config.
+- Add session events for goal audit status.
+- Add deterministic checks and structured reviewer.
+- Do not auto-retry yet.
+
+Success criteria:
+
+- A task can finish with visible `passed`, `failed`, or `needs_review`.
+- Existing sessions without goal state behave exactly as before.
+- No provider backend behavior changes.
+
+### Phase 2: Internal Retry Refactor
+
+- Extract common "run one agent turn" logic from `sendMessage()`.
+- Add internal goal retry path that does not create fake user messages.
+- Preserve existing user message queue behavior.
+- Add cancellation and new-user-message preemption.
+
+Success criteria:
+
+- Auto-retry can run one improvement turn without polluting user history.
+- User stop cancels the loop.
+- Queued real user messages still take priority.
+
+### Phase 3: Auto Improve Mode
+
+- Enable max 1 to 2 retries for work tasks.
+- Add UI Goal card and controls.
+- Add settings for mode and budget.
+- Add audit events to session persistence.
+
+Success criteria:
+
+- The app does not emit final `complete` until pass, needs-review, or stop condition.
+- Infinite loops are impossible by construction.
+- Token/cost overhead is visible.
+
+### Phase 4: Artifact-Aware Strict Work
+
+- Add artifact/file registry events.
+- Let goal audits verify output files, exports, previews, tests, and citations.
+- Add templates for code, long document writing, data extraction, and enterprise document analysis.
+
+Success criteria:
+
+- For file-producing tasks, missing/empty/wrong-location outputs are caught.
+- For code tasks, missing tests or dirty failed checks are caught.
+- For document tasks, key factual claims are tied to source or derived artifacts.
+
+## First Implementation Target
+
+The first shippable slice should be:
+
+1. Check Only mode behind a workspace/session setting.
+2. Goal card with deterministic checks plus mini-review JSON.
+3. No auto retry.
+
+After that is stable, add Auto Improve with max 1 retry. This avoids risking runaway behavior while proving that the app can separate "model stopped" from "task completed".
+
+## Main Risks
+
+- Reviewer hallucination: mitigate with deterministic checks first and bounded evidence.
+- Token cost: use cheap checks and cap audits.
+- Infinite loop: hard iteration and repeated-failure limits.
+- User confusion: make loop state visible.
+- History pollution: do not implement retry as fake user messages.
+- Provider differences: keep logic in SessionManager and normalized AgentEvent layer.
+
+## Bottom Line
+
+This is feasible and fits Agent Pi well. The key is not to copy Codex as a prompt style, but to copy the product-level control loop:
+
+1. Explicit objective
+2. Explicit criteria
+3. Turn result observation
+4. Completion audit
+5. Controlled retry or visible needs-review
+6. Only then final complete
+
+That mechanism should live above Claude/Pi providers in `SessionManager`, with provider-neutral events and a visible UI state.
