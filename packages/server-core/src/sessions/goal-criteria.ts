@@ -21,10 +21,17 @@ const BASE_DELIVERABLE_CRITERION: SessionGoalCriterionSpec = {
   required: true,
 }
 
+const SOURCE_GROUNDED_CRITERION: SessionGoalCriterionSpec = {
+  text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+  kind: 'evidence',
+  required: true,
+}
+
 const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
 const VERIFICATION_PATTERN = /验证|测试|检查|核对|复核|校验|verify|test|check|validate/i
 const COMPREHENSIVE_PATTERN = /全面|详细|认真|深入|系统|高质量|复核|审稿|comprehensive|detailed|thorough|deep|high[- ]quality|review/i
 const UNTIL_DONE_PATTERN = /直到|直至|不达标不|满足要求再|反复|多轮|continue until|until .*done|until .*complete|until .*satisf/i
+const SOURCE_SENSITIVE_PATTERN = /招标|投标|合同|规范|条款|清单|工程量|图纸|报价|标书|附件|源文件|依据|boq|pdf|excel|xlsx?|csv|tender|contract|specification|clause|source|citation|cite|spreadsheet|workbook/i
 
 export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): SessionGoalCriterionSpec[] {
   const criteria: SessionGoalCriterionSpec[] = [BASE_DELIVERABLE_CRITERION]
@@ -37,6 +44,8 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
       kind: 'evidence',
       required: true,
     })
+  } else if (SOURCE_SENSITIVE_PATTERN.test(message)) {
+    criteria.push(SOURCE_GROUNDED_CRITERION)
   }
 
   if (DOCUMENT_WORK_PATTERN.test(message)) {

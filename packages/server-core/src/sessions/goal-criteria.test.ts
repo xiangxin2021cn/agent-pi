@@ -46,6 +46,29 @@ describe('buildGoalCriteriaFromMessage', () => {
       required: true,
     })
   })
+
+  it('adds evidence criteria for source-sensitive work even without explicit attachments', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '根据招标文件条款和 BOQ 工程量清单写施工方案',
+    })
+
+    expect(criteria).toContainEqual({
+      text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+      kind: 'evidence',
+      required: true,
+    })
+  })
+
+  it('does not duplicate generic source criteria when referenced files are present', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '根据招标文件和 BOQ 工程量清单写施工方案',
+      storedAttachments: [attachment('boq.xlsx')],
+    })
+
+    const evidenceCriteria = criteria.filter(criterion => criterion.kind === 'evidence')
+    expect(evidenceCriteria).toHaveLength(1)
+    expect(evidenceCriteria[0].text).toContain('boq.xlsx')
+  })
 })
 
 describe('buildGoalExecutionPolicyFromMessage', () => {
