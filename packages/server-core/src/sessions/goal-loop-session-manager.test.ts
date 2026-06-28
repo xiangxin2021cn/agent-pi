@@ -414,6 +414,30 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
   })
 
+  it('does not complete when reviewer pass has object-array corrective prompt', async () => {
+    const sessionId = 'goal-reviewer-object-array-correction'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+
+    managed.agent = {
+      runMiniCompletion: async () => JSON.stringify({
+        status: 'pass',
+        summary: 'Looks complete, but add a citation.',
+        missingCriteria: [],
+        correctivePrompt: [{ text: 'Add a concrete citation to source.xlsx.' }],
+      }),
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(false)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+  })
+
   it('continues when reviewer returns a needs_review status alias with a correction', async () => {
     const sessionId = 'goal-reviewer-status-alias'
     const managed = buildSession(sessionId)

@@ -1199,9 +1199,8 @@ function normalizeGoalReviewCorrectivePrompt(value: unknown): string | undefined
 
   if (Array.isArray(value)) {
     const lines = value
-      .filter((item): item is string => typeof item === 'string')
-      .map(item => item.trim())
-      .filter(Boolean)
+      .map(item => normalizeGoalReviewCorrectivePrompt(item))
+      .filter((item): item is string => item !== undefined)
     return lines.length > 0 ? lines.join('\n') : undefined
   }
 
