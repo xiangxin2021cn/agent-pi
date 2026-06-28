@@ -207,6 +207,23 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(true)
   })
 
+  it('re-enables a cancelled goal loop as running work', () => {
+    const sessionId = 'goal-re-enable'
+    const managed = buildSession(sessionId)
+    const events = captureEvents()
+
+    sm.setSessionGoalMode(sessionId, 'off')
+    events.length = 0
+    sm.setSessionGoalMode(sessionId, 'auto_improve')
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.status).toBe('running')
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.status === 'running'
+    )).toBe(true)
+  })
+
   it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
     const sessionId = 'goal-reviewer-pass'
     const managed = buildSession(sessionId)

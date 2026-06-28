@@ -7532,7 +7532,7 @@ export class SessionManager implements ISessionManager {
     const nextStatus = mode === 'off'
       ? 'cancelled'
       : current.status === 'cancelled'
-      ? 'idle'
+      ? 'running'
       : current.status
 
     managed.goalState = {
