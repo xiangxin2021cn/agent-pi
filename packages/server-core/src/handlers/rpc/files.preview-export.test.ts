@@ -97,4 +97,33 @@ describe('buildMarkdownExport', () => {
       { type: 'listItem', ordered: false, index: 1, text: 'Bold item' },
     ])
   })
+
+  it('uses the host HTML renderer for PDF export when available', async () => {
+    await withTempDir(async (dir) => {
+      const sourcePath = join(dir, 'rendered.md')
+      const targetPath = join(dir, 'custom-name')
+      let renderedHtml = ''
+
+      const pdf = await buildMarkdownExport({
+        sourcePath,
+        targetPath,
+        content: '# Rendered\n\n**Bold** text\n\n| A | B |\n| - | - |\n| 1 | 2 |',
+        format: 'pdf',
+        renderHtmlToPdf: async (html) => {
+          renderedHtml = html
+          return Buffer.from('%PDF-1.4\n% rendered by host\n%%EOF')
+        },
+      })
+
+      expect(pdf.path).toBe(`${targetPath}.pdf`)
+      expect(readFileSync(pdf.path, 'utf-8')).toContain('rendered by host')
+      expect(renderedHtml).toContain('<h1>Rendered</h1>')
+      expect(renderedHtml).toContain('<strong>Bold</strong> text')
+      expect(renderedHtml).toContain('<table>')
+      expect(renderedHtml).toContain('@page{size:A4')
+      expect(renderedHtml).toContain('overflow-wrap:anywhere')
+      expect(renderedHtml).not.toContain('# Rendered')
+      expect(renderedHtml).not.toContain('**Bold**')
+    })
+  })
 })

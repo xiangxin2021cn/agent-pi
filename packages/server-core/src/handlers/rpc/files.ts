@@ -811,12 +811,30 @@ async function createMarkdownHtml(content: string, title: string): Promise<strin
     '<meta charset="utf-8">',
     `<title>${escapeHtml(title)}</title>`,
     '<style>',
-    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.65;max-width:900px;margin:40px auto;padding:0 32px;color:#202124;}',
-    'h1,h2,h3{line-height:1.25;margin-top:1.6em;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #d0d7de;padding:6px 8px;} code,pre{background:#f6f8fa;border-radius:4px;} pre{padding:12px;overflow:auto;}',
+    '@page{size:A4;margin:18mm 16mm;}',
+    'html,body{margin:0;padding:0;background:#fff;}',
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;line-height:1.65;color:#202124;font-size:14px;}',
+    '.markdown-body{box-sizing:border-box;max-width:900px;margin:40px auto;padding:0 32px;}',
+    'h1,h2,h3,h4{line-height:1.25;margin:1.4em 0 .65em;break-after:avoid;}',
+    'h1{font-size:2em;} h2{font-size:1.55em;} h3{font-size:1.25em;}',
+    'p,ul,ol,blockquote,pre,table{margin:0 0 1em;}',
+    'ul,ol{padding-left:1.6em;} li{margin:.25em 0;}',
+    'a{color:#0969da;text-decoration:none;}',
+    'blockquote{border-left:4px solid #d0d7de;color:#57606a;padding:0 1em;}',
+    'table{border-collapse:collapse;width:100%;table-layout:fixed;page-break-inside:auto;}',
+    'tr{page-break-inside:avoid;page-break-after:auto;}',
+    'th,td{border:1px solid #d0d7de;padding:6px 8px;vertical-align:top;overflow-wrap:anywhere;word-break:break-word;}',
+    'th{background:#f6f8fa;font-weight:600;}',
+    'code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;background:#f6f8fa;border-radius:4px;}',
+    'code{padding:.15em .3em;} pre{padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;page-break-inside:avoid;} pre code{padding:0;background:transparent;}',
+    'img,svg,canvas{max-width:100%;height:auto;}',
+    '@media print{body{font-size:11pt;}.markdown-body{max-width:none;margin:0;padding:0;}a{color:#202124;}h1{font-size:22pt;}h2{font-size:17pt;}h3{font-size:14pt;}}',
     '</style>',
     '</head>',
     '<body>',
+    '<main class="markdown-body">',
     body,
+    '</main>',
     '</body>',
     '</html>',
   ].join('\n')
@@ -1049,7 +1067,7 @@ function createPdfBuffer(markdown: string): Buffer {
 }
 
 async function getAvailableExportPath(sourcePath: string, format: MarkdownExportFormat, targetPath?: string): Promise<string> {
-  if (targetPath) return targetPath
+  if (targetPath) return ensureExportExtension(targetPath, format)
   const parsed = parsePath(sourcePath)
   const baseName = sanitizeFilename(parsed.name || 'document')
   const ext = format === 'html' ? '.html' : `.${format}`
@@ -1062,11 +1080,25 @@ async function getAvailableExportPath(sourcePath: string, format: MarkdownExport
   return candidate
 }
 
+function ensureExportExtension(targetPath: string, format: MarkdownExportFormat): string {
+  const expectedExt = format === 'html' ? '.html' : `.${format}`
+  return extname(targetPath).toLowerCase() === expectedExt ? targetPath : `${targetPath}${expectedExt}`
+}
+
+function validateExportTargetPath(targetPath: string): string {
+  const formatCheck = validatePathFormat(targetPath)
+  if (!formatCheck.valid) {
+    throw new Error(formatCheck.reason ?? 'Invalid export target path')
+  }
+  return resolve(targetPath)
+}
+
 export async function buildMarkdownExport(args: {
   sourcePath: string
   content: string
   format: MarkdownExportFormat
   targetPath?: string
+  renderHtmlToPdf?: (html: string) => Promise<Buffer | Uint8Array>
 }): Promise<MarkdownExportResult> {
   const targetPath = await getAvailableExportPath(args.sourcePath, args.format, args.targetPath)
   const title = basename(args.sourcePath)
@@ -1077,7 +1109,10 @@ export async function buildMarkdownExport(args: {
   } else if (args.format === 'docx') {
     output = createDocxBuffer(args.content)
   } else {
-    output = createPdfBuffer(args.content)
+    const html = await createMarkdownHtml(args.content, title)
+    output = args.renderHtmlToPdf
+      ? Buffer.from(await args.renderHtmlToPdf(html))
+      : createPdfBuffer(args.content)
   }
 
   await mkdir(dirname(targetPath), { recursive: true })
@@ -1308,7 +1343,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       }
 
       const targetPath = options.targetPath
-        ? await validateFilePath(options.targetPath, allowedDirs)
+        ? validateExportTargetPath(options.targetPath)
         : undefined
       const content = options.content ?? await readFile(safePath, 'utf-8')
       return await buildMarkdownExport({
@@ -1316,6 +1351,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         content,
         format: options.format,
         targetPath,
+        renderHtmlToPdf: deps.platform.renderHtmlToPdf,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'

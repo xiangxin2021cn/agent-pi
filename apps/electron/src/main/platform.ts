@@ -6,6 +6,7 @@
  */
 
 import type { PlatformServices } from '../runtime/platform'
+import { BrowserWindow } from 'electron'
 
 export interface ElectronPlatformOptions {
   app: Electron.App
@@ -63,6 +64,33 @@ export function createElectronPlatform(opts: ElectronPlatformOptions): PlatformS
           ? result.toJPEG(processOpts.quality ?? 90)
           : result.toPNG()
       },
+    },
+    async renderHtmlToPdf(html) {
+      const win = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+          backgroundThrottling: false,
+        },
+      })
+      try {
+        await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+        await win.webContents.executeJavaScript(
+          'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true',
+          true,
+        ).catch(() => true)
+        return await win.webContents.printToPDF({
+          printBackground: true,
+          preferCSSPageSize: true,
+          margins: { marginType: 'none' },
+        })
+      } finally {
+        if (!win.isDestroyed()) {
+          win.destroy()
+        }
+      }
     },
     logger,
     isDebugMode: opts.isDebugMode,

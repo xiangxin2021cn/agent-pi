@@ -5,6 +5,7 @@ import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, LlmConnectionWithStatus, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
+import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -2079,6 +2080,87 @@ function WindowCloseHandler() {
   return null
 }
 
+type MarkdownDocumentExportFormat = Extract<MarkdownExportFormat, 'pdf' | 'docx'>
+
+function splitFilePath(filePath: string): { dir: string; name: string; separator: string } {
+  const slashIndex = filePath.lastIndexOf('/')
+  const backslashIndex = filePath.lastIndexOf('\\')
+  const index = Math.max(slashIndex, backslashIndex)
+  const separator = backslashIndex > slashIndex ? '\\' : '/'
+  if (index === -1) return { dir: '', name: filePath, separator }
+  return {
+    dir: filePath.slice(0, index),
+    name: filePath.slice(index + 1),
+    separator,
+  }
+}
+
+function stripKnownMarkdownExtension(name: string): string {
+  return name.replace(/\.(md|markdown)$/i, '')
+}
+
+function sanitizeExportBaseName(name: string): string {
+  return stripKnownMarkdownExtension(name)
+    .replace(/[<>:"|?*\x00-\x1f]/g, '_')
+    .replace(/[\\/]/g, '_')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    || 'document'
+}
+
+function getDefaultMarkdownExportPath(sourcePath: string, format: MarkdownDocumentExportFormat): string {
+  const { dir, name, separator } = splitFilePath(sourcePath)
+  const filename = `${sanitizeExportBaseName(name)}.${format}`
+  return dir ? `${dir}${separator}${filename}` : filename
+}
+
+function getDefaultMarkdownDownloadPath(sourcePath: string): string {
+  const { dir, name, separator } = splitFilePath(sourcePath)
+  const filename = `${sanitizeExportBaseName(name)}-copy.md`
+  return dir ? `${dir}${separator}${filename}` : filename
+}
+
+function getMarkdownExportFilter(format: MarkdownDocumentExportFormat) {
+  return format === 'pdf'
+    ? { name: 'PDF Document', extensions: ['pdf'] }
+    : { name: 'Word Document', extensions: ['docx'] }
+}
+
+async function downloadMarkdownWithSaveDialog(sourcePath: string, content: string) {
+  const result = await window.electronAPI.saveTextFileWithDialog({
+    title: 'Download Markdown',
+    defaultPath: getDefaultMarkdownDownloadPath(sourcePath),
+    buttonLabel: 'Save',
+    filters: [
+      { name: 'Markdown Document', extensions: ['md', 'markdown'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    content,
+  })
+
+  if (result.canceled || !result.filePath) return null
+  return { path: result.filePath }
+}
+
+async function exportMarkdownWithSaveDialog(
+  sourcePath: string,
+  format: MarkdownDocumentExportFormat,
+  content: string,
+  exportMarkdown: (path: string, options: Parameters<typeof window.electronAPI.exportMarkdown>[1]) => ReturnType<typeof window.electronAPI.exportMarkdown>,
+) {
+  const result = await window.electronAPI.showSaveDialog({
+    title: `Export ${format.toUpperCase()}`,
+    defaultPath: getDefaultMarkdownExportPath(sourcePath, format),
+    buttonLabel: 'Export',
+    filters: [
+      getMarkdownExportFilter(format),
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+
+  if (result.canceled || !result.filePath) return null
+  return exportMarkdown(sourcePath, { format, content, targetPath: result.filePath })
+}
+
 /**
  * FilePreviewRenderer - Routes file preview state to the correct overlay component.
  *
@@ -2177,7 +2259,8 @@ function FilePreviewRenderer({
           editable
           sourceMtimeMs={state.mtimeMs}
           onSave={(content, expectedMtimeMs) => saveTextFile(state.filePath, content, expectedMtimeMs)}
-          onExport={(format, content) => exportMarkdown(state.filePath, { format, content })}
+          onDownload={(content) => downloadMarkdownWithSaveDialog(state.filePath, content)}
+          onExport={(format, content) => exportMarkdownWithSaveDialog(state.filePath, format, content, exportMarkdown)}
         />
       )
     }

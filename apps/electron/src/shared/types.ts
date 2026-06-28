@@ -75,6 +75,26 @@ export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderTy
 // GUI-only types (not used by server/handler code)
 // =============================================================================
 
+export interface SaveDialogSpec {
+  title?: string
+  defaultPath?: string
+  buttonLabel?: string
+  filters?: Array<{ name: string; extensions: string[] }>
+}
+
+export interface SaveDialogResult {
+  canceled: boolean
+  filePath?: string
+}
+
+export interface SaveTextFileDialogSpec extends SaveDialogSpec {
+  content: string
+}
+
+export interface SaveTextFileDialogResult extends SaveDialogResult {
+  bytes?: number
+}
+
 /**
  * Browser toolbar window IPC channels (preload <-> BrowserPaneManager).
  * Kept separate from RPC_CHANNELS because these are scoped to toolbar windows.
@@ -326,6 +346,8 @@ export interface ElectronAPI {
   readFileDataUrl(path: string): Promise<string>
   /** Read an image file as a size-bounded preview data URL for lightweight thumbnail rendering. */
   readFilePreviewDataUrl(path: string, maxSize?: number): Promise<string>
+  showSaveDialog(spec: SaveDialogSpec): Promise<SaveDialogResult>
+  saveTextFileWithDialog(spec: SaveTextFileDialogSpec): Promise<SaveTextFileDialogResult>
   openFileDialog(): Promise<string[]>
   openAttachmentDialog(mode?: AttachmentDialogMode): Promise<AttachmentDialogResult>
   readFileAttachment(path: string): Promise<FileAttachment | null>

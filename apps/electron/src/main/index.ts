@@ -83,6 +83,7 @@ Sentry.setUser({ id: machineId })
 
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
 import { registerAllRpcHandlers } from './handlers/index'
@@ -554,6 +555,34 @@ app.whenReady().then(async () => {
         || BrowserWindow.getAllWindows()[0]
       const result = await dialog.showOpenDialog(win, spec)
       return { canceled: result.canceled, filePaths: result.filePaths }
+    })
+    ipcMain.handle('__dialog:showSaveDialog', async (event, spec) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showSaveDialog(win, spec)
+      return { canceled: result.canceled, filePath: result.filePath }
+    })
+    ipcMain.handle('__dialog:saveTextFileWithDialog', async (event, spec) => {
+      if (!spec || typeof spec.content !== 'string') {
+        throw new Error('Invalid text content')
+      }
+
+      const { content, ...dialogSpec } = spec
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showSaveDialog(win, dialogSpec)
+      if (result.canceled || !result.filePath) {
+        return { canceled: true }
+      }
+
+      await writeFile(result.filePath, content, 'utf-8')
+      return {
+        canceled: false,
+        filePath: result.filePath,
+        bytes: Buffer.byteLength(content, 'utf-8'),
+      }
     })
 
     if (!isClientOnly) {

@@ -64,8 +64,10 @@ export interface DocumentFormattedMarkdownOverlayProps {
   sourceMtimeMs?: number
   /** Save edited Markdown content back to the source file. */
   onSave?: (content: string, expectedMtimeMs?: number) => Promise<{ mtimeMs?: number }>
+  /** Download the current Markdown content to a user-selected local path. */
+  onDownload?: (content: string) => Promise<{ path: string } | null>
   /** Export Markdown content to a document format. */
-  onExport?: (format: Extract<MarkdownExportFormat, 'pdf' | 'docx'>, content: string) => Promise<{ path: string }>
+  onExport?: (format: Extract<MarkdownExportFormat, 'pdf' | 'docx'>, content: string) => Promise<{ path: string } | null>
 }
 
 function isEditableMarkdownPath(filePath?: string): boolean {
@@ -119,6 +121,7 @@ export function DocumentFormattedMarkdownOverlay({
   editable = false,
   sourceMtimeMs,
   onSave,
+  onDownload,
   onExport,
 }: DocumentFormattedMarkdownOverlayProps) {
   const canEdit = editable && isEditableMarkdownPath(filePath) && !!onSave
@@ -127,6 +130,7 @@ export function DocumentFormattedMarkdownOverlay({
   const [savedContent, setSavedContent] = useState(content)
   const [lastMtimeMs, setLastMtimeMs] = useState(sourceMtimeMs)
   const [isSaving, setIsSaving] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
   const [exportingFormat, setExportingFormat] = useState<MarkdownExportFormat | null>(null)
   const [localError, setLocalError] = useState<string | undefined>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>()
@@ -169,11 +173,30 @@ export function DocumentFormattedMarkdownOverlay({
     setStatusMessage(undefined)
     try {
       const result = await onExport(format, draftContent)
-      setStatusMessage(`Exported: ${result.path}`)
+      if (result?.path) {
+        setStatusMessage(`Exported: ${result.path}`)
+      }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : `Failed to export ${format.toUpperCase()}`)
     } finally {
       setExportingFormat(null)
+    }
+  }
+
+  const handleDownload = async () => {
+    if (!onDownload || isDownloading) return
+    setIsDownloading(true)
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const result = await onDownload(draftContent)
+      if (result?.path) {
+        setStatusMessage(`Saved: ${result.path}`)
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Failed to download Markdown file')
+    } finally {
+      setIsDownloading(false)
     }
   }
 
@@ -188,6 +211,12 @@ export function DocumentFormattedMarkdownOverlay({
       <HeaderIconButton title="Save Markdown" disabled={!isDirty || isSaving} onClick={handleSave}>
         <Save className="h-4 w-4" />
       </HeaderIconButton>
+      {onDownload && (
+        <HeaderIconButton title="Download Markdown" disabled={isDownloading} onClick={handleDownload}>
+          <Download className="h-4 w-4" />
+          MD
+        </HeaderIconButton>
+      )}
       {onExport && (
         <>
           <HeaderIconButton title="Export PDF" disabled={!!exportingFormat} onClick={() => handleExport('pdf')}>
