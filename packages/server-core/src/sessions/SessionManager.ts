@@ -1015,6 +1015,12 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     .filter(criterion => criterion.required)
     .map((criterion, index) => `${index + 1}. [${criterion.kind}] ${criterion.text}`)
     .join('\n')
+  const auditEvidence = input.result.evidence.length > 0
+    ? input.result.evidence.map((item, index) => {
+        const detail = item.detail ? ` - ${item.detail}` : ''
+        return `${index + 1}. [${item.type}] ${item.label}${detail}`
+      }).join('\n')
+    : '(none)'
 
   return [
     'You are reviewing whether an agent response completed the user objective.',
@@ -1029,6 +1035,9 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '',
     'Deterministic audit summary:',
     input.result.summary,
+    '',
+    'Audit evidence:',
+    auditEvidence,
     '',
     'Assistant final response:',
     input.finalAssistant.content.slice(0, 12000),

@@ -59,6 +59,16 @@ export class GoalController {
         detail: finalAssistant.id,
       })
     }
+    for (const message of turnMessages) {
+      if (message.role !== 'tool') continue
+      for (const path of extractFilePaths(message.toolInput)) {
+        evidence.push({
+          type: 'file',
+          label: message.toolName ?? 'tool_file',
+          detail: path.slice(0, 500),
+        })
+      }
+    }
     for (const message of errorMessages) {
       evidence.push({
         type: 'system',
@@ -199,6 +209,37 @@ export class GoalController {
       reason,
     }
   }
+}
+
+const FILE_PATH_INPUT_KEYS = new Set([
+  'file',
+  'file_path',
+  'filepath',
+  'filename',
+  'notebook_path',
+  'output',
+  'output_file',
+  'output_path',
+  'path',
+])
+
+function extractFilePaths(value: unknown, key?: string): string[] {
+  if (typeof value === 'string') {
+    return key && FILE_PATH_INPUT_KEYS.has(key.toLowerCase()) && value.trim()
+      ? [value.trim()]
+      : []
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(item => extractFilePaths(item, key))
+  }
+
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([childKey, childValue]) => extractFilePaths(childValue, childKey))
 }
 
 function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessageId?: string): Message[] {

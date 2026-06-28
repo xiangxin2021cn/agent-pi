@@ -211,6 +211,14 @@ describe('SessionManager goal loop routing', () => {
     const sessionId = 'goal-reviewer-pass'
     const managed = buildSession(sessionId)
     managed.goalState = goal({ mode: 'check_only' })
+    managed.messages.splice(1, 0, {
+      id: 't1',
+      role: 'tool',
+      content: 'read source',
+      timestamp: 1,
+      toolName: 'Read',
+      toolInput: { file_path: '/tmp/source.xlsx' },
+    })
     const events = captureEvents()
     const reviewPrompts: string[] = []
 
@@ -231,6 +239,7 @@ describe('SessionManager goal loop routing', () => {
 
     expect(reviewPrompts).toHaveLength(1)
     expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
+    expect(reviewPrompts[0]).toContain('/tmp/source.xlsx')
     expect(managed.goalState?.status).toBe('passed')
     expect(events.some(event => event.type === 'goal_completed')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
