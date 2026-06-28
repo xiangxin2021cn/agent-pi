@@ -229,16 +229,23 @@ export class GoalController {
 const FILE_PATH_INPUT_KEYS = new Set([
   'file',
   'file_path',
+  'file_paths',
   'filepath',
+  'filepaths',
+  'files',
   'filename',
   'notebook_path',
   'output',
   'output_file',
+  'output_files',
   'output_path',
+  'output_paths',
   'path',
+  'paths',
 ])
 
 const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
+const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
 
 function extractFilePaths(value: unknown, key?: string): string[] {
   if (typeof value === 'string') {
@@ -264,7 +271,10 @@ function extractFilePathsFromText(value: unknown): string[] {
     return []
   }
 
-  return [...new Set([...value.matchAll(FILE_PATH_TEXT_PATTERN)].map(match => match[0]))]
+  return [...new Set([
+    ...[...value.matchAll(QUOTED_FILE_PATH_TEXT_PATTERN)].map(match => match[1]),
+    ...[...value.matchAll(FILE_PATH_TEXT_PATTERN)].map(match => match[0]),
+  ])]
 }
 
 function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessageId?: string): Message[] {
