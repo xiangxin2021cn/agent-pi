@@ -225,6 +225,52 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.some(m => m.role === 'assistant' && m.content === 'Improved report complete.')).toBe(true)
   })
 
+  it('reuses the last sent attachments for a hidden goal continuation', async () => {
+    const sessionId = 'goal-hidden-turn-attachments'
+    const managed = buildSession(sessionId)
+    const sourcePath = join(tmpRoot, 'tender.pdf')
+    managed.goalState = goal({
+      status: 'improving',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [],
+    })
+    managed.lastSentAttachments = [{
+      type: 'pdf',
+      path: sourcePath,
+      name: 'tender.pdf',
+      mimeType: 'application/pdf',
+      size: 100,
+    }]
+    captureEvents()
+    const seenAttachments: unknown[] = []
+
+    ;(sm as unknown as {
+      getOrCreateAgent: () => Promise<{
+        chat: (prompt: string, attachments: unknown[]) => AsyncGenerator<unknown>
+        getSessionId: () => string
+      }>
+    }).getOrCreateAgent = async () => ({
+      chat: async function* (_prompt: string, attachments: unknown[]) {
+        seenAttachments.push(attachments)
+        yield {
+          type: 'text_complete',
+          text: 'Improved report with tender evidence.',
+          isIntermediate: false,
+        }
+        yield { type: 'complete' }
+      },
+      getSessionId: () => 'sdk-hidden-turn-attachments',
+    })
+
+    await (sm as unknown as {
+      runGoalContinuation: (sessionId: string, prompt: string, iteration: number) => Promise<void>
+    }).runGoalContinuation(sessionId, '<goal-audit>improve with source</goal-audit>', 1)
+
+    expect(seenAttachments).toEqual([managed.lastSentAttachments])
+    expect(managed.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['write a report'])
+  })
+
   it('can disable an existing goal loop before completion audits', async () => {
     const sessionId = 'goal-disable'
     const managed = buildSession(sessionId)

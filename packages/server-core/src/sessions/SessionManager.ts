@@ -7227,7 +7227,7 @@ export class SessionManager implements ISessionManager {
       toolMetadataStore.setSessionDir(chatSessionDir)
 
       sessionLog.info('Starting goal continuation for session:', sessionId)
-      const chatIterator = agent.chat(prompt, [])
+      const chatIterator = agent.chat(prompt, managed.lastSentAttachments ?? [])
 
       for await (const event of chatIterator) {
         if (event.type !== 'text_delta') {

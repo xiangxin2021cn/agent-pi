@@ -160,6 +160,7 @@ Current implementation slice:
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.
 - Comprehensive, detailed, or high-quality requests add a required coverage criterion so shallow outputs remain visible to the reviewer and auto-improvement loop.
+- Hidden auto-improvement turns reuse the previous turn's processed attachments so document/file-based work keeps source context without adding fake user messages.
 
 ## Where To Hook
 
