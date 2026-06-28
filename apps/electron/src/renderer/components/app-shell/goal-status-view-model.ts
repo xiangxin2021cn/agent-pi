@@ -21,6 +21,17 @@ export type GoalEditDraft = {
   criteria: GoalCriterionEditDraft[]
 }
 
+export type GoalLatestAuditPreview = {
+  iteration: number
+  status: SessionGoalState['auditHistory'][number]['status']
+  summary: string
+  missingCriteria: string[]
+  hiddenMissingCriteriaCount: number
+  evidenceCount: number
+}
+
+const LATEST_AUDIT_MISSING_LIMIT = 2
+
 export function getGoalBadgeValue(t: Translate, goalState: SessionGoalState): string {
   if (goalState.mode === 'off') {
     return getGoalModeLabel(t, 'off')
@@ -52,6 +63,20 @@ export function getGoalStatusText(
       return t('sessionInfo.goalFailed')
     case 'cancelled':
       return t('sessionInfo.goalCancelled')
+  }
+}
+
+export function getGoalLatestAuditPreview(goalState: SessionGoalState): GoalLatestAuditPreview | undefined {
+  const latest = goalState.auditHistory.at(-1)
+  if (!latest) return undefined
+
+  return {
+    iteration: latest.iteration,
+    status: latest.status,
+    summary: latest.summary,
+    missingCriteria: latest.missingCriteria.slice(0, LATEST_AUDIT_MISSING_LIMIT),
+    hiddenMissingCriteriaCount: Math.max(0, latest.missingCriteria.length - LATEST_AUDIT_MISSING_LIMIT),
+    evidenceCount: latest.evidence.length,
   }
 }
 

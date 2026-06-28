@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "Oznacz bieżący wynik jako zaakceptowany i zatrzymaj przegląd celu.",
   "sessionInfo.goalActionFailed": "Nie udało się zaktualizować stanu celu",
   "sessionInfo.goalAddCriterion": "Dodaj",
+  "sessionInfo.goalAuditEvidenceCount": "Dowody {{count}}",
   "sessionInfo.goalAuditFail": "Niepowodzenie",
   "sessionInfo.goalAuditHistory": "Audyty celu",
   "sessionInfo.goalAuditIteration": "Przebieg {{iteration}}",

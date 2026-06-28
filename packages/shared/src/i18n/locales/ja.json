@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "現在の結果を承認し、ゴール確認を終了します。",
   "sessionInfo.goalActionFailed": "ゴール状態を更新できませんでした",
   "sessionInfo.goalAddCriterion": "追加",
+  "sessionInfo.goalAuditEvidenceCount": "証拠 {{count}} 件",
   "sessionInfo.goalAuditFail": "失敗",
   "sessionInfo.goalAuditHistory": "ゴール監査",
   "sessionInfo.goalAuditIteration": "{{iteration}} 回目",

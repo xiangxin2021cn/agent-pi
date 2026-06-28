@@ -26,6 +26,7 @@ import {
   createBlankGoalCriterionDraft,
   createGoalEditDraft,
   getGoalBadgeValue,
+  getGoalLatestAuditPreview,
   getGoalManualActions,
   getGoalModeDescription,
   getGoalModeLabel,
@@ -295,6 +296,7 @@ function GoalModeBadge({
   const [draft, setDraft] = React.useState<GoalEditDraft>(() => createGoalEditDraft(goalState))
   const activeMode = VISIBLE_GOAL_MODES.includes(goalState.mode) ? goalState.mode : 'auto_improve'
   const manualActions = React.useMemo(() => getGoalManualActions(t, goalState), [goalState, t])
+  const latestAuditPreview = React.useMemo(() => getGoalLatestAuditPreview(goalState), [goalState])
   const canSaveGoal = draft.objective.trim().length > 0 && draft.criteria.some(criterion => criterion.text.trim().length > 0)
   const badgeColor = activeMode === 'off'
     ? 'var(--foreground)'
@@ -466,28 +468,72 @@ function GoalModeBadge({
               </button>
             </div>
           </div>
-        ) : VISIBLE_GOAL_MODES.map(mode => {
-          const selected = mode === activeMode
-          return (
-            <button
-              key={mode}
-              type="button"
-              className={cn(
-                "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
-                "hover:bg-foreground/5 outline-none",
-                selected && "bg-foreground/5"
-              )}
-              onClick={() => handleSelect(mode)}
-            >
-              <Target className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium text-foreground">{getGoalModeLabel(t, mode)}</span>
-                <span className="block text-xs text-muted-foreground leading-snug">{getGoalModeDescription(t, mode)}</span>
-              </span>
-              {selected && <Check className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
-            </button>
-          )
-        })}
+        ) : (
+          <>
+            {latestAuditPreview && (
+              <div className="m-1 rounded-[7px] bg-foreground/[0.035] px-2 py-1.5">
+                <div className="flex items-center gap-2 text-[11px] font-medium text-foreground/80">
+                  <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {t('sessionInfo.goalAuditIteration', { iteration: latestAuditPreview.iteration })}
+                  </span>
+                  <span className={cn(
+                    "shrink-0",
+                    latestAuditPreview.status === 'pass'
+                      ? "text-success"
+                      : latestAuditPreview.status === 'fail'
+                      ? "text-destructive"
+                      : "text-info"
+                  )}>
+                    {getCompactGoalAuditStatusText(t, latestAuditPreview.status)}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+                  {latestAuditPreview.summary}
+                </div>
+                {latestAuditPreview.missingCriteria.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {latestAuditPreview.missingCriteria.map((criterion, index) => (
+                      <div key={`${index}-${criterion}`} className="truncate text-[11px] leading-4 text-foreground/70" title={criterion}>
+                        {criterion}
+                      </div>
+                    ))}
+                    {latestAuditPreview.hiddenMissingCriteriaCount > 0 && (
+                      <div className="text-[11px] text-muted-foreground">
+                        {t('sessionInfo.goalAuditMoreItems', { count: latestAuditPreview.hiddenMissingCriteriaCount })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  {t('sessionInfo.goalAuditEvidenceCount', { count: latestAuditPreview.evidenceCount })}
+                </div>
+              </div>
+            )}
+            {VISIBLE_GOAL_MODES.map(mode => {
+              const selected = mode === activeMode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={cn(
+                    "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                    "hover:bg-foreground/5 outline-none",
+                    selected && "bg-foreground/5"
+                  )}
+                  onClick={() => handleSelect(mode)}
+                >
+                  <Target className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-foreground">{getGoalModeLabel(t, mode)}</span>
+                    <span className="block text-xs text-muted-foreground leading-snug">{getGoalModeDescription(t, mode)}</span>
+                  </span>
+                  {selected && <Check className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+                </button>
+              )
+            })}
+          </>
+        )}
         {!editing && goalState.mode !== 'off' && (
           <div className="mt-1 border-t border-border/60 pt-1">
             <button
@@ -532,6 +578,20 @@ function GoalModeBadge({
       </PopoverContent>
     </Popover>
   )
+}
+
+function getCompactGoalAuditStatusText(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: 'pass' | 'fail' | 'uncertain',
+): string {
+  switch (status) {
+    case 'pass':
+      return t('sessionInfo.goalAuditPass')
+    case 'fail':
+      return t('sessionInfo.goalAuditFail')
+    case 'uncertain':
+      return t('sessionInfo.goalAuditUncertain')
+  }
 }
 
 // ============================================================================

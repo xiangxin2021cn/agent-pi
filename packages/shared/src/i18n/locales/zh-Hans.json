@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "接受当前结果并结束目标审查。",
   "sessionInfo.goalActionFailed": "更新目标状态失败",
   "sessionInfo.goalAddCriterion": "新增",
+  "sessionInfo.goalAuditEvidenceCount": "证据 {{count}} 项",
   "sessionInfo.goalAuditFail": "失败",
   "sessionInfo.goalAuditHistory": "目标审查",
   "sessionInfo.goalAuditIteration": "第 {{iteration}} 轮",

@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "Marcar el resultado actual como aceptado y detener la revisión.",
   "sessionInfo.goalActionFailed": "No se pudo actualizar el estado del objetivo",
   "sessionInfo.goalAddCriterion": "Añadir",
+  "sessionInfo.goalAuditEvidenceCount": "Evidencias {{count}}",
   "sessionInfo.goalAuditFail": "Falló",
   "sessionInfo.goalAuditHistory": "Auditorías de objetivo",
   "sessionInfo.goalAuditIteration": "Vuelta {{iteration}}",

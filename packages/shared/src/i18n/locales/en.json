@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "Mark the current result as accepted and stop goal review.",
   "sessionInfo.goalActionFailed": "Failed to update goal state",
   "sessionInfo.goalAddCriterion": "Add",
+  "sessionInfo.goalAuditEvidenceCount": "Evidence {{count}}",
   "sessionInfo.goalAuditFail": "Fail",
   "sessionInfo.goalAuditHistory": "Goal audits",
   "sessionInfo.goalAuditIteration": "Pass {{iteration}}",

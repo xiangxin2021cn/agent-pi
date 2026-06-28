@@ -738,6 +738,7 @@
   "sessionInfo.goalAcceptDoneDesc": "Az aktuális eredmény elfogadása és a célellenőrzés leállítása.",
   "sessionInfo.goalActionFailed": "Nem sikerült frissíteni a cél állapotát",
   "sessionInfo.goalAddCriterion": "Hozzáadás",
+  "sessionInfo.goalAuditEvidenceCount": "Bizonyíték {{count}}",
   "sessionInfo.goalAuditFail": "Sikertelen",
   "sessionInfo.goalAuditHistory": "Célellenőrzések",
   "sessionInfo.goalAuditIteration": "{{iteration}}. kör",

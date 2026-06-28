@@ -163,6 +163,7 @@ Current implementation slice:
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.
 - Comprehensive, detailed, or high-quality requests add a required coverage criterion so shallow outputs remain visible to the reviewer and auto-improvement loop.
 - Hidden auto-improvement turns reuse the previous turn's processed attachments, and can restore persisted user attachments after reload, so document/file-based work keeps source context without adding fake user messages.
+- The Goal badge popover surfaces the latest audit summary, missing criteria, and evidence count so users can see why a session is continuing or needs review without opening the full session info panel.
 
 ## Where To Hook
 
@@ -397,7 +398,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Workspace settings now expose the default strategy for newly auto-detected work sessions.
+Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, latest audit summary, missing criteria, evidence count, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Workspace settings now expose the default strategy for newly auto-detected work sessions.
 
 Success criteria:
 
