@@ -252,6 +252,51 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(true)
   })
 
+  it('includes previous audit history in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-history'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({
+      mode: 'check_only',
+      iteration: 1,
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'The spreadsheet citation was still missing.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+        evidence: [{
+          type: 'file',
+          label: 'Read',
+          detail: '/tmp/source.xlsx',
+        }],
+        createdAt: 5,
+      }],
+    })
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The response now satisfies the explicit citation requirement.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('Previous goal audits:')
+    expect(reviewPrompts[0]).toContain('Iteration 1: fail - The spreadsheet citation was still missing.')
+    expect(reviewPrompts[0]).toContain('Missing: The final report cites the source spreadsheet.')
+    expect(reviewPrompts[0]).toContain('Correction: Add a concrete citation to source.xlsx.')
+  })
+
   it('emits goal audit started before waiting for the reviewer result', async () => {
     const sessionId = 'goal-reviewer-started-before-await'
     const managed = buildSession(sessionId)

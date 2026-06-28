@@ -1022,6 +1022,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
         return `${index + 1}. [${item.type}] ${item.label}${detail}`
       }).join('\n')
     : '(none)'
+  const previousAudits = buildGoalReviewAuditHistory(input.goalState.auditHistory)
   const recentTurnContext = buildGoalReviewTurnContext(input.messages, input.finalAssistant.id)
 
   return [
@@ -1041,6 +1042,9 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     'Audit evidence:',
     auditEvidence,
     '',
+    'Previous goal audits:',
+    previousAudits,
+    '',
     'Recent turn context:',
     recentTurnContext,
     '',
@@ -1055,6 +1059,22 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
     '- Keep missingCriteria specific and grounded in the required criteria.',
   ].join('\n')
+}
+
+function buildGoalReviewAuditHistory(history: SessionGoalState['auditHistory']): string {
+  if (history.length === 0) {
+    return '(none)'
+  }
+
+  return history.slice(-3).map(result => {
+    const missing = result.missingCriteria.length > 0
+      ? `\n  Missing: ${result.missingCriteria.slice(0, 4).map(summarizeGoalReviewMessage).join('; ')}`
+      : ''
+    const correction = result.correctivePrompt
+      ? `\n  Correction: ${summarizeGoalReviewMessage(result.correctivePrompt)}`
+      : ''
+    return `Iteration ${result.iteration}: ${result.status} - ${summarizeGoalReviewMessage(result.summary)}${missing}${correction}`
+  }).join('\n')
 }
 
 function buildGoalReviewTurnContext(messages: Message[], finalAssistantId: string): string {
