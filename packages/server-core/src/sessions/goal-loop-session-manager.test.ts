@@ -674,6 +674,7 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('file_preview')
     expect(reviewPrompts[0]).toContain('Executive summary')
     expect(reviewPrompts[0]).toContain('Key risk: missing permits.')
+    expect(reviewPrompts[0]).toContain('When verified file previews are present, judge the artifact content instead of relying only on the final response.')
     expect(managed.goalState?.status).toBe('passed')
   })
 

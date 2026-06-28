@@ -160,6 +160,7 @@ Current implementation slice:
 - When a formal output directory is available, requested output files must be written under `outputFolderPath`; files written elsewhere fail the audit before reviewer approval.
 - Output-specific fields such as `destination_path` and `target_path` are also verified on disk, so a reviewer cannot pass an export whose file was never created.
 - Verified text outputs include a bounded content preview in audit evidence, so the reviewer can inspect the actual artifact instead of relying only on the final assistant message.
+- The reviewer prompt explicitly requires checking verified artifact previews when present, not just the final assistant response.
 - Consecutive audits with the same missing criteria stop in `needs_review` instead of burning the remaining retry budget on the same failure.
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.
