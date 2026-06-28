@@ -391,6 +391,37 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
   })
 
+  it('continues when reviewer returns a needs_review status alias with a correction', async () => {
+    const sessionId = 'goal-reviewer-status-alias'
+    const managed = buildSession(sessionId)
+    const events = captureEvents()
+    const continuations: Array<{ sessionId: string; prompt: string; iteration: number }> = []
+
+    managed.agent = {
+      runMiniCompletion: async () => JSON.stringify({
+        status: 'needs_review',
+        summary: 'The citation still needs to be added.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+      }),
+    } as never
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (id, prompt, iteration) => {
+      continuations.push({ sessionId: id, prompt, iteration })
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(continuations).toHaveLength(1)
+    expect(continuations[0].sessionId).toBe(sessionId)
+    expect(continuations[0].prompt).toContain('Add a concrete citation to source.xlsx.')
+    expect(managed.goalState?.status).toBe('improving')
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
+  })
+
   it('emits goal audit started before waiting for the reviewer result', async () => {
     const sessionId = 'goal-reviewer-started-before-await'
     const managed = buildSession(sessionId)

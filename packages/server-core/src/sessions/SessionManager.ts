@@ -1110,10 +1110,7 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
 
   const jsonText = extractJsonObject(raw)
   const parsed = JSON.parse(jsonText) as Record<string, unknown>
-  const status = parsed.status
-  if (status !== 'pass' && status !== 'fail' && status !== 'uncertain') {
-    throw new Error('Goal reviewer returned invalid status')
-  }
+  const status = normalizeGoalReviewStatus(parsed.status)
 
   const missingCriteria = normalizeGoalReviewMissingCriteria(parsed.missingCriteria)
   const correctivePrompt = normalizeGoalReviewCorrectivePrompt(parsed.correctivePrompt)
@@ -1125,6 +1122,27 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
       : `Reviewer returned ${status}.`,
     missingCriteria,
     correctivePrompt,
+  }
+}
+
+function normalizeGoalReviewStatus(value: unknown): GoalReviewResult['status'] {
+  if (typeof value !== 'string') {
+    throw new Error('Goal reviewer returned invalid status')
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  switch (normalized) {
+    case 'pass':
+    case 'passed':
+      return 'pass'
+    case 'fail':
+    case 'failed':
+    case 'needs_review':
+      return 'fail'
+    case 'uncertain':
+      return 'uncertain'
+    default:
+      throw new Error('Goal reviewer returned invalid status')
   }
 }
 
