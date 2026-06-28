@@ -140,11 +140,12 @@ export class GoalController {
           result,
         })
         const reviewMissingCriteria = review.missingCriteria ?? (review.status === 'pass' ? [] : missingCriteria)
-        status = review.status === 'pass' && reviewMissingCriteria.length > 0
+        const contradictoryPass = review.status === 'pass' && (reviewMissingCriteria.length > 0 || review.correctivePrompt !== undefined)
+        status = contradictoryPass
           ? 'uncertain'
           : review.status
-        summary = review.status === 'pass' && reviewMissingCriteria.length > 0
-          ? 'Goal reviewer reported missing criteria while marking the result as pass.'
+        summary = contradictoryPass
+          ? 'Goal reviewer requested more work while marking the result as pass.'
           : review.summary
         result = {
           ...result,

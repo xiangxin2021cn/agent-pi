@@ -170,6 +170,39 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept a reviewer pass that still returns a corrective prompt', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete, but add a concrete citation.',
+        missingCriteria: [],
+        correctivePrompt: 'Add a concrete citation to the source spreadsheet.',
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('uncertain')
+      expect(decision.prompt).toContain('Add a concrete citation to the source spreadsheet.')
+    }
+  })
+
   test('continues automatically for auto_improve goals when reviewer finds missing criteria', async () => {
     const controller = new GoalController()
 
