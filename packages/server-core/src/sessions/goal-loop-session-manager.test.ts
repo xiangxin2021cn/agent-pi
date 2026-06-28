@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
+import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -82,6 +83,17 @@ describe('SessionManager goal loop routing', () => {
       events.push(event as SessionEvent)
     })
     return events
+  }
+
+  function saveWorkspaceGoalLoopDefault(goalLoop: unknown) {
+    saveWorkspaceConfig(tmpRoot, {
+      id: 'ws_test',
+      name: 'Test Workspace',
+      slug: 'test-workspace',
+      defaults: { goalLoop } as never,
+      createdAt: 1,
+      updatedAt: 1,
+    })
   }
 
   it('schedules an internal continuation instead of completing when auto_improve can continue', async () => {
@@ -775,6 +787,31 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.objective).toBe('招标文件条款有哪些风险？')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('evidence')
     expect(managed.goalState?.criteria.some(criterion => criterion.text.includes('Ground key facts'))).toBe(true)
+  })
+
+  it('does not auto-initialize a goal when the workspace goal loop default is off', async () => {
+    saveWorkspaceGoalLoopDefault({ defaultMode: 'off' })
+    const sessionId = 'goal-workspace-default-off'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBeUndefined()
+    expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
+  })
+
+  it('initializes a check-only goal when the workspace goal loop default is check_only', async () => {
+    saveWorkspaceGoalLoopDefault({ defaultMode: 'check_only' })
+    const sessionId = 'goal-workspace-default-check-only'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('check_only')
+    expect(managed.goalState?.maxIterations).toBe(1)
+    expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
   })
 
   it('adds follow-up work constraints to an existing goal', async () => {

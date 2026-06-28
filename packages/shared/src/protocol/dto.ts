@@ -691,6 +691,9 @@ export interface WorkspaceSettings {
   localMcpEnabled?: boolean
   defaultLlmConnection?: string
   enabledSourceSlugs?: string[]
+  goalLoop?: {
+    defaultMode?: Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>
+  }
 }
 
 // ---------------------------------------------------------------------------

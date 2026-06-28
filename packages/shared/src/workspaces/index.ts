@@ -7,6 +7,8 @@
 // Types
 export type {
   WorkspaceConfig,
+  WorkspaceGoalLoopConfig,
+  WorkspaceGoalLoopDefaultMode,
   CreateWorkspaceInput,
   LoadedWorkspace,
   WorkspaceSummary,

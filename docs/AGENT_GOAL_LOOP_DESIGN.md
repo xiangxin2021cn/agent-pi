@@ -1,6 +1,6 @@
 # Agent Goal Loop Design
 
-Status: design plus first implementation slice
+Status: design plus implementation slice with workspace defaults
 Scope: Agent Pi session execution quality control
 
 ## Why This Exists
@@ -153,6 +153,7 @@ Current implementation slice:
 - Real queued user messages still take priority over goal continuation.
 - `SessionManager` can use the active session agent's mini completion as a bounded reviewer for explicit required criteria.
 - The first real user message can conservatively initialize an `auto_improve` goal when it looks like a work task; casual chat, hidden sessions, and mini sessions are left alone.
+- Workspace settings can set the default goal-loop strategy for newly auto-detected work sessions: off, check only, or auto improve.
 
 ## Where To Hook
 
@@ -387,7 +388,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Still pending: workspace-level settings.
+Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Workspace settings now expose the default strategy for newly auto-detected work sessions.
 
 Success criteria:
 
@@ -414,7 +415,7 @@ The first shippable slice is now split into two layers:
 1. Backend foundation: persisted goal state, deterministic audit, and hidden continuation without fake user messages.
 2. Product surface: workspace/session setting, Goal card, deterministic checks plus mini-review JSON, and explicit controls.
 
-The backend foundation and a compact product surface are now in place. The next shippable UI slice should focus on workspace defaults for when the loop starts automatically.
+The backend foundation and a compact product surface are now in place. The next shippable slice should focus on artifact-aware strict work checks and clearer evidence surfaced in the session info panel.
 
 ## Main Risks
 

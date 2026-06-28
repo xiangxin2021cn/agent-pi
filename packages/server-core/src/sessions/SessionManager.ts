@@ -39,7 +39,7 @@ import {
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
+import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -1306,6 +1306,12 @@ function appendGoalObjectiveFollowUp(objective: string, message: string): string
 
   const base = objective.trim().slice(0, remaining)
   return `${base}${separator}${followUp}`.slice(0, maxLength)
+}
+
+function normalizeWorkspaceGoalLoopDefaultMode(value: unknown): WorkspaceGoalLoopDefaultMode | undefined {
+  return value === 'off' || value === 'check_only' || value === 'auto_improve'
+    ? value
+    : undefined
 }
 
 function recoverStaleGoalStateOnRestore(goalState: SessionGoalState | undefined): SessionGoalState | undefined {
@@ -6992,16 +6998,22 @@ export class SessionManager implements ISessionManager {
       storedAttachments,
       badges: options?.badges,
     })
+    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
+    const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
+    const mode = workspaceDefaultMode ?? policy.mode
+    if (mode === 'off') {
+      return
+    }
 
     const goalState: SessionGoalState = {
       id: randomUUID(),
       objective: message.trim().slice(0, 4000),
-      mode: policy.mode,
+      mode,
       status: 'running',
       createdAt: now,
       updatedAt: now,
       iteration: 0,
-      maxIterations: policy.maxIterations,
+      maxIterations: mode === 'check_only' ? 1 : policy.maxIterations,
       criteria,
       auditHistory: [],
       budgets: {
