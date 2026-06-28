@@ -17,6 +17,8 @@ interface ChatInputZoneProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
+  onGoalAccept?: () => void
+  onGoalImprove?: () => void
   tasks?: BackgroundTask[]
   sessionId: string
   sessionFolderPath?: string
@@ -39,6 +41,8 @@ export function ChatInputZone({
   onPermissionModeChange,
   goalState,
   onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -87,6 +91,8 @@ export function ChatInputZone({
           onPermissionModeChange={onPermissionModeChange}
           goalState={goalState}
           onGoalModeChange={onGoalModeChange}
+          onGoalAccept={onGoalAccept}
+          onGoalImprove={onGoalImprove}
           tasks={tasks}
           sessionId={sessionId}
           sessionFolderPath={sessionFolderPath}

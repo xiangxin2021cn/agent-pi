@@ -387,7 +387,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, and the session info panel shows status and audit history. Still pending: workspace-level settings, manual "run one more improvement", explicit "accept as done", and criteria editing.
+Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, plus manual "run one more improvement" and "accept as done" actions when a goal is waiting for review. The session info panel shows status and audit history. Still pending: workspace-level settings and criteria editing.
 
 Success criteria:
 
@@ -414,7 +414,7 @@ The first shippable slice is now split into two layers:
 1. Backend foundation: persisted goal state, deterministic audit, and hidden continuation without fake user messages.
 2. Product surface: workspace/session setting, Goal card, deterministic checks plus mini-review JSON, and explicit controls.
 
-The backend foundation and a compact product surface are now in place. The next shippable UI slice should focus on explicit user controls: accept current result as done, run one more improvement, edit acceptance criteria, and configure workspace defaults for when the loop starts automatically.
+The backend foundation and a compact product surface are now in place. The next shippable UI slice should focus on criteria editing and workspace defaults for when the loop starts automatically.
 
 ## Main Risks
 

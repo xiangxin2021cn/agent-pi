@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
-import { getGoalBadgeValue, getGoalStatusText } from './goal-status-view-model'
+import { getGoalBadgeValue, getGoalManualActions, getGoalStatusText } from './goal-status-view-model'
 
 const t = (key: string, values?: Record<string, unknown>) => {
   const suffix = values ? ` ${JSON.stringify(values)}` : ''
@@ -43,5 +43,26 @@ describe('goal status view model', () => {
   it('keeps off-mode badges focused on the disabled mode', () => {
     expect(getGoalBadgeValue(t, goalState({ mode: 'off', status: 'cancelled' })))
       .toBe('sessionInfo.goalModeOff')
+  })
+
+  it('shows manual goal actions only for review states', () => {
+    expect(getGoalManualActions(t, goalState({ status: 'running' }))).toEqual([])
+    expect(getGoalManualActions(t, goalState({ status: 'passed' }))).toEqual([])
+    expect(getGoalManualActions(t, goalState({ mode: 'off', status: 'cancelled' }))).toEqual([])
+
+    expect(getGoalManualActions(t, goalState({ status: 'needs_review' }))).toEqual([
+      {
+        id: 'improve',
+        label: 'sessionInfo.goalImproveAgain',
+        description: 'sessionInfo.goalImproveAgainDesc',
+      },
+      {
+        id: 'accept',
+        label: 'sessionInfo.goalAcceptDone',
+        description: 'sessionInfo.goalAcceptDoneDesc',
+      },
+    ])
+    expect(getGoalManualActions(t, goalState({ status: 'failed' })).map(action => action.id))
+      .toEqual(['improve', 'accept'])
   })
 })

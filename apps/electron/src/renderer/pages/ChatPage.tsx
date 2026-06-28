@@ -520,6 +520,22 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, t])
 
+  const handleGoalAccept = React.useCallback(async () => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'acceptGoal' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+    }
+  }, [sessionId, t])
+
+  const handleGoalImprove = React.useCallback(async () => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'runGoalImprovement' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+    }
+  }, [sessionId, t])
+
   const handleLabelsChange = React.useCallback((newLabels: string[]) => {
     onSessionLabelsChange?.(sessionId, newLabels)
   }, [sessionId, onSessionLabelsChange])
@@ -873,6 +889,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onPermissionModeChange={setPermissionMode}
               goalState={session.goalState}
               onGoalModeChange={handleGoalModeChange}
+              onGoalAccept={handleGoalAccept}
+              onGoalImprove={handleGoalImprove}
               enabledModes={enabledModes}
               inputValue={inputValue}
               onInputChange={handleInputChange}

@@ -254,6 +254,8 @@ export type SessionCommand =
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setPermissionMode'; mode: PermissionMode }
   | { type: 'setGoalMode'; mode: SessionGoalMode }
+  | { type: 'acceptGoal' }
+  | { type: 'runGoalImprovement' }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
   | { type: 'setSources'; sourceSlugs: string[] }

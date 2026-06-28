@@ -70,6 +70,8 @@ export interface ISessionManager {
 
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
   setSessionGoalMode(sessionId: string, mode: SessionGoalMode): void
+  acceptSessionGoal(sessionId: string): void
+  runSessionGoalImprovement(sessionId: string): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
   updateWorkingDirectory(sessionId: string, path: string): void
   setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>

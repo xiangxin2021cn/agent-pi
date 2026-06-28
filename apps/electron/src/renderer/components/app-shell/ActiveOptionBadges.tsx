@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
-import { Check, ChevronDown, Info, Target } from 'lucide-react'
+import { Check, CheckCircle2, ChevronDown, Info, RotateCcw, Target } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import type { BackgroundTask } from './ActiveTasksBar'
@@ -20,7 +20,7 @@ import { SessionStatusMenu } from '@/components/ui/session-status-menu'
 import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { openLabelLink } from '@/lib/open-label-link'
 import { SessionInfoPopover } from './SessionInfoPopover'
-import { getGoalBadgeValue, getGoalModeDescription, getGoalModeLabel } from './goal-status-view-model'
+import { getGoalBadgeValue, getGoalManualActions, getGoalModeDescription, getGoalModeLabel } from './goal-status-view-model'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -52,6 +52,10 @@ export interface ActiveOptionBadgesProps {
   goalState?: SessionGoalState
   /** Callback when goal loop mode changes */
   onGoalModeChange?: (mode: SessionGoalMode) => void
+  /** Callback when user accepts the current goal result */
+  onGoalAccept?: () => void
+  /** Callback when user requests one more goal improvement pass */
+  onGoalImprove?: () => void
   /** Background tasks to display */
   tasks?: BackgroundTask[]
   /** Session ID for opening preview windows */
@@ -97,6 +101,8 @@ export function ActiveOptionBadges({
   onPermissionModeChange,
   goalState,
   onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -172,6 +178,8 @@ export function ActiveOptionBadges({
             <GoalModeBadge
               goalState={goalState}
               onGoalModeChange={onGoalModeChange}
+              onGoalAccept={onGoalAccept}
+              onGoalImprove={onGoalImprove}
               sessionId={sessionId}
             />
           </div>
@@ -254,15 +262,20 @@ const VISIBLE_GOAL_MODES: SessionGoalMode[] = ['auto_improve', 'check_only', 'of
 function GoalModeBadge({
   goalState,
   onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
   sessionId,
 }: {
   goalState: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
+  onGoalAccept?: () => void
+  onGoalImprove?: () => void
   sessionId?: string
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   const activeMode = VISIBLE_GOAL_MODES.includes(goalState.mode) ? goalState.mode : 'auto_improve'
+  const manualActions = React.useMemo(() => getGoalManualActions(t, goalState), [goalState, t])
   const badgeColor = activeMode === 'off'
     ? 'var(--foreground)'
     : activeMode === 'check_only'
@@ -273,6 +286,15 @@ function GoalModeBadge({
     setOpen(false)
     onGoalModeChange?.(mode)
   }, [onGoalModeChange])
+
+  const handleManualAction = React.useCallback((actionId: 'improve' | 'accept') => {
+    setOpen(false)
+    if (actionId === 'improve') {
+      onGoalImprove?.()
+    } else {
+      onGoalAccept?.()
+    }
+  }, [onGoalAccept, onGoalImprove])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -322,6 +344,29 @@ function GoalModeBadge({
             </button>
           )
         })}
+        {manualActions.length > 0 && (
+          <div className="mt-1 border-t border-border/60 pt-1">
+            {manualActions.map(action => (
+              <button
+                key={action.id}
+                type="button"
+                className={cn(
+                  "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                  "hover:bg-foreground/5 outline-none"
+                )}
+                onClick={() => handleManualAction(action.id)}
+              >
+                {action.id === 'improve'
+                  ? <RotateCcw className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  : <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-foreground">{action.label}</span>
+                  <span className="block text-xs text-muted-foreground leading-snug">{action.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )

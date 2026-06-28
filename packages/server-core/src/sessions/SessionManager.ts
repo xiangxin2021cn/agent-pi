@@ -1062,6 +1062,36 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
   ].join('\n')
 }
 
+function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
+  const latestAudit = goalState.auditHistory.at(-1)
+  const missing = latestAudit?.missingCriteria.length
+    ? latestAudit.missingCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : '1. Re-check the deliverable against the original objective and acceptance criteria.'
+  const corrective = latestAudit?.correctivePrompt?.trim()
+    ? latestAudit.correctivePrompt.trim()
+    : 'Improve the current deliverable against the missing or unproven criteria.'
+
+  return [
+    '<goal-audit>',
+    'This is an internal manual goal improvement instruction, not a new user request.',
+    '',
+    'Objective:',
+    goalState.objective,
+    '',
+    'The user requested one more improvement pass from the current goal review state.',
+    latestAudit ? `Last audit summary: ${latestAudit.summary}` : 'Last audit summary: (none)',
+    '',
+    'Missing or unproven criteria:',
+    missing,
+    '',
+    'Corrective action:',
+    corrective,
+    '',
+    'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
+    '</goal-audit>',
+  ].join('\n')
+}
+
 const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
 
 function buildGoalReviewAuditHistory(history: SessionGoalState['auditHistory']): string {
@@ -7562,6 +7592,71 @@ export class SessionManager implements ISessionManager {
       goalState: managed.goalState,
     }, managed.workspace.id)
     this.persistSession(managed)
+  }
+
+  /**
+   * Mark the current goal as accepted by the user.
+   */
+  acceptSessionGoal(sessionId: string): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.goalState || managed.goalState.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot accept a goal while the session is processing')
+    }
+
+    managed.goalState = {
+      ...managed.goalState,
+      status: 'passed',
+      updatedAt: Date.now(),
+    }
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.sendEvent({
+      type: 'goal_completed',
+      sessionId: managed.id,
+      goalId: managed.goalState.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+  }
+
+  /**
+   * Run one explicit hidden improvement pass from a manual review state.
+   */
+  runSessionGoalImprovement(sessionId: string): void {
+    const managed = this.sessions.get(sessionId)
+    const current = managed?.goalState
+    if (!managed || !current || current.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot run a goal improvement while the session is processing')
+    }
+    if (current.status !== 'needs_review' && current.status !== 'failed') {
+      return
+    }
+
+    const prompt = buildManualGoalImprovementPrompt(current)
+    managed.goalState = {
+      ...current,
+      status: 'improving',
+      maxIterations: current.iteration + 1,
+      updatedAt: Date.now(),
+    }
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+    this.scheduleGoalContinuation(sessionId, prompt, current.iteration)
   }
 
   /**

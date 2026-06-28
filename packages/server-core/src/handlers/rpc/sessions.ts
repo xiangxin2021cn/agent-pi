@@ -534,6 +534,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionManager.setSessionPermissionMode(sessionId, command.mode)
       case 'setGoalMode':
         return sessionManager.setSessionGoalMode(sessionId, command.mode)
+      case 'acceptGoal':
+        return sessionManager.acceptSessionGoal(sessionId)
+      case 'runGoalImprovement':
+        return sessionManager.runSessionGoalImprovement(sessionId)
       case 'setThinkingLevel':
         // Validate thinking level before passing to session manager
         if (!isValidThinkingLevel(command.level)) {

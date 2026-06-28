@@ -224,6 +224,81 @@ describe('SessionManager goal loop routing', () => {
     )).toBe(true)
   })
 
+  it('accepts a needs-review goal as done without scheduling another pass', () => {
+    const sessionId = 'goal-accept'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        status: 'needs_review',
+        iteration: 2,
+        maxIterations: 2,
+      }),
+    })
+    const events = captureEvents()
+    const continuations: string[] = []
+
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string) => void
+    }).scheduleGoalContinuation = (id) => {
+      continuations.push(id)
+    }
+
+    ;(sm as unknown as {
+      acceptSessionGoal: (sessionId: string) => void
+    }).acceptSessionGoal(sessionId)
+
+    expect(managed.goalState?.status).toBe('passed')
+    expect(continuations).toEqual([])
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.status === 'passed'
+    )).toBe(true)
+    expect(events.some(event => event.type === 'goal_completed')).toBe(true)
+  })
+
+  it('runs one manual improvement pass from a needs-review audit', () => {
+    const sessionId = 'goal-manual-improve'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        status: 'needs_review',
+        iteration: 2,
+        maxIterations: 5,
+        auditHistory: [{
+          iteration: 2,
+          status: 'fail',
+          summary: 'The spreadsheet citation is still missing.',
+          missingCriteria: ['The final report cites the source spreadsheet.'],
+          correctivePrompt: 'Add a concrete citation to source.xlsx.',
+          evidence: [],
+          createdAt: 5,
+        }],
+      }),
+    })
+    const events = captureEvents()
+    const continuations: Array<{ sessionId: string; prompt: string; iteration: number }> = []
+
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (id, prompt, iteration) => {
+      continuations.push({ sessionId: id, prompt, iteration })
+    }
+
+    ;(sm as unknown as {
+      runSessionGoalImprovement: (sessionId: string) => void
+    }).runSessionGoalImprovement(sessionId)
+
+    expect(managed.goalState?.status).toBe('improving')
+    expect(managed.goalState?.iteration).toBe(2)
+    expect(managed.goalState?.maxIterations).toBe(3)
+    expect(continuations).toHaveLength(1)
+    expect(continuations[0].sessionId).toBe(sessionId)
+    expect(continuations[0].iteration).toBe(2)
+    expect(continuations[0].prompt).toContain('Add a concrete citation to source.xlsx.')
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.status === 'improving'
+    )).toBe(true)
+  })
+
   it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
     const sessionId = 'goal-reviewer-pass'
     const managed = buildSession(sessionId)

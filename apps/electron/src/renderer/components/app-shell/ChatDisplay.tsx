@@ -170,6 +170,8 @@ interface ChatDisplayProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
+  onGoalAccept?: () => void
+  onGoalImprove?: () => void
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
   // Input value preservation (controlled from parent)
@@ -460,6 +462,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onPermissionModeChange,
   goalState,
   onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
   enabledModes,
   // Input value preservation
   inputValue,
@@ -1924,6 +1928,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onPermissionModeChange={onPermissionModeChange}
             goalState={goalState ?? session.goalState}
             onGoalModeChange={onGoalModeChange}
+            onGoalAccept={onGoalAccept}
+            onGoalImprove={onGoalImprove}
             tasks={backgroundTasks}
             sessionId={session.id}
             sessionFolderPath={sessionFolderPath}

@@ -2,6 +2,12 @@ import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sess
 
 type Translate = (key: string, values?: Record<string, unknown>) => string
 
+export type GoalManualAction = {
+  id: 'improve' | 'accept'
+  label: string
+  description: string
+}
+
 export function getGoalBadgeValue(t: Translate, goalState: SessionGoalState): string {
   if (goalState.mode === 'off') {
     return getGoalModeLabel(t, 'off')
@@ -60,4 +66,23 @@ export function getGoalModeDescription(t: Translate, mode: SessionGoalMode): str
     case 'strict_work':
       return t('sessionInfo.goalModeAutoImproveDesc')
   }
+}
+
+export function getGoalManualActions(t: Translate, goalState: SessionGoalState): GoalManualAction[] {
+  if (goalState.mode === 'off' || (goalState.status !== 'needs_review' && goalState.status !== 'failed')) {
+    return []
+  }
+
+  return [
+    {
+      id: 'improve',
+      label: t('sessionInfo.goalImproveAgain'),
+      description: t('sessionInfo.goalImproveAgainDesc'),
+    },
+    {
+      id: 'accept',
+      label: t('sessionInfo.goalAcceptDone'),
+      description: t('sessionInfo.goalAcceptDoneDesc'),
+    },
+  ]
 }
