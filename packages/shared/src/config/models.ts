@@ -67,6 +67,8 @@ const DEPRECATED_MODEL_REPLACEMENTS: Record<string, string> = {
   'eu.anthropic.claude-opus-4-7-v1': 'eu.anthropic.claude-opus-4-7',
   'global.anthropic.claude-opus-4-6-v1': 'global.anthropic.claude-opus-4-8',
   'global.anthropic.claude-opus-4-7-v1': 'global.anthropic.claude-opus-4-7',
+  'grok-4': 'grok-4.3',
+  'x-ai/grok-4': 'x-ai/grok-4.3',
 };
 
 /** Normalize deprecated built-in model IDs to the current supported replacement. */

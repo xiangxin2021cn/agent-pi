@@ -49,9 +49,9 @@ import type { TextContent as PiTextContent } from '@earendil-works/pi-ai';
 // Pre-register the Bedrock provider module so the Pi SDK doesn't attempt a
 // dynamic import of "./amazon-bedrock.js" — which fails in the bundled output
 // because bun collapses everything into a single file.
-// With the current Pi SDK (0.70.0 here), pi-ai is deduped (single hoisted
-// copy), so one registration covers both pi-ai and pi-agent-core module scopes.
-import { setBedrockProviderModule } from '@earendil-works/pi-ai';
+// pi-ai 0.80 moved the legacy global API surface to /compat. Keep this
+// registration on compat until the server migrates to createModels().
+import { setBedrockProviderModule } from '@earendil-works/pi-ai/compat';
 import { bedrockProviderModule } from '@earendil-works/pi-ai/bedrock-provider';
 setBedrockProviderModule(bedrockProviderModule);
 
