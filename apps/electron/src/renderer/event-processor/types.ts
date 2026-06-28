@@ -6,6 +6,7 @@
  */
 
 import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, SessionStatus, AuthRequest, ToolDisplayMeta } from '../../shared/types'
+import type { SessionGoalAuditResult, SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 
 /**
  * Streaming state for a session - replaces streamingTextRef
@@ -456,6 +457,37 @@ export interface SourceActivatedEvent {
   originalMessage: string
 }
 
+export interface GoalAuditStartedEvent {
+  type: 'goal_audit_started'
+  sessionId: string
+  goalId: string
+  iteration: number
+  mode: SessionGoalMode
+}
+
+export interface GoalAuditResultEvent {
+  type: 'goal_audit_result'
+  sessionId: string
+  goalId: string
+  result: SessionGoalAuditResult
+  goalState: SessionGoalState
+}
+
+export interface GoalCompletedEvent {
+  type: 'goal_completed'
+  sessionId: string
+  goalId: string
+  goalState: SessionGoalState
+}
+
+export interface GoalNeedsReviewEvent {
+  type: 'goal_needs_review'
+  sessionId: string
+  goalId: string
+  goalState: SessionGoalState
+  reason: string
+}
+
 /**
  * Usage update event - real-time context usage during processing
  * Allows UI to show growing context as agent processes, not just on complete
@@ -513,6 +545,10 @@ export type AgentEvent =
   | AuthRequestEvent
   | AuthCompletedEvent
   | SourceActivatedEvent
+  | GoalAuditStartedEvent
+  | GoalAuditResultEvent
+  | GoalCompletedEvent
+  | GoalNeedsReviewEvent
   | UsageUpdateEvent
 
 /**

@@ -39,6 +39,10 @@ import type {
   AuthRequestEvent,
   AuthCompletedEvent,
   UsageUpdateEvent,
+  GoalAuditStartedEvent,
+  GoalAuditResultEvent,
+  GoalCompletedEvent,
+  GoalNeedsReviewEvent,
   Effect,
 } from '../types'
 import type { Message } from '../../../shared/types'
@@ -913,6 +917,55 @@ export function handleAuthCompleted(
   }
 }
 
+export function handleGoalAuditStarted(
+  state: SessionState,
+  event: GoalAuditStartedEvent
+): ProcessResult {
+  const { session, streaming } = state
+  const current = session.goalState
+
+  if (!current || current.id !== event.goalId) {
+    return {
+      state: { ...state, session: { ...session } },
+      effects: [],
+    }
+  }
+
+  return {
+    state: {
+      session: {
+        ...session,
+        goalState: {
+          ...current,
+          status: 'auditing',
+          iteration: event.iteration,
+          mode: event.mode,
+        },
+      },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+export function handleGoalStateUpdated(
+  state: SessionState,
+  event: GoalAuditResultEvent | GoalCompletedEvent | GoalNeedsReviewEvent
+): ProcessResult {
+  const { session, streaming } = state
+
+  return {
+    state: {
+      session: {
+        ...session,
+        goalState: event.goalState,
+      },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
 /**
  * Handle usage_update - real-time context usage during processing
  * Merges usage update into existing tokenUsage (preserves outputTokens, costUsd, etc.)
@@ -946,4 +999,3 @@ export function handleUsageUpdate(
     effects: [],
   }
 }
-

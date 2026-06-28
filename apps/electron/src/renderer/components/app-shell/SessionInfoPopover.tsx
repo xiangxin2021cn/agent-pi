@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, Loader2 } from 'lucide-react'
+import { Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, Loader2, Target } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
@@ -8,6 +8,7 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import type { SessionOutputDirectory } from '../../../shared/types'
+import type { SessionGoalState } from '@craft-agent/shared/sessions'
 
 interface SessionInfoPopoverProps {
   sessionId: string
@@ -202,6 +203,10 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     return slugs.map(slug => bySlug.get(slug) ?? slug)
   }, [enabledSources, session?.enabledSourceSlugs])
 
+  const goalStatus = session?.goalState
+    ? getGoalStatusText(t, session.goalState.status, session.goalState.iteration, session.goalState.maxIterations)
+    : undefined
+
   const progressItems = [
     {
       key: 'status',
@@ -216,6 +221,15 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       label: t('common.model'),
       value: [connection?.name, session?.model].filter(Boolean).join(' · ') || t('chat.connectionDefault'),
     },
+    ...(session?.goalState && goalStatus ? [{
+      key: 'goal',
+      icon: session.goalState.status === 'auditing' || session.goalState.status === 'improving'
+        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        : <Target className="h-3.5 w-3.5" />,
+      label: t('sessionInfo.goal'),
+      value: goalStatus,
+      active: ['running', 'auditing', 'improving'].includes(session.goalState.status),
+    }] : []),
     {
       key: 'workdir',
       icon: <FolderOpen className="h-3.5 w-3.5" />,
@@ -284,6 +298,27 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       </InfoBlock>
     </div>
   )
+}
+
+function getGoalStatusText(t: ReturnType<typeof useTranslation>['t'], status: SessionGoalState['status'], iteration: number, maxIterations: number): string {
+  switch (status) {
+    case 'idle':
+      return t('sessionInfo.goalIdle')
+    case 'running':
+      return t('sessionInfo.goalRunning', { iteration, max: maxIterations })
+    case 'auditing':
+      return t('sessionInfo.goalAuditing', { iteration, max: maxIterations })
+    case 'improving':
+      return t('sessionInfo.goalImproving', { iteration, max: maxIterations })
+    case 'passed':
+      return t('sessionInfo.goalPassed', { iteration, max: maxIterations })
+    case 'needs_review':
+      return t('sessionInfo.goalNeedsReview', { iteration, max: maxIterations })
+    case 'failed':
+      return t('sessionInfo.goalFailed')
+    case 'cancelled':
+      return t('sessionInfo.goalCancelled')
+  }
 }
 
 function InfoBlock({ title, children }: { title: string; children: React.ReactNode }) {
