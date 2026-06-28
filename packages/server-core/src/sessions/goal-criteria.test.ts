@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import {
+  COMPREHENSIVE_QUALITY_CRITERION_TEXT,
   FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
   TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
   buildGoalCriteriaFromMessage,
@@ -121,6 +122,26 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
 
     expect(criteria.some(criterion => criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT)).toBe(false)
+  })
+
+  it('adds a coverage criterion when the request asks for comprehensive high-quality work', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请全面详细分析这个项目并输出高质量报告',
+    })
+
+    expect(criteria).toContainEqual({
+      text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+  })
+
+  it('does not add a coverage criterion for ordinary short analysis requests', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请分析这个项目的关键风险',
+    })
+
+    expect(criteria.some(criterion => criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT)).toBe(false)
   })
 })
 

@@ -159,6 +159,7 @@ Current implementation slice:
 - Consecutive audits with the same missing criteria stop in `needs_review` instead of burning the remaining retry budget on the same failure.
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.
+- Comprehensive, detailed, or high-quality requests add a required coverage criterion so shallow outputs remain visible to the reviewer and auto-improvement loop.
 
 ## Where To Hook
 

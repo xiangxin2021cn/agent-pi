@@ -29,6 +29,7 @@ const SOURCE_GROUNDED_CRITERION: SessionGoalCriterionSpec = {
 
 export const FILE_OUTPUT_REQUIRED_CRITERION_TEXT = 'Create or update the requested output file(s), and leave verifiable file path evidence in the turn.'
 export const TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT = 'Run the requested verification command(s), and leave successful tool evidence in the turn.'
+export const COMPREHENSIVE_QUALITY_CRITERION_TEXT = 'Cover the requested scope comprehensively and in enough detail for the requested high-quality work product.'
 
 const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
 const VERIFICATION_PATTERN = /验证|测试|检查|核对|复核|校验|verify|test|check|validate/i
@@ -57,6 +58,14 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     criteria.push({
       text: 'Produce a structured, readable deliverable with clear sections and enough detail for the requested work product.',
       kind: 'format',
+      required: true,
+    })
+  }
+
+  if (COMPREHENSIVE_PATTERN.test(message)) {
+    criteria.push({
+      text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+      kind: 'coverage',
       required: true,
     })
   }
