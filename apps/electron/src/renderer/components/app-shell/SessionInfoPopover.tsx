@@ -8,8 +8,8 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
+import { getGoalStatusText } from './goal-status-view-model'
 import type { SessionOutputDirectory } from '../../../shared/types'
-import type { SessionGoalState } from '@craft-agent/shared/sessions'
 
 interface SessionInfoPopoverProps {
   sessionId: string
@@ -402,27 +402,6 @@ function getGoalEvidenceTypeText(t: ReturnType<typeof useTranslation>['t'], type
       return t('sessionInfo.goalEvidenceTest')
     case 'tool':
       return t('sessionInfo.goalEvidenceTool')
-  }
-}
-
-function getGoalStatusText(t: ReturnType<typeof useTranslation>['t'], status: SessionGoalState['status'], iteration: number, maxIterations: number): string {
-  switch (status) {
-    case 'idle':
-      return t('sessionInfo.goalIdle')
-    case 'running':
-      return t('sessionInfo.goalRunning', { iteration, max: maxIterations })
-    case 'auditing':
-      return t('sessionInfo.goalAuditing', { iteration, max: maxIterations })
-    case 'improving':
-      return t('sessionInfo.goalImproving', { iteration, max: maxIterations })
-    case 'passed':
-      return t('sessionInfo.goalPassed', { iteration, max: maxIterations })
-    case 'needs_review':
-      return t('sessionInfo.goalNeedsReview', { iteration, max: maxIterations })
-    case 'failed':
-      return t('sessionInfo.goalFailed')
-    case 'cancelled':
-      return t('sessionInfo.goalCancelled')
   }
 }
 

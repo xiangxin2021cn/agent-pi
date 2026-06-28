@@ -20,6 +20,7 @@ import { SessionStatusMenu } from '@/components/ui/session-status-menu'
 import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { openLabelLink } from '@/lib/open-label-link'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { getGoalBadgeValue, getGoalModeDescription, getGoalModeLabel } from './goal-status-view-model'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -278,7 +279,7 @@ function GoalModeBadge({
       <PopoverTrigger asChild>
         <MetadataBadge
           label={t('sessionInfo.goal')}
-          value={getGoalModeLabel(t, activeMode)}
+          value={getGoalBadgeValue(t, goalState)}
           badgeColor={badgeColor}
           interactive
           isActive={open}
@@ -324,32 +325,6 @@ function GoalModeBadge({
       </PopoverContent>
     </Popover>
   )
-}
-
-function getGoalModeLabel(t: ReturnType<typeof useTranslation>['t'], mode: SessionGoalMode): string {
-  switch (mode) {
-    case 'auto_improve':
-      return t('sessionInfo.goalModeAutoImprove')
-    case 'check_only':
-      return t('sessionInfo.goalModeCheckOnly')
-    case 'off':
-      return t('sessionInfo.goalModeOff')
-    case 'strict_work':
-      return t('sessionInfo.goalModeAutoImprove')
-  }
-}
-
-function getGoalModeDescription(t: ReturnType<typeof useTranslation>['t'], mode: SessionGoalMode): string {
-  switch (mode) {
-    case 'auto_improve':
-      return t('sessionInfo.goalModeAutoImproveDesc')
-    case 'check_only':
-      return t('sessionInfo.goalModeCheckOnlyDesc')
-    case 'off':
-      return t('sessionInfo.goalModeOffDesc')
-    case 'strict_work':
-      return t('sessionInfo.goalModeAutoImproveDesc')
-  }
 }
 
 // ============================================================================
