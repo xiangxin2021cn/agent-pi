@@ -378,6 +378,19 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.objective).toBe('请整理一份项目分析报告')
   })
 
+  it('initializes a goal for source-sensitive risk review requests', async () => {
+    const sessionId = 'goal-auto-init-source-risk'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '招标文件条款有哪些风险？').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.objective).toBe('招标文件条款有哪些风险？')
+    expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('evidence')
+    expect(managed.goalState?.criteria.some(criterion => criterion.text.includes('Ground key facts'))).toBe(true)
+  })
+
   it('adds follow-up work constraints to an existing goal', async () => {
     const sessionId = 'goal-update-follow-up'
     const managed = buildSession(sessionId, {

@@ -1159,7 +1159,7 @@ function isWorkLikeGoalMessage(
     return true
   }
 
-  const workVerbPattern = /实现|修复|改造|生成|输出|撰写|整理|分析|总结|审查|检查|验证|测试|打包|发布|导出|转换|预览|设计|开发|优化|调研|review|build|create|implement|fix|generate|write|draft|summari[sz]e|analy[sz]e|verify|test|package|release|export|convert|preview|design|develop|optimi[sz]e|research/i
+  const workVerbPattern = /实现|修复|改造|生成|输出|撰写|整理|分析|总结|审查|检查|验证|测试|打包|发布|导出|转换|预览|设计|开发|优化|调研|编制|提取|评估|对比|风险|review|build|create|implement|fix|generate|write|draft|summari[sz]e|analy[sz]e|verify|test|package|release|export|convert|preview|design|develop|optimi[sz]e|research|extract|assess|evaluate|compare|risk/i
   return workVerbPattern.test(trimmed)
 }
 
