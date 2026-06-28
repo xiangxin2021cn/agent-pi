@@ -6,6 +6,7 @@ import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import xlsx from 'xlsx'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
@@ -38,6 +39,13 @@ function goal(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
     auditHistory: [],
     ...overrides,
   }
+}
+
+function writeWorkbook(path: string, rows: unknown[][]): void {
+  const workbook = xlsx.utils.book_new()
+  const worksheet = xlsx.utils.aoa_to_sheet(rows)
+  xlsx.utils.book_append_sheet(workbook, worksheet, 'BOQ')
+  xlsx.writeFile(workbook, path)
 }
 
 describe('SessionManager goal loop routing', () => {
@@ -675,6 +683,66 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('Executive summary')
     expect(reviewPrompts[0]).toContain('Key risk: missing permits.')
     expect(reviewPrompts[0]).toContain('When verified file previews are present, judge the artifact content instead of relying only on the final response.')
+    expect(managed.goalState?.status).toBe('passed')
+  })
+
+  it('includes verified spreadsheet output previews in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-spreadsheet-preview'
+    const workingDirectory = join(tmpRoot, 'project')
+    const outputDirectory = join(workingDirectory, FORMAL_OUTPUTS_DIR_NAME, sessionId)
+    const outputPath = join(outputDirectory, 'boq-summary.xlsx')
+    mkdirSync(outputDirectory, { recursive: true })
+    writeWorkbook(outputPath, [
+      ['Item', 'Quantity'],
+      ['Concrete', 42],
+    ])
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }, {
+          id: 'crit-boq',
+          text: 'The workbook includes BOQ quantities for concrete.',
+          kind: 'coverage',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages.splice(1, 0, message('t1', 'tool', 'created', {
+      toolName: 'Write',
+      toolStatus: 'completed',
+      toolInput: { file_path: outputPath },
+    }))
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The spreadsheet output satisfies the requested BOQ content.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('file_preview')
+    expect(reviewPrompts[0]).toContain('bounded spreadsheet preview')
+    expect(reviewPrompts[0]).toContain('BOQ')
+    expect(reviewPrompts[0]).toContain('Concrete')
+    expect(reviewPrompts[0]).toContain('42')
     expect(managed.goalState?.status).toBe('passed')
   })
 

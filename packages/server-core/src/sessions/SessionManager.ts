@@ -105,6 +105,7 @@ import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntr
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -1111,6 +1112,8 @@ function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriteri
 
 const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
 const GOAL_FILE_PREVIEW_MAX_BYTES = 12_000
+const GOAL_SPREADSHEET_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
 const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
   '.c',
   '.cc',
@@ -1141,7 +1144,28 @@ const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
 ])
 
 async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{ content: string; truncated: boolean } | undefined> {
-  if (!GOAL_FILE_PREVIEW_TEXT_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+  const extension = extname(filePath).toLowerCase()
+
+  if (GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS.has(extension)) {
+    if (sizeBytes > GOAL_SPREADSHEET_PREVIEW_MAX_BYTES) {
+      return {
+        content: `Spreadsheet output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      const preview = createSpreadsheetMarkdownPreview(filePath, basename(filePath))
+      return {
+        content: preview.textContent,
+        truncated: !preview.fullConversionAllowed,
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  if (!GOAL_FILE_PREVIEW_TEXT_EXTENSIONS.has(extension)) {
     return undefined
   }
 
