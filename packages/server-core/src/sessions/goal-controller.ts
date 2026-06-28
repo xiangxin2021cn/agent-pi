@@ -135,13 +135,18 @@ export class GoalController {
           finalAssistant,
           result,
         })
-        status = review.status
-        summary = review.summary
+        const reviewMissingCriteria = review.missingCriteria ?? (review.status === 'pass' ? [] : missingCriteria)
+        status = review.status === 'pass' && reviewMissingCriteria.length > 0
+          ? 'uncertain'
+          : review.status
+        summary = review.status === 'pass' && reviewMissingCriteria.length > 0
+          ? 'Goal reviewer reported missing criteria while marking the result as pass.'
+          : review.summary
         result = {
           ...result,
           status,
           summary,
-          missingCriteria: review.missingCriteria ?? (status === 'pass' ? [] : missingCriteria),
+          missingCriteria: reviewMissingCriteria,
           correctivePrompt: review.correctivePrompt,
           evidence: review.evidence ? [...evidence, ...review.evidence] : evidence,
         }
