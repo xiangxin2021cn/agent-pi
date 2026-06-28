@@ -178,7 +178,9 @@ export class GoalController {
       && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
     const hasRemainingIterations = iteration < goalState.maxIterations
-    const correctivePrompt = shouldAutoImprove && hasRemainingIterations
+    const hasRemainingWallClock = goalState.budgets?.maxWallClockMs === undefined
+      || now - goalState.createdAt < goalState.budgets.maxWallClockMs
+    const correctivePrompt = shouldAutoImprove && hasRemainingIterations && hasRemainingWallClock
       ? result.correctivePrompt ?? buildCorrectivePrompt(goalState, result)
       : undefined
     if (correctivePrompt) {
@@ -208,6 +210,8 @@ export class GoalController {
 
     const reason = shouldAutoImprove && !hasRemainingIterations
       ? `Reached maximum goal iterations (${goalState.maxIterations}); manual review is required.`
+      : shouldAutoImprove && !hasRemainingWallClock
+      ? `Reached maximum goal wall-clock budget (${goalState.budgets?.maxWallClockMs}ms); manual review is required.`
       : status === 'uncertain'
       ? 'Deterministic audit could not prove the goal criteria.'
       : result.summary

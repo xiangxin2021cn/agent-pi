@@ -12,6 +12,7 @@ export interface BuildGoalCriteriaInput {
 export interface GoalExecutionPolicy {
   mode: SessionGoalMode
   maxIterations: number
+  maxWallClockMs: number
 }
 
 const BASE_DELIVERABLE_CRITERION: SessionGoalCriterionSpec = {
@@ -76,22 +77,27 @@ export function buildGoalCriteriaUpdateFromMessage(input: BuildGoalCriteriaInput
 export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInput): GoalExecutionPolicy {
   const message = input.message.trim()
   let maxIterations = 2
+  let maxWallClockMs = 15 * 60 * 1000
 
   if ((input.storedAttachments?.length ?? 0) > 0 && DOCUMENT_WORK_PATTERN.test(message)) {
     maxIterations = 3
+    maxWallClockMs = 30 * 60 * 1000
   }
 
   if (COMPREHENSIVE_PATTERN.test(message)) {
     maxIterations = 3
+    maxWallClockMs = 30 * 60 * 1000
   }
 
   if (UNTIL_DONE_PATTERN.test(message)) {
     maxIterations = 4
+    maxWallClockMs = 45 * 60 * 1000
   }
 
   return {
     mode: 'auto_improve',
     maxIterations,
+    maxWallClockMs,
   }
 }
 

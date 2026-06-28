@@ -6808,6 +6808,9 @@ export class SessionManager implements ISessionManager {
       maxIterations: policy.maxIterations,
       criteria,
       auditHistory: [],
+      budgets: {
+        maxWallClockMs: policy.maxWallClockMs,
+      },
     }
     managed.goalState = goalState
     this.persistSession(managed)
@@ -6853,6 +6856,10 @@ export class SessionManager implements ISessionManager {
       updatedAt: Date.now(),
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
+      budgets: {
+        ...current.budgets,
+        maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, policy.maxWallClockMs),
+      },
     }
 
     managed.goalState = goalState

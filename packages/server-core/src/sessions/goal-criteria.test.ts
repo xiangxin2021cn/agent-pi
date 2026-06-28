@@ -55,6 +55,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     expect(policy).toEqual({
       mode: 'auto_improve',
       maxIterations: 2,
+      maxWallClockMs: 15 * 60 * 1000,
     })
   })
 
@@ -65,6 +66,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     })
 
     expect(policy.maxIterations).toBe(3)
+    expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
   it('allows more passes when the user explicitly asks for high-quality comprehensive work', () => {
@@ -73,6 +75,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     })
 
     expect(policy.maxIterations).toBe(3)
+    expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
   it('uses the highest bounded budget when the user explicitly asks to continue until done', () => {
@@ -81,5 +84,6 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     })
 
     expect(policy.maxIterations).toBe(4)
+    expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 })

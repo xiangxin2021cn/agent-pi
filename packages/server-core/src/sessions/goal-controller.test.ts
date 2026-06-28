@@ -296,6 +296,36 @@ describe('GoalController', () => {
     }
   })
 
+  test('stops for review when the goal wall-clock budget is exhausted', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      createdAt: 0,
+      maxIterations: 4,
+      budgets: { maxWallClockMs: 1000 },
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 2000,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.goalState.status).toBe('needs_review')
+      expect(decision.reason).toContain('wall-clock')
+    }
+  })
+
   test('does not auto-continue after tool failures', async () => {
     const controller = new GoalController()
 

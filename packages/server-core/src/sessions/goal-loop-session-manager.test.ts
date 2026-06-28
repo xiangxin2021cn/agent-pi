@@ -295,6 +295,7 @@ describe('SessionManager goal loop routing', () => {
 
     expect(managed.goalState?.mode).toBe('auto_improve')
     expect(managed.goalState?.maxIterations).toBe(2)
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBe(15 * 60 * 1000)
     expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toEqual(['deliverable', 'format', 'test'])
     expect(events.some(event =>
@@ -312,6 +313,7 @@ describe('SessionManager goal loop routing', () => {
 
     expect(managed.goalState?.mode).toBe('auto_improve')
     expect(managed.goalState?.maxIterations).toBe(4)
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 
   it('initializes a goal when the first work-like request follows casual chat', async () => {
@@ -371,6 +373,7 @@ describe('SessionManager goal loop routing', () => {
 
     expect(managed.goalState?.status).toBe('running')
     expect(managed.goalState?.maxIterations).toBe(4)
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBe(15 * 60 * 1000)
   })
 
   it('does not add casual follow-up chat to an existing goal', async () => {
