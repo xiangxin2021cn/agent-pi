@@ -105,6 +105,93 @@ describe('GoalController', () => {
     }
   })
 
+  test('continues automatically for auto_improve goals when explicit criteria need another pass', () => {
+    const controller = new GoalController()
+
+    const decision = controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.goalState.status).toBe('improving')
+      expect(decision.result.status).toBe('uncertain')
+      expect(decision.result.correctivePrompt).toBe(decision.prompt)
+      expect(decision.prompt).toContain('Create a complete deliverable')
+      expect(decision.prompt).toContain('The final report cites the source spreadsheet.')
+    }
+  })
+
+  test('stops for review when auto_improve reaches max iterations', () => {
+    const controller = new GoalController()
+
+    const decision = controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 2,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.goalState.status).toBe('needs_review')
+      expect(decision.reason).toContain('maximum goal iterations')
+    }
+  })
+
+  test('does not auto-continue after tool failures', () => {
+    const controller = new GoalController()
+
+    const decision = controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('t1', 'tool', 'failed', { toolStatus: 'error', toolName: 'Read' }),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.reason).toContain('errors')
+    }
+  })
+
   test('uses turnStartFinalMessageId to audit only the latest turn', () => {
     const controller = new GoalController()
 

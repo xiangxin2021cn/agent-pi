@@ -1,6 +1,6 @@
 # Agent Goal Loop Design
 
-Status: design draft  
+Status: design plus first implementation slice
 Scope: Agent Pi session execution quality control
 
 ## Why This Exists
@@ -143,6 +143,15 @@ The provider backends should remain thin:
 - PiAgent continues to emit normalized `AgentEvent`.
 - SessionManager remains the orchestration point.
 
+Current implementation slice:
+
+- `SessionGoalState` is persisted on session config/header metadata.
+- `GoalController` runs deterministic turn audits after provider completion.
+- `check_only` can mark the goal passed or needs-review.
+- `auto_improve` and `strict_work` can return an internal `continue` decision when explicit required criteria are still unproven and iteration limits remain.
+- `SessionManager.onProcessingStopped()` routes `continue` into a hidden goal continuation turn before emitting final UI `complete`.
+- Real queued user messages still take priority over goal continuation.
+
 ## Where To Hook
 
 The most stable hook is inside `SessionManager.onProcessingStopped()`.
@@ -188,7 +197,7 @@ Preferred implementation:
 3. Add an internal goal retry path that calls the shared turn runner without creating a `role: user` message.
 4. Persist a compact `role: info` or future `role: goal` message for transparency, but send the actual corrective instruction as internal control context.
 
-This requires a small refactor, but it keeps history honest.
+The first implementation slice uses a dedicated hidden continuation runner in `SessionManager` rather than fully extracting the send path. It still keeps history honest: the corrective instruction is sent as internal control context, while the visible conversation receives only an `info` marker and the improved assistant output. A later refactor should merge the duplicated turn-running details back into a shared helper.
 
 ## Audit Strategy
 
@@ -346,6 +355,8 @@ Until that exists, the first version can use output folder scans and event summa
 - Add deterministic checks and structured reviewer.
 - Do not auto-retry yet.
 
+Current status: partially implemented. Goal state persistence, audit events, and deterministic checks are in place. Structured LLM reviewer and UI rendering are still pending.
+
 Success criteria:
 
 - A task can finish with visible `passed`, `failed`, or `needs_review`.
@@ -359,6 +370,8 @@ Success criteria:
 - Preserve existing user message queue behavior.
 - Add cancellation and new-user-message preemption.
 
+Current status: partially implemented. Hidden goal continuation exists and does not create fake user messages. Queue priority is covered. The send path is not fully extracted yet, and UI-level controls are still pending.
+
 Success criteria:
 
 - Auto-retry can run one improvement turn without polluting user history.
@@ -371,6 +384,8 @@ Success criteria:
 - Add UI Goal card and controls.
 - Add settings for mode and budget.
 - Add audit events to session persistence.
+
+Current status: backend skeleton implemented for sessions that already have `goalState.mode` set to `auto_improve` or `strict_work`. Product entry points, defaults, and UI controls are still pending.
 
 Success criteria:
 
@@ -392,13 +407,12 @@ Success criteria:
 
 ## First Implementation Target
 
-The first shippable slice should be:
+The first shippable slice is now split into two layers:
 
-1. Check Only mode behind a workspace/session setting.
-2. Goal card with deterministic checks plus mini-review JSON.
-3. No auto retry.
+1. Backend foundation: persisted goal state, deterministic audit, and hidden continuation without fake user messages.
+2. Product surface: workspace/session setting, Goal card, deterministic checks plus mini-review JSON, and explicit controls.
 
-After that is stable, add Auto Improve with max 1 retry. This avoids risking runaway behavior while proving that the app can separate "model stopped" from "task completed".
+The backend foundation is underway. The next shippable UI slice should expose Check Only first, then enable Auto Improve with a conservative max retry count once users can see and control the loop.
 
 ## Main Risks
 

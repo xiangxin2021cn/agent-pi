@@ -6568,16 +6568,18 @@ export class SessionManager implements ISessionManager {
             goalId: goalDecision.goalState.id,
             goalState: goalDecision.goalState,
           }, managed.workspace.id)
-        } else {
+        } else if (goalDecision.action === 'needs_review') {
           this.sendEvent({
             type: 'goal_needs_review',
             sessionId,
             goalId: goalDecision.goalState.id,
             goalState: goalDecision.goalState,
-            reason: goalDecision.action === 'continue'
-              ? 'Auto-improve is not enabled in this phase.'
-              : goalDecision.reason,
+            reason: goalDecision.reason,
           }, managed.workspace.id)
+        } else {
+          this.scheduleGoalContinuation(sessionId, goalDecision.prompt, goalDecision.result.iteration)
+          this.persistSession(managed)
+          return
         }
       }
 
@@ -6598,6 +6600,147 @@ export class SessionManager implements ISessionManager {
    * Process the next message in the queue.
    * Called by onProcessingStopped when queue has messages.
    */
+  private scheduleGoalContinuation(sessionId: string, prompt: string, iteration: number): void {
+    setImmediate(() => {
+      this.runGoalContinuation(sessionId, prompt, iteration).catch(err => {
+        sessionLog.error('goal continuation failed', {
+          sessionId,
+          iteration,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        sessionRuntimeHooks.captureException(err, { errorSource: 'goal-continuation', sessionId })
+        this.onProcessingStopped(sessionId, 'error')
+      })
+    })
+  }
+
+  private async runGoalContinuation(sessionId: string, prompt: string, iteration: number): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    if (managed.isProcessing) {
+      sessionLog.info('goal continuation skipped because the session is already active', {
+        sessionId,
+        iteration,
+        isProcessing: managed.isProcessing,
+        queueLength: managed.messageQueue.length,
+      })
+      return
+    }
+
+    if (managed.messageQueue.length > 0) {
+      sessionLog.info('goal continuation yielded to queued user work', {
+        sessionId,
+        iteration,
+        queueLength: managed.messageQueue.length,
+      })
+      this.processNextQueuedMessage(sessionId)
+      return
+    }
+
+    if (!managed.goalState || managed.goalState.status !== 'improving' || managed.goalState.iteration !== iteration) {
+      sessionLog.info('goal continuation skipped because goal state changed', {
+        sessionId,
+        iteration,
+        goalIteration: managed.goalState?.iteration,
+        goalStatus: managed.goalState?.status,
+      })
+      this.sendEvent({
+        type: 'complete',
+        sessionId,
+        tokenUsage: managed.tokenUsage,
+        hasUnread: managed.hasUnread,
+      }, managed.workspace.id)
+      return
+    }
+
+    const infoMessage: Message = {
+      id: generateMessageId(),
+      role: 'info',
+      content: `Goal audit requested improvement pass ${iteration + 1}.`,
+      timestamp: this.monotonic(),
+      infoLevel: 'info',
+    }
+    managed.messages.push(infoMessage)
+    this.sendEvent({
+      type: 'info',
+      sessionId,
+      message: infoMessage.content,
+      level: infoMessage.infoLevel,
+      timestamp: infoMessage.timestamp,
+    }, managed.workspace.id)
+
+    managed.lastMessageAt = Date.now()
+    this.setProcessing(managed, true)
+    managed.streamingText = ''
+    managed.processingGeneration++
+    managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
+    const myGeneration = managed.processingGeneration
+    this.persistSession(managed)
+
+    const workspaceRootPath = managed.workspace.rootPath
+    const agent = await this.getOrCreateAgent(managed)
+
+    try {
+      const chatSessionDir = getSessionStoragePath(workspaceRootPath, sessionId)
+      toolMetadataStore.setSessionDir(chatSessionDir)
+
+      sessionLog.info('Starting goal continuation for session:', sessionId)
+      const chatIterator = agent.chat(prompt, [])
+
+      for await (const event of chatIterator) {
+        if (event.type !== 'text_delta') {
+          sessionLog.info('Goal continuation event:', event.type)
+        }
+
+        await this.processEvent(managed, event)
+
+        if (!managed.sdkSessionId) {
+          const sdkId = agent.getSessionId()
+          if (sdkId) {
+            managed.sdkSessionId = sdkId
+            this.persistSession(managed)
+            sessionPersistenceQueue.flush(managed.id)
+          }
+        }
+
+        if (event.type === 'complete') {
+          if (!managed.isProcessing) {
+            sessionLog.info('Goal continuation completed after explicit handoff/stop')
+            return
+          }
+
+          this.onProcessingStopped(sessionId, 'complete')
+          return
+        }
+      }
+
+      if (managed.isProcessing && managed.processingGeneration === myGeneration) {
+        this.onProcessingStopped(sessionId, managed.stopRequested ? 'interrupted' : 'error')
+      }
+    } catch (error) {
+      const isAbortError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message === 'Request was aborted.' ||
+        error.message.includes('aborted')
+      )
+
+      if (isAbortError) {
+        this.onProcessingStopped(sessionId, 'interrupted')
+        return
+      }
+
+      sessionLog.error('Error in goal continuation:', error)
+      sessionRuntimeHooks.captureException(error, { errorSource: 'goal-continuation', sessionId })
+      this.sendEvent({
+        type: 'error',
+        sessionId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, managed.workspace.id)
+      this.onProcessingStopped(sessionId, 'error')
+    }
+  }
+
   private processNextQueuedMessage(sessionId: string): void {
     const managed = this.sessions.get(sessionId)
     if (!managed || managed.messageQueue.length === 0) return

@@ -100,9 +100,19 @@ export class GoalController {
       createdAt: now,
     }
 
+    const shouldAutoImprove = status === 'uncertain'
+      && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
+    const hasRemainingIterations = iteration < goalState.maxIterations
+    const correctivePrompt = shouldAutoImprove && hasRemainingIterations
+      ? buildCorrectivePrompt(goalState, result)
+      : undefined
+    if (correctivePrompt) {
+      result.correctivePrompt = correctivePrompt
+    }
+
     const nextGoalState: SessionGoalState = {
       ...goalState,
-      status: status === 'pass' ? 'passed' : 'needs_review',
+      status: status === 'pass' ? 'passed' : correctivePrompt ? 'improving' : 'needs_review',
       iteration,
       updatedAt: now,
       auditHistory: [...goalState.auditHistory, result],
@@ -112,7 +122,18 @@ export class GoalController {
       return { action: 'complete', goalState: nextGoalState, result }
     }
 
-    const reason = status === 'uncertain'
+    if (correctivePrompt) {
+      return {
+        action: 'continue',
+        goalState: nextGoalState,
+        result,
+        prompt: correctivePrompt,
+      }
+    }
+
+    const reason = shouldAutoImprove && !hasRemainingIterations
+      ? `Reached maximum goal iterations (${goalState.maxIterations}); manual review is required.`
+      : status === 'uncertain'
       ? 'Deterministic audit could not prove the goal criteria.'
       : result.summary
 
@@ -129,4 +150,27 @@ function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessa
   if (!turnStartFinalMessageId) return messages
   const index = messages.findIndex(message => message.id === turnStartFinalMessageId)
   return index === -1 ? messages : messages.slice(index + 1)
+}
+
+function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalAuditResult): string {
+  const missing = result.missingCriteria.length > 0
+    ? result.missingCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : '1. Re-check the deliverable against the original objective.'
+
+  return [
+    '<goal-audit>',
+    'This is an internal goal audit instruction, not a new user request.',
+    '',
+    'Objective:',
+    goalState.objective,
+    '',
+    'The previous response could not be proven complete.',
+    `Audit summary: ${result.summary}`,
+    '',
+    'Missing or unproven criteria:',
+    missing,
+    '',
+    'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
+    '</goal-audit>',
+  ].join('\n')
 }
