@@ -1,6 +1,6 @@
 {
   "name": "@craft-agent/file-memory-mcp-server",
-  "version": "0.10.9",
+  "version": "0.10.10",
   "license": "Apache-2.0",
   "description": "Read-only MCP server for a single indexed file memory source",
   "type": "commonjs",

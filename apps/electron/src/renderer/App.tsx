@@ -61,6 +61,7 @@ import {
   PlatformProvider,
   ImagePreviewOverlay,
   PDFPreviewOverlay,
+  SpreadsheetPreviewOverlay,
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
@@ -1650,6 +1651,7 @@ export default function App() {
     },
     readFile: (path) => window.electronAPI.readFile(path),
     readFilePreview: (path) => window.electronAPI.readFilePreview(path),
+    readSpreadsheetPreview: (path) => window.electronAPI.readSpreadsheetPreview(path),
     readFileDataUrl: (path) => window.electronAPI.readFileDataUrl(path),
     readFileBinary: (path) => window.electronAPI.readFileBinary(path),
   })
@@ -2052,6 +2054,8 @@ export default function App() {
               onClose={linkInterceptor.closePreview}
               loadDataUrl={linkInterceptor.readFileDataUrl}
               loadPdfData={linkInterceptor.readFileBinary}
+              saveTextFile={(path, content, expectedMtimeMs) => window.electronAPI.writeTextFile(path, content, { expectedMtimeMs })}
+              exportMarkdown={(path, options) => window.electronAPI.exportMarkdown(path, options)}
               isDark={isDark}
             />
           )}
@@ -2093,12 +2097,16 @@ function FilePreviewRenderer({
   onClose,
   loadDataUrl,
   loadPdfData,
+  saveTextFile,
+  exportMarkdown,
   isDark,
 }: {
   state: FilePreviewState
   onClose: () => void
   loadDataUrl: (path: string) => Promise<string>
   loadPdfData: (path: string) => Promise<Uint8Array>
+  saveTextFile: (path: string, content: string, expectedMtimeMs?: number) => Promise<{ mtimeMs: number }>
+  exportMarkdown: (path: string, options: Parameters<typeof window.electronAPI.exportMarkdown>[1]) => ReturnType<typeof window.electronAPI.exportMarkdown>
   isDark: boolean
 }) {
   const theme = isDark ? 'dark' : 'light' as const
@@ -2122,6 +2130,18 @@ function FilePreviewRenderer({
           onClose={onClose}
           filePath={state.filePath}
           loadPdfData={loadPdfData}
+          theme={theme}
+        />
+      )
+
+    case 'spreadsheet':
+      return (
+        <SpreadsheetPreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          preview={state.preview}
+          error={state.error}
           theme={theme}
         />
       )
@@ -2154,6 +2174,10 @@ function FilePreviewRenderer({
           filePath={state.filePath}
           variant={isPlanFile ? 'plan' : 'response'}
           error={state.error}
+          editable
+          sourceMtimeMs={state.mtimeMs}
+          onSave={(content, expectedMtimeMs) => saveTextFile(state.filePath, content, expectedMtimeMs)}
+          onExport={(format, content) => exportMarkdown(state.filePath, { format, content })}
         />
       )
     }

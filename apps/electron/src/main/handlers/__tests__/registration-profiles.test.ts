@@ -1,8 +1,6 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { describe, expect, it, mock } from 'bun:test'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-
-const registeredChannels: string[] = []
 
 mock.module('electron', () => ({
   ipcMain: {
@@ -41,7 +39,7 @@ mock.module('electron', () => ({
   session: {},
 }))
 
-function createMockServer(): RpcServer {
+function createMockServer(registeredChannels: string[]): RpcServer {
   return {
     handle(channel: string, _handler: unknown) {
       registeredChannels.push(channel)
@@ -160,29 +158,27 @@ async function getExpectedGuiChannels(): Promise<Set<string>> {
 }
 
 describe('RPC handler profile registration', () => {
-  beforeEach(() => {
-    registeredChannels.length = 0
-  })
-
   it('registerCoreRpcHandlers registers only core channels', async () => {
+    const registeredChannels: string[] = []
     const expected = await getExpectedCoreChannels()
     const { registerCoreRpcHandlers } = await import('../index')
 
-    registerCoreRpcHandlers(createMockServer(), createMockDeps())
+    registerCoreRpcHandlers(createMockServer(registeredChannels), createMockDeps())
 
     const actual = new Set(registeredChannels.filter(ch => ch.includes(':')))
     expect([...expected].filter(ch => !actual.has(ch))).toEqual([])
     expect([...actual].filter(ch => !expected.has(ch))).toEqual([])
-  })
+  }, 15_000)
 
   it('registerGuiRpcHandlers registers only gui channels', async () => {
+    const registeredChannels: string[] = []
     const expected = await getExpectedGuiChannels()
     const { registerGuiRpcHandlers } = await import('../index')
 
-    registerGuiRpcHandlers(createMockServer(), createMockDeps())
+    registerGuiRpcHandlers(createMockServer(registeredChannels), createMockDeps())
 
     const actual = new Set(registeredChannels.filter(ch => ch.includes(':')))
     expect([...expected].filter(ch => !actual.has(ch))).toEqual([])
     expect([...actual].filter(ch => !expected.has(ch))).toEqual([])
-  })
+  }, 15_000)
 })

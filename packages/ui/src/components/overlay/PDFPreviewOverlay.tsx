@@ -11,7 +11,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Document, Page, pdfjs } from 'react-pdf'
-import { FileText } from 'lucide-react'
+import { FileText, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
 import { CopyButton } from './CopyButton'
 import { ItemNavigator } from './ItemNavigator'
@@ -63,6 +63,7 @@ export function PDFPreviewOverlay({
   const [numPages, setNumPages] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [scale, setScale] = useState(1)
 
   const activeItem = resolvedItems[activeIdx]
 
@@ -70,6 +71,7 @@ export function PDFPreviewOverlay({
   useEffect(() => {
     if (isOpen) {
       setActiveIdx(initialIndex)
+      setScale(1)
     }
   }, [isOpen, initialIndex])
 
@@ -117,6 +119,41 @@ export function PDFPreviewOverlay({
   // Header actions: item navigation + copy button
   const headerActions = (
     <div className="flex items-center gap-2">
+      {numPages > 0 && (
+        <span className="h-7 rounded-[6px] bg-background px-2 py-1 text-xs font-medium text-muted-foreground shadow-minimal">
+          {numPages} pages
+        </span>
+      )}
+      <button
+        type="button"
+        title="Zoom out"
+        aria-label="Zoom out"
+        onClick={() => setScale(value => Math.max(0.5, Number((value - 0.1).toFixed(2))))}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] bg-background shadow-minimal opacity-75 hover:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <ZoomOut className="h-4 w-4" />
+      </button>
+      <span className="h-7 min-w-12 rounded-[6px] bg-background px-2 py-1 text-center text-xs font-medium text-muted-foreground shadow-minimal">
+        {Math.round(scale * 100)}%
+      </span>
+      <button
+        type="button"
+        title="Zoom in"
+        aria-label="Zoom in"
+        onClick={() => setScale(value => Math.min(2.5, Number((value + 0.1).toFixed(2))))}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] bg-background shadow-minimal opacity-75 hover:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <ZoomIn className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        title="Reset zoom"
+        aria-label="Reset zoom"
+        onClick={() => setScale(1)}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] bg-background shadow-minimal opacity-75 hover:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <RotateCcw className="h-4 w-4" />
+      </button>
       <ItemNavigator items={resolvedItems} activeIndex={activeIdx} onSelect={setActiveIdx} size="md" />
       <CopyButton content={activeItem?.src || filePath} title={t('common.copyPath')} className="bg-background shadow-minimal" />
     </div>
@@ -153,6 +190,7 @@ export function PDFPreviewOverlay({
                 pageNumber={i + 1}
                 renderTextLayer={true}
                 renderAnnotationLayer={true}
+                scale={scale}
                 className="pdf-page"
               />
             ))}

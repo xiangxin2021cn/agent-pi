@@ -22,6 +22,8 @@ import type {
   PermissionModeState,
   UnreadSummary,
   ShareResult,
+  OptimizePromptRequest,
+  OptimizePromptResult,
 } from '@craft-agent/shared/protocol'
 import type { SessionBundle, DispatchMode } from '@craft-agent/shared/sessions'
 import type { EventSink } from '../transport'
@@ -189,6 +191,7 @@ export interface ISessionManager {
 
   getSessionPath(sessionId: string): string | null
   refreshTitle(sessionId: string): Promise<{ success: boolean; title?: string; error?: string }>
+  optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
   refreshBadge(): void
   getUnreadSummary(): UnreadSummary
 

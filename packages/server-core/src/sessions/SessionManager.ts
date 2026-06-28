@@ -81,11 +81,12 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
 import { invalidateContextFileCache } from '@craft-agent/shared/prompts/system'
+import { buildPromptOptimizationInstruction, createPromptOptimizationFallback, normalizeOptimizedPrompt } from '@craft-agent/shared/prompts'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
@@ -5139,6 +5140,84 @@ export class SessionManager implements ISessionManager {
       // Signal async operation end
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
+    }
+  }
+
+  async optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      throw new Error('Session not found')
+    }
+
+    const input = request.input.trim()
+    if (!input) {
+      throw new Error('Prompt is empty')
+    }
+
+    const connectionSlug = managed.llmConnection
+    const connection = connectionSlug ? getLlmConnection(connectionSlug) : null
+    const context: OptimizePromptRequest = {
+      input,
+      attachments: request.attachments,
+      workingDirectory: request.workingDirectory ?? managed.workingDirectory,
+      model: request.model ?? managed.model,
+      connectionName: request.connectionName ?? connection?.name,
+    }
+    const fallbackPrompt = createPromptOptimizationFallback(context)
+
+    let agent: AgentInstance | null = managed.agent
+    let isTemporary = false
+
+    if (!agent && connectionSlug) {
+      try {
+        const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+        agent = createBackendFromConnection(connectionSlug, {
+          workspace: managed.workspace,
+          miniModel: resolvedMiniModel,
+          session: {
+            id: `prompt-optimize-${managed.id}`,
+            workspaceRootPath: managed.workspace.rootPath,
+            llmConnection: connectionSlug,
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+          },
+          isHeadless: true,
+        }, buildBackendHostRuntimeContext()) as AgentInstance
+        await agent.postInit()
+        isTemporary = true
+      } catch (error) {
+        sessionLog.warn('optimizePrompt: failed to create temporary agent, using fallback:', error)
+      }
+    }
+
+    try {
+      if (!agent) {
+        return {
+          optimizedPrompt: fallbackPrompt,
+          changed: fallbackPrompt.trim() !== input,
+          fallback: true,
+        }
+      }
+
+      const instruction = buildPromptOptimizationInstruction(context)
+      const modelResult = normalizeOptimizedPrompt(await agent.runMiniCompletion(instruction))
+      const optimizedPrompt = modelResult || fallbackPrompt
+      return {
+        optimizedPrompt,
+        changed: optimizedPrompt.trim() !== input,
+        fallback: !modelResult,
+      }
+    } catch (error) {
+      sessionLog.warn('optimizePrompt: mini completion failed, using fallback:', error)
+      return {
+        optimizedPrompt: fallbackPrompt,
+        changed: fallbackPrompt.trim() !== input,
+        fallback: true,
+      }
+    } finally {
+      if (isTemporary && agent) {
+        agent.destroy()
+      }
     }
   }
 

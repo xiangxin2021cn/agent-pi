@@ -7,7 +7,7 @@
  */
 
 /** Preview types that map to specific overlay components */
-export type FilePreviewType = 'image' | 'code' | 'markdown' | 'json' | 'text' | 'pdf' | 'office'
+export type FilePreviewType = 'image' | 'code' | 'markdown' | 'json' | 'text' | 'pdf' | 'spreadsheet' | 'office'
 
 export interface FileClassification {
   /** The preview type, or null if no in-app preview is available */
@@ -64,9 +64,13 @@ const TEXT_EXTENSIONS = new Set([
 /** PDF files — rendered in PDFPreviewOverlay via embedded viewer */
 const PDF_EXTENSIONS = new Set(['pdf'])
 
+/** Spreadsheet files — rendered in a bounded read-only table overlay */
+const SPREADSHEET_EXTENSIONS = new Set([
+  'xlsx', 'xls', 'xlsm',
+])
+
 /** Office files — rendered as bounded Markdown previews in-app */
 const OFFICE_EXTENSIONS = new Set([
-  'xlsx', 'xls', 'xlsm',
   'docx', 'doc',
   'pptx', 'ppt',
   'rtf',
@@ -112,6 +116,7 @@ export function classifyFile(filePath: string): FileClassification {
   if (CODE_EXTENSIONS.has(ext))     return { type: 'code', canPreview: true }
   if (TEXT_EXTENSIONS.has(ext))     return { type: 'text', canPreview: true }
   if (PDF_EXTENSIONS.has(ext))      return { type: 'pdf', canPreview: true }
+  if (SPREADSHEET_EXTENSIONS.has(ext)) return { type: 'spreadsheet', canPreview: true }
   if (OFFICE_EXTENSIONS.has(ext))   return { type: 'office', canPreview: true }
 
   return { type: null, canPreview: false }
@@ -129,6 +134,7 @@ export const FILE_EXTENSIONS_PATTERN = [
   ...JSON_EXTENSIONS,
   ...TEXT_EXTENSIONS,
   ...PDF_EXTENSIONS,
+  ...SPREADSHEET_EXTENSIONS,
   ...OFFICE_EXTENSIONS,
   ...EXTERNAL_EXTENSIONS,
 ].join('|')

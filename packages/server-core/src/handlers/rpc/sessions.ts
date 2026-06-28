@@ -312,6 +312,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
+  RPC_CHANNELS.sessions.OPTIMIZE_PROMPT,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
@@ -460,6 +461,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           } as SessionEvent)
         })
     })
+  })
+
+  server.handle(RPC_CHANNELS.sessions.OPTIMIZE_PROMPT, async (_ctx, sessionId: string, request: import('@craft-agent/shared/protocol').OptimizePromptRequest) => {
+    return sessionManager.optimizePrompt(sessionId, request)
   })
 
   // Cancel processing

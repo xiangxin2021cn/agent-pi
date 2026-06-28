@@ -1,6 +1,6 @@
 {
   "name": "@craft-agent/server-core",
-  "version": "0.10.9",
+  "version": "0.10.10",
   "license": "Apache-2.0",
   "description": "Reusable headless server infrastructure for Craft Agent",
   "type": "module",
@@ -27,7 +27,9 @@
     "@craft-agent/core": "workspace:*",
     "@craft-agent/shared": "workspace:*",
     "@craft-agent/session-tools-core": "workspace:*",
+    "fflate": "^0.8.2",
     "jose": "^6.0.0",
+    "marked": "^17.0.1",
     "ws": "^8.19.0",
     "sharp": "0.34.5",
     "@earendil-works/pi-ai": "0.79.9"

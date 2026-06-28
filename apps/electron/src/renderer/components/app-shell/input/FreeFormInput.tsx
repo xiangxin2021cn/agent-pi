@@ -13,6 +13,7 @@ import {
   ChevronUp,
   AlertCircle,
   Image as ImageIcon,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
@@ -573,6 +574,7 @@ export function FreeFormInput({
   const [isFocused, setIsFocused] = React.useState(false)
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
+  const [isOptimizingPrompt, setIsOptimizingPrompt] = React.useState(false)
 
   // Input settings (loaded from config)
   const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
@@ -1609,6 +1611,54 @@ export function FreeFormInput({
     && isCompatProvider(effectiveConnectionDetails.providerType)
     && !modelSupportsImages(effectiveConnectionDetails, currentModel)
 
+  const handleOptimizePrompt = React.useCallback(async () => {
+    const rawInput = input.trim()
+    if (!rawInput || !sessionId || disabled || isProcessing || isOptimizingPrompt) return
+
+    setIsOptimizingPrompt(true)
+    try {
+      const result = await window.electronAPI.optimizePrompt(sessionId, {
+        input: rawInput,
+        attachments: attachments.map(attachment => ({
+          name: attachment.name,
+          type: attachment.type,
+          size: attachment.size,
+        })),
+        workingDirectory,
+        model: currentModel,
+        connectionName: effectiveConnectionDetails?.name,
+      })
+      const optimized = coerceInputText(result.optimizedPrompt)
+      if (!optimized.trim()) {
+        throw new Error('Optimizer returned an empty prompt')
+      }
+      setInput(optimized)
+      syncToParent(optimized)
+      richInputRef.current?.focus()
+      window.setTimeout(() => {
+        richInputRef.current?.setSelectionRange(optimized.length, optimized.length)
+      }, 0)
+      toast.success(result.fallback ? t('chat.optimizePromptFallbackApplied') : t('chat.optimizePromptApplied'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      toast.error(t('chat.optimizePromptFailed'), { description: message })
+    } finally {
+      setIsOptimizingPrompt(false)
+    }
+  }, [
+    input,
+    disabled,
+    isProcessing,
+    isOptimizingPrompt,
+    sessionId,
+    attachments,
+    workingDirectory,
+    currentModel,
+    effectiveConnectionDetails?.name,
+    syncToParent,
+    t,
+  ])
+
   const handleAttachmentMenuSelect = (mode: AttachmentDialogMode) => {
     setAttachmentMenuOpen(false)
     window.setTimeout(() => {
@@ -1666,6 +1716,20 @@ export function FreeFormInput({
       </div>
     )
   }
+
+  const renderOptimizePromptControl = (isCompactToolbar: boolean) => (
+    <FreeFormInputContextBadge
+      icon={isOptimizingPrompt ? <Spinner className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+      label={isCompactToolbar ? t('chat.optimizePromptShort') : t('chat.optimizePrompt')}
+      isExpanded={!isCompactToolbar && isEmptySession}
+      hasSelection={false}
+      showChevron={false}
+      isOpen={false}
+      disabled={disabled || isProcessing || isOptimizingPrompt || !sessionId || !input.trim()}
+      onClick={() => void handleOptimizePrompt()}
+      tooltip={t('chat.optimizePromptTooltip')}
+    />
+  )
 
   return (
     <form onSubmit={handleSubmit}>
@@ -1933,6 +1997,7 @@ export function FreeFormInput({
             />
           )}
           {renderAttachmentControl(true)}
+          {renderOptimizePromptControl(true)}
           {onSourcesChange && (
             <div className="relative shrink min-w-0">
               <FreeFormInputContextBadge
@@ -2021,6 +2086,7 @@ export function FreeFormInput({
           <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
           {/* 1. Attach Files Badge */}
           {renderAttachmentControl(false)}
+          {renderOptimizePromptControl(false)}
 
           {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (

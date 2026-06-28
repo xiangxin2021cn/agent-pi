@@ -217,6 +217,14 @@ import type {
   DirectoryListingResult,
   RemoteSessionTransferPayload,
   ImportRemoteSessionTransferResult,
+  FilePreviewReadResult,
+  FileWriteTextOptions,
+  FileWriteTextResult,
+  SpreadsheetPreviewResult,
+  MarkdownExportOptions,
+  MarkdownExportResult,
+  OptimizePromptRequest,
+  OptimizePromptResult,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -228,6 +236,7 @@ export interface ElectronAPI {
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
+  optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
@@ -307,12 +316,10 @@ export interface ElectronAPI {
   // File operations
   readFile(path: string): Promise<string>
   /** Read a size-bounded text/Office preview for in-app file preview overlays. */
-  readFilePreview(path: string): Promise<{
-    content: string
-    truncated: boolean
-    originalSize: number
-    previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
-  }>
+  readFilePreview(path: string): Promise<FilePreviewReadResult>
+  readSpreadsheetPreview(path: string): Promise<SpreadsheetPreviewResult>
+  writeTextFile(path: string, content: string, options?: FileWriteTextOptions): Promise<FileWriteTextResult>
+  exportMarkdown(path: string, options: MarkdownExportOptions): Promise<MarkdownExportResult>
   /** Read a file as binary data (Uint8Array) */
   readFileBinary(path: string): Promise<Uint8Array>
   /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */

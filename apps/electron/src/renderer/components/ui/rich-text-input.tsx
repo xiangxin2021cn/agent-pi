@@ -28,6 +28,11 @@ export interface EscapeCompositionEventLike {
   }
 }
 
+export interface InputCompositionEventLike {
+  isComposing?: unknown
+  nativeEvent?: unknown
+}
+
 /**
  * Returns true when Escape is pressed while IME composition is active.
  *
@@ -40,6 +45,22 @@ export function isEscapeDuringComposition(
 ): boolean {
   if (event.key !== 'Escape') return false
   return Boolean(isComposingRefActive || event.isComposing || event.nativeEvent?.isComposing)
+}
+
+export function isInputDuringComposition(
+  event: InputCompositionEventLike | undefined,
+  isComposingRefActive: boolean
+): boolean {
+  return Boolean(isComposingRefActive || event?.isComposing || readIsComposing(event?.nativeEvent))
+}
+
+function readIsComposing(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  return Boolean((value as { isComposing?: unknown }).isComposing)
+}
+
+export function shouldShowRichInputPlaceholder(value: string, isComposingActive: boolean): boolean {
+  return value.length === 0 && !isComposingActive
 }
 
 export interface RichTextInputProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange' | 'onInput' | 'onPaste'> {
@@ -522,6 +543,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     const safeValue = React.useMemo(() => coerceInputText(value), [value])
     const divRef = React.useRef<HTMLDivElement>(null)
     const [isFocused, setIsFocused] = React.useState(false)
+    const [isComposingVisual, setIsComposingVisual] = React.useState(false)
     const isComposing = React.useRef(false)
     const lastValueRef = React.useRef(safeValue)
     const cursorPositionRef = React.useRef(0)
@@ -590,8 +612,8 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     }), [])
 
     // Handle input events
-    const handleInput = React.useCallback(() => {
-      if (isComposing.current) return
+    const handleInput = React.useCallback((event?: React.FormEvent<HTMLDivElement>) => {
+      if (isInputDuringComposition(event, isComposing.current)) return
       if (!divRef.current) return
 
       const newText = getTextFromElement(divRef.current)
@@ -620,10 +642,12 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     // Handle composition (IME)
     const handleCompositionStart = React.useCallback(() => {
       isComposing.current = true
+      setIsComposingVisual(true)
     }, [])
 
     const handleCompositionEnd = React.useCallback(() => {
       isComposing.current = false
+      setIsComposingVisual(false)
       handleInput()
     }, [handleInput])
 
@@ -668,9 +692,6 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     // Handle focus
     const handleFocus = React.useCallback((e: React.FocusEvent<HTMLDivElement>) => {
       setIsFocused(true)
-      // Tell browser to use <br> instead of <div> for line breaks.
-      // This prevents div-wrapping when typing before non-editable spans (badges).
-      document.execCommand('defaultParagraphSeparator', false, 'br')
       onFocus?.(e)
     }, [onFocus])
 
@@ -684,6 +705,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     React.useEffect(() => {
       if (!divRef.current) return
       if (isInternalUpdate.current) return
+      if (isComposing.current) return
       if (lastValueRef.current === safeValue) return
 
       // External value change - update content
@@ -708,6 +730,14 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     // Initialize content on mount
     React.useEffect(() => {
       if (!divRef.current) return
+      // Tell browser to use <br> instead of <div> for line breaks.
+      // Run this outside the focus path so clicking the input does not perform
+      // synchronous selection/editor work right before IME starts composing.
+      try {
+        document.execCommand('defaultParagraphSeparator', false, 'br')
+      } catch {
+        // Non-critical editor preference; browser defaults remain usable.
+      }
       lastMentionSignatureRef.current = getMentionSignature(safeValue, skillSlugs, sourceSlugs)
       const html = textToHTML(safeValue, skills, sources, workspaceId)
       divRef.current.innerHTML = html || '<br>'
@@ -758,7 +788,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     }, [])
 
     // Show placeholder when input is empty (regardless of focus state)
-    const showPlaceholder = !safeValue
+    const showPlaceholder = shouldShowRichInputPlaceholder(safeValue, isComposingVisual)
 
     // Normalize placeholder to array for RotatingPlaceholder
     const placeholderArray = React.useMemo(() => {

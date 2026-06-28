@@ -3,7 +3,21 @@ import { basename, extname, isAbsolute, join, resolve, dirname, parse as parsePa
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
-import { RPC_CHANNELS, type AttachmentDialogMode, type AttachmentDialogResult, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
+import {
+  RPC_CHANNELS,
+  type AttachmentDialogMode,
+  type AttachmentDialogResult,
+  type FileAttachment,
+  type DirectoryListingResult,
+  type FilePreviewReadResult,
+  type FileWriteTextOptions,
+  type FileWriteTextResult,
+  type MarkdownExportFormat,
+  type MarkdownExportOptions,
+  type MarkdownExportResult,
+  type SpreadsheetCellValue,
+  type SpreadsheetPreviewResult,
+} from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, getSessionOutputPathFromSessionPath, validateSessionId } from '@craft-agent/shared/sessions'
@@ -12,11 +26,14 @@ import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { MarkItDown } from 'markitdown-js'
 import xlsx, { type WorkBook, type WorkSheet } from 'xlsx'
+import { marked } from 'marked'
+import { strToU8, zipSync } from 'fflate'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 
-const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls'])
+const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
+const MARKDOWN_EDIT_EXTENSIONS = new Set(['.md', '.markdown'])
 const OFFICE_PREVIEW_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
 const TEXT_PREVIEW_MAX_BYTES = 1 * 1024 * 1024
 const SPREADSHEET_PREVIEW_MAX_BYTES = 50 * 1024 * 1024
@@ -30,6 +47,8 @@ const SPREADSHEET_MAX_TOTAL_DECLARED_CELLS = 1_000_000
 const SPREADSHEET_SAMPLE_SHEETS = 8
 const SPREADSHEET_SAMPLE_ROWS = 12
 const SPREADSHEET_SAMPLE_COLS = 8
+const SPREADSHEET_TABLE_MAX_ROWS = 200
+const SPREADSHEET_TABLE_MAX_COLS = 50
 const SPREADSHEET_CELL_TEXT_LIMIT = 160
 const ATTACHMENT_DIALOG_MAX_FILES = 250
 const ATTACHMENT_DIALOG_MAX_DIRECTORIES = 1_000
@@ -89,17 +108,10 @@ interface SpreadsheetSheetSummary {
   sampleRows: string[][]
 }
 
-interface SpreadsheetPreviewResult {
+interface SpreadsheetMarkdownPreviewResult {
   textContent: string
   fullConversionAllowed: boolean
   reason?: string
-}
-
-interface FilePreviewReadResult {
-  content: string
-  truncated: boolean
-  originalSize: number
-  previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
 }
 
 function clampCellText(value: unknown): string {
@@ -126,6 +138,15 @@ function formatBytes(bytes: number): string {
     unit = units[i]
   }
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function readUtf8Prefix(filePath: string, maxBytes: number): Promise<string> {
@@ -494,7 +515,7 @@ function markdownTable(headers: string[], rows: string[][]): string {
   ].join('\n')
 }
 
-export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook, filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook, filePath: string, originalName = basename(filePath)): SpreadsheetMarkdownPreviewResult {
   const sheetSummaries: SpreadsheetSheetSummary[] = []
   let totalDeclaredCells = 0
   for (const sheetName of workbook.SheetNames) {
@@ -565,7 +586,7 @@ export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook,
   }
 }
 
-export function createSpreadsheetMarkdownPreview(filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+export function createSpreadsheetMarkdownPreview(filePath: string, originalName = basename(filePath)): SpreadsheetMarkdownPreviewResult {
   const workbook = xlsx.readFile(filePath, {
     cellDates: true,
     cellFormula: false,
@@ -577,13 +598,302 @@ export function createSpreadsheetMarkdownPreview(filePath: string, originalName 
   return createSpreadsheetMarkdownPreviewFromWorkbook(workbook, filePath, originalName)
 }
 
+function spreadsheetColumnLabel(index: number): string {
+  let n = index + 1
+  let label = ''
+  while (n > 0) {
+    const remainder = (n - 1) % 26
+    label = String.fromCharCode(65 + remainder) + label
+    n = Math.floor((n - 1) / 26)
+  }
+  return label
+}
+
+function normalizeSpreadsheetCell(value: unknown): SpreadsheetCellValue {
+  if (value == null) return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+  if (value instanceof Date) return value.toISOString()
+  return String(value)
+}
+
+export function createSpreadsheetTablePreviewFromWorkbook(
+  workbook: WorkBook,
+  filePath: string,
+  originalName = basename(filePath)
+): SpreadsheetPreviewResult {
+  const sheets = workbook.SheetNames.slice(0, SPREADSHEET_SAMPLE_SHEETS).map(sheetName => {
+    const worksheet = workbook.Sheets[sheetName]
+    const matrix = worksheet
+      ? xlsx.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: null, raw: true })
+      : []
+    const totalRows = matrix.length
+    const totalCols = matrix.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0)
+    const visibleCols = Math.min(totalCols, SPREADSHEET_TABLE_MAX_COLS)
+    const columns = Array.from({ length: visibleCols }, (_, index) => {
+      const label = spreadsheetColumnLabel(index)
+      return { key: label, label }
+    })
+    const rows = matrix.slice(0, SPREADSHEET_TABLE_MAX_ROWS).map(row => {
+      const record: Record<string, SpreadsheetCellValue> = {}
+      for (let col = 0; col < visibleCols; col += 1) {
+        const key = columns[col].key
+        record[key] = normalizeSpreadsheetCell(Array.isArray(row) ? row[col] : null)
+      }
+      return record
+    })
+
+    return {
+      name: sheetName,
+      columns,
+      rows,
+      totalRows,
+      totalCols,
+      truncated: totalRows > SPREADSHEET_TABLE_MAX_ROWS || totalCols > SPREADSHEET_TABLE_MAX_COLS,
+    }
+  })
+
+  return {
+    filePath,
+    fileName: originalName,
+    sheets,
+    activeSheet: sheets[0]?.name ?? null,
+    truncated: workbook.SheetNames.length > SPREADSHEET_SAMPLE_SHEETS || sheets.some(sheet => sheet.truncated),
+  }
+}
+
+export function createSpreadsheetTablePreview(filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+  const workbook = xlsx.readFile(filePath, {
+    cellDates: true,
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+  })
+
+  return createSpreadsheetTablePreviewFromWorkbook(workbook, filePath, originalName)
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function escapeXml(value: string): string {
+  return escapeHtml(value).replace(/'/g, '&apos;')
+}
+
+function markdownToTextLines(markdown: string): string[] {
+  return markdown
+    .replace(/\r\n/g, '\n')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .split('\n')
+    .map(line => line
+      .replace(/^#{1,6}\s*/, '')
+      .replace(/^>\s?/, '')
+      .replace(/^\s*[-*+]\s+/, '- ')
+      .replace(/^\s*\d+\.\s+/, match => match.trim() + ' ')
+      .replace(/[*_`~]/g, '')
+      .trimEnd()
+    )
+}
+
+async function createMarkdownHtml(content: string, title: string): Promise<string> {
+  const body = await Promise.resolve(marked.parse(content, { gfm: true, breaks: false }))
+  return [
+    '<!doctype html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<meta charset="utf-8">',
+    `<title>${escapeHtml(title)}</title>`,
+    '<style>',
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.65;max-width:900px;margin:40px auto;padding:0 32px;color:#202124;}',
+    'h1,h2,h3{line-height:1.25;margin-top:1.6em;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #d0d7de;padding:6px 8px;} code,pre{background:#f6f8fa;border-radius:4px;} pre{padding:12px;overflow:auto;}',
+    '</style>',
+    '</head>',
+    '<body>',
+    body,
+    '</body>',
+    '</html>',
+  ].join('\n')
+}
+
+function createDocxBuffer(markdown: string): Buffer {
+  const paragraphs = markdownToTextLines(markdown).map(line =>
+    `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
+  ).join('')
+
+  const files: Record<string, Uint8Array> = {
+    '[Content_Types].xml': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+      '<Default Extension="xml" ContentType="application/xml"/>',
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+      '</Types>',
+    ].join('')),
+    '_rels/.rels': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>',
+      '</Relationships>',
+    ].join('')),
+    'word/document.xml': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+      '<w:body>',
+      paragraphs || '<w:p/>',
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
+      '</w:body>',
+      '</w:document>',
+    ].join('')),
+  }
+
+  return Buffer.from(zipSync(files))
+}
+
+function utf16BeHex(value: string): string {
+  const buffer = Buffer.alloc(value.length * 2)
+  for (let index = 0; index < value.length; index += 1) {
+    buffer.writeUInt16BE(value.charCodeAt(index), index * 2)
+  }
+  return buffer.toString('hex').toUpperCase()
+}
+
+function textWidthUnits(value: string): number {
+  let width = 0
+  for (const char of value) {
+    width += char.charCodeAt(0) > 255 ? 2 : 1
+  }
+  return width
+}
+
+function wrapPdfLine(line: string, maxUnits = 78): string[] {
+  if (!line) return ['']
+  const wrapped: string[] = []
+  let current = ''
+  let units = 0
+  for (const char of line) {
+    const charUnits = char.charCodeAt(0) > 255 ? 2 : 1
+    if (units + charUnits > maxUnits && current) {
+      wrapped.push(current)
+      current = ''
+      units = 0
+    }
+    current += char
+    units += charUnits
+  }
+  if (current) wrapped.push(current)
+  return wrapped
+}
+
+function createPdfBuffer(markdown: string): Buffer {
+  const lines = markdownToTextLines(markdown).flatMap(line => wrapPdfLine(line))
+  const linesPerPage = 48
+  const pages = Math.max(1, Math.ceil(lines.length / linesPerPage))
+  const objects: Array<{ id: number; body: string }> = [
+    { id: 1, body: '<< /Type /Catalog /Pages 2 0 R >>' },
+    { id: 2, body: `<< /Type /Pages /Kids [${Array.from({ length: pages }, (_, index) => `${6 + index * 2} 0 R`).join(' ')}] /Count ${pages} >>` },
+    { id: 3, body: '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>' },
+    { id: 4, body: '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 5 >> /FontDescriptor 5 0 R /DW 1000 >>' },
+    { id: 5, body: '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>' },
+  ]
+
+  for (let page = 0; page < pages; page += 1) {
+    const pageLines = lines.slice(page * linesPerPage, (page + 1) * linesPerPage)
+    const commands = [
+      'BT',
+      '/F1 11 Tf',
+      '15 TL',
+      '50 790 Td',
+      ...pageLines.flatMap((line, index) => {
+        const move = index === 0 ? [] : ['T*']
+        return line ? [...move, `<${utf16BeHex(line)}> Tj`] : [...move]
+      }),
+      'ET',
+    ].join('\n')
+    const contentId = 7 + page * 2
+    const pageId = 6 + page * 2
+    objects.push({
+      id: pageId,
+      body: `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`,
+    })
+    objects.push({
+      id: contentId,
+      body: `<< /Length ${Buffer.byteLength(commands, 'utf-8')} >>\nstream\n${commands}\nendstream`,
+    })
+  }
+
+  objects.sort((a, b) => a.id - b.id)
+  const chunks: string[] = ['%PDF-1.4\n% Agent Pi\n']
+  const offsets: number[] = [0]
+  for (const object of objects) {
+    offsets[object.id] = Buffer.byteLength(chunks.join(''), 'utf-8')
+    chunks.push(`${object.id} 0 obj\n${object.body}\nendobj\n`)
+  }
+  const xrefOffset = Buffer.byteLength(chunks.join(''), 'utf-8')
+  const maxId = Math.max(...objects.map(object => object.id))
+  chunks.push(`xref\n0 ${maxId + 1}\n`)
+  chunks.push('0000000000 65535 f \n')
+  for (let id = 1; id <= maxId; id += 1) {
+    chunks.push(`${String(offsets[id] ?? 0).padStart(10, '0')} 00000 n \n`)
+  }
+  chunks.push(`trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`)
+  return Buffer.from(chunks.join(''), 'utf-8')
+}
+
+async function getAvailableExportPath(sourcePath: string, format: MarkdownExportFormat, targetPath?: string): Promise<string> {
+  if (targetPath) return targetPath
+  const parsed = parsePath(sourcePath)
+  const baseName = sanitizeFilename(parsed.name || 'document')
+  const ext = format === 'html' ? '.html' : `.${format}`
+  let candidate = join(parsed.dir, `${baseName}${ext}`)
+  let counter = 2
+  while (await pathExists(candidate)) {
+    candidate = join(parsed.dir, `${baseName} ${counter}${ext}`)
+    counter += 1
+  }
+  return candidate
+}
+
+export async function buildMarkdownExport(args: {
+  sourcePath: string
+  content: string
+  format: MarkdownExportFormat
+  targetPath?: string
+}): Promise<MarkdownExportResult> {
+  const targetPath = await getAvailableExportPath(args.sourcePath, args.format, args.targetPath)
+  const title = basename(args.sourcePath)
+  let output: string | Buffer
+
+  if (args.format === 'html') {
+    output = await createMarkdownHtml(args.content, title)
+  } else if (args.format === 'docx') {
+    output = createDocxBuffer(args.content)
+  } else {
+    output = createPdfBuffer(args.content)
+  }
+
+  await mkdir(dirname(targetPath), { recursive: true })
+  await writeFile(targetPath, output)
+  const info = await stat(targetPath)
+  return { path: targetPath, format: args.format, bytes: info.size }
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
   RPC_CHANNELS.file.READ_PREVIEW,
+  RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW,
+  RPC_CHANNELS.file.WRITE_TEXT,
+  RPC_CHANNELS.file.EXPORT_MARKDOWN,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
   RPC_CHANNELS.file.READ_BINARY,
   RPC_CHANNELS.file.OPEN_DIALOG,
+  RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG,
   RPC_CHANNELS.file.READ_ATTACHMENT,
   RPC_CHANNELS.file.READ_USER_ATTACHMENT,
   RPC_CHANNELS.file.STORE_ATTACHMENT,
@@ -633,6 +943,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             ),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'spreadsheet',
           }
         }
@@ -642,6 +953,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: preview.textContent,
           truncated: !preview.fullConversionAllowed,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'spreadsheet',
         }
       }
@@ -656,6 +968,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             ),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'office',
           }
         }
@@ -668,6 +981,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             content: buildMetadataPreview(safePath, info.size, 'Office conversion returned no readable text.'),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'office',
           }
         }
@@ -677,6 +991,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: preview.content,
           truncated: preview.truncated,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'office',
         }
       }
@@ -687,6 +1002,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: `${content}\n\n---\nPreview truncated at ${formatBytes(TEXT_PREVIEW_MAX_BYTES)} of ${formatBytes(info.size)}. Open externally for the full file.`,
           truncated: true,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'text',
         }
       }
@@ -695,12 +1011,113 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         content: await readFile(safePath, 'utf-8'),
         truncated: false,
         originalSize: info.size,
+        mtimeMs: info.mtimeMs,
         previewKind: 'text',
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger.error('readFilePreview error:', path, message)
       throw new Error(`Failed to read file preview: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW, async (ctx, path: string): Promise<SpreadsheetPreviewResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+      if (!isSpreadsheetPath(safePath)) {
+        throw new Error('Path is not a supported spreadsheet')
+      }
+      if (info.size > SPREADSHEET_PREVIEW_MAX_BYTES) {
+        return {
+          filePath: safePath,
+          fileName: basename(safePath),
+          sheets: [],
+          activeSheet: null,
+          truncated: true,
+          originalSize: info.size,
+          mtimeMs: info.mtimeMs,
+        }
+      }
+
+      const preview = createSpreadsheetTablePreview(safePath, basename(safePath))
+      return {
+        ...preview,
+        originalSize: info.size,
+        mtimeMs: info.mtimeMs,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('readSpreadsheetPreview error:', path, message)
+      throw new Error(`Failed to read spreadsheet preview: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.WRITE_TEXT, async (ctx, path: string, content: string, options?: FileWriteTextOptions): Promise<FileWriteTextResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
+      const ext = extname(safePath).toLowerCase()
+      if (!MARKDOWN_EDIT_EXTENSIONS.has(ext)) {
+        throw new Error('Only Markdown files can be edited in preview')
+      }
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+      if (typeof options?.expectedMtimeMs === 'number' && Math.abs(info.mtimeMs - options.expectedMtimeMs) > 5) {
+        throw new Error('File changed on disk after preview was opened. Reopen the file before saving.')
+      }
+
+      await writeFile(safePath, content, 'utf-8')
+      const updated = await stat(safePath)
+      return {
+        path: safePath,
+        bytes: Buffer.byteLength(content, 'utf-8'),
+        mtimeMs: updated.mtimeMs,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('writeText error:', path, message)
+      throw new Error(`Failed to save file: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.EXPORT_MARKDOWN, async (ctx, path: string, options: MarkdownExportOptions): Promise<MarkdownExportResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const allowedDirs = getAllowedDirsForFileRequest(deps, workspaceId)
+      const safePath = await validateFilePath(path, allowedDirs)
+      const ext = extname(safePath).toLowerCase()
+      if (!MARKDOWN_EDIT_EXTENSIONS.has(ext)) {
+        throw new Error('Only Markdown files can be exported from preview')
+      }
+      if (!['html', 'docx', 'pdf'].includes(options.format)) {
+        throw new Error(`Unsupported Markdown export format: ${options.format}`)
+      }
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+
+      const targetPath = options.targetPath
+        ? await validateFilePath(options.targetPath, allowedDirs)
+        : undefined
+      const content = options.content ?? await readFile(safePath, 'utf-8')
+      return await buildMarkdownExport({
+        sourcePath: safePath,
+        content,
+        format: options.format,
+        targetPath,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('exportMarkdown error:', path, message)
+      throw new Error(`Failed to export Markdown: ${message}`)
     }
   })
 

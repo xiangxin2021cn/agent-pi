@@ -341,6 +341,84 @@ export interface AttachmentDialogResult {
   maxFiles: number
 }
 
+export interface FilePreviewReadResult {
+  content: string
+  truncated: boolean
+  originalSize: number
+  previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
+  mtimeMs?: number
+}
+
+export interface FileWriteTextOptions {
+  expectedMtimeMs?: number
+}
+
+export interface FileWriteTextResult {
+  path: string
+  bytes: number
+  mtimeMs: number
+}
+
+export interface SpreadsheetPreviewColumn {
+  key: string
+  label: string
+}
+
+export type SpreadsheetCellValue = string | number | boolean | null
+
+export interface SpreadsheetPreviewSheet {
+  name: string
+  columns: SpreadsheetPreviewColumn[]
+  rows: Record<string, SpreadsheetCellValue>[]
+  totalRows: number
+  totalCols: number
+  truncated: boolean
+}
+
+export interface SpreadsheetPreviewResult {
+  filePath: string
+  fileName: string
+  sheets: SpreadsheetPreviewSheet[]
+  activeSheet: string | null
+  truncated: boolean
+  originalSize?: number
+  mtimeMs?: number
+}
+
+export type MarkdownExportFormat = 'html' | 'docx' | 'pdf'
+
+export interface MarkdownExportOptions {
+  format: MarkdownExportFormat
+  targetPath?: string
+  content?: string
+}
+
+export interface MarkdownExportResult {
+  path: string
+  format: MarkdownExportFormat
+  bytes: number
+}
+
+export interface OptimizePromptAttachment {
+  name: string
+  type?: string
+  size?: number
+}
+
+export interface OptimizePromptRequest {
+  input: string
+  attachments?: OptimizePromptAttachment[]
+  workingDirectory?: string
+  model?: string
+  connectionName?: string
+}
+
+export interface OptimizePromptResult {
+  optimizedPrompt: string
+  changed: boolean
+  fallback?: boolean
+}
+
 export interface SessionFile {
   name: string
   path: string
