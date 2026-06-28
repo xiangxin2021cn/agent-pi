@@ -1263,6 +1263,35 @@ function appendGoalObjectiveFollowUp(objective: string, message: string): string
   return `${base}${separator}${followUp}`.slice(0, maxLength)
 }
 
+function recoverStaleGoalStateOnRestore(goalState: SessionGoalState | undefined): SessionGoalState | undefined {
+  if (!goalState || (goalState.status !== 'auditing' && goalState.status !== 'improving')) {
+    return goalState
+  }
+
+  const now = Date.now()
+  const staleStatus = goalState.status
+  return {
+    ...goalState,
+    status: 'needs_review',
+    updatedAt: now,
+    auditHistory: [
+      ...goalState.auditHistory,
+      {
+        iteration: goalState.iteration,
+        status: 'uncertain',
+        summary: `Goal loop was interrupted before completion while ${staleStatus}; manual review is required before continuing.`,
+        missingCriteria: ['The previous automatic goal audit or improvement pass did not finish. Review the last output and continue the goal if needed.'],
+        evidence: [{
+          type: 'system',
+          label: 'stale_goal_state',
+          detail: staleStatus,
+        }],
+        createdAt: now,
+      },
+    ],
+  }
+}
+
 /**
  * Create a ManagedSession from any session-like source (SessionMetadata, SessionConfig, StoredSession).
  * Spreads all matching fields from the source so new persistent fields automatically propagate.
@@ -1288,6 +1317,7 @@ export function createManagedSession(
       delete sourceFields.thinkingLevel
     }
   }
+  sourceFields.goalState = recoverStaleGoalStateOnRestore(sourceFields.goalState)
 
   const managed = {
     // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
@@ -2296,7 +2326,7 @@ export class SessionManager implements ISessionManager {
       if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
       if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
       if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
-      if (managed.goalState === undefined) managed.goalState = stored.goalState
+      if (managed.goalState === undefined) managed.goalState = recoverStaleGoalStateOnRestore(stored.goalState)
       if (managed.sharedUrl === undefined) managed.sharedUrl = stored.sharedUrl
       if (managed.sharedId === undefined) managed.sharedId = stored.sharedId
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
@@ -2766,7 +2796,7 @@ export class SessionManager implements ISessionManager {
       managed.lastReadMessageId = storedSession.lastReadMessageId
       managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
       managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
-      managed.goalState = storedSession.goalState
+      managed.goalState = recoverStaleGoalStateOnRestore(storedSession.goalState)
       managed.sharedUrl = storedSession.sharedUrl
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading

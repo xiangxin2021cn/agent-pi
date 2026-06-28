@@ -6,6 +6,7 @@ import {
   getSessionFilePath,
   loadSession,
   writeSessionJsonl,
+  type SessionGoalState,
   type StoredSession,
 } from '@craft-agent/shared/sessions'
 import type { StoredMessage } from '@craft-agent/core/types'
@@ -56,6 +57,7 @@ describe('cold-session metadata persistence', () => {
       sessionStatus?: string
       labels?: string[]
       messages?: StoredMessage[]
+      goalState?: SessionGoalState
     } = {},
   ) {
     const filePath = getSessionFilePath(tmpRoot, sessionId)
@@ -69,6 +71,7 @@ describe('cold-session metadata persistence', () => {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       messages: opts.messages ?? [],
+      goalState: opts.goalState,
     } as StoredSession
     writeSessionJsonl(filePath, stored)
 
@@ -101,6 +104,27 @@ describe('cold-session metadata persistence', () => {
 
   function makeUserMessage(id: string, content: string): StoredMessage {
     return { id, type: 'user', content, timestamp: Date.now() } as StoredMessage
+  }
+
+  function goalState(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
+    return {
+      id: 'goal-1',
+      objective: 'Create a complete deliverable',
+      mode: 'auto_improve',
+      status: 'running',
+      createdAt: 1,
+      updatedAt: 1,
+      iteration: 0,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'Complete the deliverable.',
+        kind: 'deliverable',
+        required: true,
+      }],
+      auditHistory: [],
+      ...overrides,
+    }
   }
 
   it('setSessionStatus on a cold session is on disk after flushSession resolves', async () => {
@@ -163,6 +187,25 @@ describe('cold-session metadata persistence', () => {
     expect(readDiskHeader(sessionId).sessionStatus).toBe('done')
     // …and the seeded messages survive (regression: original guard's intent).
     expect(readDiskMessageIds(sessionId)).toEqual(['m1', 'm2', 'm3'])
+  })
+
+  it('lazy-loading a cold session recovers stale goal state from disk', async () => {
+    const sessionId = 'cold-stale-goal'
+    seedColdSession(sessionId, {
+      goalState: goalState({
+        status: 'improving',
+        iteration: 1,
+      }),
+    })
+
+    const session = await sm.getSession(sessionId)
+
+    expect(session?.goalState?.status).toBe('needs_review')
+    expect(session?.goalState?.auditHistory.at(-1)?.evidence).toContainEqual({
+      type: 'system',
+      label: 'stale_goal_state',
+      detail: 'improving',
+    })
   })
 
   it('concurrent cold-session status changes serialize to last-writer-wins on disk', async () => {
