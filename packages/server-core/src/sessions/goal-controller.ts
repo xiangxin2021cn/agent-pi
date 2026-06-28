@@ -4,6 +4,7 @@ import type {
   SessionGoalAuditResult,
   SessionGoalState,
 } from '@craft-agent/shared/sessions'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -88,6 +89,14 @@ export class GoalController {
     }
 
     const fileVerificationIssues: string[] = []
+    if (requiresOutputFileEvidence(goalState) && fileEvidencePaths.size === 0) {
+      fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
+      evidence.push({
+        type: 'file',
+        label: 'file_evidence_missing',
+        detail: 'No file path was captured from tool input or tool output.',
+      })
+    }
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
@@ -286,6 +295,14 @@ function buildFileVerificationIssue(filePath: string, verification: GoalFileVeri
     return `Referenced file is empty: ${filePath}`
   }
   return undefined
+}
+
+function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'deliverable'
+    && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
+  )
 }
 
 function buildFileVerificationEvidenceLabel(verification: GoalFileVerificationResult): string {

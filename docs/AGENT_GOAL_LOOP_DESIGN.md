@@ -155,6 +155,7 @@ Current implementation slice:
 - The first real user message can conservatively initialize an `auto_improve` goal when it looks like a work task; casual chat, hidden sessions, and mini sessions are left alone.
 - Workspace settings can set the default goal-loop strategy for newly auto-detected work sessions: off, check only, or auto improve.
 - File paths surfaced by tool input or tool output are verified against the local filesystem during goal audit. Missing, unreadable, non-file, or empty file evidence fails the audit and can trigger an automatic improvement pass.
+- Requests that explicitly ask to create, save, export, or convert an output file add a required file-output criterion; if the turn produces no verifiable file path evidence, the audit fails before any reviewer can mark it complete.
 
 ## Where To Hook
 

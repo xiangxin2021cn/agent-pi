@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -330,6 +331,49 @@ describe('GoalController', () => {
         detail: '/tmp/missing-report.md',
       })
       expect(decision.prompt).toContain('Referenced file was not found: /tmp/missing-report.md')
+    }
+  })
+
+  test('does not accept reviewer pass when requested output file has no file evidence', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成 final-report.md 文件'),
+        message('a1', 'assistant', 'final-report.md 已生成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The file output is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('No verifiable output file path was produced for the requested file deliverable.')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_evidence_missing',
+        detail: 'No file path was captured from tool input or tool output.',
+      })
+      expect(decision.prompt).toContain('No verifiable output file path was produced')
     }
   })
 

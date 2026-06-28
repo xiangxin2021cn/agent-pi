@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { buildGoalCriteriaFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, buildGoalCriteriaFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
 
 function attachment(name: string): StoredAttachment {
   return {
@@ -68,6 +68,34 @@ describe('buildGoalCriteriaFromMessage', () => {
     const evidenceCriteria = criteria.filter(criterion => criterion.kind === 'evidence')
     expect(evidenceCriteria).toHaveLength(1)
     expect(evidenceCriteria[0].text).toContain('boq.xlsx')
+  })
+
+  it('adds output-file evidence criteria when the request explicitly asks to create a file', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请生成 final-report.md 文件并保存到工作目录',
+    })
+
+    expect(criteria).toContainEqual({
+      text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+      kind: 'deliverable',
+      required: true,
+    })
+  })
+
+  it('adds output-file evidence criteria when the request asks to convert into a file format', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请将 tender.pdf 转换为 markdown 文件',
+    })
+
+    expect(criteria.some(criterion => criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT)).toBe(true)
+  })
+
+  it('does not require output-file evidence for source-only document analysis', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请分析 tender.pdf 的关键风险',
+    })
+
+    expect(criteria.some(criterion => criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT)).toBe(false)
   })
 })
 
