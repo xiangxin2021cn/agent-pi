@@ -343,6 +343,29 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
   })
 
+  it('does not complete when reviewer pass has root object missing criteria', async () => {
+    const sessionId = 'goal-reviewer-root-object-missing'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+
+    managed.agent = {
+      runMiniCompletion: async () => JSON.stringify({
+        status: 'pass',
+        summary: 'Looks complete, but the citation is still missing.',
+        missingCriteria: { text: 'The final report cites the source spreadsheet.' },
+      }),
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(false)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+  })
+
   it('does not complete when reviewer pass has malformed corrective prompt', async () => {
     const sessionId = 'goal-reviewer-malformed-correction'
     const managed = buildSession(sessionId)

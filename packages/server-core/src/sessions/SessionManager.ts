@@ -1158,6 +1158,20 @@ function normalizeGoalReviewMissingCriteria(value: unknown): string[] | undefine
     return [value.trim()]
   }
 
+  if (value && typeof value === 'object') {
+    const direct = normalizeGoalReviewMissingCriterion(value)
+    if (direct) {
+      return [direct]
+    }
+
+    for (const key of ['items', 'criteria', 'missing', 'missingCriteria', 'reasons']) {
+      const nested = normalizeGoalReviewMissingCriteria((value as Record<string, unknown>)[key])
+      if (nested && nested.length > 0) {
+        return nested
+      }
+    }
+  }
+
   return undefined
 }
 
