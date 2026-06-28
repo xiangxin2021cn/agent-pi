@@ -6745,7 +6745,7 @@ export class SessionManager implements ISessionManager {
       badges: options?.badges,
     })
 
-    managed.goalState = {
+    const goalState: SessionGoalState = {
       id: randomUUID(),
       objective: message.trim().slice(0, 4000),
       mode: policy.mode,
@@ -6757,7 +6757,9 @@ export class SessionManager implements ISessionManager {
       criteria,
       auditHistory: [],
     }
+    managed.goalState = goalState
     this.persistSession(managed)
+    this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
     this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
   }
 

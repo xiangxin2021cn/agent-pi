@@ -249,7 +249,7 @@ describe('SessionManager goal loop routing', () => {
   it('initializes an auto_improve goal for a first work-like user message', async () => {
     const sessionId = 'goal-auto-init-work'
     const managed = buildSession(sessionId, { goalState: undefined })
-    captureEvents()
+    const events = captureEvents()
 
     await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告').catch(() => { /* expected after pre-agent setup */ })
 
@@ -257,6 +257,10 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.maxIterations).toBe(2)
     expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toEqual(['deliverable', 'format', 'test'])
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.id === managed.goalState?.id
+    )).toBe(true)
   })
 
   it('uses a larger goal loop budget when the first work request asks to continue until done', async () => {
