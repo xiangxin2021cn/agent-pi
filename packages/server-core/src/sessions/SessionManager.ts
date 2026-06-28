@@ -5975,7 +5975,7 @@ export class SessionManager implements ISessionManager {
         this.generateTitle(managed, message)
       }
 
-      this.maybeInitializeGoalStateForUserMessage(managed, message, storedAttachments, options, isFirstUserMessage)
+      this.maybeInitializeGoalStateForUserMessage(managed, message, storedAttachments, options)
     }
 
     // Evaluate auto-label rules against the user message (common path for both
@@ -6721,9 +6721,8 @@ export class SessionManager implements ISessionManager {
     message: string,
     storedAttachments: StoredAttachment[] | undefined,
     options: SendMessageOptions | undefined,
-    isFirstUserMessage: boolean,
   ): void {
-    if (!isFirstUserMessage || managed.goalState || managed.hidden || managed.systemPromptPreset === 'mini') {
+    if (managed.goalState || managed.hidden || managed.systemPromptPreset === 'mini') {
       return
     }
 

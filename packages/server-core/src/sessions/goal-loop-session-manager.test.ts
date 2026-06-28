@@ -270,6 +270,21 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.maxIterations).toBe(4)
   })
 
+  it('initializes a goal when the first work-like request follows casual chat', async () => {
+    const sessionId = 'goal-auto-init-after-chat'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    managed.messages.push(
+      message('u1', 'user', '你好'),
+      message('a1', 'assistant', '你好，有什么可以帮你？'),
+    )
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请整理一份项目分析报告').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.objective).toBe('请整理一份项目分析报告')
+  })
+
   it('does not initialize a goal for a first casual chat message', async () => {
     const sessionId = 'goal-auto-init-chat'
     const managed = buildSession(sessionId, { goalState: undefined })
