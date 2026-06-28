@@ -536,6 +536,40 @@ describe('GoalController', () => {
     }
   })
 
+  test('records bounded file previews from verified output evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal(), {
+      messages: [
+        message('u1', 'user', 'write a report file'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.md' },
+        }),
+        message('a1', 'assistant', 'Report file complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 42,
+        preview: 'Executive summary\nKey risk: missing permits.',
+      }),
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_preview',
+        detail: '/tmp/report.md\nExecutive summary\nKey risk: missing permits.',
+      })
+    }
+  })
+
   test('records user attachments as source file evidence without satisfying output file evidence', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

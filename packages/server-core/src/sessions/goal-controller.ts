@@ -33,6 +33,8 @@ export interface GoalFileVerificationResult {
   readable?: boolean
   isFile?: boolean
   sizeBytes?: number
+  preview?: string
+  previewTruncated?: boolean
   error?: string
 }
 
@@ -147,6 +149,14 @@ export class GoalController {
             label: 'file_verified',
             detail: `${filePath}${size}`.slice(0, 500),
           })
+          const preview = verification.preview?.trim()
+          if (preview) {
+            evidence.push({
+              type: 'file',
+              label: verification.previewTruncated ? 'file_preview_truncated' : 'file_preview',
+              detail: `${filePath}\n${preview}`.slice(0, 3000),
+            })
+          }
         }
       }
     }

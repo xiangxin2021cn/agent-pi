@@ -4,9 +4,9 @@ import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import { constants as FS_CONSTANTS, existsSync } from 'fs'
-import { access, readFile, stat, writeFile, mkdir } from 'fs/promises'
+import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
 import {
@@ -1109,6 +1109,63 @@ function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriteri
 }
 
 const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
+const GOAL_FILE_PREVIEW_MAX_BYTES = 12_000
+const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
+  '.c',
+  '.cc',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.csv',
+  '.go',
+  '.h',
+  '.html',
+  '.java',
+  '.js',
+  '.json',
+  '.jsx',
+  '.kt',
+  '.md',
+  '.mjs',
+  '.py',
+  '.rs',
+  '.sh',
+  '.sql',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.xml',
+  '.yaml',
+  '.yml',
+])
+
+async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{ content: string; truncated: boolean } | undefined> {
+  if (!GOAL_FILE_PREVIEW_TEXT_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+    return undefined
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    handle = await open(filePath, 'r')
+    const bytesToRead = Math.min(sizeBytes, GOAL_FILE_PREVIEW_MAX_BYTES + 1)
+    const buffer = Buffer.alloc(bytesToRead)
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0)
+    if (bytesRead === 0) return undefined
+
+    const truncated = bytesRead > GOAL_FILE_PREVIEW_MAX_BYTES || sizeBytes > GOAL_FILE_PREVIEW_MAX_BYTES
+    const content = buffer
+      .subarray(0, Math.min(bytesRead, GOAL_FILE_PREVIEW_MAX_BYTES))
+      .toString('utf-8')
+      .replace(/\0/g, '')
+      .trim()
+
+    return content ? { content, truncated } : undefined
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
 
 function buildGoalReviewAuditHistory(history: SessionGoalState['auditHistory']): string {
   if (history.length === 0) {
@@ -7006,11 +7063,15 @@ export class SessionManager implements ISessionManager {
           }
         }
 
+        const preview = await readGoalFilePreview(filePath, info.size)
+
         return {
           exists: true,
           readable: true,
           isFile: true,
           sizeBytes: info.size,
+          preview: preview?.content,
+          previewTruncated: preview?.truncated,
         }
       } catch (error) {
         const code = getErrorCode(error)

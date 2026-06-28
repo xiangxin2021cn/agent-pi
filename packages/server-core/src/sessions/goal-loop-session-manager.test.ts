@@ -622,6 +622,61 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(true)
   })
 
+  it('includes verified text output file previews in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-output-preview'
+    const workingDirectory = join(tmpRoot, 'project')
+    const outputDirectory = join(workingDirectory, FORMAL_OUTPUTS_DIR_NAME, sessionId)
+    const outputPath = join(outputDirectory, 'final-report.md')
+    mkdirSync(outputDirectory, { recursive: true })
+    writeFileSync(outputPath, 'Executive summary\nKey risk: missing permits.\nRecommended next action.')
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }, {
+          id: 'crit-quality',
+          text: 'The final report includes an executive summary and risk section.',
+          kind: 'coverage',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages.splice(1, 0, message('t1', 'tool', 'created', {
+      toolName: 'Write',
+      toolStatus: 'completed',
+      toolInput: { file_path: outputPath },
+    }))
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The output file satisfies the requested content.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('file_preview')
+    expect(reviewPrompts[0]).toContain('Executive summary')
+    expect(reviewPrompts[0]).toContain('Key risk: missing permits.')
+    expect(managed.goalState?.status).toBe('passed')
+  })
+
   it('includes previous audit history in the reviewer prompt', async () => {
     const sessionId = 'goal-reviewer-history'
     const managed = buildSession(sessionId)
