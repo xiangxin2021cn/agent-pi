@@ -72,6 +72,19 @@ export class GoalController {
       })
     }
     for (const message of turnMessages) {
+      if (message.role !== 'user') continue
+      for (const attachment of message.attachments ?? []) {
+        const path = attachment.storedPath.trim()
+        if (!path) continue
+        fileEvidencePaths.add(path)
+        evidence.push({
+          type: 'file',
+          label: 'user_attachment',
+          detail: path.slice(0, 500),
+        })
+      }
+    }
+    for (const message of turnMessages) {
       if (message.role !== 'tool') continue
       const inputPaths = extractFilePaths(message.toolInput)
       const resultPaths = extractFilePathsFromText(message.toolResult)
