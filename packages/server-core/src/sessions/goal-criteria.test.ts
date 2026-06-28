@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, buildGoalCriteriaFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import {
+  FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+  TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+  buildGoalCriteriaFromMessage,
+  buildGoalExecutionPolicyFromMessage,
+} from './goal-criteria'
 
 function attachment(name: string): StoredAttachment {
   return {
@@ -96,6 +101,26 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
 
     expect(criteria.some(criterion => criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT)).toBe(false)
+  })
+
+  it('adds tool verification evidence criteria when the request asks to run tests', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请运行 typecheck 和测试，确认全部通过',
+    })
+
+    expect(criteria).toContainEqual({
+      text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+      kind: 'test',
+      required: true,
+    })
+  })
+
+  it('does not require tool verification evidence when the request only asks to describe validation', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请描述这个方案的验证思路',
+    })
+
+    expect(criteria.some(criterion => criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT)).toBe(false)
   })
 })
 

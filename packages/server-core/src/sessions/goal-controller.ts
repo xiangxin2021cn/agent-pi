@@ -4,7 +4,7 @@ import type {
   SessionGoalAuditResult,
   SessionGoalState,
 } from '@craft-agent/shared/sessions'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -87,6 +87,7 @@ export class GoalController {
     }
 
     const fileVerificationIssues: string[] = []
+    const toolVerificationIssues: string[] = []
     if (requiresOutputFileEvidence(goalState) && fileEvidencePaths.size === 0) {
       fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
       evidence.push({
@@ -112,6 +113,25 @@ export class GoalController {
             type: 'file',
             label: 'file_verified',
             detail: `${filePath}${size}`.slice(0, 500),
+          })
+        }
+      }
+    }
+    if (requiresToolVerificationEvidence(goalState)) {
+      const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
+      if (toolVerificationMessages.length === 0) {
+        toolVerificationIssues.push('No successful tool evidence was produced for the requested verification step.')
+        evidence.push({
+          type: 'tool',
+          label: 'tool_verification_missing',
+          detail: 'No completed verification, test, build, lint, typecheck, or validation tool run was captured.',
+        })
+      } else {
+        for (const message of toolVerificationMessages) {
+          evidence.push({
+            type: 'tool',
+            label: 'tool_verification_evidence',
+            detail: summarizeToolVerificationMessage(message),
           })
         }
       }
@@ -160,6 +180,14 @@ export class GoalController {
       missingCriteria.push(...fileVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because referenced file evidence could not be verified.'
+      }
+    }
+
+    if (toolVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...toolVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because requested verification tool evidence was missing.'
       }
     }
 
@@ -354,6 +382,50 @@ function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
     && criterion.kind === 'deliverable'
     && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
   )
+}
+
+function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'test'
+    && criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT
+  )
+}
+
+const TOOL_VERIFICATION_EVIDENCE_PATTERN = /测试|单测|验证|检查|构建|类型检查|source_test|skill_validate|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b/i
+
+function getSuccessfulToolVerificationMessages(messages: Message[]): Message[] {
+  return messages.filter(message =>
+    isSuccessfulTool(message)
+    && TOOL_VERIFICATION_EVIDENCE_PATTERN.test(buildToolEvidenceText(message))
+  )
+}
+
+function buildToolEvidenceText(message: Message): string {
+  return [
+    message.toolName,
+    message.content,
+    stringifyToolEvidenceValue(message.toolInput),
+    stringifyToolEvidenceValue(message.toolResult),
+  ].filter(Boolean).join('\n')
+}
+
+function stringifyToolEvidenceValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value.slice(0, 4000)
+  try {
+    return JSON.stringify(value).slice(0, 4000)
+  } catch {
+    return String(value).slice(0, 4000)
+  }
+}
+
+function summarizeToolVerificationMessage(message: Message): string {
+  const label = message.toolName?.trim() || 'tool'
+  const result = typeof message.toolResult === 'string' && message.toolResult.trim()
+    ? ` - ${message.toolResult.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+    : ''
+  return `${label}${result}`.slice(0, 500)
 }
 
 function hasRepeatedGoalFailure(history: SessionGoalState['auditHistory'], result: SessionGoalAuditResult): boolean {

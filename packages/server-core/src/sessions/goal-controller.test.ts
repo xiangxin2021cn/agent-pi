@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -374,6 +374,49 @@ describe('GoalController', () => {
         detail: 'No file path was captured from tool input or tool output.',
       })
       expect(decision.prompt).toContain('No verifiable output file path was produced')
+    }
+  })
+
+  test('does not accept reviewer pass when requested verification has no tool evidence', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-tool-verification',
+        text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+        kind: 'test',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请运行测试并确认通过'),
+        message('a1', 'assistant', '测试已经通过。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The requested verification is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('No successful tool evidence was produced for the requested verification step.')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'tool',
+        label: 'tool_verification_missing',
+        detail: 'No completed verification, test, build, lint, typecheck, or validation tool run was captured.',
+      })
+      expect(decision.prompt).toContain('No successful tool evidence was produced')
     }
   })
 
