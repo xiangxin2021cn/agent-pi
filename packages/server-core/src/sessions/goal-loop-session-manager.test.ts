@@ -513,6 +513,8 @@ describe('SessionManager goal loop routing', () => {
     await reviewerStartedPromise
 
     expect(events.some(event => event.type === 'goal_audit_started')).toBe(true)
+    expect(managed.goalState?.status).toBe('auditing')
+    expect(managed.goalState?.iteration).toBe(1)
 
     resolveReview(JSON.stringify({
       status: 'pass',

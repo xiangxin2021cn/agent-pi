@@ -6827,16 +6827,24 @@ export class SessionManager implements ISessionManager {
 
       const goalStateBeforeAudit = managed.goalState
       if (goalStateBeforeAudit && goalStateBeforeAudit.mode !== 'off') {
+        const auditingGoalState: SessionGoalState = {
+          ...goalStateBeforeAudit,
+          status: 'auditing',
+          iteration: goalStateBeforeAudit.iteration + 1,
+          updatedAt: Date.now(),
+        }
+        managed.goalState = auditingGoalState
+        this.persistSession(managed)
         this.sendEvent({
           type: 'goal_audit_started',
           sessionId,
-          goalId: goalStateBeforeAudit.id,
-          iteration: goalStateBeforeAudit.iteration + 1,
-          mode: goalStateBeforeAudit.mode,
+          goalId: auditingGoalState.id,
+          iteration: auditingGoalState.iteration,
+          mode: auditingGoalState.mode,
         }, managed.workspace.id)
       }
 
-      const goalDecision = await this.goalController.onTurnStopped(managed.goalState, {
+      const goalDecision = await this.goalController.onTurnStopped(goalStateBeforeAudit, {
         messages: managed.messages,
         turnStartFinalMessageId,
         stoppedReason: reason,
