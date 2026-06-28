@@ -320,6 +320,30 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
   })
 
+  it('does not complete when reviewer pass has malformed corrective prompt', async () => {
+    const sessionId = 'goal-reviewer-malformed-correction'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+
+    managed.agent = {
+      runMiniCompletion: async () => JSON.stringify({
+        status: 'pass',
+        summary: 'Looks complete, but add a citation.',
+        missingCriteria: [],
+        correctivePrompt: ['Add a concrete citation to source.xlsx.'],
+      }),
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(false)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+  })
+
   it('emits goal audit started before waiting for the reviewer result', async () => {
     const sessionId = 'goal-reviewer-started-before-await'
     const managed = buildSession(sessionId)

@@ -1116,9 +1116,7 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
   }
 
   const missingCriteria = normalizeGoalReviewMissingCriteria(parsed.missingCriteria)
-  const correctivePrompt = typeof parsed.correctivePrompt === 'string' && parsed.correctivePrompt.trim()
-    ? parsed.correctivePrompt.trim()
-    : undefined
+  const correctivePrompt = normalizeGoalReviewCorrectivePrompt(parsed.correctivePrompt)
 
   return {
     status,
@@ -1140,6 +1138,22 @@ function normalizeGoalReviewMissingCriteria(value: unknown): string[] | undefine
 
   if (typeof value === 'string' && value.trim()) {
     return [value.trim()]
+  }
+
+  return undefined
+}
+
+function normalizeGoalReviewCorrectivePrompt(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  if (Array.isArray(value)) {
+    const lines = value
+      .filter((item): item is string => typeof item === 'string')
+      .map(item => item.trim())
+      .filter(Boolean)
+    return lines.length > 0 ? lines.join('\n') : undefined
   }
 
   return undefined
