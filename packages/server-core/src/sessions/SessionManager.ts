@@ -101,7 +101,7 @@ import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import { GoalController, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
-import { buildGoalCriteriaFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -1109,6 +1109,19 @@ function isWorkLikeGoalMessage(
 
   const workVerbPattern = /实现|修复|改造|生成|输出|撰写|整理|分析|总结|审查|检查|验证|测试|打包|发布|导出|转换|预览|设计|开发|优化|调研|review|build|create|implement|fix|generate|write|draft|summari[sz]e|analy[sz]e|verify|test|package|release|export|convert|preview|design|develop|optimi[sz]e|research/i
   return workVerbPattern.test(trimmed)
+}
+
+function appendGoalObjectiveFollowUp(objective: string, message: string): string {
+  const followUp = `Follow-up: ${message.trim().slice(0, 1000)}`
+  if (!message.trim() || objective.includes(followUp)) return objective
+
+  const separator = '\n\n'
+  const maxLength = 4000
+  const remaining = maxLength - separator.length - followUp.length
+  if (remaining <= 0) return followUp.slice(0, maxLength)
+
+  const base = objective.trim().slice(0, remaining)
+  return `${base}${separator}${followUp}`.slice(0, maxLength)
 }
 
 /**
@@ -6722,7 +6735,12 @@ export class SessionManager implements ISessionManager {
     storedAttachments: StoredAttachment[] | undefined,
     options: SendMessageOptions | undefined,
   ): void {
-    if (managed.goalState || managed.hidden || managed.systemPromptPreset === 'mini') {
+    if (managed.hidden || managed.systemPromptPreset === 'mini') {
+      return
+    }
+
+    if (managed.goalState) {
+      this.maybeUpdateGoalStateForUserMessage(managed, message, storedAttachments, options)
       return
     }
 
@@ -6757,6 +6775,52 @@ export class SessionManager implements ISessionManager {
       criteria,
       auditHistory: [],
     }
+    managed.goalState = goalState
+    this.persistSession(managed)
+    this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
+    this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
+  }
+
+  private maybeUpdateGoalStateForUserMessage(
+    managed: ManagedSession,
+    message: string,
+    storedAttachments: StoredAttachment[] | undefined,
+    options: SendMessageOptions | undefined,
+  ): void {
+    const current = managed.goalState
+    if (!current || current.mode === 'off' || current.status === 'cancelled') {
+      return
+    }
+
+    if (!isWorkLikeGoalMessage(message, storedAttachments, options)) {
+      return
+    }
+
+    const existingCriteria = new Set(current.criteria.map(criterion => `${criterion.kind}\u0000${criterion.text}`))
+    const newCriteria = buildGoalCriteriaUpdateFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    })
+      .filter(criterion => !existingCriteria.has(`${criterion.kind}\u0000${criterion.text}`))
+      .map(criterion => ({
+        id: randomUUID(),
+        ...criterion,
+      }))
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    })
+    const goalState: SessionGoalState = {
+      ...current,
+      objective: appendGoalObjectiveFollowUp(current.objective, message),
+      status: 'running',
+      updatedAt: Date.now(),
+      maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
+      criteria: [...current.criteria, ...newCriteria],
+    }
+
     managed.goalState = goalState
     this.persistSession(managed)
     this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)

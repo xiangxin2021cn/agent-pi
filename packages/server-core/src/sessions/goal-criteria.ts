@@ -57,6 +57,22 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
   return criteria
 }
 
+export function buildGoalCriteriaUpdateFromMessage(input: BuildGoalCriteriaInput): SessionGoalCriterionSpec[] {
+  const message = input.message.trim()
+  const criteria = buildGoalCriteriaFromMessage(input)
+    .filter(criterion => criterion.kind !== BASE_DELIVERABLE_CRITERION.kind || criterion.text !== BASE_DELIVERABLE_CRITERION.text)
+
+  if (message) {
+    criteria.unshift({
+      text: `Also satisfy this follow-up instruction: ${message.slice(0, 1000)}.`,
+      kind: 'user_constraint',
+      required: true,
+    })
+  }
+
+  return dedupeCriteria(criteria)
+}
+
 export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInput): GoalExecutionPolicy {
   const message = input.message.trim()
   let maxIterations = 2
@@ -93,4 +109,14 @@ function getReferencedNames(input: BuildGoalCriteriaInput): string[] {
   }
 
   return [...names].slice(0, 6)
+}
+
+function dedupeCriteria(criteria: SessionGoalCriterionSpec[]): SessionGoalCriterionSpec[] {
+  const seen = new Set<string>()
+  return criteria.filter(criterion => {
+    const key = `${criterion.kind}\u0000${criterion.text}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }

@@ -289,6 +289,61 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.objective).toBe('请整理一份项目分析报告')
   })
 
+  it('adds follow-up work constraints to an existing goal', async () => {
+    const sessionId = 'goal-update-follow-up'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        objective: '请整理一份项目分析报告',
+        criteria: [{
+          id: 'crit-1',
+          text: 'Complete the user request.',
+          kind: 'deliverable',
+          required: true,
+        }],
+      }),
+    })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '另外请验证结果并引用 source.xlsx').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.objective).toContain('Follow-up: 另外请验证结果并引用 source.xlsx')
+    expect(managed.goalState?.status).toBe('running')
+    expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('user_constraint')
+    expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('test')
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.id === managed.goalState?.id
+    )).toBe(true)
+  })
+
+  it('extends the goal loop budget when the user resumes a goal that reached review', async () => {
+    const sessionId = 'goal-update-budget-after-review'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        status: 'needs_review',
+        iteration: 2,
+        maxIterations: 2,
+      }),
+    })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '继续修复并验证结果').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.status).toBe('running')
+    expect(managed.goalState?.maxIterations).toBe(4)
+  })
+
+  it('does not add casual follow-up chat to an existing goal', async () => {
+    const sessionId = 'goal-ignore-casual-follow-up'
+    const managed = buildSession(sessionId)
+    const originalGoal = managed.goalState
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '谢谢').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBe(originalGoal)
+  })
+
   it('does not initialize a goal for a first casual chat message', async () => {
     const sessionId = 'goal-auto-init-chat'
     const managed = buildSession(sessionId, { goalState: undefined })
