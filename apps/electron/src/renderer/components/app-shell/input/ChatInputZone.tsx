@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import { CHAT_LAYOUT } from '@/config/layout'
 import { flattenLabels, type LabelConfig } from '@craft-agent/shared/labels'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionStatus } from '@/config/session-status-config'
 import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
@@ -14,6 +15,8 @@ interface ChatInputZoneProps {
   showOptionBadges?: boolean
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalState?: SessionGoalState
+  onGoalModeChange?: (mode: SessionGoalMode) => void
   tasks?: BackgroundTask[]
   sessionId: string
   sessionFolderPath?: string
@@ -34,6 +37,8 @@ export function ChatInputZone({
   showOptionBadges,
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalState,
+  onGoalModeChange,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -80,6 +85,8 @@ export function ChatInputZone({
         <ActiveOptionBadges
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          goalState={goalState}
+          onGoalModeChange={onGoalModeChange}
           tasks={tasks}
           sessionId={sessionId}
           sessionFolderPath={sessionFolderPath}

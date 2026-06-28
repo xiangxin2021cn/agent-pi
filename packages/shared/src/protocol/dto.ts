@@ -230,6 +230,7 @@ export type SessionEvent =
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
   | { type: 'working_directory_error'; sessionId: string; error: string }
+  | { type: 'goal_state_changed'; sessionId: string; goalState: SessionGoalState }
 
 export interface SendMessageOptions {
   skillSlugs?: string[]
@@ -252,6 +253,7 @@ export type SessionCommand =
   | { type: 'markUnread' }
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setPermissionMode'; mode: PermissionMode }
+  | { type: 'setGoalMode'; mode: SessionGoalMode }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
   | { type: 'setSources'; sourceSlugs: string[] }

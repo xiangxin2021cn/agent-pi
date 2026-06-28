@@ -214,6 +214,7 @@ export function processEvent(
     case 'goal_audit_result':
     case 'goal_completed':
     case 'goal_needs_review':
+    case 'goal_state_changed':
       return handleGoalStateUpdated(state, event)
 
     case 'usage_update':

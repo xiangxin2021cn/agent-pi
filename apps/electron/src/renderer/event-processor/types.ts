@@ -488,6 +488,12 @@ export interface GoalNeedsReviewEvent {
   reason: string
 }
 
+export interface GoalStateChangedEvent {
+  type: 'goal_state_changed'
+  sessionId: string
+  goalState: SessionGoalState
+}
+
 /**
  * Usage update event - real-time context usage during processing
  * Allows UI to show growing context as agent processes, not just on complete
@@ -549,6 +555,7 @@ export type AgentEvent =
   | GoalAuditResultEvent
   | GoalCompletedEvent
   | GoalNeedsReviewEvent
+  | GoalStateChangedEvent
   | UsageUpdateEvent
 
 /**

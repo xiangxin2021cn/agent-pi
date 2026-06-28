@@ -28,6 +28,7 @@ import { ensureSessionMessagesLoadedAtom, forceSessionMessagesReloadAtom, loaded
 import { getSessionTitle } from '@/utils/session'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
+import type { SessionGoalMode } from '@craft-agent/shared/sessions'
 
 export interface ChatPageProps {
   sessionId: string
@@ -511,6 +512,14 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSessionStatusChange(sessionId, state)
   }, [sessionId, onSessionStatusChange])
 
+  const handleGoalModeChange = React.useCallback(async (mode: SessionGoalMode) => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'setGoalMode', mode })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalModeUpdateFailed'))
+    }
+  }, [sessionId, t])
+
   const handleLabelsChange = React.useCallback((newLabels: string[]) => {
     onSessionLabelsChange?.(sessionId, newLabels)
   }, [sessionId, onSessionLabelsChange])
@@ -754,6 +763,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         isFlagged: sessionMeta.isFlagged,
         workingDirectory: sessionMeta.workingDirectory,
         enabledSourceSlugs: sessionMeta.enabledSourceSlugs,
+        goalState: sessionMeta.goalState,
       }
 
       return (
@@ -779,6 +789,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                   onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
                   permissionMode={sessionOpts.permissionMode}
                   onPermissionModeChange={setPermissionMode}
+                  goalState={sessionMeta.goalState}
+                  onGoalModeChange={handleGoalModeChange}
                   enabledModes={enabledModes}
                   inputValue={inputValue}
                   onInputChange={handleInputChange}
@@ -859,6 +871,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
               permissionMode={sessionOpts.permissionMode}
               onPermissionModeChange={setPermissionMode}
+              goalState={session.goalState}
+              onGoalModeChange={handleGoalModeChange}
               enabledModes={enabledModes}
               inputValue={inputValue}
               onInputChange={handleInputChange}

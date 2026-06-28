@@ -179,6 +179,34 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.some(m => m.role === 'assistant' && m.content === 'Improved report complete.')).toBe(true)
   })
 
+  it('can disable an existing goal loop before completion audits', async () => {
+    const sessionId = 'goal-disable'
+    const managed = buildSession(sessionId)
+    const events = captureEvents()
+    const continuations: string[] = []
+
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string) => void
+    }).scheduleGoalContinuation = (id) => {
+      continuations.push(id)
+    }
+
+    sm.setSessionGoalMode(sessionId, 'off')
+
+    expect(managed.goalState?.mode).toBe('off')
+    expect(managed.goalState?.status).toBe('cancelled')
+    expect(events.some(event => event.type === 'goal_state_changed')).toBe(true)
+
+    events.length = 0
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(continuations).toEqual([])
+    expect(events.some(event => event.type === 'goal_audit_result')).toBe(false)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
+  })
+
   it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
     const sessionId = 'goal-reviewer-pass'
     const managed = buildSession(sessionId)

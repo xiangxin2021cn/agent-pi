@@ -71,6 +71,18 @@ describe('goal state events', () => {
     expect(result.state.session.goalState).toEqual(nextGoal)
   })
 
+  it('stores goalState from goal_state_changed', () => {
+    const nextGoal = goalState({ mode: 'off', status: 'cancelled' })
+
+    const result = processEvent(makeState(goalState()), {
+      type: 'goal_state_changed',
+      sessionId: 'session-1',
+      goalState: nextGoal,
+    } as any)
+
+    expect(result.state.session.goalState).toEqual(nextGoal)
+  })
+
   it('stores terminal goal states from complete and needs-review events', () => {
     const completed = processEvent(makeState(goalState()), {
       type: 'goal_completed',

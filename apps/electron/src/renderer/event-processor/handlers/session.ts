@@ -43,6 +43,7 @@ import type {
   GoalAuditResultEvent,
   GoalCompletedEvent,
   GoalNeedsReviewEvent,
+  GoalStateChangedEvent,
   Effect,
 } from '../types'
 import type { Message } from '../../../shared/types'
@@ -950,7 +951,7 @@ export function handleGoalAuditStarted(
 
 export function handleGoalStateUpdated(
   state: SessionState,
-  event: GoalAuditResultEvent | GoalCompletedEvent | GoalNeedsReviewEvent
+  event: GoalAuditResultEvent | GoalCompletedEvent | GoalNeedsReviewEvent | GoalStateChangedEvent
 ): ProcessResult {
   const { session, streaming } = state
 

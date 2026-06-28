@@ -70,6 +70,7 @@ import {
   type SessionMetadata,
   type SessionStatus,
   type SessionHeader,
+  type SessionGoalMode,
   type SessionGoalState,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
@@ -7245,6 +7246,44 @@ export class SessionManager implements ISessionManager {
       changedAt: diagnostics.lastChangedAt,
       changedBy: diagnostics.lastChangedBy,
     }
+  }
+
+  /**
+   * Set the goal loop mode for an existing session goal.
+   * Sessions without a goal keep legacy behavior until work-like auto-init creates one.
+   */
+  setSessionGoalMode(sessionId: string, mode: SessionGoalMode): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.goalState) {
+      return
+    }
+
+    const current = managed.goalState
+    const nextStatus = mode === 'off'
+      ? 'cancelled'
+      : current.status === 'cancelled'
+      ? 'idle'
+      : current.status
+
+    managed.goalState = {
+      ...current,
+      mode,
+      status: nextStatus,
+      updatedAt: Date.now(),
+    }
+
+    sessionLog.info('Session goal mode changed', {
+      sessionId,
+      mode,
+      status: managed.goalState.status,
+    })
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
   }
 
   /**

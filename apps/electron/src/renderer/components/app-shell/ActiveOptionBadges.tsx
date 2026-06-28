@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
-import { ChevronDown, Info } from 'lucide-react'
+import { Check, ChevronDown, Info, Target } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import type { BackgroundTask } from './ActiveTasksBar'
 import { LabelIcon, LabelValueTypeIcon } from '@/components/ui/label-icon'
 import { LabelValuePopover } from '@/components/ui/label-value-popover'
@@ -46,6 +47,10 @@ export interface ActiveOptionBadgesProps {
   permissionMode?: PermissionMode
   /** Callback when permission mode changes */
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Application-level goal audit state for this session */
+  goalState?: SessionGoalState
+  /** Callback when goal loop mode changes */
+  onGoalModeChange?: (mode: SessionGoalMode) => void
   /** Background tasks to display */
   tasks?: BackgroundTask[]
   /** Session ID for opening preview windows */
@@ -89,6 +94,8 @@ interface ResolvedLabelEntry {
 export function ActiveOptionBadges({
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalState,
+  onGoalModeChange,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -154,6 +161,16 @@ export function ActiveOptionBadges({
             <PermissionModeDropdown
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              sessionId={sessionId}
+            />
+          </div>
+        )}
+
+        {goalState && (
+          <div className="shrink-0">
+            <GoalModeBadge
+              goalState={goalState}
+              onGoalModeChange={onGoalModeChange}
               sessionId={sessionId}
             />
           </div>
@@ -225,6 +242,114 @@ export function ActiveOptionBadges({
       </div>
     </div>
   )
+}
+
+// ============================================================================
+// Goal Mode Badge Component
+// ============================================================================
+
+const VISIBLE_GOAL_MODES: SessionGoalMode[] = ['auto_improve', 'check_only', 'off']
+
+function GoalModeBadge({
+  goalState,
+  onGoalModeChange,
+  sessionId,
+}: {
+  goalState: SessionGoalState
+  onGoalModeChange?: (mode: SessionGoalMode) => void
+  sessionId?: string
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = React.useState(false)
+  const activeMode = VISIBLE_GOAL_MODES.includes(goalState.mode) ? goalState.mode : 'auto_improve'
+  const badgeColor = activeMode === 'off'
+    ? 'var(--foreground)'
+    : activeMode === 'check_only'
+    ? 'var(--info)'
+    : 'var(--accent)'
+
+  const handleSelect = React.useCallback((mode: SessionGoalMode) => {
+    setOpen(false)
+    onGoalModeChange?.(mode)
+  }, [onGoalModeChange])
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <MetadataBadge
+          label={t('sessionInfo.goal')}
+          value={getGoalModeLabel(t, activeMode)}
+          badgeColor={badgeColor}
+          interactive
+          isActive={open}
+          showChevron
+          icon={<Target className="h-3.5 w-3.5" />}
+          className="pl-2.5"
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[240px] p-1 rounded-[8px] bg-background shadow-modal-small border border-border/60"
+        side="top"
+        align="start"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent('craft:focus-input', {
+            detail: { sessionId }
+          }))
+        }}
+      >
+        {VISIBLE_GOAL_MODES.map(mode => {
+          const selected = mode === activeMode
+          return (
+            <button
+              key={mode}
+              type="button"
+              className={cn(
+                "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                "hover:bg-foreground/5 outline-none",
+                selected && "bg-foreground/5"
+              )}
+              onClick={() => handleSelect(mode)}
+            >
+              <Target className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-foreground">{getGoalModeLabel(t, mode)}</span>
+                <span className="block text-xs text-muted-foreground leading-snug">{getGoalModeDescription(t, mode)}</span>
+              </span>
+              {selected && <Check className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+            </button>
+          )
+        })}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function getGoalModeLabel(t: ReturnType<typeof useTranslation>['t'], mode: SessionGoalMode): string {
+  switch (mode) {
+    case 'auto_improve':
+      return t('sessionInfo.goalModeAutoImprove')
+    case 'check_only':
+      return t('sessionInfo.goalModeCheckOnly')
+    case 'off':
+      return t('sessionInfo.goalModeOff')
+    case 'strict_work':
+      return t('sessionInfo.goalModeAutoImprove')
+  }
+}
+
+function getGoalModeDescription(t: ReturnType<typeof useTranslation>['t'], mode: SessionGoalMode): string {
+  switch (mode) {
+    case 'auto_improve':
+      return t('sessionInfo.goalModeAutoImproveDesc')
+    case 'check_only':
+      return t('sessionInfo.goalModeCheckOnlyDesc')
+    case 'off':
+      return t('sessionInfo.goalModeOffDesc')
+    case 'strict_work':
+      return t('sessionInfo.goalModeAutoImproveDesc')
+  }
 }
 
 // ============================================================================
@@ -503,4 +628,3 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
     </Popover>
   )
 }
-
