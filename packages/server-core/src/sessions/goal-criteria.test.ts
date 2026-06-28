@@ -92,6 +92,16 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
+  it('allows more passes for source-sensitive document work with attachments', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '招标文件条款有哪些风险？',
+      storedAttachments: [attachment('tender.pdf')],
+    })
+
+    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
+  })
+
   it('allows more passes when the user explicitly asks for high-quality comprehensive work', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '请全面详细分析这个项目并输出高质量报告',

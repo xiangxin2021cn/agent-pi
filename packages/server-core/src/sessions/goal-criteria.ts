@@ -88,7 +88,7 @@ export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInpu
   let maxIterations = 2
   let maxWallClockMs = 15 * 60 * 1000
 
-  if ((input.storedAttachments?.length ?? 0) > 0 && DOCUMENT_WORK_PATTERN.test(message)) {
+  if ((input.storedAttachments?.length ?? 0) > 0 && (DOCUMENT_WORK_PATTERN.test(message) || SOURCE_SENSITIVE_PATTERN.test(message))) {
     maxIterations = 3
     maxWallClockMs = 30 * 60 * 1000
   }
