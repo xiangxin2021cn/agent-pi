@@ -431,6 +431,58 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept requested output files outside the formal output directory', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成 final-report.md 文件'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/final-report.md' },
+        }),
+        message('a1', 'assistant', 'final-report.md 已生成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      expectedOutputDirectory: '/tmp/project/Agent Pi Outputs/session-1',
+      fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 100 }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The file output is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria.some(criterion =>
+        criterion.includes('Requested output file was not written to the formal output directory: /tmp/final-report.md')
+      )).toBe(true)
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_wrong_output_directory',
+        detail: '/tmp/final-report.md',
+      })
+      expect(decision.prompt).toContain('/tmp/project/Agent Pi Outputs/session-1')
+    }
+  })
+
   test('records user attachments as source file evidence without satisfying output file evidence', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

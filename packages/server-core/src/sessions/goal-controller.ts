@@ -4,6 +4,7 @@ import type {
   SessionGoalAuditResult,
   SessionGoalState,
 } from '@craft-agent/shared/sessions'
+import { pathStartsWith } from '@craft-agent/shared/utils'
 import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 export type GoalControllerDecision =
@@ -42,6 +43,7 @@ export interface GoalTurnSnapshot {
   turnStartFinalMessageId?: string
   stoppedReason: 'complete' | 'interrupted' | 'error' | 'timeout'
   now?: number
+  expectedOutputDirectory?: string
   reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
   fileVerifier?: GoalFileVerifier
 }
@@ -114,6 +116,17 @@ export class GoalController {
         label: 'file_evidence_missing',
         detail: 'No file path was captured from tool input or tool output.',
       })
+    }
+    if (requiresOutputFileEvidence(goalState) && snapshot.expectedOutputDirectory && outputFileEvidencePaths.size > 0) {
+      for (const filePath of outputFileEvidencePaths) {
+        if (pathStartsWith(filePath, snapshot.expectedOutputDirectory)) continue
+        fileVerificationIssues.push(`Requested output file was not written to the formal output directory: ${filePath} (expected under: ${snapshot.expectedOutputDirectory})`)
+        evidence.push({
+          type: 'file',
+          label: 'file_wrong_output_directory',
+          detail: filePath.slice(0, 500),
+        })
+      }
     }
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {

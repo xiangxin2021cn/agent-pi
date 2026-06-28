@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
-import type { SessionGoalState } from '@craft-agent/shared/sessions'
+import { FORMAL_OUTPUTS_DIR_NAME, type SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
 import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -153,6 +154,54 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.status).toBe('improving')
     expect(managed.goalState?.auditHistory.at(-1)?.missingCriteria).toContain(`Referenced file was not found: ${missingPath}`)
     expect(scheduledPrompt).toContain(`Referenced file was not found: ${missingPath}`)
+    expect(events.some(event => event.type === 'complete')).toBe(false)
+  })
+
+  it('continues automatically when a requested output file is outside the formal output directory', async () => {
+    const sessionId = 'goal-wrong-output-directory'
+    const workingDirectory = join(tmpRoot, 'project')
+    const expectedOutputDirectory = join(workingDirectory, FORMAL_OUTPUTS_DIR_NAME, sessionId)
+    const wrongPath = join(tmpRoot, 'final-report.md')
+    mkdirSync(workingDirectory, { recursive: true })
+    writeFileSync(wrongPath, 'report')
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'auto_improve',
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages.push(
+      message('u2', 'user', 'write a final report file'),
+      message('t2', 'tool', 'created', {
+        toolName: 'Write',
+        toolStatus: 'completed',
+        toolInput: { file_path: wrongPath },
+      }),
+      message('a2', 'assistant', 'Final report file complete.'),
+    )
+    const events = captureEvents()
+    let scheduledPrompt = ''
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (_id, prompt) => {
+      scheduledPrompt = prompt
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('improving')
+    expect(managed.goalState?.auditHistory.at(-1)?.missingCriteria.some(criterion =>
+      criterion.includes(`Requested output file was not written to the formal output directory: ${wrongPath}`)
+    )).toBe(true)
+    expect(scheduledPrompt).toContain(expectedOutputDirectory)
     expect(events.some(event => event.type === 'complete')).toBe(false)
   })
 

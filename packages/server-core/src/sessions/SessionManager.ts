@@ -56,6 +56,7 @@ import {
   getPendingPlanExecution as getStoredPendingPlanExecution,
   getSessionAttachmentsPath,
   getSessionPath as getSessionStoragePath,
+  getSessionOutputPath,
   ensureSessionDir,
   getSessionFilePath,
   generateSessionId,
@@ -6913,6 +6914,7 @@ export class SessionManager implements ISessionManager {
         stoppedReason: reason,
         reviewer: this.buildGoalReviewer(managed),
         fileVerifier: this.buildGoalFileVerifier(),
+        expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
