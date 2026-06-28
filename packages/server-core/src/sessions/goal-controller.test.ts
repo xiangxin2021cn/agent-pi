@@ -202,6 +202,38 @@ describe('GoalController', () => {
     }
   })
 
+  test('includes audit evidence in automatic improvement prompts', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the generated report file.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.md' },
+        }),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Audit evidence:')
+      expect(decision.prompt).toContain('/tmp/report.md')
+    }
+  })
+
   test('stops for review when auto_improve reaches max iterations', async () => {
     const controller = new GoalController()
 

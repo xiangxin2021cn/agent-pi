@@ -252,6 +252,12 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
   const missing = result.missingCriteria.length > 0
     ? result.missingCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
     : '1. Re-check the deliverable against the original objective.'
+  const evidence = result.evidence.length > 0
+    ? result.evidence.map((item, index) => {
+        const detail = item.detail ? ` - ${item.detail}` : ''
+        return `${index + 1}. [${item.type}] ${item.label}${detail}`
+      }).join('\n')
+    : '(none)'
 
   return [
     '<goal-audit>',
@@ -265,6 +271,9 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     '',
     'Missing or unproven criteria:',
     missing,
+    '',
+    'Audit evidence:',
+    evidence,
     '',
     'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
