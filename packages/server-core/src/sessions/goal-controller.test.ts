@@ -419,9 +419,9 @@ describe('GoalController', () => {
       auditHistory: [{
         iteration: 1,
         status: 'fail',
-        summary: 'The spreadsheet citation was still missing.',
-        missingCriteria: ['The final report cites the source spreadsheet.'],
-        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+        summary: 'The executive summary was still missing.',
+        missingCriteria: ['The final report includes an executive summary.'],
+        correctivePrompt: 'Add a concise executive summary.',
         evidence: [{
           type: 'file',
           label: 'Read',
@@ -441,8 +441,8 @@ describe('GoalController', () => {
     expect(decision.action).toBe('continue')
     if (decision.action === 'continue') {
       expect(decision.prompt).toContain('Previous goal audits:')
-      expect(decision.prompt).toContain('Iteration 1: fail - The spreadsheet citation was still missing.')
-      expect(decision.prompt).toContain('Correction: Add a concrete citation to source.xlsx.')
+      expect(decision.prompt).toContain('Iteration 1: fail - The executive summary was still missing.')
+      expect(decision.prompt).toContain('Correction: Add a concise executive summary.')
     }
   })
 
@@ -472,6 +472,55 @@ describe('GoalController', () => {
     if (decision.action === 'needs_review') {
       expect(decision.goalState.status).toBe('needs_review')
       expect(decision.reason).toContain('maximum goal iterations')
+    }
+  })
+
+  test('stops for review when the same missing criteria repeat across audits', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 4,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'The citation is missing.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'The citation is still missing.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+      }),
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.goalState.status).toBe('needs_review')
+      expect(decision.reason).toContain('same goal audit failure')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'system',
+        label: 'repeated_goal_failure',
+        detail: 'The same missing criteria were reported in consecutive audits.',
+      })
     }
   })
 

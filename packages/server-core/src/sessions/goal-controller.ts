@@ -228,7 +228,23 @@ export class GoalController {
       }
     }
 
+    const repeatedFailure = hasRepeatedGoalFailure(goalState.auditHistory, result)
+    if (repeatedFailure) {
+      result = {
+        ...result,
+        evidence: [
+          ...result.evidence,
+          {
+            type: 'system',
+            label: 'repeated_goal_failure',
+            detail: 'The same missing criteria were reported in consecutive audits.',
+          },
+        ],
+      }
+    }
+
     const shouldAutoImprove = !reviewerFailed
+      && !repeatedFailure
       && snapshot.stoppedReason === 'complete'
       && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
@@ -263,7 +279,9 @@ export class GoalController {
       }
     }
 
-    const reason = shouldAutoImprove && !hasRemainingIterations
+    const reason = repeatedFailure
+      ? 'Repeated the same goal audit failure; manual review is required.'
+      : shouldAutoImprove && !hasRemainingIterations
       ? `Reached maximum goal iterations (${goalState.maxIterations}); manual review is required.`
       : shouldAutoImprove && !hasRemainingWallClock
       ? `Reached maximum goal wall-clock budget (${goalState.budgets?.maxWallClockMs}ms); manual review is required.`
@@ -303,6 +321,30 @@ function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
     && criterion.kind === 'deliverable'
     && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
   )
+}
+
+function hasRepeatedGoalFailure(history: SessionGoalState['auditHistory'], result: SessionGoalAuditResult): boolean {
+  if (result.status === 'pass' || result.missingCriteria.length === 0) {
+    return false
+  }
+
+  const previous = [...history].reverse().find(item => item.status !== 'pass' && item.missingCriteria.length > 0)
+  if (!previous) {
+    return false
+  }
+
+  const currentMissing = normalizeMissingCriteria(result.missingCriteria)
+  const previousMissing = normalizeMissingCriteria(previous.missingCriteria)
+  return currentMissing.length > 0
+    && currentMissing.length === previousMissing.length
+    && currentMissing.every((criterion, index) => criterion === previousMissing[index])
+}
+
+function normalizeMissingCriteria(criteria: string[]): string[] {
+  return [...new Set(criteria
+    .map(criterion => criterion.replace(/\s+/g, ' ').trim().toLowerCase())
+    .filter(Boolean))]
+    .sort()
 }
 
 function buildFileVerificationEvidenceLabel(verification: GoalFileVerificationResult): string {
