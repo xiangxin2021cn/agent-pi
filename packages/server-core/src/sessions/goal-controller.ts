@@ -91,7 +91,7 @@ export class GoalController {
     if (snapshot.stoppedReason !== 'complete') {
       status = 'fail'
       missingCriteria.push(`Turn stopped with reason: ${snapshot.stoppedReason}`)
-      summary = 'Goal audit failed because the turn did not complete normally.'
+      summary = `Goal audit failed because the turn stopped with reason: ${snapshot.stoppedReason}.`
     }
 
     if (!finalAssistant) {
@@ -170,6 +170,7 @@ export class GoalController {
     }
 
     const shouldAutoImprove = !reviewerFailed
+      && snapshot.stoppedReason === 'complete'
       && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
     const hasRemainingIterations = iteration < goalState.maxIterations

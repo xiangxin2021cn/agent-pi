@@ -324,6 +324,33 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not auto-continue after an interrupted turn even if partial output exists', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Partial report draft.'),
+      ],
+      stoppedReason: 'interrupted',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.reason).toContain('interrupted')
+    }
+  })
+
   test('records file evidence from file-oriented tool input', async () => {
     const controller = new GoalController()
 
