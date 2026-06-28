@@ -1130,14 +1130,31 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
 
 function normalizeGoalReviewMissingCriteria(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === 'string')
-      .map(item => item.trim())
-      .filter(Boolean)
+    const normalized = value
+      .map(normalizeGoalReviewMissingCriterion)
+      .filter((item): item is string => item !== undefined)
+    return normalized.length > 0 ? normalized : undefined
   }
 
   if (typeof value === 'string' && value.trim()) {
     return [value.trim()]
+  }
+
+  return undefined
+}
+
+function normalizeGoalReviewMissingCriterion(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  if (value && typeof value === 'object') {
+    for (const key of ['text', 'message', 'criterion', 'reason']) {
+      const candidate = (value as Record<string, unknown>)[key]
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+    }
   }
 
   return undefined
