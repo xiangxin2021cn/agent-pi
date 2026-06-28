@@ -3,17 +3,18 @@ import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
 import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
-function message(id: string, role: Message['role'], content: string): Message {
+function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
     id,
     role,
     content,
     timestamp: 1,
+    ...extra,
   }
 }
 
@@ -119,6 +120,39 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.status).toBe('improving')
     expect(events.some(event => event.type === 'goal_audit_result')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
+    expect(events.some(event => event.type === 'complete')).toBe(false)
+  })
+
+  it('continues automatically when a claimed output file is missing on disk', async () => {
+    const sessionId = 'goal-missing-file-evidence'
+    const missingPath = join(tmpRoot, 'missing-report.md')
+    const managed = buildSession(sessionId, {
+      goalState: goal({ mode: 'auto_improve', criteria: [] }),
+    })
+    managed.messages.push(
+      message('u2', 'user', 'write a report file'),
+      message('t2', 'tool', 'created', {
+        toolName: 'Write',
+        toolStatus: 'completed',
+        toolInput: { file_path: missingPath },
+      }),
+      message('a2', 'assistant', 'Report file complete.'),
+    )
+    const events = captureEvents()
+    let scheduledPrompt = ''
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (_id, prompt) => {
+      scheduledPrompt = prompt
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('improving')
+    expect(managed.goalState?.auditHistory.at(-1)?.missingCriteria).toContain(`Referenced file was not found: ${missingPath}`)
+    expect(scheduledPrompt).toContain(`Referenced file was not found: ${missingPath}`)
     expect(events.some(event => event.type === 'complete')).toBe(false)
   })
 
@@ -393,6 +427,8 @@ describe('SessionManager goal loop routing', () => {
 
   it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
     const sessionId = 'goal-reviewer-pass'
+    const sourcePath = join(tmpRoot, 'source.xlsx')
+    writeFileSync(sourcePath, 'source rows')
     const managed = buildSession(sessionId)
     managed.goalState = goal({ mode: 'check_only' })
     managed.messages.splice(1, 0, {
@@ -401,7 +437,7 @@ describe('SessionManager goal loop routing', () => {
       content: 'read source',
       timestamp: 1,
       toolName: 'Read',
-      toolInput: { file_path: '/tmp/source.xlsx' },
+      toolInput: { file_path: sourcePath },
       toolResult: 'loaded source rows from the spreadsheet',
     })
     const events = captureEvents()
@@ -427,7 +463,7 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('user: write a report')
     expect(reviewPrompts[0]).toContain('tool Read: loaded source rows from the spreadsheet')
     expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
-    expect(reviewPrompts[0]).toContain('/tmp/source.xlsx')
+    expect(reviewPrompts[0]).toContain(sourcePath)
     expect(reviewPrompts[0]).toContain('When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.')
     expect(reviewPrompts[0]).toContain('If any criterion is missing or any correctivePrompt is needed, status must not be "pass".')
     expect(managed.goalState?.status).toBe('passed')

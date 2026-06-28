@@ -26,12 +26,23 @@ export interface GoalReviewResult {
   evidence?: SessionGoalAuditEvidence[]
 }
 
+export interface GoalFileVerificationResult {
+  exists: boolean
+  readable?: boolean
+  isFile?: boolean
+  sizeBytes?: number
+  error?: string
+}
+
+export type GoalFileVerifier = (filePath: string) => Promise<GoalFileVerificationResult> | GoalFileVerificationResult
+
 export interface GoalTurnSnapshot {
   messages: Message[]
   turnStartFinalMessageId?: string
   stoppedReason: 'complete' | 'interrupted' | 'error' | 'timeout'
   now?: number
   reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
+  fileVerifier?: GoalFileVerifier
 }
 
 export class GoalController {
@@ -52,6 +63,7 @@ export class GoalController {
     )
 
     const evidence: SessionGoalAuditEvidence[] = []
+    const fileEvidencePaths = new Set<string>()
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -66,6 +78,7 @@ export class GoalController {
         ...extractFilePathsFromText(message.toolResult),
       ])
       for (const path of paths) {
+        fileEvidencePaths.add(path)
         evidence.push({
           type: 'file',
           label: message.toolName ?? 'tool_file',
@@ -73,6 +86,30 @@ export class GoalController {
         })
       }
     }
+
+    const fileVerificationIssues: string[] = []
+    if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
+      for (const filePath of fileEvidencePaths) {
+        const verification = await snapshot.fileVerifier(filePath)
+        const issue = buildFileVerificationIssue(filePath, verification)
+        if (issue) {
+          fileVerificationIssues.push(issue)
+          evidence.push({
+            type: 'file',
+            label: buildFileVerificationEvidenceLabel(verification),
+            detail: filePath.slice(0, 500),
+          })
+        } else {
+          const size = typeof verification.sizeBytes === 'number' ? ` (${verification.sizeBytes} bytes)` : ''
+          evidence.push({
+            type: 'file',
+            label: 'file_verified',
+            detail: `${filePath}${size}`.slice(0, 500),
+          })
+        }
+      }
+    }
+
     for (const message of errorMessages) {
       evidence.push({
         type: 'system',
@@ -109,6 +146,14 @@ export class GoalController {
       if (errorMessages.length > 0) missingCriteria.push(`${errorMessages.length} error message(s) were produced.`)
       if (failedTools.length > 0) missingCriteria.push(`${failedTools.length} tool failure(s) were produced.`)
       summary = 'Goal audit failed because this turn produced errors.'
+    }
+
+    if (fileVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...fileVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because referenced file evidence could not be verified.'
+      }
     }
 
     if (status === 'pass' && goalState.criteria.some(criterion => criterion.required)) {
@@ -224,6 +269,31 @@ export class GoalController {
       reason,
     }
   }
+}
+
+function buildFileVerificationIssue(filePath: string, verification: GoalFileVerificationResult): string | undefined {
+  if (!verification.exists) {
+    return `Referenced file was not found: ${filePath}`
+  }
+  if (verification.readable === false) {
+    const suffix = verification.error ? ` (${verification.error})` : ''
+    return `Referenced file could not be read: ${filePath}${suffix}`
+  }
+  if (verification.isFile === false) {
+    return `Referenced path is not a file: ${filePath}`
+  }
+  if (verification.sizeBytes === 0) {
+    return `Referenced file is empty: ${filePath}`
+  }
+  return undefined
+}
+
+function buildFileVerificationEvidenceLabel(verification: GoalFileVerificationResult): string {
+  if (!verification.exists) return 'file_missing'
+  if (verification.readable === false) return 'file_unreadable'
+  if (verification.isFile === false) return 'file_not_file'
+  if (verification.sizeBytes === 0) return 'file_empty'
+  return 'file_verification_failed'
 }
 
 const FILE_PATH_INPUT_KEYS = new Set([

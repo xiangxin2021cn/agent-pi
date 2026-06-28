@@ -154,6 +154,7 @@ Current implementation slice:
 - `SessionManager` can use the active session agent's mini completion as a bounded reviewer for explicit required criteria.
 - The first real user message can conservatively initialize an `auto_improve` goal when it looks like a work task; casual chat, hidden sessions, and mini sessions are left alone.
 - Workspace settings can set the default goal-loop strategy for newly auto-detected work sessions: off, check only, or auto improve.
+- File paths surfaced by tool input or tool output are verified against the local filesystem during goal audit. Missing, unreadable, non-file, or empty file evidence fails the audit and can trigger an automatic improvement pass.
 
 ## Where To Hook
 
@@ -401,6 +402,8 @@ Success criteria:
 - Add artifact/file registry events.
 - Let goal audits verify output files, exports, previews, tests, and citations.
 - Add templates for code, long document writing, data extraction, and enterprise document analysis.
+
+Current status: first deterministic file-evidence verification is implemented without a full registry. The audit now checks file paths already surfaced by tool input or tool output and flags missing, unreadable, non-file, or empty files. Full artifact registry events, output-folder policy, preview/export checks, and citation-level checks remain future work.
 
 Success criteria:
 

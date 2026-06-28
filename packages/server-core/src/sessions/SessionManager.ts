@@ -5,8 +5,8 @@ import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
-import { existsSync } from 'fs'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { constants as FS_CONSTANTS, existsSync } from 'fs'
+import { access, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
 import {
@@ -102,7 +102,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
-import { GoalController, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
+import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
 
 // Import from server-core domain utilities
@@ -1312,6 +1312,18 @@ function normalizeWorkspaceGoalLoopDefaultMode(value: unknown): WorkspaceGoalLoo
   return value === 'off' || value === 'check_only' || value === 'auto_improve'
     ? value
     : undefined
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
+
+function summarizeGoalFileVerifierError(error: unknown): string {
+  return error instanceof Error
+    ? error.message.slice(0, 300)
+    : String(error).slice(0, 300)
 }
 
 function recoverStaleGoalStateOnRestore(goalState: SessionGoalState | undefined): SessionGoalState | undefined {
@@ -6900,6 +6912,7 @@ export class SessionManager implements ISessionManager {
         turnStartFinalMessageId,
         stoppedReason: reason,
         reviewer: this.buildGoalReviewer(managed),
+        fileVerifier: this.buildGoalFileVerifier(),
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
@@ -6962,6 +6975,56 @@ export class SessionManager implements ISessionManager {
         `Goal reviewer timed out after ${Math.floor(GOAL_REVIEW_TIMEOUT_MS / 1000)}s`,
       )
       return parseGoalReviewResult(response)
+    }
+  }
+
+  private buildGoalFileVerifier(): GoalFileVerifier {
+    return async (filePath) => {
+      try {
+        const info = await stat(filePath)
+        const isFile = info.isFile()
+        if (!isFile) {
+          return {
+            exists: true,
+            readable: true,
+            isFile: false,
+            sizeBytes: info.size,
+          }
+        }
+
+        try {
+          await access(filePath, FS_CONSTANTS.R_OK)
+        } catch (error) {
+          return {
+            exists: true,
+            readable: false,
+            isFile: true,
+            sizeBytes: info.size,
+            error: summarizeGoalFileVerifierError(error),
+          }
+        }
+
+        return {
+          exists: true,
+          readable: true,
+          isFile: true,
+          sizeBytes: info.size,
+        }
+      } catch (error) {
+        const code = getErrorCode(error)
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+          return {
+            exists: false,
+            readable: false,
+          }
+        }
+
+        return {
+          exists: true,
+          readable: false,
+          error: summarizeGoalFileVerifierError(error),
+        }
+      }
     }
   }
 

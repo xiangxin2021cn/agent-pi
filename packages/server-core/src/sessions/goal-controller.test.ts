@@ -300,6 +300,65 @@ describe('GoalController', () => {
     }
   })
 
+  test('continues automatically when claimed file evidence is missing', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report file'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/missing-report.md' },
+        }),
+        message('a1', 'assistant', 'Report file complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({ exists: false, readable: false }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Referenced file was not found: /tmp/missing-report.md')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_missing',
+        detail: '/tmp/missing-report.md',
+      })
+      expect(decision.prompt).toContain('Referenced file was not found: /tmp/missing-report.md')
+    }
+  })
+
+  test('needs review when claimed file evidence is empty in check-only mode', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal(), {
+      messages: [
+        message('u1', 'user', 'write a report file'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/empty-report.md' },
+        }),
+        message('a1', 'assistant', 'Report file complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 0 }),
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Referenced file is empty: /tmp/empty-report.md')
+      expect(decision.reason).toContain('file evidence')
+    }
+  })
+
   test('includes previous audit history in automatic improvement prompts', async () => {
     const controller = new GoalController()
 
