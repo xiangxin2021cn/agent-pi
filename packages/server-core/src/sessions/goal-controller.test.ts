@@ -377,6 +377,60 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not count source read paths as requested output file evidence', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请将 tender.pdf 转换为 markdown 文件'),
+        message('t1', 'tool', 'read source', {
+          toolName: 'Read',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/tender.pdf' },
+          toolResult: 'Read /tmp/tender.pdf',
+        }),
+        message('a1', 'assistant', '已生成 tender.md。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 100 }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The requested conversion is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('No verifiable output file path was produced for the requested file deliverable.')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'Read',
+        detail: '/tmp/tender.pdf',
+      })
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_evidence_missing',
+        detail: 'No file path was captured from tool input or tool output.',
+      })
+    }
+  })
+
   test('does not accept reviewer pass when requested verification has no tool evidence', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

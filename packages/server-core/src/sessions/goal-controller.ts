@@ -63,6 +63,7 @@ export class GoalController {
 
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
+    const outputFileEvidencePaths = new Set<string>()
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -72,10 +73,15 @@ export class GoalController {
     }
     for (const message of turnMessages) {
       if (message.role !== 'tool') continue
+      const inputPaths = extractFilePaths(message.toolInput)
+      const resultPaths = extractFilePathsFromText(message.toolResult)
       const paths = new Set([
-        ...extractFilePaths(message.toolInput),
-        ...extractFilePathsFromText(message.toolResult),
+        ...inputPaths,
+        ...resultPaths,
       ])
+      for (const path of extractOutputFilePaths(message, inputPaths, resultPaths)) {
+        outputFileEvidencePaths.add(path)
+      }
       for (const path of paths) {
         fileEvidencePaths.add(path)
         evidence.push({
@@ -88,7 +94,7 @@ export class GoalController {
 
     const fileVerificationIssues: string[] = []
     const toolVerificationIssues: string[] = []
-    if (requiresOutputFileEvidence(goalState) && fileEvidencePaths.size === 0) {
+    if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
       fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
       evidence.push({
         type: 'file',
@@ -478,18 +484,57 @@ const FILE_PATH_INPUT_KEYS = new Set([
   'paths',
 ])
 
+const OUTPUT_FILE_PATH_INPUT_KEYS = new Set([
+  'destination',
+  'destination_file',
+  'destination_files',
+  'destination_path',
+  'destination_paths',
+  'output',
+  'output_file',
+  'output_files',
+  'output_path',
+  'output_paths',
+  'target',
+  'target_file',
+  'target_files',
+  'target_path',
+  'target_paths',
+])
+
+const OUTPUT_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:write|writemany|writefile|edit|multiedit|notebookedit|save|export|convert|generate|create|update|replace)(?:$|[_\-\s])/i
+const OUTPUT_RESULT_TEXT_PATTERN = /(?:created|wrote|written|saved|exported|converted|generated|updated|创建|生成|写入|保存|导出|转换|更新).{0,200}(?:[A-Za-z]:\\|\/)/i
 const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
 const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
 
-function extractFilePaths(value: unknown, key?: string): string[] {
+function extractOutputFilePaths(message: Message, inputPaths: string[], resultPaths: string[]): string[] {
+  if (!isSuccessfulTool(message)) {
+    return []
+  }
+
+  const paths = new Set<string>(extractFilePaths(message.toolInput, undefined, OUTPUT_FILE_PATH_INPUT_KEYS))
+  const toolName = message.toolName ?? ''
+  const toolResult = typeof message.toolResult === 'string' ? message.toolResult : ''
+
+  if (OUTPUT_TOOL_NAME_PATTERN.test(toolName)) {
+    for (const path of inputPaths) paths.add(path)
+    for (const path of resultPaths) paths.add(path)
+  } else if (OUTPUT_RESULT_TEXT_PATTERN.test(toolResult)) {
+    for (const path of resultPaths) paths.add(path)
+  }
+
+  return [...paths]
+}
+
+function extractFilePaths(value: unknown, key?: string, pathKeys = FILE_PATH_INPUT_KEYS): string[] {
   if (typeof value === 'string') {
-    return key && FILE_PATH_INPUT_KEYS.has(key.toLowerCase()) && value.trim()
+    return key && pathKeys.has(key.toLowerCase()) && value.trim()
       ? [value.trim()]
       : []
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap(item => extractFilePaths(item, key))
+    return value.flatMap(item => extractFilePaths(item, key, pathKeys))
   }
 
   if (!value || typeof value !== 'object') {
@@ -497,7 +542,7 @@ function extractFilePaths(value: unknown, key?: string): string[] {
   }
 
   return Object.entries(value as Record<string, unknown>)
-    .flatMap(([childKey, childValue]) => extractFilePaths(childValue, childKey))
+    .flatMap(([childKey, childValue]) => extractFilePaths(childValue, childKey, pathKeys))
 }
 
 function extractFilePathsFromText(value: unknown): string[] {
