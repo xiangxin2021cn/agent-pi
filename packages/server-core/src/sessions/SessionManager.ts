@@ -1022,6 +1022,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
         return `${index + 1}. [${item.type}] ${item.label}${detail}`
       }).join('\n')
     : '(none)'
+  const recentTurnContext = buildGoalReviewTurnContext(input.messages, input.finalAssistant.id)
 
   return [
     'You are reviewing whether an agent response completed the user objective.',
@@ -1040,6 +1041,9 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     'Audit evidence:',
     auditEvidence,
     '',
+    'Recent turn context:',
+    recentTurnContext,
+    '',
     'Assistant final response:',
     input.finalAssistant.content.slice(0, 12000),
     '',
@@ -1049,6 +1053,32 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
     '- Keep missingCriteria specific and grounded in the required criteria.',
   ].join('\n')
+}
+
+function buildGoalReviewTurnContext(messages: Message[], finalAssistantId: string): string {
+  const lines = messages
+    .filter(message => message.id !== finalAssistantId)
+    .filter(message => message.role === 'user' || message.role === 'tool' || message.role === 'error' || message.role === 'info')
+    .slice(-8)
+    .map(message => {
+      if (message.role === 'tool') {
+        const label = message.toolName ? `tool ${message.toolName}` : 'tool'
+        const status = message.toolStatus ? ` (${message.toolStatus})` : ''
+        return `${label}${status}: ${summarizeGoalReviewMessage(message.toolResult ?? message.content)}`
+      }
+      return `${message.role}: ${summarizeGoalReviewMessage(message.content)}`
+    })
+
+  return lines.length > 0 ? lines.join('\n') : '(none)'
+}
+
+function summarizeGoalReviewMessage(value: unknown): string {
+  const text = typeof value === 'string'
+    ? value
+    : value == null
+    ? ''
+    : JSON.stringify(value)
+  return text.replace(/\s+/g, ' ').trim().slice(0, 1000) || '(empty)'
 }
 
 function parseGoalReviewResult(raw: string | null): GoalReviewResult {

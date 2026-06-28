@@ -218,6 +218,7 @@ describe('SessionManager goal loop routing', () => {
       timestamp: 1,
       toolName: 'Read',
       toolInput: { file_path: '/tmp/source.xlsx' },
+      toolResult: 'loaded source rows from the spreadsheet',
     })
     const events = captureEvents()
     const reviewPrompts: string[] = []
@@ -238,6 +239,9 @@ describe('SessionManager goal loop routing', () => {
     }).onProcessingStopped(sessionId, 'complete')
 
     expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('Recent turn context:')
+    expect(reviewPrompts[0]).toContain('user: write a report')
+    expect(reviewPrompts[0]).toContain('tool Read: loaded source rows from the spreadsheet')
     expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
     expect(reviewPrompts[0]).toContain('/tmp/source.xlsx')
     expect(managed.goalState?.status).toBe('passed')
