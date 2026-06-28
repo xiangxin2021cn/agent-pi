@@ -157,6 +157,7 @@ Current implementation slice:
 - File paths surfaced by tool input or tool output are verified against the local filesystem during goal audit. Missing, unreadable, non-file, or empty file evidence fails the audit and can trigger an automatic improvement pass.
 - Requests that explicitly ask to create, save, export, or convert an output file add a required file-output criterion; if the turn produces no verifiable file path evidence, the audit fails before any reviewer can mark it complete.
 - Consecutive audits with the same missing criteria stop in `needs_review` instead of burning the remaining retry budget on the same failure.
+- Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 
 ## Where To Hook
 

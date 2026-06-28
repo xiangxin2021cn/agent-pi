@@ -59,9 +59,7 @@ export class GoalController {
       message.role === 'assistant' && !message.isIntermediate && message.content.trim().length > 0
     )
     const errorMessages = turnMessages.filter(message => message.role === 'error')
-    const failedTools = turnMessages.filter(message =>
-      message.role === 'tool' && (message.toolStatus === 'error' || message.isError === true)
-    )
+    const failedTools = getUnresolvedFailedTools(turnMessages)
 
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
@@ -313,6 +311,41 @@ function buildFileVerificationIssue(filePath: string, verification: GoalFileVeri
     return `Referenced file is empty: ${filePath}`
   }
   return undefined
+}
+
+function getUnresolvedFailedTools(messages: Message[]): Message[] {
+  const successfulToolKeys = new Set<string>()
+  const unresolved: Message[] = []
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'tool') continue
+
+    const key = getToolResolutionKey(message)
+    if (isSuccessfulTool(message)) {
+      if (key) successfulToolKeys.add(key)
+      continue
+    }
+
+    if (!isFailedTool(message)) continue
+    if (key && successfulToolKeys.has(key)) continue
+    unresolved.unshift(message)
+  }
+
+  return unresolved
+}
+
+function isFailedTool(message: Message): boolean {
+  return message.role === 'tool' && (message.toolStatus === 'error' || message.isError === true)
+}
+
+function isSuccessfulTool(message: Message): boolean {
+  return message.role === 'tool' && message.toolStatus === 'completed' && message.isError !== true
+}
+
+function getToolResolutionKey(message: Message): string | undefined {
+  const key = message.toolName?.trim() || message.toolUseId?.trim()
+  return key || undefined
 }
 
 function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {

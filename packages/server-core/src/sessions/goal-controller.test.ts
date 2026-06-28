@@ -554,6 +554,37 @@ describe('GoalController', () => {
     }
   })
 
+  test('passes when a tool failure is resolved by a later successful run of the same tool', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal(), {
+      messages: [
+        message('u1', 'user', 'run tests and summarize the result'),
+        message('t1', 'tool', 'tests failed', {
+          toolStatus: 'error',
+          toolName: 'Bash',
+          isError: true,
+          toolResult: 'npm test failed',
+        }),
+        message('t2', 'tool', 'tests passed', {
+          toolStatus: 'completed',
+          toolName: 'Bash',
+          isError: false,
+          toolResult: 'npm test passed',
+        }),
+        message('a1', 'assistant', 'Tests pass after fixing the issue.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.status).toBe('pass')
+      expect(decision.result.missingCriteria).not.toContain('1 tool failure(s) were produced.')
+    }
+  })
+
   test('does not auto-continue after tool failures', async () => {
     const controller = new GoalController()
 
