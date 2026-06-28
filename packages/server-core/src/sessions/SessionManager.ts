@@ -6656,6 +6656,17 @@ export class SessionManager implements ISessionManager {
         doneBpm.unbindAllForSession(sessionId)
       }
 
+      const goalStateBeforeAudit = managed.goalState
+      if (goalStateBeforeAudit && goalStateBeforeAudit.mode !== 'off') {
+        this.sendEvent({
+          type: 'goal_audit_started',
+          sessionId,
+          goalId: goalStateBeforeAudit.id,
+          iteration: goalStateBeforeAudit.iteration + 1,
+          mode: goalStateBeforeAudit.mode,
+        }, managed.workspace.id)
+      }
+
       const goalDecision = await this.goalController.onTurnStopped(managed.goalState, {
         messages: managed.messages,
         turnStartFinalMessageId,
@@ -6664,13 +6675,6 @@ export class SessionManager implements ISessionManager {
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
-        this.sendEvent({
-          type: 'goal_audit_started',
-          sessionId,
-          goalId: goalDecision.goalState.id,
-          iteration: goalDecision.result.iteration,
-          mode: goalDecision.goalState.mode,
-        }, managed.workspace.id)
         this.sendEvent({
           type: 'goal_audit_result',
           sessionId,

@@ -246,6 +246,42 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(true)
   })
 
+  it('emits goal audit started before waiting for the reviewer result', async () => {
+    const sessionId = 'goal-reviewer-started-before-await'
+    const managed = buildSession(sessionId)
+    const events = captureEvents()
+    let reviewerStarted!: () => void
+    let resolveReview!: (value: string) => void
+    const reviewerStartedPromise = new Promise<void>(resolve => {
+      reviewerStarted = resolve
+    })
+    const reviewResultPromise = new Promise<string>(resolve => {
+      resolveReview = resolve
+    })
+
+    managed.agent = {
+      runMiniCompletion: async () => {
+        reviewerStarted()
+        return reviewResultPromise
+      },
+    } as never
+
+    const stopped = (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    await reviewerStartedPromise
+
+    expect(events.some(event => event.type === 'goal_audit_started')).toBe(true)
+
+    resolveReview(JSON.stringify({
+      status: 'pass',
+      summary: 'The response satisfies the explicit criteria.',
+      missingCriteria: [],
+    }))
+    await stopped
+  })
+
   it('initializes an auto_improve goal for a first work-like user message', async () => {
     const sessionId = 'goal-auto-init-work'
     const managed = buildSession(sessionId, { goalState: undefined })
