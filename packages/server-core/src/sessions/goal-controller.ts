@@ -11,15 +11,31 @@ export type GoalControllerDecision =
   | { action: 'needs_review'; goalState: SessionGoalState; result: SessionGoalAuditResult; reason: string }
   | { action: 'continue'; goalState: SessionGoalState; result: SessionGoalAuditResult; prompt: string }
 
+export interface GoalReviewInput {
+  goalState: SessionGoalState
+  messages: Message[]
+  finalAssistant: Message
+  result: SessionGoalAuditResult
+}
+
+export interface GoalReviewResult {
+  status: SessionGoalAuditResult['status']
+  summary: string
+  missingCriteria?: string[]
+  correctivePrompt?: string
+  evidence?: SessionGoalAuditEvidence[]
+}
+
 export interface GoalTurnSnapshot {
   messages: Message[]
   turnStartFinalMessageId?: string
   stoppedReason: 'complete' | 'interrupted' | 'error' | 'timeout'
   now?: number
+  reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
 }
 
 export class GoalController {
-  onTurnStopped(goalState: SessionGoalState | undefined, snapshot: GoalTurnSnapshot): GoalControllerDecision {
+  async onTurnStopped(goalState: SessionGoalState | undefined, snapshot: GoalTurnSnapshot): Promise<GoalControllerDecision> {
     if (!goalState || goalState.mode === 'off') {
       return { action: 'skip' }
     }
@@ -91,7 +107,7 @@ export class GoalController {
       summary = 'Goal audit could not prove all explicit criteria with deterministic checks only.'
     }
 
-    const result: SessionGoalAuditResult = {
+    let result: SessionGoalAuditResult = {
       iteration,
       status,
       summary,
@@ -100,11 +116,50 @@ export class GoalController {
       createdAt: now,
     }
 
-    const shouldAutoImprove = status === 'uncertain'
+    let reviewerFailed = false
+    if (status === 'uncertain' && finalAssistant && snapshot.reviewer) {
+      try {
+        const review = await snapshot.reviewer({
+          goalState,
+          messages: turnMessages,
+          finalAssistant,
+          result,
+        })
+        status = review.status
+        summary = review.summary
+        result = {
+          ...result,
+          status,
+          summary,
+          missingCriteria: review.missingCriteria ?? (status === 'pass' ? [] : missingCriteria),
+          correctivePrompt: review.correctivePrompt,
+          evidence: review.evidence ? [...evidence, ...review.evidence] : evidence,
+        }
+      } catch (error) {
+        reviewerFailed = true
+        summary = 'Goal reviewer failed; manual review is required.'
+        result = {
+          ...result,
+          status: 'uncertain',
+          summary,
+          evidence: [
+            ...evidence,
+            {
+              type: 'system',
+              label: 'reviewer_error',
+              detail: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            },
+          ],
+        }
+      }
+    }
+
+    const shouldAutoImprove = !reviewerFailed
+      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
     const hasRemainingIterations = iteration < goalState.maxIterations
     const correctivePrompt = shouldAutoImprove && hasRemainingIterations
-      ? buildCorrectivePrompt(goalState, result)
+      ? result.correctivePrompt ?? buildCorrectivePrompt(goalState, result)
       : undefined
     if (correctivePrompt) {
       result.correctivePrompt = correctivePrompt

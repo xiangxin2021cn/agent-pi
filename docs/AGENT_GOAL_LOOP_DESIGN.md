@@ -151,6 +151,8 @@ Current implementation slice:
 - `auto_improve` and `strict_work` can return an internal `continue` decision when explicit required criteria are still unproven and iteration limits remain.
 - `SessionManager.onProcessingStopped()` routes `continue` into a hidden goal continuation turn before emitting final UI `complete`.
 - Real queued user messages still take priority over goal continuation.
+- `SessionManager` can use the active session agent's mini completion as a bounded reviewer for explicit required criteria.
+- The first real user message can conservatively initialize an `auto_improve` goal when it looks like a work task; casual chat, hidden sessions, and mini sessions are left alone.
 
 ## Where To Hook
 
@@ -355,7 +357,7 @@ Until that exists, the first version can use output folder scans and event summa
 - Add deterministic checks and structured reviewer.
 - Do not auto-retry yet.
 
-Current status: partially implemented. Goal state persistence, audit events, and deterministic checks are in place. Structured LLM reviewer and UI rendering are still pending.
+Current status: partially implemented. Goal state persistence, audit events, deterministic checks, and a mini-model JSON reviewer are in place. UI rendering is still pending.
 
 Success criteria:
 
@@ -385,7 +387,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: backend skeleton implemented for sessions that already have `goalState.mode` set to `auto_improve` or `strict_work`. Product entry points, defaults, and UI controls are still pending.
+Current status: backend skeleton implemented. Work-like first user messages can initialize `auto_improve`; sessions that already have `goalState.mode` set to `auto_improve` or `strict_work` can self-improve. User-facing defaults and UI controls are still pending.
 
 Success criteria:
 
@@ -412,7 +414,7 @@ The first shippable slice is now split into two layers:
 1. Backend foundation: persisted goal state, deterministic audit, and hidden continuation without fake user messages.
 2. Product surface: workspace/session setting, Goal card, deterministic checks plus mini-review JSON, and explicit controls.
 
-The backend foundation is underway. The next shippable UI slice should expose Check Only first, then enable Auto Improve with a conservative max retry count once users can see and control the loop.
+The backend foundation is underway. The next shippable UI slice should expose the current goal state, let users accept/stop/edit it, and make the automatic work-task heuristic configurable.
 
 ## Main Risks
 

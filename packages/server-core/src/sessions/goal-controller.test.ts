@@ -30,10 +30,10 @@ function goal(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
 }
 
 describe('GoalController', () => {
-  test('skips when no goal state is present', () => {
+  test('skips when no goal state is present', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(undefined, {
+    const decision = await controller.onTurnStopped(undefined, {
       messages: [],
       stoppedReason: 'complete',
       now: 10,
@@ -42,10 +42,10 @@ describe('GoalController', () => {
     expect(decision).toEqual({ action: 'skip' })
   })
 
-  test('passes when a complete turn produced a final assistant message and no required criteria', () => {
+  test('passes when a complete turn produced a final assistant message and no required criteria', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal(), {
+    const decision = await controller.onTurnStopped(goal(), {
       messages: [
         message('u1', 'user', 'write a report'),
         message('a1', 'assistant', 'Report complete.'),
@@ -62,10 +62,10 @@ describe('GoalController', () => {
     }
   })
 
-  test('needs review when no final assistant message was produced', () => {
+  test('needs review when no final assistant message was produced', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal(), {
+    const decision = await controller.onTurnStopped(goal(), {
       messages: [message('u1', 'user', 'write a report')],
       stoppedReason: 'complete',
       now: 10,
@@ -79,10 +79,10 @@ describe('GoalController', () => {
     }
   })
 
-  test('needs review when deterministic checks cannot prove explicit criteria', () => {
+  test('needs review when deterministic checks cannot prove explicit criteria', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal({
+    const decision = await controller.onTurnStopped(goal({
       criteria: [{
         id: 'crit-1',
         text: 'The final report cites the source spreadsheet.',
@@ -105,10 +105,77 @@ describe('GoalController', () => {
     }
   })
 
-  test('continues automatically for auto_improve goals when explicit criteria need another pass', () => {
+  test('passes when reviewer proves explicit criteria', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal({
+    const decision = await controller.onTurnStopped(goal({
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete with source spreadsheet citation.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'All explicit criteria are satisfied.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.status).toBe('pass')
+      expect(decision.result.summary).toBe('All explicit criteria are satisfied.')
+      expect(decision.result.missingCriteria).toEqual([])
+    }
+  })
+
+  test('continues automatically for auto_improve goals when reviewer finds missing criteria', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'The citation is missing.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to the source spreadsheet.',
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.goalState.status).toBe('improving')
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.summary).toBe('The citation is missing.')
+      expect(decision.prompt).toContain('Add a concrete citation')
+    }
+  })
+
+  test('continues automatically for auto_improve goals when explicit criteria need another pass', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
       mode: 'auto_improve',
       criteria: [{
         id: 'crit-1',
@@ -135,10 +202,10 @@ describe('GoalController', () => {
     }
   })
 
-  test('stops for review when auto_improve reaches max iterations', () => {
+  test('stops for review when auto_improve reaches max iterations', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal({
+    const decision = await controller.onTurnStopped(goal({
       mode: 'auto_improve',
       iteration: 1,
       maxIterations: 2,
@@ -164,10 +231,10 @@ describe('GoalController', () => {
     }
   })
 
-  test('does not auto-continue after tool failures', () => {
+  test('does not auto-continue after tool failures', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal({
+    const decision = await controller.onTurnStopped(goal({
       mode: 'auto_improve',
       criteria: [{
         id: 'crit-1',
@@ -192,10 +259,10 @@ describe('GoalController', () => {
     }
   })
 
-  test('uses turnStartFinalMessageId to audit only the latest turn', () => {
+  test('uses turnStartFinalMessageId to audit only the latest turn', async () => {
     const controller = new GoalController()
 
-    const decision = controller.onTurnStopped(goal(), {
+    const decision = await controller.onTurnStopped(goal(), {
       messages: [
         message('old-a', 'assistant', 'Previous answer'),
         message('u1', 'user', 'new work'),

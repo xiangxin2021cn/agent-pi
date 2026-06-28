@@ -40,17 +40,20 @@ function goal(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
 describe('SessionManager goal loop routing', () => {
   let tmpRoot: string
   let sm: SessionManager
+  let sessionIds: string[]
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'sm-goal-loop-'))
     sm = new SessionManager()
+    sessionIds = []
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(sessionIds.map(id => sm.flushSession(id).catch(() => undefined)))
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 
-  function buildSession(id: string) {
+  function buildSession(id: string, options: { goalState?: SessionGoalState } = { goalState: goal() }) {
     const workspace = {
       id: 'ws_test',
       name: 'Test Workspace',
@@ -58,14 +61,17 @@ describe('SessionManager goal loop routing', () => {
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
-      { id, name: 'goal loop test', goalState: goal() },
+      { id, name: 'goal loop test', goalState: options.goalState },
       workspace as never,
       { messagesLoaded: true },
     )
-    managed.messages.push(
-      message('u1', 'user', 'write a report'),
-      message('a1', 'assistant', 'Report complete.'),
-    )
+    if (options.goalState) {
+      managed.messages.push(
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      )
+    }
+    sessionIds.push(id)
     ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(id, managed)
     return managed
   }
@@ -171,5 +177,57 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['write a report'])
     expect(managed.messages.some(m => m.role === 'info' && m.content.includes('Goal audit requested'))).toBe(true)
     expect(managed.messages.some(m => m.role === 'assistant' && m.content === 'Improved report complete.')).toBe(true)
+  })
+
+  it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
+    const sessionId = 'goal-reviewer-pass'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The response satisfies the explicit citation requirement.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
+    expect(managed.goalState?.status).toBe('passed')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(true)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
+  })
+
+  it('initializes an auto_improve goal for a first work-like user message', async () => {
+    const sessionId = 'goal-auto-init-work'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
+    expect(managed.goalState?.criteria.some(criterion => criterion.required)).toBe(true)
+  })
+
+  it('does not initialize a goal for a first casual chat message', async () => {
+    const sessionId = 'goal-auto-init-chat'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '你好').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBeUndefined()
   })
 })

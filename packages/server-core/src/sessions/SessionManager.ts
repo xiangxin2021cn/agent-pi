@@ -99,7 +99,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
-import { GoalController } from './goal-controller'
+import { GoalController, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -1007,6 +1007,97 @@ export function claimAutoRetryPending(
   }
 
   return 'send'
+}
+
+function buildGoalReviewPrompt(input: GoalReviewInput): string {
+  const requiredCriteria = input.goalState.criteria
+    .filter(criterion => criterion.required)
+    .map((criterion, index) => `${index + 1}. [${criterion.kind}] ${criterion.text}`)
+    .join('\n')
+
+  return [
+    'You are reviewing whether an agent response completed the user objective.',
+    'Return only compact JSON with this exact shape:',
+    '{"status":"pass|fail|uncertain","summary":"...","missingCriteria":["..."],"correctivePrompt":"..."}',
+    '',
+    'Objective:',
+    input.goalState.objective,
+    '',
+    'Required criteria:',
+    requiredCriteria || '(none)',
+    '',
+    'Deterministic audit summary:',
+    input.result.summary,
+    '',
+    'Assistant final response:',
+    input.finalAssistant.content.slice(0, 12000),
+    '',
+    'Rules:',
+    '- Use "pass" only when the final response clearly satisfies every required criterion.',
+    '- Use "fail" when concrete missing work can be fixed by another pass.',
+    '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
+    '- Keep missingCriteria specific and grounded in the required criteria.',
+  ].join('\n')
+}
+
+function parseGoalReviewResult(raw: string | null): GoalReviewResult {
+  if (!raw?.trim()) {
+    throw new Error('Goal reviewer returned empty output')
+  }
+
+  const jsonText = extractJsonObject(raw)
+  const parsed = JSON.parse(jsonText) as Record<string, unknown>
+  const status = parsed.status
+  if (status !== 'pass' && status !== 'fail' && status !== 'uncertain') {
+    throw new Error('Goal reviewer returned invalid status')
+  }
+
+  const missingCriteria = Array.isArray(parsed.missingCriteria)
+    ? parsed.missingCriteria.filter((item): item is string => typeof item === 'string')
+    : undefined
+  const correctivePrompt = typeof parsed.correctivePrompt === 'string' && parsed.correctivePrompt.trim()
+    ? parsed.correctivePrompt.trim()
+    : undefined
+
+  return {
+    status,
+    summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : `Reviewer returned ${status}.`,
+    missingCriteria,
+    correctivePrompt,
+  }
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced?.[1] ?? raw
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('Goal reviewer output did not contain a JSON object')
+  }
+  return candidate.slice(start, end + 1)
+}
+
+function isWorkLikeGoalMessage(
+  message: string,
+  storedAttachments: StoredAttachment[] | undefined,
+  options: SendMessageOptions | undefined,
+): boolean {
+  const trimmed = message.trim()
+  if (!trimmed) return false
+
+  if ((storedAttachments?.length ?? 0) > 0 || (options?.skillSlugs?.length ?? 0) > 0) {
+    return true
+  }
+
+  if (options?.badges?.some(badge => badge.type === 'file' || badge.type === 'folder' || badge.type === 'skill')) {
+    return true
+  }
+
+  const workVerbPattern = /实现|修复|改造|生成|输出|撰写|整理|分析|总结|审查|检查|验证|测试|打包|发布|导出|转换|预览|设计|开发|优化|调研|review|build|create|implement|fix|generate|write|draft|summari[sz]e|analy[sz]e|verify|test|package|release|export|convert|preview|design|develop|optimi[sz]e|research/i
+  return workVerbPattern.test(trimmed)
 }
 
 /**
@@ -5872,6 +5963,8 @@ export class SessionManager implements ISessionManager {
         // (waits briefly for agent creation if needed)
         this.generateTitle(managed, message)
       }
+
+      this.maybeInitializeGoalStateForUserMessage(managed, message, storedAttachments, options, isFirstUserMessage)
     }
 
     // Evaluate auto-label rules against the user message (common path for both
@@ -6539,10 +6632,11 @@ export class SessionManager implements ISessionManager {
         doneBpm.unbindAllForSession(sessionId)
       }
 
-      const goalDecision = this.goalController.onTurnStopped(managed.goalState, {
+      const goalDecision = await this.goalController.onTurnStopped(managed.goalState, {
         messages: managed.messages,
         turnStartFinalMessageId,
         stoppedReason: reason,
+        reviewer: this.buildGoalReviewer(managed),
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
@@ -6600,6 +6694,54 @@ export class SessionManager implements ISessionManager {
    * Process the next message in the queue.
    * Called by onProcessingStopped when queue has messages.
    */
+  private buildGoalReviewer(managed: ManagedSession): ((input: GoalReviewInput) => Promise<GoalReviewResult>) | undefined {
+    if (!managed.agent || !managed.goalState?.criteria.some(criterion => criterion.required)) {
+      return undefined
+    }
+
+    return async (input) => {
+      const response = await managed.agent!.runMiniCompletion(buildGoalReviewPrompt(input))
+      return parseGoalReviewResult(response)
+    }
+  }
+
+  private maybeInitializeGoalStateForUserMessage(
+    managed: ManagedSession,
+    message: string,
+    storedAttachments: StoredAttachment[] | undefined,
+    options: SendMessageOptions | undefined,
+    isFirstUserMessage: boolean,
+  ): void {
+    if (!isFirstUserMessage || managed.goalState || managed.hidden || managed.systemPromptPreset === 'mini') {
+      return
+    }
+
+    if (!isWorkLikeGoalMessage(message, storedAttachments, options)) {
+      return
+    }
+
+    const now = Date.now()
+    managed.goalState = {
+      id: randomUUID(),
+      objective: message.trim().slice(0, 4000),
+      mode: 'auto_improve',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+      iteration: 0,
+      maxIterations: 2,
+      criteria: [{
+        id: randomUUID(),
+        text: 'Complete the user request, including any requested deliverables, constraints, referenced files, and verification steps.',
+        kind: 'deliverable',
+        required: true,
+      }],
+      auditHistory: [],
+    }
+    this.persistSession(managed)
+    this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
+  }
+
   private scheduleGoalContinuation(sessionId: string, prompt: string, iteration: number): void {
     setImmediate(() => {
       this.runGoalContinuation(sessionId, prompt, iteration).catch(err => {
