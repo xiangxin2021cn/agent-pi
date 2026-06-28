@@ -20,6 +20,7 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
+import { LLM_QUERY_TIMEOUT_MS, withTimeout } from '@craft-agent/shared/agent/llm-tool'
 import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
@@ -1060,6 +1061,8 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '- Keep missingCriteria specific and grounded in the required criteria.',
   ].join('\n')
 }
+
+const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
 
 function buildGoalReviewAuditHistory(history: SessionGoalState['auditHistory']): string {
   if (history.length === 0) {
@@ -6864,7 +6867,11 @@ export class SessionManager implements ISessionManager {
     }
 
     return async (input) => {
-      const response = await managed.agent!.runMiniCompletion(buildGoalReviewPrompt(input))
+      const response = await withTimeout(
+        managed.agent!.runMiniCompletion(buildGoalReviewPrompt(input)),
+        GOAL_REVIEW_TIMEOUT_MS,
+        `Goal reviewer timed out after ${Math.floor(GOAL_REVIEW_TIMEOUT_MS / 1000)}s`,
+      )
       return parseGoalReviewResult(response)
     }
   }

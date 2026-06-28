@@ -505,6 +505,46 @@ describe('SessionManager goal loop routing', () => {
     await stopped
   })
 
+  it('times out a hung goal reviewer and completes the session for manual review', async () => {
+    const sessionId = 'goal-reviewer-timeout'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+    const originalSetTimeout = globalThis.setTimeout
+    const immediateLongTimers = ((...args: Parameters<typeof setTimeout>) => {
+      const [handler, timeout, ...rest] = args
+      const delay = typeof timeout === 'number' && timeout >= 1000 ? 0 : timeout
+      return originalSetTimeout(handler, delay, ...rest)
+    }) as typeof setTimeout
+
+    managed.agent = {
+      runMiniCompletion: async () => new Promise<string | null>(() => {}),
+    } as never
+
+    try {
+      globalThis.setTimeout = immediateLongTimers
+      const stopped = (sm as unknown as {
+        onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+      }).onProcessingStopped(sessionId, 'complete')
+      const outcome = await Promise.race([
+        stopped.then(() => 'resolved' as const),
+        new Promise<'hung'>(resolve => originalSetTimeout(() => resolve('hung'), 50)),
+      ])
+
+      expect(outcome).toBe('resolved')
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
+    expect(events.some(event =>
+      event.type === 'goal_audit_result'
+      && event.result.evidence.some(item => item.label === 'reviewer_error')
+    )).toBe(true)
+  })
+
   it('initializes an auto_improve goal for a first work-like user message', async () => {
     const sessionId = 'goal-auto-init-work'
     const managed = buildSession(sessionId, { goalState: undefined })
