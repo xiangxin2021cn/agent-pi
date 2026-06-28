@@ -1173,6 +1173,15 @@ function normalizeGoalReviewCorrectivePrompt(value: unknown): string | undefined
     return lines.length > 0 ? lines.join('\n') : undefined
   }
 
+  if (value && typeof value === 'object') {
+    for (const key of ['text', 'message', 'prompt', 'correction']) {
+      const candidate = (value as Record<string, unknown>)[key]
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+    }
+  }
+
   return undefined
 }
 
