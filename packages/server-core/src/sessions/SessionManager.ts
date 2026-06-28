@@ -96,6 +96,7 @@ import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
+import { MarkItDown } from 'markitdown-js'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels, loadLabelConfig } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, resolveSessionLabels } from '@craft-agent/shared/labels'
@@ -1113,7 +1114,10 @@ function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriteri
 const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
 const GOAL_FILE_PREVIEW_MAX_BYTES = 12_000
 const GOAL_SPREADSHEET_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const GOAL_OFFICE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+const GOAL_OFFICE_PREVIEW_TIMEOUT_MS = 20_000
 const GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
+const GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
 const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
   '.c',
   '.cc',
@@ -1160,6 +1164,24 @@ async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise
         content: preview.textContent,
         truncated: !preview.fullConversionAllowed,
       }
+    } catch {
+      return undefined
+    }
+  }
+
+  if (GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS.has(extension)) {
+    if (sizeBytes > GOAL_OFFICE_PREVIEW_MAX_BYTES) {
+      return {
+        content: `Office output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      const markitdown = new MarkItDown()
+      const result = await withTimeout(markitdown.convert(filePath), GOAL_OFFICE_PREVIEW_TIMEOUT_MS, 'Goal Office preview conversion')
+      const content = result?.textContent?.trim()
+      return content ? { content, truncated: false } : undefined
     } catch {
       return undefined
     }

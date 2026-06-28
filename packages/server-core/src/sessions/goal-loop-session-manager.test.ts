@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import xlsx from 'xlsx'
+import { buildMarkdownExport } from '../handlers/rpc/files'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
@@ -743,6 +744,66 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('BOQ')
     expect(reviewPrompts[0]).toContain('Concrete')
     expect(reviewPrompts[0]).toContain('42')
+    expect(managed.goalState?.status).toBe('passed')
+  })
+
+  it('includes verified Word output previews in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-word-preview'
+    const workingDirectory = join(tmpRoot, 'project')
+    const outputDirectory = join(workingDirectory, FORMAL_OUTPUTS_DIR_NAME, sessionId)
+    const sourcePath = join(outputDirectory, 'source.md')
+    mkdirSync(outputDirectory, { recursive: true })
+    const exportResult = await buildMarkdownExport({
+      sourcePath,
+      format: 'docx',
+      content: '# Executive summary\n\nContract risk: payment terms need review.',
+      targetPath: join(outputDirectory, 'contract-review.docx'),
+    })
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }, {
+          id: 'crit-word',
+          text: 'The Word document includes an executive summary and contract risk section.',
+          kind: 'coverage',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages.splice(1, 0, message('t1', 'tool', 'created', {
+      toolName: 'Export',
+      toolStatus: 'completed',
+      toolInput: { output_path: exportResult.path },
+    }))
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The Word output satisfies the requested content.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('file_preview')
+    expect(reviewPrompts[0]).toContain('Executive summary')
+    expect(reviewPrompts[0]).toContain('Contract risk')
     expect(managed.goalState?.status).toBe('passed')
   })
 
