@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
-import { getGoalBadgeValue, getGoalManualActions, getGoalStatusText } from './goal-status-view-model'
+import { buildGoalUpdateFromDraft, createBlankGoalCriterionDraft, createGoalEditDraft, getGoalBadgeValue, getGoalManualActions, getGoalStatusText } from './goal-status-view-model'
 
 const t = (key: string, values?: Record<string, unknown>) => {
   const suffix = values ? ` ${JSON.stringify(values)}` : ''
@@ -64,5 +64,44 @@ describe('goal status view model', () => {
     ])
     expect(getGoalManualActions(t, goalState({ status: 'failed' })).map(action => action.id))
       .toEqual(['improve', 'accept'])
+  })
+
+  it('creates and normalizes editable goal drafts', () => {
+    const draft = createGoalEditDraft(goalState({
+      objective: '  Create final report  ',
+      criteria: [{
+        id: 'crit-1',
+        text: '  Cite source.xlsx.  ',
+        kind: 'evidence',
+        required: true,
+      }],
+    }))
+    draft.criteria.push({
+      ...createBlankGoalCriterionDraft(),
+      text: '  Include summary.  ',
+      required: false,
+    })
+    draft.criteria.push({
+      ...createBlankGoalCriterionDraft(),
+      text: '   ',
+    })
+
+    expect(draft.objective).toBe('Create final report')
+    expect(buildGoalUpdateFromDraft(draft)).toEqual({
+      objective: 'Create final report',
+      criteria: [
+        {
+          id: 'crit-1',
+          text: 'Cite source.xlsx.',
+          kind: 'evidence',
+          required: true,
+        },
+        {
+          text: 'Include summary.',
+          kind: 'user_constraint',
+          required: false,
+        },
+      ],
+    })
   })
 })

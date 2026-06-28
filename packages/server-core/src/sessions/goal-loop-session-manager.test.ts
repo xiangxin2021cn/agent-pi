@@ -299,6 +299,86 @@ describe('SessionManager goal loop routing', () => {
     )).toBe(true)
   })
 
+  it('updates goal objective and acceptance criteria for manual review', () => {
+    const sessionId = 'goal-update-criteria'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        status: 'passed',
+        iteration: 1,
+        criteria: [{
+          id: 'crit-existing',
+          text: 'Old citation requirement.',
+          kind: 'evidence',
+          required: true,
+        }],
+      }),
+    })
+    const events = captureEvents()
+
+    ;(sm as unknown as {
+      updateSessionGoal: (
+        sessionId: string,
+        update: {
+          objective: string
+          criteria: Array<{ id?: string; text: string; kind?: 'evidence' | 'user_constraint'; required?: boolean }>
+        },
+      ) => void
+    }).updateSessionGoal(sessionId, {
+      objective: '  Revised deliverable objective  ',
+      criteria: [
+        {
+          id: 'crit-existing',
+          text: '  Cite source.xlsx for key facts.  ',
+          kind: 'evidence',
+          required: true,
+        },
+        {
+          text: 'Include a concise final summary.',
+          required: true,
+        },
+      ],
+    })
+
+    expect(managed.goalState?.objective).toBe('Revised deliverable objective')
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(managed.goalState?.criteria).toHaveLength(2)
+    expect(managed.goalState?.criteria[0]).toMatchObject({
+      id: 'crit-existing',
+      text: 'Cite source.xlsx for key facts.',
+      kind: 'evidence',
+      required: true,
+    })
+    expect(managed.goalState?.criteria[1].id).toBeTruthy()
+    expect(managed.goalState?.criteria[1]).toMatchObject({
+      text: 'Include a concise final summary.',
+      kind: 'user_constraint',
+      required: true,
+    })
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.status === 'needs_review'
+    )).toBe(true)
+  })
+
+  it('rejects empty goal criteria edits', () => {
+    const sessionId = 'goal-empty-criteria'
+    const managed = buildSession(sessionId)
+    const originalGoal = managed.goalState
+
+    expect(() => {
+      ;(sm as unknown as {
+        updateSessionGoal: (
+          sessionId: string,
+          update: { objective: string; criteria: Array<{ text: string }> },
+        ) => void
+      }).updateSessionGoal(sessionId, {
+        objective: 'Revised objective',
+        criteria: [{ text: '   ' }],
+      })
+    }).toThrow('At least one goal criterion is required')
+    expect(managed.goalState).toBe(originalGoal)
+  })
+
   it('uses the session agent reviewer to pass explicit criteria before completing', async () => {
     const sessionId = 'goal-reviewer-pass'
     const managed = buildSession(sessionId)

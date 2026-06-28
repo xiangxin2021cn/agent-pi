@@ -19,6 +19,7 @@ import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
   SessionGoalAuditResult,
+  SessionGoalCriterionKind,
   SessionGoalMode,
   SessionGoalState,
 } from '../sessions/types'
@@ -242,6 +243,18 @@ export interface SendMessageOptions {
 // Session commands (consolidated operations)
 // ---------------------------------------------------------------------------
 
+export interface SessionGoalCriterionUpdate {
+  id?: string
+  text: string
+  kind?: SessionGoalCriterionKind
+  required?: boolean
+}
+
+export interface SessionGoalUpdate {
+  objective?: string
+  criteria?: SessionGoalCriterionUpdate[]
+}
+
 export type SessionCommand =
   | { type: 'flag' }
   | { type: 'unflag' }
@@ -254,6 +267,7 @@ export type SessionCommand =
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setPermissionMode'; mode: PermissionMode }
   | { type: 'setGoalMode'; mode: SessionGoalMode }
+  | { type: 'updateGoal'; goal: SessionGoalUpdate }
   | { type: 'acceptGoal' }
   | { type: 'runGoalImprovement' }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }

@@ -1,4 +1,5 @@
-import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionGoalCriterionKind, SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 
 type Translate = (key: string, values?: Record<string, unknown>) => string
 
@@ -6,6 +7,18 @@ export type GoalManualAction = {
   id: 'improve' | 'accept'
   label: string
   description: string
+}
+
+export type GoalCriterionEditDraft = {
+  id?: string
+  text: string
+  kind: SessionGoalCriterionKind
+  required: boolean
+}
+
+export type GoalEditDraft = {
+  objective: string
+  criteria: GoalCriterionEditDraft[]
 }
 
 export function getGoalBadgeValue(t: Translate, goalState: SessionGoalState): string {
@@ -85,4 +98,38 @@ export function getGoalManualActions(t: Translate, goalState: SessionGoalState):
       description: t('sessionInfo.goalAcceptDoneDesc'),
     },
   ]
+}
+
+export function createBlankGoalCriterionDraft(): GoalCriterionEditDraft {
+  return {
+    text: '',
+    kind: 'user_constraint',
+    required: true,
+  }
+}
+
+export function createGoalEditDraft(goalState: SessionGoalState): GoalEditDraft {
+  return {
+    objective: goalState.objective.trim(),
+    criteria: goalState.criteria.map(criterion => ({
+      id: criterion.id,
+      text: criterion.text.trim(),
+      kind: criterion.kind,
+      required: criterion.required,
+    })),
+  }
+}
+
+export function buildGoalUpdateFromDraft(draft: GoalEditDraft): SessionGoalUpdate {
+  return {
+    objective: draft.objective.trim(),
+    criteria: draft.criteria
+      .map(criterion => ({
+        id: criterion.id,
+        text: criterion.text.trim(),
+        kind: criterion.kind,
+        required: criterion.required,
+      }))
+      .filter(criterion => criterion.text.length > 0),
+  }
 }

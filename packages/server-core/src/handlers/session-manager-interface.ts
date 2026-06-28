@@ -24,6 +24,7 @@ import type {
   ShareResult,
   OptimizePromptRequest,
   OptimizePromptResult,
+  SessionGoalUpdate,
 } from '@craft-agent/shared/protocol'
 import type { SessionBundle, DispatchMode, SessionGoalMode } from '@craft-agent/shared/sessions'
 import type { EventSink } from '../transport'
@@ -70,6 +71,7 @@ export interface ISessionManager {
 
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
   setSessionGoalMode(sessionId: string, mode: SessionGoalMode): void
+  updateSessionGoal(sessionId: string, update: SessionGoalUpdate): void
   acceptSessionGoal(sessionId: string): void
   runSessionGoalImprovement(sessionId: string): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void

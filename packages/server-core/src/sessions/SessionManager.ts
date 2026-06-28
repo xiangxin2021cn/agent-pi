@@ -72,6 +72,7 @@ import {
   type SessionStatus,
   type SessionHeader,
   type SessionGoalMode,
+  type SessionGoalCriterionKind,
   type SessionGoalState,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
@@ -84,7 +85,7 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, type SessionGoalUpdate, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -1090,6 +1091,20 @@ function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
     'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
   ].join('\n')
+}
+
+const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
+  'deliverable',
+  'evidence',
+  'format',
+  'test',
+  'coverage',
+  'user_constraint',
+  'safety',
+])
+
+function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriterionKind {
+  return typeof value === 'string' && SESSION_GOAL_CRITERION_KINDS.has(value as SessionGoalCriterionKind)
 }
 
 const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
@@ -7585,6 +7600,56 @@ export class SessionManager implements ISessionManager {
       mode,
       status: managed.goalState.status,
     })
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+  }
+
+  /**
+   * Update the active goal objective and acceptance criteria.
+   */
+  updateSessionGoal(sessionId: string, update: SessionGoalUpdate): void {
+    const managed = this.sessions.get(sessionId)
+    const current = managed?.goalState
+    if (!managed || !current || current.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot edit a goal while the session is processing')
+    }
+
+    const objective = update.objective === undefined
+      ? current.objective
+      : update.objective.trim()
+    if (!objective) {
+      throw new Error('Goal objective is required')
+    }
+
+    const criteria = update.criteria === undefined
+      ? current.criteria
+      : update.criteria
+        .map(criterion => ({
+          id: criterion.id?.trim() || randomUUID(),
+          text: criterion.text.trim(),
+          kind: isSessionGoalCriterionKind(criterion.kind) ? criterion.kind : 'user_constraint',
+          required: criterion.required ?? true,
+        }))
+        .filter(criterion => criterion.text.length > 0)
+    if (criteria.length === 0) {
+      throw new Error('At least one goal criterion is required')
+    }
+
+    managed.goalState = {
+      ...current,
+      objective,
+      status: 'needs_review',
+      updatedAt: Date.now(),
+      criteria,
+    }
 
     this.sendEvent({
       type: 'goal_state_changed',

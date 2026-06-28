@@ -29,6 +29,7 @@ import { getSessionTitle } from '@/utils/session'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
 import type { SessionGoalMode } from '@craft-agent/shared/sessions'
+import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 
 export interface ChatPageProps {
   sessionId: string
@@ -536,6 +537,15 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, t])
 
+  const handleGoalUpdate = React.useCallback(async (goal: SessionGoalUpdate) => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'updateGoal', goal })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+      throw error
+    }
+  }, [sessionId, t])
+
   const handleLabelsChange = React.useCallback((newLabels: string[]) => {
     onSessionLabelsChange?.(sessionId, newLabels)
   }, [sessionId, onSessionLabelsChange])
@@ -891,6 +901,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onGoalModeChange={handleGoalModeChange}
               onGoalAccept={handleGoalAccept}
               onGoalImprove={handleGoalImprove}
+              onGoalUpdate={handleGoalUpdate}
               enabledModes={enabledModes}
               inputValue={inputValue}
               onInputChange={handleInputChange}

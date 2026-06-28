@@ -46,6 +46,7 @@ import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequ
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import type { SessionGoalMode, SessionGoalState } from "@craft-agent/shared/sessions"
+import type { SessionGoalUpdate } from "@craft-agent/shared/protocol"
 import {
   TurnCard,
   UserMessageBubble,
@@ -172,6 +173,7 @@ interface ChatDisplayProps {
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
   onGoalImprove?: () => void
+  onGoalUpdate?: (update: SessionGoalUpdate) => void | Promise<void>
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
   // Input value preservation (controlled from parent)
@@ -464,6 +466,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onGoalModeChange,
   onGoalAccept,
   onGoalImprove,
+  onGoalUpdate,
   enabledModes,
   // Input value preservation
   inputValue,
@@ -1930,6 +1933,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onGoalModeChange={onGoalModeChange}
             onGoalAccept={onGoalAccept}
             onGoalImprove={onGoalImprove}
+            onGoalUpdate={onGoalUpdate}
             tasks={backgroundTasks}
             sessionId={session.id}
             sessionFolderPath={sessionFolderPath}

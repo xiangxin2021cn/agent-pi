@@ -534,6 +534,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionManager.setSessionPermissionMode(sessionId, command.mode)
       case 'setGoalMode':
         return sessionManager.setSessionGoalMode(sessionId, command.mode)
+      case 'updateGoal':
+        return sessionManager.updateSessionGoal(sessionId, command.goal)
       case 'acceptGoal':
         return sessionManager.acceptSessionGoal(sessionId)
       case 'runGoalImprovement':

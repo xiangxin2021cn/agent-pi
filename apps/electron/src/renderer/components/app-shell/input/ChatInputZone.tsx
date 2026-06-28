@@ -4,6 +4,7 @@ import { CHAT_LAYOUT } from '@/config/layout'
 import { flattenLabels, type LabelConfig } from '@craft-agent/shared/labels'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 import type { SessionStatus } from '@/config/session-status-config'
 import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
@@ -19,6 +20,7 @@ interface ChatInputZoneProps {
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
   onGoalImprove?: () => void
+  onGoalUpdate?: (update: SessionGoalUpdate) => void | Promise<void>
   tasks?: BackgroundTask[]
   sessionId: string
   sessionFolderPath?: string
@@ -43,6 +45,7 @@ export function ChatInputZone({
   onGoalModeChange,
   onGoalAccept,
   onGoalImprove,
+  onGoalUpdate,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -93,6 +96,7 @@ export function ChatInputZone({
           onGoalModeChange={onGoalModeChange}
           onGoalAccept={onGoalAccept}
           onGoalImprove={onGoalImprove}
+          onGoalUpdate={onGoalUpdate}
           tasks={tasks}
           sessionId={sessionId}
           sessionFolderPath={sessionFolderPath}
