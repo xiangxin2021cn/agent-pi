@@ -29,7 +29,9 @@
     "@craft-agent/session-tools-core": "workspace:*",
     "fflate": "^0.8.2",
     "jose": "^6.0.0",
+    "markitdown-js": "^0.0.14",
     "marked": "^17.0.1",
+    "pdfjs-dist": "^5.4.0",
     "ws": "^8.19.0",
     "sharp": "0.34.5",
     "@earendil-works/pi-ai": "0.80.2"

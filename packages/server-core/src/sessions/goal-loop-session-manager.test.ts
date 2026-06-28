@@ -807,6 +807,66 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.status).toBe('passed')
   })
 
+  it('includes verified PDF output previews in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-pdf-preview'
+    const workingDirectory = join(tmpRoot, 'project')
+    const outputDirectory = join(workingDirectory, FORMAL_OUTPUTS_DIR_NAME, sessionId)
+    const sourcePath = join(outputDirectory, 'source.md')
+    mkdirSync(outputDirectory, { recursive: true })
+    const exportResult = await buildMarkdownExport({
+      sourcePath,
+      format: 'pdf',
+      content: '# Executive summary\n\nPDF risk: cost overrun needs mitigation.',
+      targetPath: join(outputDirectory, 'contract-review.pdf'),
+    })
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }, {
+          id: 'crit-pdf',
+          text: 'The PDF document includes an executive summary and PDF risk section.',
+          kind: 'coverage',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages.splice(1, 0, message('t1', 'tool', 'created', {
+      toolName: 'Export',
+      toolStatus: 'completed',
+      toolInput: { output_path: exportResult.path },
+    }))
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The PDF output satisfies the requested content.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('file_preview')
+    expect(reviewPrompts[0]).toContain('Executive summary')
+    expect(reviewPrompts[0]).toContain('PDF risk')
+    expect(managed.goalState?.status).toBe('passed')
+  })
+
   it('includes previous audit history in the reviewer prompt', async () => {
     const sessionId = 'goal-reviewer-history'
     const managed = buildSession(sessionId)

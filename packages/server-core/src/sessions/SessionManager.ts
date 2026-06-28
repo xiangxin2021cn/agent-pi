@@ -1116,6 +1116,8 @@ const GOAL_FILE_PREVIEW_MAX_BYTES = 12_000
 const GOAL_SPREADSHEET_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
 const GOAL_OFFICE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
 const GOAL_OFFICE_PREVIEW_TIMEOUT_MS = 20_000
+const GOAL_PDF_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const GOAL_PDF_PREVIEW_TIMEOUT_MS = 20_000
 const GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
 const GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
 const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
@@ -1147,8 +1149,149 @@ const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
   '.yml',
 ])
 
+function ensureGoalPdfjsPolyfills(): void {
+  if (typeof (globalThis as any).DOMMatrix === 'undefined') {
+    ;(globalThis as any).DOMMatrix = class DOMMatrix {
+      a = 1
+      b = 0
+      c = 0
+      d = 1
+      e = 0
+      f = 0
+      m11 = 1
+      m12 = 0
+      m13 = 0
+      m14 = 0
+      m21 = 0
+      m22 = 1
+      m23 = 0
+      m24 = 0
+      m31 = 0
+      m32 = 0
+      m33 = 1
+      m34 = 0
+      m41 = 0
+      m42 = 0
+      m43 = 0
+      m44 = 1
+      is2D = true
+
+      constructor(init?: unknown) {
+        if (Array.isArray(init) && init.length >= 6) {
+          this.a = Number(init[0])
+          this.b = Number(init[1])
+          this.c = Number(init[2])
+          this.d = Number(init[3])
+          this.e = Number(init[4])
+          this.f = Number(init[5])
+        }
+      }
+
+      multiply() { return new (globalThis as any).DOMMatrix() }
+      preMultiplySelf() { return this }
+      invertSelf() { return this }
+      translate() { return new (globalThis as any).DOMMatrix() }
+      scale() { return new (globalThis as any).DOMMatrix() }
+      transformPoint(point: unknown) { return point ?? { x: 0, y: 0 } }
+      static fromMatrix() { return new (globalThis as any).DOMMatrix() }
+    }
+  }
+
+  if (typeof (globalThis as any).Path2D === 'undefined') {
+    ;(globalThis as any).Path2D = class Path2D {
+      addPath() {}
+    }
+  }
+}
+
+async function extractGoalPdfPreview(filePath: string): Promise<{ content: string; truncated: boolean } | undefined> {
+  const buffer = await readFile(filePath)
+  const directText = extractGoalPdfUtf16Text(buffer).trim()
+  if (directText) {
+    return {
+      content: directText.slice(0, GOAL_FILE_PREVIEW_MAX_BYTES),
+      truncated: directText.length > GOAL_FILE_PREVIEW_MAX_BYTES,
+    }
+  }
+
+  let content = ''
+
+  ensureGoalPdfjsPolyfills()
+  try {
+    if (!(globalThis as any).pdfjsWorker) {
+      ;(globalThis as any).pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs')
+    }
+
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const documentTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    })
+    const document = await documentTask.promise
+
+    try {
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+        const page = await document.getPage(pageNumber)
+        const pageContent = await page.getTextContent()
+        const pageText = pageContent.items
+          .filter((item: any) => typeof item?.str === 'string')
+          .map((item: any) => item.str)
+          .join(' ')
+          .trim()
+        if (!pageText) continue
+
+        content += `${content ? '\n\n' : ''}--- Page ${pageNumber} ---\n${pageText}`
+      }
+    } finally {
+      await document.destroy?.()
+    }
+  } catch {
+    content = ''
+  }
+
+  const preview = content.trim()
+  if (!preview) return undefined
+
+  return {
+    content: preview.slice(0, GOAL_FILE_PREVIEW_MAX_BYTES),
+    truncated: preview.length > GOAL_FILE_PREVIEW_MAX_BYTES,
+  }
+}
+
+function extractGoalPdfUtf16Text(buffer: Buffer): string {
+  return [...buffer.toString('latin1').matchAll(/<([0-9A-Fa-f]+)> Tj/g)]
+    .map((match) => {
+      const bytes = Buffer.from(match[1], 'hex')
+      let offset = bytes[0] === 0xFE && bytes[1] === 0xFF ? 2 : 0
+      let text = ''
+      for (; offset + 1 < bytes.length; offset += 2) {
+        text += String.fromCharCode((bytes[offset] << 8) | bytes[offset + 1])
+      }
+      return text
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
 async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{ content: string; truncated: boolean } | undefined> {
   const extension = extname(filePath).toLowerCase()
+
+  if (extension === '.pdf') {
+    if (sizeBytes > GOAL_PDF_PREVIEW_MAX_BYTES) {
+      return {
+        content: `PDF output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      return await withTimeout(extractGoalPdfPreview(filePath), GOAL_PDF_PREVIEW_TIMEOUT_MS, 'Goal PDF preview conversion')
+    } catch {
+      return undefined
+    }
+  }
 
   if (GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS.has(extension)) {
     if (sizeBytes > GOAL_SPREADSHEET_PREVIEW_MAX_BYTES) {
