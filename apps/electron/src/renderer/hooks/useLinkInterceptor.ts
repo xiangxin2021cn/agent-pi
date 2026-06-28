@@ -111,7 +111,7 @@ interface LinkInterceptorOptions {
   readSpreadsheetPreview: (path: string) => Promise<SpreadsheetPreviewResult>
   /** Read file as data URL (for image previews) */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary (Uint8Array) for PDF previews via react-pdf */
+  /** Read file as binary (Uint8Array) for embedded PDF previews */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 
@@ -134,7 +134,7 @@ interface LinkInterceptorResult {
   revealCurrentInFinder: () => void
   /** Read file as data URL — passed to image overlays as their loader */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary — passed to PDF overlays for react-pdf */
+  /** Read file as binary — passed to PDF overlays */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 

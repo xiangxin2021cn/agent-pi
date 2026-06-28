@@ -1,8 +1,8 @@
 /**
  * MarkdownPdfBlock - Renders ```pdf-preview code blocks as inline PDF previews.
  *
- * Loads PDF(s) from file(s) (via `src` or `items` field) and renders the first page
- * using react-pdf. Supports multiple items with a tab bar for switching between them.
+ * Loads PDF(s) from file(s) (via `src` or `items` field) and embeds them with
+ * Chromium's PDF viewer. Supports multiple items with a tab bar for switching.
  *
  * Expected JSON shapes:
  * Single item:
@@ -23,25 +23,18 @@
  * Only one Document is mounted at a time. The content area uses a fixed height
  * container to prevent layout shift when switching between items.
  *
- * Inline: Shows first page in a fixed 400px container with bottom fade + expand button.
- * Fullscreen: Opens PDFPreviewOverlay with full page-by-page navigation.
+ * Inline: Shows the PDF in a fixed 400px container with bottom fade + expand button.
+ * Fullscreen: Opens PDFPreviewOverlay.
  */
 
 import * as React from 'react'
 import { FileText, Maximize2 } from 'lucide-react'
-import { Document, Page, pdfjs } from 'react-pdf'
 import { cn } from '../../lib/utils'
 import { CodeBlock } from './CodeBlock'
 import { PDFPreviewOverlay } from '../overlay/PDFPreviewOverlay'
 import { ItemNavigator } from '../overlay/ItemNavigator'
 import { usePlatform } from '../../context/PlatformContext'
 import { useTranslation } from 'react-i18next'
-import 'react-pdf/dist/Page/AnnotationLayer.css'
-import 'react-pdf/dist/Page/TextLayer.css'
-
-// Configure pdf.js worker using Vite's ?url import for cross-platform dev/prod compatibility
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,13 +105,16 @@ export function MarkdownPdfBlock({ code, className, onCreateRegionAnnotation: _o
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [isFullscreen, setIsFullscreen] = React.useState(false)
 
-  // Content cache: src path → loaded Uint8Array (master copy, never passed to react-pdf directly)
+  // Content cache: src path -> loaded Uint8Array.
   const [contentCache, setContentCache] = React.useState<Record<string, Uint8Array>>({})
+  const [urlCache, setUrlCache] = React.useState<Record<string, string>>({})
+  const objectUrlsRef = React.useRef<Record<string, string>>({})
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   const activeItem = items[activeIndex]
   const activePdfData = activeItem ? contentCache[activeItem.src] : undefined
+  const activePdfUrl = activeItem ? urlCache[activeItem.src] : undefined
 
   // Load active item's content when it changes
   React.useEffect(() => {
@@ -131,7 +127,6 @@ export function MarkdownPdfBlock({ code, className, onCreateRegionAnnotation: _o
     setError(null)
     onReadFileBinary(activeItem.src)
       .then((data) => {
-        // Store a copy — react-pdf transfers ArrayBuffers to workers, detaching the original
         setContentCache((prev) => ({ ...prev, [activeItem.src]: new Uint8Array(data) }))
       })
       .catch((err) => {
@@ -140,18 +135,24 @@ export function MarkdownPdfBlock({ code, className, onCreateRegionAnnotation: _o
       .finally(() => setLoading(false))
   }, [activeItem?.src, onReadFileBinary, contentCache])
 
-  // Stable file objects per item (ref ensures Documents don't remount on re-render).
-  // Each Document gets its own Uint8Array copy since react-pdf transfers the ArrayBuffer.
-  const fileObjsRef = React.useRef<Record<string, { data: Uint8Array }>>({})
-  for (const [src, data] of Object.entries(contentCache)) {
-    if (!fileObjsRef.current[src]) {
-      fileObjsRef.current[src] = { data: new Uint8Array(data) }
+  React.useEffect(() => {
+    let changed = false
+    for (const [src, data] of Object.entries(contentCache)) {
+      if (objectUrlsRef.current[src]) continue
+      const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
+      objectUrlsRef.current[src] = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }))
+      changed = true
     }
-  }
+    if (changed) setUrlCache({ ...objectUrlsRef.current })
+  }, [contentCache])
 
-  const activeFileObj = activeItem ? fileObjsRef.current[activeItem.src] : undefined
+  React.useEffect(() => {
+    return () => {
+      for (const url of Object.values(objectUrlsRef.current)) URL.revokeObjectURL(url)
+      objectUrlsRef.current = {}
+    }
+  }, [])
 
-  // Fullscreen overlay: always provide a fresh copy (the overlay's Document will also transfer it)
   const loadPdfData = React.useCallback(async (path: string) => {
     if (contentCache[path]) return new Uint8Array(contentCache[path])
     if (!onReadFileBinary) throw new Error('Cannot load PDF')
@@ -196,22 +197,12 @@ export function MarkdownPdfBlock({ code, className, onCreateRegionAnnotation: _o
 
         {/* Content area: fixed height prevents layout shift on item switch */}
         <div className="relative h-[400px] overflow-hidden">
-          {/* Active Document (only one mounted at a time) */}
-          {activeFileObj && (
-            <div className="flex items-start justify-center bg-white p-4">
-              <Document
-                file={activeFileObj}
-                loading={<div className="py-8 text-center text-muted-foreground text-[13px]">{t('common.rendering')}</div>}
-                error={<div className="py-6 text-center text-destructive/70 text-[13px]">{t('preview.failedToRenderPdf')}</div>}
-              >
-                <Page
-                  pageNumber={1}
-                  renderTextLayer={false}
-                  renderAnnotationLayer={false}
-                  width={500}
-                />
-              </Document>
-            </div>
+          {activePdfUrl && (
+            <iframe
+              src={activePdfUrl}
+              title={activeItem?.label || activeItem?.src || spec.title || t('preview.pdfPreview')}
+              className="h-full w-full border-0 bg-background"
+            />
           )}
 
           {/* Loading state for uncached active item */}
@@ -249,4 +240,3 @@ export function MarkdownPdfBlock({ code, className, onCreateRegionAnnotation: _o
     </PdfBlockErrorBoundary>
   )
 }
-

@@ -3,10 +3,27 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import xlsx from 'xlsx'
+import { strFromU8, unzipSync } from 'fflate'
 import {
   buildMarkdownExport,
   createSpreadsheetTablePreviewFromWorkbook,
+  renderMarkdownBlocksForExport,
 } from './files'
+
+function extractPdfText(buffer: Buffer): string {
+  const raw = buffer.toString('latin1')
+  return [...raw.matchAll(/<([0-9A-F]+)> Tj/g)]
+    .map((match) => {
+      const bytes = Buffer.from(match[1], 'hex')
+      let offset = bytes[0] === 0xFE && bytes[1] === 0xFF ? 2 : 0
+      let text = ''
+      for (; offset + 1 < bytes.length; offset += 2) {
+        text += String.fromCharCode((bytes[offset] << 8) | bytes[offset + 1])
+      }
+      return text
+    })
+    .join('\n')
+}
 
 async function withTempDir<T>(fn: (dir: string) => T | Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'agent-pi-preview-export-'))
@@ -42,7 +59,7 @@ describe('buildMarkdownExport', () => {
   it('exports markdown content as HTML, DOCX, and PDF files', async () => {
     await withTempDir(async (dir) => {
       const sourcePath = join(dir, 'analysis.md')
-      const content = '# 分析报告\n\n- 工期：30 天\n- 依据：招标文件第 5 页'
+      const content = '# 分析报告\n\n**结论**：可行。\n\n- 工期：30 天\n- 依据：招标文件第 5 页'
 
       const html = await buildMarkdownExport({ sourcePath, content, format: 'html' })
       const docx = await buildMarkdownExport({ sourcePath, content, format: 'docx' })
@@ -51,10 +68,33 @@ describe('buildMarkdownExport', () => {
       expect(existsSync(html.path)).toBe(true)
       expect(readFileSync(html.path, 'utf-8')).toContain('<h1>分析报告</h1>')
       expect(existsSync(docx.path)).toBe(true)
-      expect(readFileSync(docx.path).subarray(0, 2).toString()).toBe('PK')
+      const docxBytes = readFileSync(docx.path)
+      expect(docxBytes.subarray(0, 2).toString()).toBe('PK')
+      const docxXml = strFromU8(unzipSync(new Uint8Array(docxBytes))['word/document.xml']!)
+      expect(docxXml).toContain('分析报告')
+      expect(docxXml).toContain('结论：可行。')
+      expect(docxXml).toContain('• 工期：30 天')
+      expect(docxXml).not.toContain('# 分析报告')
+      expect(docxXml).not.toContain('**结论**')
+      expect(docxXml).not.toContain('- 工期')
       expect(existsSync(pdf.path)).toBe(true)
-      expect(readFileSync(pdf.path, 'utf-8').startsWith('%PDF-1.4')).toBe(true)
+      const pdfBytes = readFileSync(pdf.path)
+      expect(pdfBytes.toString('utf-8').startsWith('%PDF-1.4')).toBe(true)
       expect(statSync(pdf.path).size).toBeGreaterThan(500)
+      const pdfText = extractPdfText(pdfBytes)
+      expect(pdfText).toContain('分析报告')
+      expect(pdfText).toContain('结论：可行。')
+      expect(pdfText).toContain('工期：30 天')
+      expect(pdfText).not.toContain('# 分析报告')
+      expect(pdfText).not.toContain('**结论**')
+      expect(pdfText).not.toContain('- 工期')
     })
+  })
+
+  it('normalizes markdown blocks before document export', () => {
+    expect(renderMarkdownBlocksForExport('# Title\n\n- **Bold** item')).toEqual([
+      { type: 'heading', depth: 1, text: 'Title' },
+      { type: 'listItem', ordered: false, index: 1, text: 'Bold item' },
+    ])
   })
 })

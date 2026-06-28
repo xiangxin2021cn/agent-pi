@@ -685,20 +685,121 @@ function escapeXml(value: string): string {
   return escapeHtml(value).replace(/'/g, '&apos;')
 }
 
-function markdownToTextLines(markdown: string): string[] {
-  return markdown
-    .replace(/\r\n/g, '\n')
+type MarkdownExportBlock =
+  | { type: 'heading'; depth: number; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'listItem'; ordered: boolean; index: number; text: string }
+  | { type: 'code'; text: string }
+  | { type: 'quote'; text: string }
+  | { type: 'table'; header: string[]; rows: string[][] }
+  | { type: 'space' }
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+}
+
+function markdownInlineToText(value: string): string {
+  return decodeHtmlEntities(value)
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .split('\n')
-    .map(line => line
-      .replace(/^#{1,6}\s*/, '')
-      .replace(/^>\s?/, '')
-      .replace(/^\s*[-*+]\s+/, '- ')
-      .replace(/^\s*\d+\.\s+/, match => match.trim() + ' ')
-      .replace(/[*_`~]/g, '')
-      .trimEnd()
-    )
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?[^>]+>/g, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function tokenText(token: any): string {
+  if (!token) return ''
+  if (typeof token.text === 'string') {
+    return markdownInlineToText(token.text)
+  }
+  if (Array.isArray(token.tokens)) {
+    return token.tokens.map(tokenText).filter(Boolean).join(' ')
+  }
+  if (typeof token.raw === 'string') {
+    return markdownInlineToText(token.raw)
+  }
+  return ''
+}
+
+export function renderMarkdownBlocksForExport(markdown: string): MarkdownExportBlock[] {
+  const blocks: MarkdownExportBlock[] = []
+  const tokens = marked.lexer(markdown.replace(/\r\n/g, '\n'), { gfm: true })
+
+  const appendTokens = (items: any[]) => {
+    for (const token of items) {
+      switch (token.type) {
+        case 'space':
+          if (blocks[blocks.length - 1]?.type !== 'space') {
+            blocks.push({ type: 'space' })
+          }
+          break
+        case 'heading':
+          blocks.push({
+            type: 'heading',
+            depth: Math.max(1, Math.min(6, Number(token.depth) || 1)),
+            text: tokenText(token),
+          })
+          break
+        case 'paragraph': {
+          const text = tokenText(token)
+          if (text) blocks.push({ type: 'paragraph', text })
+          break
+        }
+        case 'blockquote': {
+          const text = Array.isArray(token.tokens)
+            ? token.tokens.map(tokenText).filter(Boolean).join('\n')
+            : tokenText(token)
+          if (text) blocks.push({ type: 'quote', text })
+          break
+        }
+        case 'code':
+          blocks.push({ type: 'code', text: String(token.text ?? '').trimEnd() })
+          break
+        case 'list': {
+          const ordered = !!token.ordered
+          const start = typeof token.start === 'number' ? token.start : 1
+          const items = Array.isArray(token.items) ? token.items : []
+          items.forEach((item: any, offset: number) => {
+            const text = Array.isArray(item.tokens)
+              ? item.tokens.map(tokenText).filter(Boolean).join(' ')
+              : tokenText(item)
+            if (text) {
+              blocks.push({ type: 'listItem', ordered, index: start + offset, text })
+            }
+          })
+          break
+        }
+        case 'table': {
+          const header = (token.header ?? []).map((cell: any) => tokenText(cell))
+          const rows = (token.rows ?? []).map((row: any[]) => row.map((cell: any) => tokenText(cell)))
+          blocks.push({ type: 'table', header, rows })
+          break
+        }
+        case 'hr':
+          blocks.push({ type: 'space' })
+          break
+        default: {
+          const text = tokenText(token)
+          if (text) blocks.push({ type: 'paragraph', text })
+          break
+        }
+      }
+    }
+  }
+
+  appendTokens(tokens as any[])
+  while (blocks[0]?.type === 'space') blocks.shift()
+  while (blocks[blocks.length - 1]?.type === 'space') blocks.pop()
+  return blocks
 }
 
 async function createMarkdownHtml(content: string, title: string): Promise<string> {
@@ -721,10 +822,77 @@ async function createMarkdownHtml(content: string, title: string): Promise<strin
   ].join('\n')
 }
 
+function docxRun(text: string, options: { bold?: boolean; size?: number } = {}): string {
+  const props = [
+    options.bold ? '<w:b/>' : '',
+    options.size ? `<w:sz w:val="${options.size}"/>` : '',
+  ].filter(Boolean).join('')
+  return `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ''}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`
+}
+
+function docxParagraph(text: string, options: { bold?: boolean; size?: number; indent?: number; after?: number } = {}): string {
+  const pPr = [
+    options.indent ? `<w:ind w:left="${options.indent}"/>` : '',
+    `<w:spacing w:after="${options.after ?? 120}"/>`,
+  ].filter(Boolean).join('')
+  return `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ''}${docxRun(text, options)}</w:p>`
+}
+
+function docxTable(block: Extract<MarkdownExportBlock, { type: 'table' }>): string {
+  const rows = [block.header, ...block.rows]
+    .filter(row => row.length > 0)
+    .map((row, rowIndex) => [
+      '<w:tr>',
+      ...row.map(cell => [
+        '<w:tc>',
+        '<w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>',
+        docxParagraph(cell, { bold: rowIndex === 0, after: 0 }),
+        '</w:tc>',
+      ].join('')),
+      '</w:tr>',
+    ].join(''))
+    .join('')
+
+  if (!rows) return ''
+  return [
+    '<w:tbl>',
+    '<w:tblPr><w:tblBorders>',
+    '<w:top w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:left w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:right w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '</w:tblBorders></w:tblPr>',
+    rows,
+    '</w:tbl>',
+  ].join('')
+}
+
 function createDocxBuffer(markdown: string): Buffer {
-  const paragraphs = markdownToTextLines(markdown).map(line =>
-    `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
-  ).join('')
+  const blocks = renderMarkdownBlocksForExport(markdown)
+  const documentContent = blocks.map(block => {
+    switch (block.type) {
+      case 'heading':
+        return docxParagraph(block.text, {
+          bold: true,
+          size: block.depth === 1 ? 32 : block.depth === 2 ? 28 : 24,
+          after: 180,
+        })
+      case 'paragraph':
+        return docxParagraph(block.text)
+      case 'listItem':
+        return docxParagraph(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, { indent: 360 })
+      case 'quote':
+        return docxParagraph(block.text, { indent: 360 })
+      case 'code':
+        return docxParagraph(block.text, { indent: 360 })
+      case 'table':
+        return docxTable(block)
+      case 'space':
+        return '<w:p/>'
+    }
+  }).join('')
 
   const files: Record<string, Uint8Array> = {
     '[Content_Types].xml': strToU8([
@@ -745,7 +913,7 @@ function createDocxBuffer(markdown: string): Buffer {
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
       '<w:body>',
-      paragraphs || '<w:p/>',
+      documentContent || '<w:p/>',
       '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
       '</w:body>',
       '</w:document>',
@@ -791,8 +959,36 @@ function wrapPdfLine(line: string, maxUnits = 78): string[] {
 }
 
 function createPdfBuffer(markdown: string): Buffer {
-  const lines = markdownToTextLines(markdown).flatMap(line => wrapPdfLine(line))
-  const linesPerPage = 48
+  const blocks = renderMarkdownBlocksForExport(markdown)
+  const lines = blocks.flatMap(block => {
+    switch (block.type) {
+      case 'heading':
+        return wrapPdfLine(block.text, block.depth === 1 ? 44 : 56)
+          .map(text => ({ text, size: block.depth === 1 ? 18 : 15, indent: 0, after: 8 }))
+      case 'paragraph':
+        return wrapPdfLine(block.text).map(text => ({ text, size: 11, indent: 0, after: 2 }))
+      case 'listItem':
+        return wrapPdfLine(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, 72)
+          .map(text => ({ text, size: 11, indent: 18, after: 2 }))
+      case 'quote':
+        return wrapPdfLine(block.text, 72).map(text => ({ text, size: 11, indent: 18, after: 2 }))
+      case 'code':
+        return block.text.split('\n').flatMap(line =>
+          wrapPdfLine(line, 72).map(text => ({ text, size: 10, indent: 18, after: 1 }))
+        )
+      case 'table': {
+        const tableLines = [block.header, ...block.rows]
+          .filter(row => row.length > 0)
+          .map(row => row.join('  |  '))
+        return tableLines.flatMap((line, index) =>
+          wrapPdfLine(line, 68).map(text => ({ text, size: 10, indent: 0, after: index === 0 ? 4 : 1 }))
+        )
+      }
+      case 'space':
+        return [{ text: '', size: 11, indent: 0, after: 6 }]
+    }
+  })
+  const linesPerPage = 46
   const pages = Math.max(1, Math.ceil(lines.length / linesPerPage))
   const objects: Array<{ id: number; body: string }> = [
     { id: 1, body: '<< /Type /Catalog /Pages 2 0 R >>' },
@@ -806,12 +1002,19 @@ function createPdfBuffer(markdown: string): Buffer {
     const pageLines = lines.slice(page * linesPerPage, (page + 1) * linesPerPage)
     const commands = [
       'BT',
-      '/F1 11 Tf',
-      '15 TL',
       '50 790 Td',
       ...pageLines.flatMap((line, index) => {
-        const move = index === 0 ? [] : ['T*']
-        return line ? [...move, `<${utf16BeHex(line)}> Tj`] : [...move]
+        const leading = Math.max(13, line.size + 4 + line.after)
+        const move = index === 0 ? [] : [`0 -${leading} Td`]
+        const indent = line.indent ? [`${line.indent} 0 Td`] : []
+        const resetIndent = line.indent ? [`-${line.indent} 0 Td`] : []
+        return [
+          ...move,
+          `/F1 ${line.size} Tf`,
+          ...indent,
+          ...(line.text ? [`<${utf16BeHex(line.text)}> Tj`] : []),
+          ...resetIndent,
+        ]
       }),
       'ET',
     ].join('\n')
@@ -1173,7 +1376,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read a file as raw binary (Uint8Array) for react-pdf.
+  // Read a file as raw binary (Uint8Array) for in-app PDF previews.
   // The WS transport codec preserves Uint8Array payloads over JSON envelopes.
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
