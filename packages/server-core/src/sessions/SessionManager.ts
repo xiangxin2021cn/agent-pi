@@ -1115,9 +1115,7 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
     throw new Error('Goal reviewer returned invalid status')
   }
 
-  const missingCriteria = Array.isArray(parsed.missingCriteria)
-    ? parsed.missingCriteria.filter((item): item is string => typeof item === 'string')
-    : undefined
+  const missingCriteria = normalizeGoalReviewMissingCriteria(parsed.missingCriteria)
   const correctivePrompt = typeof parsed.correctivePrompt === 'string' && parsed.correctivePrompt.trim()
     ? parsed.correctivePrompt.trim()
     : undefined
@@ -1130,6 +1128,21 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
     missingCriteria,
     correctivePrompt,
   }
+}
+
+function normalizeGoalReviewMissingCriteria(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return [value.trim()]
+  }
+
+  return undefined
 }
 
 function extractJsonObject(raw: string): string {
