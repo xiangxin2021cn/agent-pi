@@ -271,6 +271,61 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['write a report'])
   })
 
+  it('restores persisted user attachments for a hidden goal continuation', async () => {
+    const sessionId = 'goal-hidden-turn-stored-attachments'
+    const managed = buildSession(sessionId)
+    const sourcePath = join(tmpRoot, 'tender.pdf')
+    writeFileSync(sourcePath, '%PDF-1.4\n')
+    managed.goalState = goal({
+      status: 'improving',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [],
+    })
+    managed.lastSentAttachments = undefined
+    managed.lastSentStoredAttachments = undefined
+    const userMessage = managed.messages.find(m => m.role === 'user')
+    userMessage!.attachments = [{
+      id: 'att-1',
+      type: 'pdf',
+      name: 'tender.pdf',
+      mimeType: 'application/pdf',
+      size: 9,
+      storedPath: sourcePath,
+    }]
+    captureEvents()
+    const seenAttachments: Array<Array<{ path: string; name: string; type: string }>> = []
+
+    ;(sm as unknown as {
+      getOrCreateAgent: () => Promise<{
+        chat: (prompt: string, attachments: Array<{ path: string; name: string; type: string }>) => AsyncGenerator<unknown>
+        getSessionId: () => string
+      }>
+    }).getOrCreateAgent = async () => ({
+      chat: async function* (_prompt: string, attachments: Array<{ path: string; name: string; type: string }>) {
+        seenAttachments.push(attachments)
+        yield {
+          type: 'text_complete',
+          text: 'Improved report with restored attachment evidence.',
+          isIntermediate: false,
+        }
+        yield { type: 'complete' }
+      },
+      getSessionId: () => 'sdk-hidden-turn-stored-attachments',
+    })
+
+    await (sm as unknown as {
+      runGoalContinuation: (sessionId: string, prompt: string, iteration: number) => Promise<void>
+    }).runGoalContinuation(sessionId, '<goal-audit>improve with restored source</goal-audit>', 1)
+
+    expect(seenAttachments[0]).toMatchObject([{
+      path: sourcePath,
+      name: 'tender.pdf',
+      type: 'pdf',
+    }])
+    expect(managed.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['write a report'])
+  })
+
   it('can disable an existing goal loop before completion audits', async () => {
     const sessionId = 'goal-disable'
     const managed = buildSession(sessionId)

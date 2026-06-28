@@ -7155,6 +7155,35 @@ export class SessionManager implements ISessionManager {
     })
   }
 
+  private getGoalContinuationAttachments(managed: ManagedSession): FileAttachment[] {
+    if (managed.lastSentAttachments && managed.lastSentAttachments.length > 0) {
+      return managed.lastSentAttachments
+    }
+
+    const storedAttachments = managed.lastSentStoredAttachments && managed.lastSentStoredAttachments.length > 0
+      ? managed.lastSentStoredAttachments
+      : [...managed.messages].reverse().find(message => message.role === 'user' && message.attachments?.length)?.attachments
+
+    if (!storedAttachments?.length) {
+      return []
+    }
+
+    const attachments: FileAttachment[] = []
+    for (const stored of storedAttachments) {
+      try {
+        const attachment = readFileAttachment(stored.storedPath)
+        if (attachment) attachments.push(attachment)
+      } catch (error) {
+        sessionLog.warn('Failed to restore stored attachment for goal continuation', {
+          sessionId: managed.id,
+          path: stored.storedPath,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return attachments
+  }
+
   private async runGoalContinuation(sessionId: string, prompt: string, iteration: number): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
@@ -7227,7 +7256,7 @@ export class SessionManager implements ISessionManager {
       toolMetadataStore.setSessionDir(chatSessionDir)
 
       sessionLog.info('Starting goal continuation for session:', sessionId)
-      const chatIterator = agent.chat(prompt, managed.lastSentAttachments ?? [])
+      const chatIterator = agent.chat(prompt, this.getGoalContinuationAttachments(managed))
 
       for await (const event of chatIterator) {
         if (event.type !== 'text_delta') {
