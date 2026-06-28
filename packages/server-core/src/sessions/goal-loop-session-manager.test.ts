@@ -244,6 +244,8 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('tool Read: loaded source rows from the spreadsheet')
     expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
     expect(reviewPrompts[0]).toContain('/tmp/source.xlsx')
+    expect(reviewPrompts[0]).toContain('When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.')
+    expect(reviewPrompts[0]).toContain('If any criterion is missing or any correctivePrompt is needed, status must not be "pass".')
     expect(managed.goalState?.status).toBe('passed')
     expect(events.some(event => event.type === 'goal_completed')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)

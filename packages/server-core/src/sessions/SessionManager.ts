@@ -1049,6 +1049,8 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '',
     'Rules:',
     '- Use "pass" only when the final response clearly satisfies every required criterion.',
+    '- When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.',
+    '- If any criterion is missing or any correctivePrompt is needed, status must not be "pass".',
     '- Use "fail" when concrete missing work can be fixed by another pass.',
     '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
     '- Keep missingCriteria specific and grounded in the required criteria.',
