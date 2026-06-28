@@ -357,7 +357,7 @@ Until that exists, the first version can use output folder scans and event summa
 - Add deterministic checks and structured reviewer.
 - Do not auto-retry yet.
 
-Current status: partially implemented. Goal state persistence, audit events, deterministic checks, and a mini-model JSON reviewer are in place. UI rendering is still pending.
+Current status: implemented as a guarded first slice. Goal state persistence, audit events, deterministic checks, bounded mini-model JSON review, reviewer timeout handling, and stale `auditing`/`improving` recovery are in place. The active-session UI now shows live goal phase and recent audit history through the goal badge and session info panel.
 
 Success criteria:
 
@@ -372,7 +372,7 @@ Success criteria:
 - Preserve existing user message queue behavior.
 - Add cancellation and new-user-message preemption.
 
-Current status: partially implemented. Hidden goal continuation exists and does not create fake user messages. Queue priority is covered. The send path is not fully extracted yet, and UI-level controls are still pending.
+Current status: mostly implemented without a broad send-path refactor. Hidden goal continuation exists and does not create fake user messages. Queue priority, stale continuation guards, and user-message preemption are covered. The send path is still shared in place rather than extracted into a separate turn runner.
 
 Success criteria:
 
@@ -387,7 +387,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: backend skeleton implemented. Work-like first user messages can initialize `auto_improve`; sessions that already have `goalState.mode` set to `auto_improve` or `strict_work` can self-improve. User-facing defaults and UI controls are still pending.
+Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, and the session info panel shows status and audit history. Still pending: workspace-level settings, manual "run one more improvement", explicit "accept as done", and criteria editing.
 
 Success criteria:
 
@@ -414,7 +414,7 @@ The first shippable slice is now split into two layers:
 1. Backend foundation: persisted goal state, deterministic audit, and hidden continuation without fake user messages.
 2. Product surface: workspace/session setting, Goal card, deterministic checks plus mini-review JSON, and explicit controls.
 
-The backend foundation is underway. The next shippable UI slice should expose the current goal state, let users accept/stop/edit it, and make the automatic work-task heuristic configurable.
+The backend foundation and a compact product surface are now in place. The next shippable UI slice should focus on explicit user controls: accept current result as done, run one more improvement, edit acceptance criteria, and configure workspace defaults for when the loop starts automatically.
 
 ## Main Risks
 
