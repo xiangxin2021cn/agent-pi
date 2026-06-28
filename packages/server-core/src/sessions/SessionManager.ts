@@ -6849,16 +6849,18 @@ export class SessionManager implements ISessionManager {
       storedAttachments,
       badges: options?.badges,
     })
+    const now = Date.now()
+    const elapsedWallClockMs = Math.max(0, now - current.createdAt)
     const goalState: SessionGoalState = {
       ...current,
       objective: appendGoalObjectiveFollowUp(current.objective, message),
       status: 'running',
-      updatedAt: Date.now(),
+      updatedAt: now,
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
       budgets: {
         ...current.budgets,
-        maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, policy.maxWallClockMs),
+        maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, elapsedWallClockMs + policy.maxWallClockMs),
       },
     }
 

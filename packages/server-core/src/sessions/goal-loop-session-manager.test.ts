@@ -362,6 +362,7 @@ describe('SessionManager goal loop routing', () => {
     const sessionId = 'goal-update-budget-after-review'
     const managed = buildSession(sessionId, {
       goalState: goal({
+        createdAt: Date.now(),
         status: 'needs_review',
         iteration: 2,
         maxIterations: 2,
@@ -373,7 +374,28 @@ describe('SessionManager goal loop routing', () => {
 
     expect(managed.goalState?.status).toBe('running')
     expect(managed.goalState?.maxIterations).toBe(4)
-    expect(managed.goalState?.budgets?.maxWallClockMs).toBe(15 * 60 * 1000)
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBeGreaterThanOrEqual(15 * 60 * 1000)
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBeLessThan(16 * 60 * 1000)
+  })
+
+  it('extends an old goal wall-clock budget from the follow-up time', async () => {
+    const sessionId = 'goal-update-old-wall-clock-budget'
+    const twentyMinutesMs = 20 * 60 * 1000
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        createdAt: Date.now() - twentyMinutesMs,
+        status: 'needs_review',
+        iteration: 2,
+        maxIterations: 2,
+        budgets: { maxWallClockMs: 15 * 60 * 1000 },
+      }),
+    })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '继续修复并验证结果').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.status).toBe('running')
+    expect(managed.goalState?.budgets?.maxWallClockMs).toBeGreaterThanOrEqual(35 * 60 * 1000)
   })
 
   it('does not add casual follow-up chat to an existing goal', async () => {
