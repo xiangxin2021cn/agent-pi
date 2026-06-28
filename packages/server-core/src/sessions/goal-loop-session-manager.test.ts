@@ -255,7 +255,7 @@ describe('SessionManager goal loop routing', () => {
 
     expect(managed.goalState?.mode).toBe('auto_improve')
     expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
-    expect(managed.goalState?.criteria.some(criterion => criterion.required)).toBe(true)
+    expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toEqual(['deliverable', 'format', 'test'])
   })
 
   it('does not initialize a goal for a first casual chat message', async () => {

@@ -101,6 +101,7 @@ import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import { GoalController, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
+import { buildGoalCriteriaFromMessage } from './goal-criteria'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -6731,6 +6732,15 @@ export class SessionManager implements ISessionManager {
     }
 
     const now = Date.now()
+    const criteria = buildGoalCriteriaFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    }).map(criterion => ({
+      id: randomUUID(),
+      ...criterion,
+    }))
+
     managed.goalState = {
       id: randomUUID(),
       objective: message.trim().slice(0, 4000),
@@ -6740,12 +6750,7 @@ export class SessionManager implements ISessionManager {
       updatedAt: now,
       iteration: 0,
       maxIterations: 2,
-      criteria: [{
-        id: randomUUID(),
-        text: 'Complete the user request, including any requested deliverables, constraints, referenced files, and verification steps.',
-        kind: 'deliverable',
-        required: true,
-      }],
+      criteria,
       auditHistory: [],
     }
     this.persistSession(managed)
