@@ -96,6 +96,30 @@ describe('buildGoalCriteriaFromMessage', () => {
     expect(criteria.some(criterion => criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT)).toBe(true)
   })
 
+  it('adds explicit output format criteria when the request names deliverable formats', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请生成 PDF 和 Word 版分析报告',
+    })
+
+    expect(criteria).toContainEqual({
+      text: 'Create output file(s) in the requested format(s): PDF, DOCX.',
+      kind: 'format',
+      required: true,
+    })
+  })
+
+  it('uses the target format instead of the source format for conversions', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请将 tender.pdf 转换为 markdown 文件',
+    })
+
+    const outputFormat = criteria.find(criterion =>
+      criterion.kind === 'format'
+      && criterion.text.startsWith('Create output file(s) in the requested format(s):')
+    )
+    expect(outputFormat?.text).toBe('Create output file(s) in the requested format(s): MD.')
+  })
+
   it('does not require output-file evidence for source-only document analysis', () => {
     const criteria = buildGoalCriteriaFromMessage({
       message: '请分析 tender.pdf 的关键风险',

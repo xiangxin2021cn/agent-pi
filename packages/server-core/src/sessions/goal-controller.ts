@@ -5,7 +5,7 @@ import type {
   SessionGoalState,
 } from '@craft-agent/shared/sessions'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -128,6 +128,19 @@ export class GoalController {
           type: 'file',
           label: 'file_wrong_output_directory',
           detail: filePath.slice(0, 500),
+        })
+      }
+    }
+    const requiredOutputFormats = getRequiredOutputFormats(goalState)
+    if (requiredOutputFormats.length > 0 && outputFileEvidencePaths.size > 0) {
+      const producedFormats = new Set([...outputFileEvidencePaths].flatMap(getOutputFormatsForPath))
+      for (const format of requiredOutputFormats) {
+        if (producedFormats.has(format)) continue
+        fileVerificationIssues.push(`Requested output format was not produced: ${format}.`)
+        evidence.push({
+          type: 'file',
+          label: 'file_wrong_output_format',
+          detail: [...outputFileEvidencePaths].join(', ').slice(0, 500),
         })
       }
     }
@@ -433,6 +446,40 @@ function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean 
     && criterion.kind === 'test'
     && criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT
   )
+}
+
+function getRequiredOutputFormats(goalState: SessionGoalState): string[] {
+  return [...new Set(goalState.criteria
+    .filter(criterion =>
+      criterion.required
+      && criterion.kind === 'format'
+      && criterion.text.startsWith(OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX)
+    )
+    .flatMap(criterion => criterion.text
+      .slice(OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX.length)
+      .replace(/\.$/, '')
+      .split(',')
+      .map(format => normalizeOutputFormatLabel(format))
+      .filter((format): format is string => format !== undefined)))]
+}
+
+function normalizeOutputFormatLabel(value: string): string | undefined {
+  const normalized = value.trim().replace(/^\.+|\.+$/g, '').toUpperCase()
+  return normalized || undefined
+}
+
+function getOutputFormatsForPath(filePath: string): string[] {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.pdf')) return ['PDF']
+  if (lower.endsWith('.doc') || lower.endsWith('.docx')) return ['DOCX']
+  if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) return ['XLSX']
+  if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) return ['PPTX']
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return ['MD']
+  if (lower.endsWith('.csv')) return ['CSV']
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return ['HTML']
+  if (lower.endsWith('.json')) return ['JSON']
+  if (lower.endsWith('.txt')) return ['TXT']
+  return []
 }
 
 const TOOL_VERIFICATION_EVIDENCE_PATTERN = /测试|单测|验证|检查|构建|类型检查|source_test|skill_validate|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b/i

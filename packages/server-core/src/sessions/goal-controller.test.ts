@@ -483,6 +483,59 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept output files that do not match the requested format', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }, {
+        id: 'crit-output-format',
+        text: 'Create output file(s) in the requested format(s): PDF.',
+        kind: 'format',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成 PDF 报告'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.md' },
+        }),
+        message('a1', 'assistant', 'PDF 报告已生成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 100 }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The requested PDF output is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Requested output format was not produced: PDF.')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_wrong_output_format',
+        detail: '/tmp/report.md',
+      })
+    }
+  })
+
   test('does not accept reviewer pass when destination output file evidence is missing on disk', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
