@@ -378,6 +378,34 @@ describe('GoalController', () => {
     }
   })
 
+  test('records file evidence from tool result text when structured input lacks a path', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal(), {
+      messages: [
+        message('u1', 'user', 'write a report file'),
+        message('t1', 'tool', 'created C:\\work\\report.md', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { content: 'report' },
+          toolResult: 'Created file: C:\\work\\report.md',
+        }),
+        message('a1', 'assistant', 'Report file complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'Write',
+        detail: 'C:\\work\\report.md',
+      })
+    }
+  })
+
   test('uses turnStartFinalMessageId to audit only the latest turn', async () => {
     const controller = new GoalController()
 

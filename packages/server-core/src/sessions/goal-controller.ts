@@ -61,7 +61,11 @@ export class GoalController {
     }
     for (const message of turnMessages) {
       if (message.role !== 'tool') continue
-      for (const path of extractFilePaths(message.toolInput)) {
+      const paths = new Set([
+        ...extractFilePaths(message.toolInput),
+        ...extractFilePathsFromText(message.toolResult),
+      ])
+      for (const path of paths) {
         evidence.push({
           type: 'file',
           label: message.toolName ?? 'tool_file',
@@ -229,6 +233,8 @@ const FILE_PATH_INPUT_KEYS = new Set([
   'path',
 ])
 
+const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
+
 function extractFilePaths(value: unknown, key?: string): string[] {
   if (typeof value === 'string') {
     return key && FILE_PATH_INPUT_KEYS.has(key.toLowerCase()) && value.trim()
@@ -246,6 +252,14 @@ function extractFilePaths(value: unknown, key?: string): string[] {
 
   return Object.entries(value as Record<string, unknown>)
     .flatMap(([childKey, childValue]) => extractFilePaths(childValue, childKey))
+}
+
+function extractFilePathsFromText(value: unknown): string[] {
+  if (typeof value !== 'string' || !value.trim()) {
+    return []
+  }
+
+  return [...new Set([...value.matchAll(FILE_PATH_TEXT_PATTERN)].map(match => match[0]))]
 }
 
 function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessageId?: string): Message[] {
