@@ -300,6 +300,49 @@ describe('GoalController', () => {
     }
   })
 
+  test('includes previous audit history in automatic improvement prompts', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'The spreadsheet citation was still missing.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        correctivePrompt: 'Add a concrete citation to source.xlsx.',
+        evidence: [{
+          type: 'file',
+          label: 'Read',
+          detail: '/tmp/source.xlsx',
+        }],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Previous goal audits:')
+      expect(decision.prompt).toContain('Iteration 1: fail - The spreadsheet citation was still missing.')
+      expect(decision.prompt).toContain('Correction: Add a concrete citation to source.xlsx.')
+    }
+  })
+
   test('stops for review when auto_improve reaches max iterations', async () => {
     const controller = new GoalController()
 

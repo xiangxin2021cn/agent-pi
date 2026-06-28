@@ -293,6 +293,7 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
         return `${index + 1}. [${item.type}] ${item.label}${detail}`
       }).join('\n')
     : '(none)'
+  const previousAudits = buildPreviousAuditSummary(goalState.auditHistory)
 
   return [
     '<goal-audit>',
@@ -310,7 +311,30 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Audit evidence:',
     evidence,
     '',
+    'Previous goal audits:',
+    previousAudits,
+    '',
     'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
   ].join('\n')
+}
+
+function buildPreviousAuditSummary(history: SessionGoalState['auditHistory']): string {
+  if (history.length === 0) {
+    return '(none)'
+  }
+
+  return history.slice(-3).map(result => {
+    const missing = result.missingCriteria.length > 0
+      ? `\n  Missing: ${result.missingCriteria.slice(0, 4).map(summarizePromptText).join('; ')}`
+      : ''
+    const correction = result.correctivePrompt
+      ? `\n  Correction: ${summarizePromptText(result.correctivePrompt)}`
+      : ''
+    return `Iteration ${result.iteration}: ${result.status} - ${summarizePromptText(result.summary)}${missing}${correction}`
+  }).join('\n')
+}
+
+function summarizePromptText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 1000) || '(empty)'
 }
