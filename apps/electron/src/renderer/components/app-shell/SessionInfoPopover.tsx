@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
+import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
 import type { SessionOutputDirectory } from '../../../shared/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 
@@ -206,6 +207,7 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
   const goalStatus = session?.goalState
     ? getGoalStatusText(t, session.goalState.status, session.goalState.iteration, session.goalState.maxIterations)
     : undefined
+  const goalAuditItems = React.useMemo(() => getGoalAuditViewModels(session?.goalState), [session?.goalState])
 
   const progressItems = [
     {
@@ -251,6 +253,16 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
           />
         ))}
       </InfoBlock>
+
+      {goalAuditItems.length > 0 && (
+        <InfoBlock title={t('sessionInfo.goalAuditHistory')}>
+          <div className="space-y-1.5">
+            {goalAuditItems.map(item => (
+              <GoalAuditCard key={`${item.iteration}-${item.createdAt}`} item={item} />
+            ))}
+          </div>
+        </InfoBlock>
+      )}
 
       <InfoBlock title={t('sessionInfo.outputs')}>
         <InfoPathButton
@@ -298,6 +310,99 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       </InfoBlock>
     </div>
   )
+}
+
+function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
+  const { t } = useTranslation()
+  const statusTone = item.status === 'pass'
+    ? 'text-success'
+    : item.status === 'fail'
+    ? 'text-destructive'
+    : 'text-info'
+
+  return (
+    <div className="rounded-[7px] bg-foreground/[0.025] px-2 py-1.5">
+      <div className="flex items-center gap-2">
+        <Target className={cn("h-3.5 w-3.5 shrink-0", statusTone)} />
+        <div className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/82">
+          {t('sessionInfo.goalAuditIteration', { iteration: item.iteration })}
+        </div>
+        <div className={cn("shrink-0 text-[11px] font-medium", statusTone)}>
+          {getGoalAuditStatusText(t, item.status)}
+        </div>
+      </div>
+      <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+        {item.summary}
+      </div>
+      {item.missingCriteria.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
+            {t('sessionInfo.goalAuditMissing')}
+          </div>
+          {item.missingCriteria.map((criterion, index) => (
+            <div key={`${index}-${criterion}`} className="truncate text-[11px] leading-4 text-foreground/70" title={criterion}>
+              {criterion}
+            </div>
+          ))}
+          {item.hiddenMissingCriteriaCount > 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              {t('sessionInfo.goalAuditMoreItems', { count: item.hiddenMissingCriteriaCount })}
+            </div>
+          )}
+        </div>
+      )}
+      {item.evidence.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {item.evidence.map((evidence, index) => {
+            const label = evidence.detail
+              ? `${evidence.label}: ${evidence.detail}`
+              : evidence.label
+            return (
+              <span
+                key={`${index}-${evidence.type}-${evidence.label}`}
+                className="inline-flex max-w-full items-center rounded-[5px] bg-foreground/5 px-1.5 py-0.5 text-[10px] text-foreground/70"
+                title={label}
+              >
+                <span className="mr-1 text-muted-foreground">{getGoalEvidenceTypeText(t, evidence.type)}</span>
+                <span className="truncate">{label}</span>
+              </span>
+            )
+          })}
+          {item.hiddenEvidenceCount > 0 && (
+            <span className="inline-flex items-center rounded-[5px] bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {t('sessionInfo.goalAuditMoreItems', { count: item.hiddenEvidenceCount })}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function getGoalAuditStatusText(t: ReturnType<typeof useTranslation>['t'], status: GoalAuditViewModel['status']): string {
+  switch (status) {
+    case 'pass':
+      return t('sessionInfo.goalAuditPass')
+    case 'fail':
+      return t('sessionInfo.goalAuditFail')
+    case 'uncertain':
+      return t('sessionInfo.goalAuditUncertain')
+  }
+}
+
+function getGoalEvidenceTypeText(t: ReturnType<typeof useTranslation>['t'], type: GoalAuditViewModel['evidence'][number]['type']): string {
+  switch (type) {
+    case 'file':
+      return t('sessionInfo.goalEvidenceFile')
+    case 'message':
+      return t('sessionInfo.goalEvidenceMessage')
+    case 'system':
+      return t('sessionInfo.goalEvidenceSystem')
+    case 'test':
+      return t('sessionInfo.goalEvidenceTest')
+    case 'tool':
+      return t('sessionInfo.goalEvidenceTool')
+  }
 }
 
 function getGoalStatusText(t: ReturnType<typeof useTranslation>['t'], status: SessionGoalState['status'], iteration: number, maxIterations: number): string {
