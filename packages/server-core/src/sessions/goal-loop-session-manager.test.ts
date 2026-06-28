@@ -254,8 +254,20 @@ describe('SessionManager goal loop routing', () => {
     await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告').catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.maxIterations).toBe(2)
     expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toEqual(['deliverable', 'format', 'test'])
+  })
+
+  it('uses a larger goal loop budget when the first work request asks to continue until done', async () => {
+    const sessionId = 'goal-auto-init-until-done'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请反复检查并继续改进，直到成果满足要求再结束').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.maxIterations).toBe(4)
   })
 
   it('does not initialize a goal for a first casual chat message', async () => {
