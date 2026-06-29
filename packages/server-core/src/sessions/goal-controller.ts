@@ -4,6 +4,7 @@ import type {
   SessionGoalAuditResult,
   SessionGoalState,
 } from '@craft-agent/shared/sessions'
+import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
 import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
@@ -172,6 +173,20 @@ export class GoalController {
           }
         }
       }
+    }
+    const sourceFileEvidencePaths = [...fileEvidencePaths].filter(filePath => !outputFileEvidencePaths.has(filePath))
+    if (
+      finalAssistant
+      && sourceFileEvidencePaths.length > 0
+      && requiresSourceCitationMarker(goalState)
+      && !hasSourceCitationMarker(finalAssistant.content, sourceFileEvidencePaths)
+    ) {
+      fileVerificationIssues.push('Final response did not include a source citation marker for required source evidence.')
+      evidence.push({
+        type: 'message',
+        label: 'source_citation_marker_missing',
+        detail: finalAssistant.id,
+      })
     }
     if (requiresToolVerificationEvidence(goalState)) {
       const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
@@ -446,6 +461,27 @@ function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean 
     && criterion.kind === 'test'
     && criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT
   )
+}
+
+function requiresSourceCitationMarker(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'evidence'
+    && criterion.text.startsWith('Use and cite the referenced input material where relevant:')
+  )
+}
+
+function hasSourceCitationMarker(content: string, sourceFileEvidencePaths: string[]): boolean {
+  const normalized = content.toLowerCase()
+  for (const filePath of sourceFileEvidencePaths) {
+    const name = basename(filePath).toLowerCase()
+    if (name && normalized.includes(name)) return true
+
+    const stem = name.slice(0, name.length - extname(name).length)
+    if (stem && stem.length >= 3 && normalized.includes(stem)) return true
+  }
+
+  return /来源|依据|引用|参考|条款|章节|第\s*\d+\s*页|source|according to|based on|citation|cite|clause|section|page|§|\[[^\]]+\]/i.test(content)
 }
 
 function getRequiredOutputFormats(goalState: SessionGoalState): string[] {

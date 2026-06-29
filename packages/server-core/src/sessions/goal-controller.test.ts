@@ -138,6 +138,65 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept reviewer pass when required source citation markers are missing', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-source-citation',
+        text: 'Use and cite the referenced input material where relevant: tender.md.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Summarize the tender mobilization requirement.', {
+          attachments: [{
+            id: 'att-1',
+            type: 'text',
+            name: 'tender.md',
+            mimeType: 'text/markdown',
+            size: 58,
+            storedPath: '/tmp/tender.md',
+          }],
+        }),
+        message('a1', 'assistant', 'The mobilization period is 14 days.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 58,
+        preview: 'Tender clause 4.2 requires a 14-day mobilization plan.',
+      }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The answer is grounded in the source.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Final response did not include a source citation marker for required source evidence.')
+      expect(decision.prompt).toContain('Final response did not include a source citation marker')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'source_file_preview',
+        detail: '/tmp/tender.md\nTender clause 4.2 requires a 14-day mobilization plan.',
+      })
+    }
+  })
+
   test('does not accept a reviewer pass that still reports missing criteria', async () => {
     const controller = new GoalController()
 
