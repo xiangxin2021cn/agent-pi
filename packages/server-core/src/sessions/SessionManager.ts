@@ -20,7 +20,7 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { LLM_QUERY_TIMEOUT_MS, withTimeout } from '@craft-agent/shared/agent/llm-tool'
+import { LLM_QUERY_TIMEOUT_MS, withTimeout, type LLMQueryRequest, type LLMQueryResult } from '@craft-agent/shared/agent/llm-tool'
 import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
@@ -790,6 +790,14 @@ async function resolveToolDisplayMeta(
 
 /** Agent type - unified backend interface for all providers */
 type AgentInstance = AgentBackend
+
+type QueryLlmCapableAgent = AgentInstance & {
+  queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult>
+}
+
+function canQueryLlm(agent: AgentInstance | null): agent is QueryLlmCapableAgent {
+  return !!agent && typeof (agent as { queryLlm?: unknown }).queryLlm === 'function'
+}
 
 interface ManagedSession {
   id: string
@@ -5850,11 +5858,12 @@ export class SessionManager implements ISessionManager {
 
     const connectionSlug = managed.llmConnection
     const connection = connectionSlug ? getLlmConnection(connectionSlug) : null
+    const selectedModel = request.model ?? managed.model
     const context: OptimizePromptRequest = {
       input,
       attachments: request.attachments,
       workingDirectory: request.workingDirectory ?? managed.workingDirectory,
-      model: request.model ?? managed.model,
+      model: selectedModel,
       connectionName: request.connectionName ?? connection?.name,
     }
     const fallbackPrompt = createPromptOptimizationFallback(context)
@@ -5864,9 +5873,10 @@ export class SessionManager implements ISessionManager {
 
     if (!agent && connectionSlug) {
       try {
-        const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+        const resolvedMiniModel = selectedModel ?? (connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined)
         agent = createBackendFromConnection(connectionSlug, {
           workspace: managed.workspace,
+          model: selectedModel,
           miniModel: resolvedMiniModel,
           session: {
             id: `prompt-optimize-${managed.id}`,
@@ -5885,7 +5895,7 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      if (!agent) {
+      if (!canQueryLlm(agent)) {
         return {
           optimizedPrompt: fallbackPrompt,
           changed: fallbackPrompt.trim() !== input,
@@ -5894,7 +5904,14 @@ export class SessionManager implements ISessionManager {
       }
 
       const instruction = buildPromptOptimizationInstruction(context)
-      const modelResult = normalizeOptimizedPrompt(await agent.runMiniCompletion(instruction))
+      const queryResult = await agent.queryLlm({
+        prompt: instruction,
+        model: selectedModel,
+        systemPrompt: '只输出优化后的提示词正文。不要解释，不要加标题说明，不要包裹代码块。',
+        temperature: 0.2,
+        maxTokens: 2400,
+      })
+      const modelResult = normalizeOptimizedPrompt(queryResult.text)
       const optimizedPrompt = modelResult || fallbackPrompt
       return {
         optimizedPrompt,

@@ -25,6 +25,21 @@ describe('prompt optimizer helpers', () => {
     expect(instruction).toContain('只输出优化后的提示词')
   })
 
+  it('does not force unrelated tasks into a tender or engineering workflow', () => {
+    const instruction = buildPromptOptimizationInstruction({
+      input: '修复登录页中文输入前几个拼音字母会直接蹦出来的问题，并加一个回归测试',
+      workingDirectory: 'C:\\repo',
+      model: 'deepseek-v4-pro',
+    })
+
+    expect(instruction).toContain('代码修改')
+    expect(instruction).toContain('最小必要改动')
+    expect(instruction).toContain('修复登录页中文输入前几个拼音字母会直接蹦出来的问题')
+    expect(instruction).not.toContain('招标文件内容')
+    expect(instruction).not.toContain('工程量')
+    expect(instruction).not.toContain('投标流程')
+  })
+
   it('creates a deterministic fallback prompt without adding fake materials', () => {
     const optimized = createPromptOptimizationFallback({
       input: '帮我写施工方案',
@@ -36,6 +51,17 @@ describe('prompt optimizer helpers', () => {
     expect(optimized).toContain('spec.pdf')
     expect(optimized).toContain('不要编造')
     expect(optimized).not.toContain('未提供的图纸')
+  })
+
+  it('keeps fallback generic for non-document tasks', () => {
+    const optimized = createPromptOptimizationFallback({
+      input: '检查 Electron 退出后仍有后台进程驻留的问题',
+    })
+
+    expect(optimized).toContain('检查 Electron 退出后仍有后台进程驻留的问题')
+    expect(optimized).toContain('按任务类型执行')
+    expect(optimized).not.toContain('招标文件')
+    expect(optimized).not.toContain('工程量')
   })
 
   it('normalizes fenced model output to plain prompt text', () => {
