@@ -16,10 +16,9 @@ import {
 } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-import { getProjectBrainPath, getSessionOutputPathFromSessionPath } from '@craft-agent/shared/sessions'
+import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath } from '@craft-agent/shared/sessions'
 import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
 import {
   handleFileMemorySourceCreate,
@@ -114,23 +113,6 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-interface ProjectMemorySyncManifest {
-  status?: string
-  updatedAt?: number
-  entryCount?: number
-  importAttempt?: {
-    status?: string
-    reason?: string
-    stderr?: string
-    stdout?: string
-    maintenance?: {
-      links?: { ok?: boolean }
-      facts?: { ok?: boolean }
-      embeddings?: { ok?: boolean }
-    }
-  }
-}
-
 function getOutputScope(sessionPath: string, outputPath: string): SessionOutputDirectory['scope'] {
   return pathStartsWith(outputPath, sessionPath) ? 'session' : 'working-directory'
 }
@@ -153,83 +135,25 @@ async function getProjectMemoryStatusForWorkingDirectory(workingDirectory?: stri
     }
   }
 
-  const manifestPath = join(brainPath, 'gbrain', 'sync-manifest.json')
-  if (!(await pathExists(manifestPath))) {
-    const entriesPath = join(brainPath, 'entries.jsonl')
-    const entriesInfo = await stat(entriesPath).catch(() => null)
-    return {
-      status: 'lite_ready',
-      message: 'Project Memory Lite is refreshed; gbrain sync has not run yet.',
-      workingDirectory,
-      projectBrainPath: brainPath,
-      updatedAt: entriesInfo?.mtimeMs,
-    }
-  }
-
-  try {
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as ProjectMemorySyncManifest
-    const importStatus = manifest.importAttempt?.status
-    const gbrainMaintenance = summarizeProjectMemoryMaintenance(manifest)
-    if (manifest.status === 'imported') {
-      return {
-        status: 'gbrain_imported',
-        message: 'Project gbrain has been refreshed.',
-        workingDirectory,
-        projectBrainPath: brainPath,
-        manifestPath,
-        updatedAt: manifest.updatedAt,
-        entryCount: manifest.entryCount,
-        gbrainImportStatus: importStatus,
-        gbrainMaintenance,
-      }
-    }
-    if (manifest.status === 'failed') {
-      return {
-        status: 'gbrain_failed',
-        message: manifest.importAttempt?.reason ?? 'Project gbrain sync failed.',
-        workingDirectory,
-        projectBrainPath: brainPath,
-        manifestPath,
-        updatedAt: manifest.updatedAt,
-        entryCount: manifest.entryCount,
-        gbrainImportStatus: importStatus,
-        gbrainMaintenance,
-        gbrainError: manifest.importAttempt?.stderr ?? manifest.importAttempt?.stdout,
-      }
-    }
-
-    return {
-      status: 'lite_ready',
-      message: 'Project Memory Lite is refreshed; gbrain import is prepared.',
-      workingDirectory,
-      projectBrainPath: brainPath,
-      manifestPath,
-      updatedAt: manifest.updatedAt,
-      entryCount: manifest.entryCount,
-      gbrainImportStatus: importStatus,
-      gbrainMaintenance,
-    }
-  } catch (error) {
-    return {
-      status: 'gbrain_failed',
-      message: 'Project memory sync manifest could not be read.',
-      workingDirectory,
-      projectBrainPath: brainPath,
-      manifestPath,
-      gbrainError: error instanceof Error ? error.message : String(error),
-    }
+  const entriesPath = join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME)
+  const entriesInfo = await stat(entriesPath).catch(() => null)
+  const entryCount = await countJsonlEntries(entriesPath)
+  return {
+    status: 'lite_ready',
+    message: 'Project Memory Lite is refreshed.',
+    workingDirectory,
+    projectBrainPath: brainPath,
+    updatedAt: entriesInfo?.mtimeMs,
+    entryCount,
   }
 }
 
-function summarizeProjectMemoryMaintenance(
-  manifest: ProjectMemorySyncManifest,
-): ProjectMemorySessionStatusResult['gbrainMaintenance'] | undefined {
-  const maintenance = manifest.importAttempt?.maintenance
-  if (!maintenance) return undefined
-  return {
-    ...(maintenance.links ? { links: maintenance.links.ok === true } : {}),
-    ...(maintenance.facts ? { facts: maintenance.facts.ok === true } : {}),
-    ...(maintenance.embeddings ? { embeddings: maintenance.embeddings.ok === true } : {}),
+async function countJsonlEntries(filePath: string): Promise<number> {
+  try {
+    const content = await readFile(filePath, 'utf8')
+    return content.split(/\r?\n/).filter(line => line.trim().length > 0).length
+  } catch {
+    return 0
   }
 }
 
@@ -843,15 +767,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
     if (session?.workingDirectory) {
       try {
-        const workspace = getWorkspaceByNameOrId(session.workspaceId) ?? getWorkspaceByNameOrId(session.workspaceName)
-        const workspaceRootPath = workspace?.rootPath ?? resolve(sessionPath, '..', '..')
         await recordProjectMemoryFormalOutput({
           workingDirectory: session.workingDirectory,
           sessionId,
           sourcePath,
           outputPath,
           reason: 'user_promoted',
-          projectMemory: loadWorkspaceConfig(workspaceRootPath)?.projectMemory,
         })
       } catch (error) {
         log.warn('Failed to record promoted formal output in project memory:', error)

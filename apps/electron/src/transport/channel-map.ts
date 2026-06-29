@@ -179,8 +179,6 @@ export const CHANNEL_MAP = {
   // Workspace Settings
   getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
   updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
-  getProjectGbrainStatus: invoke(RPC_CHANNELS.workspace.PROJECT_GBRAIN_STATUS),
-  initializeProjectGbrain: invoke(RPC_CHANNELS.workspace.PROJECT_GBRAIN_INITIALIZE),
 
   // Folder dialog
   openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER),

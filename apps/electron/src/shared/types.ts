@@ -228,8 +228,6 @@ import type {
   ClaudeOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
-  ProjectGbrainInitializeResult,
-  ProjectGbrainStatusResult,
   ProjectMemorySessionStatusResult,
   PermissionModeState,
   BrowserInstanceInfo,
@@ -472,8 +470,6 @@ export interface ElectronAPI {
   // Workspace Settings (per-workspace configuration)
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
   updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
-  getProjectGbrainStatus(workspaceId: string): Promise<ProjectGbrainStatusResult>
-  initializeProjectGbrain(workspaceId: string): Promise<ProjectGbrainInitializeResult>
 
   // Folder dialog
   openFolderDialog(): Promise<string | null>

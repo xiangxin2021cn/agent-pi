@@ -260,7 +260,7 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       icon: <DatabaseZap className="h-3.5 w-3.5" />,
       label: t('sessionInfo.projectMemory', { defaultValue: 'Project memory' }),
       value: getProjectMemoryStatusText(t, projectMemoryStatus),
-      active: projectMemoryStatus?.status === 'gbrain_imported',
+      active: projectMemoryStatus?.status === 'lite_ready',
     }] : []),
   ]
 
@@ -498,46 +498,15 @@ function getProjectMemoryStatusText(
   const suffix = typeof status.entryCount === 'number'
     ? t('sessionInfo.projectMemoryEntries', { count: status.entryCount, defaultValue: '{{count}} entries' })
     : undefined
-  const maintenance = formatProjectMemoryMaintenance(t, status)
 
   switch (status.status) {
-    case 'gbrain_imported':
-      return [t('sessionInfo.projectMemoryGbrainReady', { defaultValue: 'gbrain refreshed' }), maintenance, suffix].filter(Boolean).join(' · ')
-    case 'gbrain_failed':
-      return [t('sessionInfo.projectMemoryGbrainFailed', { defaultValue: 'gbrain import failed' }), maintenance, suffix].filter(Boolean).join(' · ')
     case 'lite_ready':
-      return [t('sessionInfo.projectMemoryLiteReady', { defaultValue: 'Lite memory refreshed' }), suffix].filter(Boolean).join(' · ')
+      return [t('sessionInfo.projectMemoryLiteReady', { defaultValue: 'Project Memory Lite ready' }), suffix].filter(Boolean).join(' · ')
     case 'not_initialized':
       return t('sessionInfo.projectMemoryNotInitialized', { defaultValue: 'Not initialized' })
     case 'missing_working_directory':
       return t('sessionInfo.projectMemoryNoWorkdir', { defaultValue: 'No working directory' })
   }
-}
-
-function formatProjectMemoryMaintenance(
-  t: ReturnType<typeof useTranslation>['t'],
-  status: ProjectMemorySessionStatusResult,
-): string | undefined {
-  const maintenance = status.gbrainMaintenance
-  if (!maintenance) return undefined
-  const parts = [
-    typeof maintenance.links === 'boolean'
-      ? maintenance.links
-        ? t('sessionInfo.projectMemoryLinksReady', { defaultValue: 'links ok' })
-        : t('sessionInfo.projectMemoryLinksPending', { defaultValue: 'links pending' })
-      : undefined,
-    typeof maintenance.facts === 'boolean'
-      ? maintenance.facts
-        ? t('sessionInfo.projectMemoryFactsReady', { defaultValue: 'facts ok' })
-        : t('sessionInfo.projectMemoryFactsPending', { defaultValue: 'facts pending' })
-      : undefined,
-    typeof maintenance.embeddings === 'boolean'
-      ? maintenance.embeddings
-        ? t('sessionInfo.projectMemoryEmbeddingsReady', { defaultValue: 'embed ok' })
-        : t('sessionInfo.projectMemoryEmbeddingsPending', { defaultValue: 'embed pending' })
-      : undefined,
-  ].filter((item): item is string => Boolean(item))
-  return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
 function InfoBlock({ title, children }: { title: string; children: React.ReactNode }) {

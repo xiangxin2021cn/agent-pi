@@ -369,8 +369,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspace.WRITE_IMAGE,
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
-  RPC_CHANNELS.workspace.PROJECT_GBRAIN_STATUS,
-  RPC_CHANNELS.workspace.PROJECT_GBRAIN_INITIALIZE,
 
   // permissions — workspace permissions
   RPC_CHANNELS.permissions.GET_DEFAULTS,

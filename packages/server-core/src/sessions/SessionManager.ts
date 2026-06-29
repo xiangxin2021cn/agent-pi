@@ -39,7 +39,7 @@ import {
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode, type WorkspaceProjectMemoryConfig } from '@craft-agent/shared/workspaces'
+import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -109,12 +109,7 @@ import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalR
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
-import { ensureProjectMemoryLite, initializeProjectGbrainRuntime, recordProjectMemoryGoalAudit } from '../project-memory-lite'
-import {
-  ensureProjectGbrainStore,
-  getProjectGbrainSessionSourceSlugs,
-  withProjectGbrainSourcesContext,
-} from '../project-gbrain-source'
+import { ensureProjectMemoryLite, recordProjectMemoryGoalAudit } from '../project-memory-lite'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -1786,70 +1781,23 @@ export class SessionManager implements ISessionManager {
    * subprocess can race the resulting `chat` against the still-pending update.
    */
   private agentRefreshLocks: Map<string, Promise<void>> = new Map()
-  private projectGbrainInitializationKeys: Set<string> = new Set()
   private goalController = new GoalController()
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
-  private getProjectMemoryConfig(managed: ManagedSession): WorkspaceProjectMemoryConfig | undefined {
-    return loadWorkspaceConfig(managed.workspace.rootPath)?.projectMemory
-  }
-
-  private applyProjectGbrainSourceBinding(
-    managed: ManagedSession,
-    projectMemory: WorkspaceProjectMemoryConfig | undefined = this.getProjectMemoryConfig(managed),
-  ): boolean {
-    const nextSlugs = getProjectGbrainSessionSourceSlugs(
-      managed.enabledSourceSlugs,
-      projectMemory,
-      managed.workingDirectory,
-    )
-    if (stringArraysEqual(managed.enabledSourceSlugs ?? [], nextSlugs)) return false
-    managed.enabledSourceSlugs = nextSlugs
-    return true
-  }
-
-  private syncProjectGbrainSourceBinding(
-    managed: ManagedSession,
-    projectMemory: WorkspaceProjectMemoryConfig | undefined = this.getProjectMemoryConfig(managed),
-  ): boolean {
-    const changed = this.applyProjectGbrainSourceBinding(managed, projectMemory)
-    if (!changed) return false
-    this.persistSession(managed)
-    this.sendEvent({
-      type: 'sources_changed',
-      sessionId: managed.id,
-      enabledSourceSlugs: managed.enabledSourceSlugs ?? [],
-    }, managed.workspace.id)
-    return true
-  }
-
-  private loadAllSourcesForSession(
-    managed: ManagedSession,
-    projectMemory: WorkspaceProjectMemoryConfig | undefined = this.getProjectMemoryConfig(managed),
-  ): LoadedSource[] {
-    return withProjectGbrainSourcesContext(
-      loadAllSources(managed.workspace.rootPath),
-      managed.workingDirectory,
-      projectMemory,
-    )
+  private loadAllSourcesForSession(managed: ManagedSession): LoadedSource[] {
+    return loadAllSources(managed.workspace.rootPath)
   }
 
   private getSourcesBySlugsForSession(
     managed: ManagedSession,
     sourceSlugs: string[],
-    projectMemory: WorkspaceProjectMemoryConfig | undefined = this.getProjectMemoryConfig(managed),
   ): LoadedSource[] {
-    return withProjectGbrainSourcesContext(
-      getSourcesBySlugs(managed.workspace.rootPath, sourceSlugs),
-      managed.workingDirectory,
-      projectMemory,
-    )
+    return getSourcesBySlugs(managed.workspace.rootPath, sourceSlugs)
   }
 
   private async ensureProjectMemoryForWorkingDirectory(
     workingDirectory: string | undefined,
-    projectMemory?: WorkspaceProjectMemoryConfig,
   ): Promise<void> {
     if (!workingDirectory) return
 
@@ -1870,54 +1818,6 @@ export class SessionManager implements ISessionManager {
         error: error instanceof Error ? error.message : String(error),
       })
     }
-
-    try {
-      await ensureProjectGbrainStore(workingDirectory, projectMemory)
-      this.initializeProjectGbrainForWorkingDirectoryInBackground(workingDirectory, projectMemory)
-    } catch (error) {
-      sessionLog.warn('Failed to initialize project gbrain store', {
-        workingDirectory,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
-  private initializeProjectGbrainForWorkingDirectoryInBackground(
-    workingDirectory: string,
-    projectMemory?: WorkspaceProjectMemoryConfig,
-  ): void {
-    const gbrain = projectMemory?.gbrain
-    if (!gbrain?.enabled) return
-    if ((gbrain.backend ?? 'local_pglite') === 'remote_mcp') return
-
-    const key = [
-      workingDirectory,
-      gbrain.backend ?? 'local_pglite',
-      gbrain.postgresUrl ?? '',
-      gbrain.localDatabasePath ?? '',
-    ].join('\0')
-    if (this.projectGbrainInitializationKeys.has(key)) return
-    this.projectGbrainInitializationKeys.add(key)
-
-    void initializeProjectGbrainRuntime(workingDirectory, projectMemory)
-      .then(result => {
-        if (!result.initialized) {
-          sessionLog.warn('Project gbrain background initialization did not complete', {
-            workingDirectory,
-            status: result.status,
-            message: result.message,
-          })
-        }
-      })
-      .catch(error => {
-        sessionLog.warn('Project gbrain background initialization failed', {
-          workingDirectory,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      })
-      .finally(() => {
-        this.projectGbrainInitializationKeys.delete(key)
-      })
   }
 
   private async recordGoalAuditInProjectMemory(
@@ -1933,7 +1833,6 @@ export class SessionManager implements ISessionManager {
         sessionId: managed.id,
         goalState,
         result,
-        projectMemory: this.getProjectMemoryConfig(managed),
       })
     } catch (error) {
       sessionLog.warn('Failed to record Goal audit in Project Memory Lite', {
@@ -2546,11 +2445,9 @@ export class SessionManager implements ISessionManager {
 
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Reloading sources for session ${managed.id}`)
-    const projectMemory = this.getProjectMemoryConfig(managed)
-    this.syncProjectGbrainSourceBinding(managed, projectMemory)
 
     // Reload all sources from disk (craft-agents-docs is always available as MCP server)
-    const allSources = this.loadAllSourcesForSession(managed, projectMemory)
+    const allSources = this.loadAllSourcesForSession(managed)
     managed.agent.setAllSources(allSources)
 
     // Rebuild MCP and API servers for session's enabled sources
@@ -3002,10 +2899,8 @@ export class SessionManager implements ISessionManager {
     if (result.success && result.sourceSlug && managed.agent) {
       const workspaceRootPath = managed.workspace.rootPath
       const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
-      const projectMemory = this.getProjectMemoryConfig(managed)
-      this.syncProjectGbrainSourceBinding(managed, projectMemory)
       const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = this.loadAllSourcesForSession(managed, projectMemory)
+      const allSources = this.loadAllSourcesForSession(managed)
       const enabledSources = allSources.filter(s =>
         enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
       )
@@ -3381,9 +3276,8 @@ export class SessionManager implements ISessionManager {
       ?? getDefaultThinkingLevel()
     // Get default model from workspace config (used when no session-specific model is set)
     const defaultModel = wsConfig?.defaults?.model
-    // Get default enabled sources from workspace config; project gbrain is added
-    // after workingDirectory resolution because its namespace is project-bound.
-    const baseDefaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
+    // Get default enabled sources from workspace config.
+    const defaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
 
     // Resolve model tier hints ('fast' / 'default') to actual model IDs.
     // EditPopover uses tier hints instead of hardcoded Anthropic model names
@@ -3425,12 +3319,6 @@ export class SessionManager implements ISessionManager {
     } else {
       resolvedWorkingDir = options.workingDirectory
     }
-    const defaultEnabledSourceSlugs = getProjectGbrainSessionSourceSlugs(
-      baseDefaultEnabledSourceSlugs,
-      wsConfig?.projectMemory,
-      resolvedWorkingDir,
-    )
-
     // Validate branch request up-front so branch metadata is only set for valid branches.
     // This prevents creating sessions that claim to be branched but don't have copied history.
     let validatedBranch: {
@@ -3623,7 +3511,7 @@ export class SessionManager implements ISessionManager {
     const parentSessionId = validatedBranch?.sourceSessionId ?? options?.parentSessionId
     const parentSessionKind = validatedBranch ? 'branch' : options?.parentSessionKind
 
-    await this.ensureProjectMemoryForWorkingDirectory(resolvedWorkingDir, wsConfig?.projectMemory)
+    await this.ensureProjectMemoryForWorkingDirectory(resolvedWorkingDir)
 
     // Use storage layer to create and persist the session
     const storedSession = await createStoredSession(workspaceRootPath, {
@@ -4084,10 +3972,8 @@ export class SessionManager implements ISessionManager {
       // ============================================================
 
       const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
-      const projectMemory = this.getProjectMemoryConfig(managed)
-      this.syncProjectGbrainSourceBinding(managed, projectMemory)
       const enabledSlugs = managed.enabledSourceSlugs || []
-      const allSources = this.loadAllSourcesForSession(managed, projectMemory)
+      const allSources = this.loadAllSourcesForSession(managed)
       const enabledSources = allSources.filter(s =>
         enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
       )
@@ -5121,8 +5007,6 @@ export class SessionManager implements ISessionManager {
         sessionLog.info(`Source activation request for session ${managed.id}:`, sourceSlug)
 
         const workspaceRootPath = managed.workspace.rootPath
-        const projectMemory = this.getProjectMemoryConfig(managed)
-        this.syncProjectGbrainSourceBinding(managed, projectMemory)
 
         // Check if source is already enabled
         if (managed.enabledSourceSlugs?.includes(sourceSlug)) {
@@ -5131,7 +5015,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Load the source to check if it exists and is ready
-        const sources = this.getSourcesBySlugsForSession(managed, [sourceSlug], projectMemory)
+        const sources = this.getSourcesBySlugsForSession(managed, [sourceSlug])
         if (sources.length === 0) {
           sessionLog.warn(`Source ${sourceSlug} not found in workspace`)
           return false
@@ -5157,7 +5041,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Build server configs for all enabled sources
-        const allEnabledSources = this.getSourcesBySlugsForSession(managed, managed.enabledSourceSlugs || [], projectMemory)
+        const allEnabledSources = this.getSourcesBySlugsForSession(managed, managed.enabledSourceSlugs || [])
         // Pass session path so large API responses can be saved to session folder
         const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
         const { mcpServers, apiServers, errors } = await buildServersFromSources(allEnabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
@@ -5625,17 +5509,11 @@ export class SessionManager implements ISessionManager {
 
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Setting sources for session ${sessionId}:`, sourceSlugs)
-    const projectMemory = this.getProjectMemoryConfig(managed)
-    const resolvedSourceSlugs = getProjectGbrainSessionSourceSlugs(
-      sourceSlugs,
-      projectMemory,
-      managed.workingDirectory,
-    )
 
     // Clean up credential cache for sources being disabled (security)
     // This removes decrypted tokens from disk when sources are no longer active
     const previousSlugs = new Set(managed.enabledSourceSlugs || [])
-    const newSlugs = new Set(resolvedSourceSlugs)
+    const newSlugs = new Set(sourceSlugs)
     const disabledSlugs = [...previousSlugs].filter(prevSlug => !newSlugs.has(prevSlug))
     if (disabledSlugs.length > 0) {
       try {
@@ -5646,11 +5524,11 @@ export class SessionManager implements ISessionManager {
     }
 
     // Store the selection
-    managed.enabledSourceSlugs = resolvedSourceSlugs
+    managed.enabledSourceSlugs = sourceSlugs
 
     // If agent exists, build and apply servers immediately
     if (managed.agent) {
-      const sources = this.getSourcesBySlugsForSession(managed, resolvedSourceSlugs, projectMemory)
+      const sources = this.getSourcesBySlugsForSession(managed, sourceSlugs)
       // Pass session path so large API responses can be saved to session folder
       const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
       const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, managed.agent.getSummarizeCallback())
@@ -5659,7 +5537,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // Set all sources for context (agent sees full list with descriptions, including built-ins)
-      const allSources = this.loadAllSourcesForSession(managed, projectMemory)
+      const allSources = this.loadAllSourcesForSession(managed)
       managed.agent.setAllSources(allSources)
 
       // Set active source servers (tools are only available from these)
@@ -5681,7 +5559,7 @@ export class SessionManager implements ISessionManager {
     this.sendEvent({
       type: 'sources_changed',
       sessionId,
-      enabledSourceSlugs: resolvedSourceSlugs,
+      enabledSourceSlugs: sourceSlugs,
     }, managed.workspace.id)
 
     sessionLog.info(`Session ${sessionId} sources updated: ${sourceSlugs.length} sources`)
@@ -6076,9 +5954,7 @@ export class SessionManager implements ISessionManager {
       }
 
       managed.workingDirectory = path
-      const projectMemory = this.getProjectMemoryConfig(managed)
-      void this.ensureProjectMemoryForWorkingDirectory(path, projectMemory)
-      const sourcesChanged = this.applyProjectGbrainSourceBinding(managed, projectMemory)
+      void this.ensureProjectMemoryForWorkingDirectory(path)
 
       // Invalidate filesystem caches that depend on working directory
       invalidateContextFileCache(path)
@@ -6107,13 +5983,6 @@ export class SessionManager implements ISessionManager {
       }
 
       this.persistSession(managed)
-      if (sourcesChanged) {
-        this.sendEvent({
-          type: 'sources_changed',
-          sessionId,
-          enabledSourceSlugs: managed.enabledSourceSlugs ?? [],
-        }, managed.workspace.id)
-      }
       // Notify renderer of the working directory change
       this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
     }
@@ -6541,9 +6410,7 @@ export class SessionManager implements ISessionManager {
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
-    const projectMemory = this.getProjectMemoryConfig(managed)
-    await this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory, projectMemory)
-    this.syncProjectGbrainSourceBinding(managed, projectMemory)
+    await this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory)
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
     // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
@@ -6787,7 +6654,7 @@ export class SessionManager implements ISessionManager {
           const toEnable: string[] = []
           const skipped: string[] = []
           const candidateSlugs = Array.from(requiredSources)
-          const loadedSources = this.getSourcesBySlugsForSession(managed, candidateSlugs, projectMemory)
+          const loadedSources = this.getSourcesBySlugsForSession(managed, candidateSlugs)
           const usableSources = new Set(
             loadedSources
               .filter(isSourceUsable)
@@ -6835,7 +6702,7 @@ export class SessionManager implements ISessionManager {
     // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
     // post-build refresh restores state (#710).
     const sources: LoadedSource[] = hasSources
-      ? this.getSourcesBySlugsForSession(managed, enabledSlugs, projectMemory)
+      ? this.getSourcesBySlugsForSession(managed, enabledSlugs)
       : []
 
     if (hasSources && managed.tokenRefreshManager) {
@@ -6855,7 +6722,7 @@ export class SessionManager implements ISessionManager {
     sendSpan.mark('agent.ready')
 
     // Always set all sources for context (even if none are enabled), including built-ins
-    const allSources = this.loadAllSourcesForSession(managed, projectMemory)
+    const allSources = this.loadAllSourcesForSession(managed)
     agent.setAllSources(allSources)
     sendSpan.mark('sources.loaded')
 
@@ -7855,9 +7722,7 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (!managed || managed.messageQueue.length === 0) return
 
-    const projectMemory = this.getProjectMemoryConfig(managed)
-    void this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory, projectMemory)
-    this.syncProjectGbrainSourceBinding(managed, projectMemory)
+    void this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory)
 
     const next = managed.messageQueue.shift()!
     sessionLog.info('replay queued', {

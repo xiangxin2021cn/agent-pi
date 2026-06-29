@@ -261,8 +261,6 @@ export const RPC_CHANNELS = {
     WRITE_IMAGE: 'workspace:writeImage',
     SETTINGS_GET: 'workspaceSettings:get',
     SETTINGS_UPDATE: 'workspaceSettings:update',
-    PROJECT_GBRAIN_STATUS: 'workspace:projectGbrainStatus',
-    PROJECT_GBRAIN_INITIALIZE: 'workspace:projectGbrainInitialize',
   },
   permissions: {
     GET_DEFAULTS: 'permissions:getDefaults',

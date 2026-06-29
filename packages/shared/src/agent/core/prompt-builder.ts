@@ -12,7 +12,7 @@
  * - Format user preferences for prompt injection
  */
 
-import { isLocalMcpEnabled, loadWorkspaceConfig } from '../../workspaces/storage.ts';
+import { isLocalMcpEnabled } from '../../workspaces/storage.ts';
 import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
@@ -184,18 +184,7 @@ export class PromptBuilder {
       capabilities.push('local-mcp: disabled (only HTTP/SSE servers)');
     }
 
-    const projectMemory = loadWorkspaceConfig(this.workspaceRootPath)?.projectMemory;
-    const gbrain = projectMemory?.gbrain;
-    if (gbrain?.enabled) {
-      const backend = gbrain.backend === 'remote_mcp'
-        ? `remote MCP${gbrain.remoteMcpUrl ? ` (${gbrain.remoteMcpUrl})` : ''}`
-        : gbrain.backend === 'local_postgres'
-        ? 'local PostgreSQL + pgvector'
-        : `local PGLite${gbrain.localDatabasePath ? ` base (${gbrain.localDatabasePath})` : ' under the working directory'}`;
-      capabilities.push(`project-memory: Project Memory Lite + project gbrain backend enabled via source agent-pi-gbrain: ${backend}; runtime is bound to the selected workingDirectory namespace`);
-    } else {
-      capabilities.push('project-memory: Project Memory Lite enabled; gbrain advanced backend disabled');
-    }
+    capabilities.push('project-memory: Project Memory Lite enabled; working-directory scoped memory is stored under .agent-pi/brain');
 
     return `<workspace_capabilities>\n${capabilities.join('\n')}\n</workspace_capabilities>`;
   }

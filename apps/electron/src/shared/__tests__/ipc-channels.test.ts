@@ -325,8 +325,6 @@ const EXPECTED_CHANNELS: string[] = [
   'window:setTrafficLights',
   'window:switchWorkspace',
   'workspace:getPermissions',
-  'workspace:projectGbrainInitialize',
-  'workspace:projectGbrainStatus',
   'workspace:readImage',
   'workspace:writeImage',
   'workspaceSettings:get',

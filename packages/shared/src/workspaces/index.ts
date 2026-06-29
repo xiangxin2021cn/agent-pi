@@ -7,11 +7,8 @@
 // Types
 export type {
   WorkspaceConfig,
-  WorkspaceGbrainBackend,
-  WorkspaceGbrainConfig,
   WorkspaceGoalLoopConfig,
   WorkspaceGoalLoopDefaultMode,
-  WorkspaceProjectMemoryConfig,
   CreateWorkspaceInput,
   LoadedWorkspace,
   WorkspaceSummary,
