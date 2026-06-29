@@ -309,6 +309,49 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept reviewer pass when explicit required user item is missing', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-user-requirement',
+        text: 'Must satisfy explicit user requirement: 风险清单.',
+        kind: 'user_constraint',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请生成施工方案报告，必须包含风险清单。'),
+        message('a1', 'assistant', '施工方案报告已完成，包含工程概况和施工部署。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'Looks complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Final response or verified output preview did not address explicit user requirement: 风险清单.')
+      expect(decision.prompt).toContain('风险清单')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'message',
+        label: 'explicit_user_requirement_missing',
+        detail: '风险清单',
+      })
+    }
+  })
+
   test('does not accept a reviewer pass that still reports missing criteria', async () => {
     const controller = new GoalController()
 

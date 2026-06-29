@@ -9,6 +9,7 @@ import { pathStartsWith } from '@craft-agent/shared/utils'
 import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
+const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -206,6 +207,17 @@ export class GoalController {
         label: 'substantive_content_missing',
         detail: finalAssistant.id,
       })
+    }
+    if (finalAssistant) {
+      for (const requirement of getExplicitUserRequirements(goalState)) {
+        if (hasExplicitUserRequirement([finalAssistant.content, ...outputPreviewTexts], requirement)) continue
+        contentVerificationIssues.push(`Final response or verified output preview did not address explicit user requirement: ${requirement}.`)
+        evidence.push({
+          type: 'message',
+          label: 'explicit_user_requirement_missing',
+          detail: requirement.slice(0, 500),
+        })
+      }
     }
     if (requiresToolVerificationEvidence(goalState)) {
       const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
@@ -521,6 +533,33 @@ function hasSubstantiveWorkProduct(contents: string[]): boolean {
 
   return normalized.length >= 160
     && (structuralMarkers >= 3 || paragraphCount >= 3 || sentenceCount >= 4)
+}
+
+function getExplicitUserRequirements(goalState: SessionGoalState): string[] {
+  return goalState.criteria
+    .filter(criterion =>
+      criterion.required
+      && criterion.kind === 'user_constraint'
+      && criterion.text.startsWith(EXPLICIT_USER_REQUIREMENT_PREFIX)
+    )
+    .map(criterion => criterion.text
+      .slice(EXPLICIT_USER_REQUIREMENT_PREFIX.length)
+      .replace(/\.$/, '')
+      .trim())
+    .filter(Boolean)
+}
+
+function hasExplicitUserRequirement(contents: string[], requirement: string): boolean {
+  const needle = normalizeRequirementText(requirement)
+  if (!needle) return true
+  return contents.some(content => normalizeRequirementText(content).includes(needle))
+}
+
+function normalizeRequirementText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\s"'`*_#>()[\]{}:：,，.。!！?？;；\-—_/\\|]+/g, '')
+    .trim()
 }
 
 function hasSourceCitationMarker(contents: string[], sourceFileEvidencePaths: string[]): boolean {
