@@ -11,8 +11,10 @@
  * Uses FullscreenOverlayBase for portal, traffic lights, ESC handling, and header.
  */
 
-import { ListTodo } from 'lucide-react'
-import { Markdown } from '../markdown'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Download, Eye, Pencil, Save, ListTodo } from 'lucide-react'
+import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
+import { Markdown, TiptapMarkdownEditor } from '../markdown'
 import type { AnnotationV1 } from '@craft-agent/core'
 import type { ExternalOpenAnnotationRequest } from '../annotations/use-annotation-interaction-controller'
 import { FullscreenOverlayBase } from './FullscreenOverlayBase'
@@ -56,6 +58,45 @@ export interface DocumentFormattedMarkdownOverlayProps {
   isStreaming?: boolean
   /** Optional external request to open a specific annotation */
   openAnnotationRequest?: ExternalOpenAnnotationRequest | null
+  /** Enable file-backed Markdown editing. Only used for real .md/.markdown files. */
+  editable?: boolean
+  /** Source file mtime captured when preview was opened. */
+  sourceMtimeMs?: number
+  /** Save edited Markdown content back to the source file. */
+  onSave?: (content: string, expectedMtimeMs?: number) => Promise<{ mtimeMs?: number }>
+  /** Download the current Markdown content to a user-selected local path. */
+  onDownload?: (content: string) => Promise<{ path: string } | null>
+  /** Export Markdown content to a document format. */
+  onExport?: (format: Extract<MarkdownExportFormat, 'pdf' | 'docx'>, content: string) => Promise<{ path: string } | null>
+}
+
+function isEditableMarkdownPath(filePath?: string): boolean {
+  return !!filePath && /\.(md|markdown)$/i.test(filePath)
+}
+
+function HeaderIconButton({
+  title,
+  disabled,
+  onClick,
+  children,
+}: {
+  title: string
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-7 items-center justify-center gap-1 rounded-[6px] bg-background px-2 text-xs font-medium shadow-minimal opacity-75 transition-opacity hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-35 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      {children}
+    </button>
+  )
 }
 
 export function DocumentFormattedMarkdownOverlay({
@@ -77,8 +118,119 @@ export function DocumentFormattedMarkdownOverlay({
   sendMessageKey = 'enter',
   isStreaming = false,
   openAnnotationRequest,
+  editable = false,
+  sourceMtimeMs,
+  onSave,
+  onDownload,
+  onExport,
 }: DocumentFormattedMarkdownOverlayProps) {
-  const hasContent = content.trim().length > 0
+  const canEdit = editable && isEditableMarkdownPath(filePath) && !!onSave
+  const [mode, setMode] = useState<'preview' | 'edit'>('preview')
+  const [draftContent, setDraftContent] = useState(content)
+  const [savedContent, setSavedContent] = useState(content)
+  const [lastMtimeMs, setLastMtimeMs] = useState(sourceMtimeMs)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState<MarkdownExportFormat | null>(null)
+  const [localError, setLocalError] = useState<string | undefined>()
+  const [statusMessage, setStatusMessage] = useState<string | undefined>()
+  const visibleContent = canEdit ? draftContent : content
+  const hasContent = visibleContent.trim().length > 0
+  const isDirty = canEdit && draftContent !== savedContent
+
+  useEffect(() => {
+    setDraftContent(content)
+    setSavedContent(content)
+    setLastMtimeMs(sourceMtimeMs)
+    setMode('preview')
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+  }, [content, filePath, sourceMtimeMs])
+
+  const handleSave = async () => {
+    if (!canEdit || !onSave || isSaving || !isDirty) return
+    setIsSaving(true)
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const result = await onSave(draftContent, lastMtimeMs)
+      setSavedContent(draftContent)
+      if (typeof result.mtimeMs === 'number') {
+        setLastMtimeMs(result.mtimeMs)
+      }
+      setStatusMessage('Saved')
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Failed to save Markdown file')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleExport = async (format: Extract<MarkdownExportFormat, 'pdf' | 'docx'>) => {
+    if (!onExport || exportingFormat) return
+    setExportingFormat(format)
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const result = await onExport(format, draftContent)
+      if (result?.path) {
+        setStatusMessage(`Exported: ${result.path}`)
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : `Failed to export ${format.toUpperCase()}`)
+    } finally {
+      setExportingFormat(null)
+    }
+  }
+
+  const handleDownload = async () => {
+    if (!onDownload || isDownloading) return
+    setIsDownloading(true)
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const result = await onDownload(draftContent)
+      if (result?.path) {
+        setStatusMessage(`Saved: ${result.path}`)
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Failed to download Markdown file')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  const headerActions = canEdit ? (
+    <div className="flex items-center gap-1">
+      <HeaderIconButton
+        title={mode === 'edit' ? 'Preview Markdown' : 'Edit Markdown'}
+        onClick={() => setMode(mode === 'edit' ? 'preview' : 'edit')}
+      >
+        {mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+      </HeaderIconButton>
+      <HeaderIconButton title="Save Markdown" disabled={!isDirty || isSaving} onClick={handleSave}>
+        <Save className="h-4 w-4" />
+      </HeaderIconButton>
+      {onDownload && (
+        <HeaderIconButton title="Download Markdown" disabled={isDownloading} onClick={handleDownload}>
+          <Download className="h-4 w-4" />
+          MD
+        </HeaderIconButton>
+      )}
+      {onExport && (
+        <>
+          <HeaderIconButton title="Export PDF" disabled={!!exportingFormat} onClick={() => handleExport('pdf')}>
+            <Download className="h-4 w-4" />
+            PDF
+          </HeaderIconButton>
+          <HeaderIconButton title="Export DOCX" disabled={!!exportingFormat} onClick={() => handleExport('docx')}>
+            <Download className="h-4 w-4" />
+            DOCX
+          </HeaderIconButton>
+        </>
+      )}
+    </div>
+  ) : undefined
 
   return (
     <FullscreenOverlayBase
@@ -86,8 +238,9 @@ export function DocumentFormattedMarkdownOverlay({
       onClose={onClose}
       filePath={filePath}
       typeBadge={typeBadge}
-      copyContent={content}
-      error={error ? { label: 'Preview Issue', message: error } : undefined}
+      headerActions={headerActions}
+      copyContent={visibleContent}
+      error={(error || localError) ? { label: localError ? 'File Action Failed' : 'Preview Issue', message: localError ?? error! } : undefined}
     >
       {/* Content wrapper — min-h-full for vertical centering within FullscreenOverlayBase's scroll container.
           Scrolling and gradient fade mask are handled by FullscreenOverlayBase. */}
@@ -104,14 +257,27 @@ export function DocumentFormattedMarkdownOverlay({
 
           {/* Content area */}
           <div className="px-10 pt-8 pb-8">
+            {statusMessage && (
+              <div className="mb-4 rounded-[8px] border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+                {statusMessage}
+              </div>
+            )}
             <div className="text-sm">
               {!hasContent ? (
                 <div className="rounded-[8px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
                   No preview content was returned for this file.
                 </div>
+              ) : canEdit && mode === 'edit' ? (
+                <TiptapMarkdownEditor
+                  content={draftContent}
+                  onUpdate={setDraftContent}
+                  editable
+                  markdownEngine="official"
+                  className="min-h-[56vh] rounded-[8px] border border-border/50 bg-background px-4 py-3 text-foreground focus-within:border-ring focus-within:ring-1 focus-within:ring-ring"
+                />
               ) : messageId && onAddAnnotation ? (
                 <AnnotatableMarkdownDocument
-                  content={content}
+                  content={visibleContent}
                   sessionId={sessionId}
                   messageId={messageId}
                   annotations={annotations}
@@ -132,7 +298,7 @@ export function DocumentFormattedMarkdownOverlay({
                   onFileClick={onOpenFile}
                   hideFirstMermaidExpand={false}
                 >
-                  {content}
+                  {visibleContent}
                 </Markdown>
               )}
             </div>

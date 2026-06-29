@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "bun";
-import { existsSync, readFileSync, statSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, readFileSync, statSync, mkdirSync } from "fs";
 import { join } from "path";
 
 const ROOT_DIR = join(import.meta.dir, "..");
@@ -15,8 +15,13 @@ const INTERCEPTOR_OUTPUT = join(DIST_DIR, "interceptor.cjs");
 const SESSION_TOOLS_CORE_DIR = join(ROOT_DIR, "packages/session-tools-core");
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
+const SESSION_RESOURCE_OUTPUT = join(ROOT_DIR, "apps/electron/resources/session-mcp-server/index.js");
+const FILE_MEMORY_SERVER_DIR = join(ROOT_DIR, "packages/file-memory-mcp-server");
+const FILE_MEMORY_SERVER_OUTPUT = join(FILE_MEMORY_SERVER_DIR, "dist/index.js");
+const FILE_MEMORY_RESOURCE_OUTPUT = join(ROOT_DIR, "apps/electron/resources/file-memory-mcp-server/index.js");
 const PI_AGENT_SERVER_DIR = join(ROOT_DIR, "packages/pi-agent-server");
 const PI_AGENT_SERVER_OUTPUT = join(PI_AGENT_SERVER_DIR, "dist/index.js");
+const PI_AGENT_RESOURCE_OUTPUT = join(ROOT_DIR, "apps/electron/resources/pi-agent-server/index.js");
 const WA_WORKER_DIR = join(ROOT_DIR, "packages/messaging-whatsapp-worker");
 const WA_WORKER_SOURCE = join(WA_WORKER_DIR, "src/worker.ts");
 const WA_WORKER_OUTPUT = join(WA_WORKER_DIR, "dist/worker.cjs");
@@ -208,6 +213,61 @@ async function buildSessionServer(): Promise<void> {
   console.log("✅ Session server built successfully");
 }
 
+function copySessionServerResource(): void {
+  const resourceDir = join(ROOT_DIR, "apps/electron/resources/session-mcp-server");
+  if (!existsSync(resourceDir)) {
+    mkdirSync(resourceDir, { recursive: true });
+  }
+  copyFileSync(SESSION_SERVER_OUTPUT, SESSION_RESOURCE_OUTPUT);
+  console.log("✅ Session server copied to resources");
+}
+
+// Build the File Memory MCP Server (read-only single-file evidence source)
+async function buildFileMemoryServer(): Promise<void> {
+  console.log("🗂️ Building File Memory MCP Server...");
+
+  const distDir = join(FILE_MEMORY_SERVER_DIR, "dist");
+  if (!existsSync(distDir)) {
+    mkdirSync(distDir, { recursive: true });
+  }
+
+  const proc = spawn({
+    cmd: [
+      "bun", "build",
+      join(FILE_MEMORY_SERVER_DIR, "src/index.ts"),
+      "--outfile", FILE_MEMORY_SERVER_OUTPUT,
+      "--target", "node",
+      "--format", "cjs",
+    ],
+    cwd: ROOT_DIR,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const exitCode = await proc.exited;
+
+  if (exitCode !== 0) {
+    console.error("❌ File memory server build failed with exit code", exitCode);
+    process.exit(exitCode);
+  }
+
+  if (!existsSync(FILE_MEMORY_SERVER_OUTPUT)) {
+    console.error("❌ File memory server output not found at", FILE_MEMORY_SERVER_OUTPUT);
+    process.exit(1);
+  }
+
+  console.log("✅ File memory server built successfully");
+}
+
+function copyFileMemoryServerResource(): void {
+  const resourceDir = join(ROOT_DIR, "apps/electron/resources/file-memory-mcp-server");
+  if (!existsSync(resourceDir)) {
+    mkdirSync(resourceDir, { recursive: true });
+  }
+  copyFileSync(FILE_MEMORY_SERVER_OUTPUT, FILE_MEMORY_RESOURCE_OUTPUT);
+  console.log("✅ File memory server copied to resources");
+}
+
 // Build the Pi Agent Server (subprocess for Pi SDK sessions)
 // Optional: skips if package directory is missing (e.g., not synced to OSS).
 async function buildPiAgentServer(): Promise<void> {
@@ -224,7 +284,7 @@ async function buildPiAgentServer(): Promise<void> {
     mkdirSync(distDir, { recursive: true });
   }
 
-  // Use --target=bun --format=esm because the Pi SDK (@mariozechner/pi-coding-agent)
+  // Use --target=bun --format=esm because the Pi SDK (@earendil-works/pi-coding-agent)
   // is ESM-only. --target=node --format=cjs leaves ESM deps as external require()
   // calls that fail at runtime since there are no node_modules relative to dist/.
   const proc = spawn({
@@ -255,6 +315,19 @@ async function buildPiAgentServer(): Promise<void> {
   }
 
   console.log("✅ Pi agent server built successfully");
+}
+
+function copyPiAgentServerResource(): void {
+  if (!existsSync(PI_AGENT_SERVER_OUTPUT)) {
+    return;
+  }
+
+  const resourceDir = join(ROOT_DIR, "apps/electron/resources/pi-agent-server");
+  if (!existsSync(resourceDir)) {
+    mkdirSync(resourceDir, { recursive: true });
+  }
+  copyFileSync(PI_AGENT_SERVER_OUTPUT, PI_AGENT_RESOURCE_OUTPUT);
+  console.log("✅ Pi agent server copied to resources");
 }
 
 // Build the WhatsApp worker (Baileys-backed subprocess spawned by WhatsAppAdapter)
@@ -324,9 +397,15 @@ async function main(): Promise<void> {
   // Build session server (provides session-scoped tools like SubmitPlan)
   // Depends on session-tools-core being built first
   await buildSessionServer();
+  copySessionServerResource();
+
+  // Build file memory server (provides per-file read-only MCP sources)
+  await buildFileMemoryServer();
+  copyFileMemoryServerResource();
 
   // Build Pi agent server (subprocess for Pi SDK sessions)
   await buildPiAgentServer();
+  copyPiAgentServerResource();
 
   // Build unified network interceptor (CJS bundle for Node.js --require)
   await buildInterceptor();

@@ -47,6 +47,8 @@ import {
   handleAuthRequest,
   handleAuthCompleted,
   handleUsageUpdate,
+  handleGoalAuditStarted,
+  handleGoalStateUpdated,
 } from './handlers/session'
 
 /**
@@ -205,6 +207,15 @@ export function processEvent(
       // Server-side handles the auto-retry now (craft-agents-oss#804); the renderer
       // just receives the event for UI feedback. See SessionManager.processEvent.
       return { state, effects: [] }
+
+    case 'goal_audit_started':
+      return handleGoalAuditStarted(state, event)
+
+    case 'goal_audit_result':
+    case 'goal_completed':
+    case 'goal_needs_review':
+    case 'goal_state_changed':
+      return handleGoalStateUpdated(state, event)
 
     case 'usage_update':
       return handleUsageUpdate(state, event)

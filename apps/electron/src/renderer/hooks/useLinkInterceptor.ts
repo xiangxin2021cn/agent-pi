@@ -17,6 +17,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { classifyFile, type FilePreviewType } from '@craft-agent/ui'
 import { getLanguageFromPath } from '@/lib/file-utils'
+import type { SpreadsheetPreviewResult } from '@craft-agent/shared/protocol'
 
 // ── Preview state types ────────────────────────────────────────────────────────
 // Each variant carries the data needed to render its specific overlay.
@@ -45,6 +46,8 @@ interface MarkdownPreview {
   type: 'markdown'
   filePath: string
   content: string | null
+  mtimeMs?: number
+  truncated?: boolean
   error?: string
 }
 
@@ -69,6 +72,13 @@ interface OfficePreview {
   error?: string
 }
 
+interface SpreadsheetPreview {
+  type: 'spreadsheet'
+  filePath: string
+  preview: SpreadsheetPreviewResult | null
+  error?: string
+}
+
 export type FilePreviewState =
   | ImagePreview
   | PDFPreview
@@ -76,6 +86,7 @@ export type FilePreviewState =
   | MarkdownPreview
   | JSONPreview
   | TextPreview
+  | SpreadsheetPreview
   | OfficePreview
 
 // ── Hook options ───────────────────────────────────────────────────────────────
@@ -95,11 +106,13 @@ interface LinkInterceptorOptions {
     content: string
     truncated?: boolean
     originalSize?: number
+    mtimeMs?: number
     previewKind?: 'text' | 'spreadsheet' | 'office' | 'binary'
   }>
+  readSpreadsheetPreview: (path: string) => Promise<SpreadsheetPreviewResult>
   /** Read file as data URL (for image previews) */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary (Uint8Array) for PDF previews via react-pdf */
+  /** Read file as binary (Uint8Array) for embedded PDF previews */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 
@@ -122,7 +135,7 @@ interface LinkInterceptorResult {
   revealCurrentInFinder: () => void
   /** Read file as data URL — passed to image overlays as their loader */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary — passed to PDF overlays for react-pdf */
+  /** Read file as binary — passed to PDF overlays */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 
@@ -169,13 +182,35 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
       return
     }
 
+    if (type === 'spreadsheet') {
+      try {
+        const preview = await optionsRef.current.readSpreadsheetPreview(path)
+        setPreviewState({ type, filePath: path, preview })
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Failed to read spreadsheet'
+        setPreviewState({ type, filePath: path, preview: null, error: errorMsg })
+      }
+      return
+    }
+
     // For text-based files: read content first, then show overlay with content ready.
     // Local filesystem reads are near-instant — no loading state needed.
     try {
       const preview = await optionsRef.current.readFilePreview(path)
-      const state = buildInitialTextState(type, path)
       const emptyPreviewError = getEmptyPreviewError(path, preview.content, preview.originalSize)
-      setPreviewState({ ...state, content: preview.content, error: emptyPreviewError } as FilePreviewState)
+      if (type === 'markdown') {
+        setPreviewState({
+          type,
+          filePath: path,
+          content: preview.content,
+          mtimeMs: preview.mtimeMs,
+          truncated: preview.truncated,
+          error: emptyPreviewError,
+        })
+        return
+      }
+      const state = buildInitialTextState(type, path)
+      setPreviewState({ ...state, content: preview.content, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to read file'
       const state = buildInitialTextState(type, path)
@@ -255,6 +290,8 @@ function buildInitialTextState(type: FilePreviewType, path: string): FilePreview
       return { type: 'text', filePath: path, content: null }
     case 'office':
       return { type: 'office', filePath: path, content: null }
+    case 'spreadsheet':
+      return { type: 'spreadsheet', filePath: path, preview: null }
     default:
       // Should never happen — image/pdf are handled before this function is called
       return { type: 'text', filePath: path, content: null }

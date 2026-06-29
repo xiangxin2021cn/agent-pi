@@ -44,6 +44,8 @@ export const meta: DetailsPageMeta = {
   slug: 'workspace',
 }
 
+type GoalLoopDefaultMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['defaultMode']>
+
 // ============================================
 // Main Component
 // ============================================
@@ -65,6 +67,7 @@ export default function WorkspaceSettingsPage() {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
+  const [goalLoopDefaultMode, setGoalLoopDefaultMode] = useState<GoalLoopDefaultMode>('auto_improve')
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Default sources state
@@ -92,6 +95,7 @@ export default function WorkspaceSettingsPage() {
           setPermissionMode(settings.permissionMode || 'ask')
           setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
+          setGoalLoopDefaultMode(settings.goalLoop?.defaultMode ?? 'auto_improve')
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
             setEnabledModes(settings.cyclablePermissionModes)
@@ -282,6 +286,14 @@ export default function WorkspaceSettingsPage() {
     [updateWorkspaceSetting]
   )
 
+  const handleGoalLoopDefaultModeChange = useCallback(
+    async (mode: GoalLoopDefaultMode) => {
+      setGoalLoopDefaultMode(mode)
+      await updateWorkspaceSetting('goalLoop', { defaultMode: mode })
+    },
+    [updateWorkspaceSetting]
+  )
+
   const handleSourceToggle = useCallback(
     async (slug: string, checked: boolean) => {
       const newSlugs = checked
@@ -441,6 +453,23 @@ export default function WorkspaceSettingsPage() {
                     { value: 'safe', label: t("mode.explore"), description: t("mode.exploreDesc") },
                     { value: 'ask', label: t("mode.ask"), description: t("mode.askDesc") },
                     { value: 'allow-all', label: t("mode.execute"), description: t("mode.executeDesc") },
+                  ]}
+                />
+              </SettingsCard>
+            </SettingsSection>
+
+            {/* Goal Loop */}
+            <SettingsSection title={t("settings.workspace.goalLoop")}>
+              <SettingsCard>
+                <SettingsMenuSelectRow
+                  label={t("settings.workspace.goalLoopDefault")}
+                  description={t("settings.workspace.goalLoopDefaultDesc")}
+                  value={goalLoopDefaultMode}
+                  onValueChange={(v) => handleGoalLoopDefaultModeChange(v as GoalLoopDefaultMode)}
+                  options={[
+                    { value: 'auto_improve', label: t("settings.workspace.goalLoopAutoImprove"), description: t("settings.workspace.goalLoopAutoImproveDesc") },
+                    { value: 'check_only', label: t("settings.workspace.goalLoopCheckOnly"), description: t("settings.workspace.goalLoopCheckOnlyDesc") },
+                    { value: 'off', label: t("settings.workspace.goalLoopOff"), description: t("settings.workspace.goalLoopOffDesc") },
                   ]}
                 />
               </SettingsCard>

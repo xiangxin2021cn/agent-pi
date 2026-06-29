@@ -4,9 +4,9 @@ import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
-import { basename, dirname, join } from 'path'
-import { existsSync } from 'fs'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { basename, dirname, extname, join } from 'path'
+import { constants as FS_CONSTANTS, existsSync } from 'fs'
+import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
 import {
@@ -20,11 +20,12 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior } from '@craft-agent/shared/config'
+import { LLM_QUERY_TIMEOUT_MS, withTimeout } from '@craft-agent/shared/agent/llm-tool'
+import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
-import { i18n, LOCALE_REGISTRY, type LanguageCode } from '@craft-agent/shared/i18n'
+import { i18n } from '@craft-agent/shared/i18n'
 import {
   getWorkspaces,
   getWorkspaceByNameOrId,
@@ -38,7 +39,7 @@ import {
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
+import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -55,6 +56,7 @@ import {
   getPendingPlanExecution as getStoredPendingPlanExecution,
   getSessionAttachmentsPath,
   getSessionPath as getSessionStoragePath,
+  getSessionOutputPath,
   ensureSessionDir,
   getSessionFilePath,
   generateSessionId,
@@ -70,6 +72,9 @@ import {
   type SessionMetadata,
   type SessionStatus,
   type SessionHeader,
+  type SessionGoalMode,
+  type SessionGoalCriterionKind,
+  type SessionGoalState,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -81,15 +86,17 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, type SessionGoalUpdate, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
 import { invalidateContextFileCache } from '@craft-agent/shared/prompts/system'
+import { buildPromptOptimizationInstruction, createPromptOptimizationFallback, normalizeOptimizedPrompt } from '@craft-agent/shared/prompts'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import { getDefaultSummarizationModel } from '@craft-agent/shared/config/models'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
+import { MarkItDown } from 'markitdown-js'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels, loadLabelConfig } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, resolveSessionLabels } from '@craft-agent/shared/labels'
@@ -97,6 +104,9 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
+import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
+import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -832,6 +842,8 @@ interface ManagedSession {
   hasUnread?: boolean
   // Per-session source selection (slugs of enabled sources)
   enabledSourceSlugs?: string[]
+  // Application-level goal audit state. Omitted/off means legacy completion behavior.
+  goalState?: SessionGoalState
   // Labels applied to this session (additive tags, many-per-session)
   labels?: string[]
   // Working directory for this session (used by agent for bash commands)
@@ -1004,6 +1016,600 @@ export function claimAutoRetryPending(
   return 'send'
 }
 
+function buildGoalReviewPrompt(input: GoalReviewInput): string {
+  const requiredCriteria = input.goalState.criteria
+    .filter(criterion => criterion.required)
+    .map((criterion, index) => `${index + 1}. [${criterion.kind}] ${criterion.text}`)
+    .join('\n')
+  const auditEvidence = input.result.evidence.length > 0
+    ? input.result.evidence.map((item, index) => {
+        const detail = item.detail ? ` - ${item.detail}` : ''
+        return `${index + 1}. [${item.type}] ${item.label}${detail}`
+      }).join('\n')
+    : '(none)'
+  const previousAudits = buildGoalReviewAuditHistory(input.goalState.auditHistory)
+  const recentTurnContext = buildGoalReviewTurnContext(input.messages, input.finalAssistant.id)
+
+  return [
+    'You are reviewing whether an agent response completed the user objective.',
+    'Return only compact JSON with this exact shape:',
+    '{"status":"pass|fail|uncertain","summary":"...","missingCriteria":["..."],"correctivePrompt":"..."}',
+    '',
+    'Objective:',
+    input.goalState.objective,
+    '',
+    'Required criteria:',
+    requiredCriteria || '(none)',
+    '',
+    'Deterministic audit summary:',
+    input.result.summary,
+    '',
+    'Audit evidence:',
+    auditEvidence,
+    '',
+    'Previous goal audits:',
+    previousAudits,
+    '',
+    'Recent turn context:',
+    recentTurnContext,
+    '',
+    'Assistant final response:',
+    input.finalAssistant.content.slice(0, 12000),
+    '',
+    'Rules:',
+    '- Use "pass" only when the final response and verified artifacts clearly satisfy every required criterion.',
+    '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',
+    '- When source_file_preview evidence is present, use it as source material for grounding and citation checks, not as proof that a requested output file was produced.',
+    '- When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.',
+    '- If any criterion is missing or any correctivePrompt is needed, status must not be "pass".',
+    '- Use "fail" when concrete missing work can be fixed by another pass.',
+    '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
+    '- Keep missingCriteria specific and grounded in the required criteria.',
+  ].join('\n')
+}
+
+function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
+  const latestAudit = goalState.auditHistory.at(-1)
+  const missing = latestAudit?.missingCriteria.length
+    ? latestAudit.missingCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : '1. Re-check the deliverable against the original objective and acceptance criteria.'
+  const corrective = latestAudit?.correctivePrompt?.trim()
+    ? latestAudit.correctivePrompt.trim()
+    : 'Improve the current deliverable against the missing or unproven criteria.'
+
+  return [
+    '<goal-audit>',
+    'This is an internal manual goal improvement instruction, not a new user request.',
+    '',
+    'Objective:',
+    goalState.objective,
+    '',
+    'The user requested one more improvement pass from the current goal review state.',
+    latestAudit ? `Last audit summary: ${latestAudit.summary}` : 'Last audit summary: (none)',
+    '',
+    'Missing or unproven criteria:',
+    missing,
+    '',
+    'Corrective action:',
+    corrective,
+    '',
+    'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
+    '</goal-audit>',
+  ].join('\n')
+}
+
+const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
+  'deliverable',
+  'evidence',
+  'format',
+  'test',
+  'coverage',
+  'user_constraint',
+  'safety',
+])
+
+function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriterionKind {
+  return typeof value === 'string' && SESSION_GOAL_CRITERION_KINDS.has(value as SessionGoalCriterionKind)
+}
+
+const GOAL_REVIEW_TIMEOUT_MS = Math.min(LLM_QUERY_TIMEOUT_MS, 60_000)
+const GOAL_FILE_PREVIEW_MAX_BYTES = 12_000
+const GOAL_SPREADSHEET_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const GOAL_OFFICE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+const GOAL_OFFICE_PREVIEW_TIMEOUT_MS = 20_000
+const GOAL_PDF_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+const GOAL_PDF_PREVIEW_TIMEOUT_MS = 20_000
+const GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
+const GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
+const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
+  '.c',
+  '.cc',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.csv',
+  '.go',
+  '.h',
+  '.html',
+  '.java',
+  '.js',
+  '.json',
+  '.jsx',
+  '.kt',
+  '.md',
+  '.mjs',
+  '.py',
+  '.rs',
+  '.sh',
+  '.sql',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.xml',
+  '.yaml',
+  '.yml',
+])
+
+function ensureGoalPdfjsPolyfills(): void {
+  if (typeof (globalThis as any).DOMMatrix === 'undefined') {
+    ;(globalThis as any).DOMMatrix = class DOMMatrix {
+      a = 1
+      b = 0
+      c = 0
+      d = 1
+      e = 0
+      f = 0
+      m11 = 1
+      m12 = 0
+      m13 = 0
+      m14 = 0
+      m21 = 0
+      m22 = 1
+      m23 = 0
+      m24 = 0
+      m31 = 0
+      m32 = 0
+      m33 = 1
+      m34 = 0
+      m41 = 0
+      m42 = 0
+      m43 = 0
+      m44 = 1
+      is2D = true
+
+      constructor(init?: unknown) {
+        if (Array.isArray(init) && init.length >= 6) {
+          this.a = Number(init[0])
+          this.b = Number(init[1])
+          this.c = Number(init[2])
+          this.d = Number(init[3])
+          this.e = Number(init[4])
+          this.f = Number(init[5])
+        }
+      }
+
+      multiply() { return new (globalThis as any).DOMMatrix() }
+      preMultiplySelf() { return this }
+      invertSelf() { return this }
+      translate() { return new (globalThis as any).DOMMatrix() }
+      scale() { return new (globalThis as any).DOMMatrix() }
+      transformPoint(point: unknown) { return point ?? { x: 0, y: 0 } }
+      static fromMatrix() { return new (globalThis as any).DOMMatrix() }
+    }
+  }
+
+  if (typeof (globalThis as any).Path2D === 'undefined') {
+    ;(globalThis as any).Path2D = class Path2D {
+      addPath() {}
+    }
+  }
+}
+
+async function extractGoalPdfPreview(filePath: string): Promise<{ content: string; truncated: boolean } | undefined> {
+  const buffer = await readFile(filePath)
+  const directText = extractGoalPdfUtf16Text(buffer).trim()
+  if (directText) {
+    return {
+      content: directText.slice(0, GOAL_FILE_PREVIEW_MAX_BYTES),
+      truncated: directText.length > GOAL_FILE_PREVIEW_MAX_BYTES,
+    }
+  }
+
+  let content = ''
+
+  ensureGoalPdfjsPolyfills()
+  try {
+    if (!(globalThis as any).pdfjsWorker) {
+      ;(globalThis as any).pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs')
+    }
+
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const documentTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    })
+    const document = await documentTask.promise
+
+    try {
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+        const page = await document.getPage(pageNumber)
+        const pageContent = await page.getTextContent()
+        const pageText = pageContent.items
+          .filter((item: any) => typeof item?.str === 'string')
+          .map((item: any) => item.str)
+          .join(' ')
+          .trim()
+        if (!pageText) continue
+
+        content += `${content ? '\n\n' : ''}--- Page ${pageNumber} ---\n${pageText}`
+      }
+    } finally {
+      await document.destroy?.()
+    }
+  } catch {
+    content = ''
+  }
+
+  const preview = content.trim()
+  if (!preview) return undefined
+
+  return {
+    content: preview.slice(0, GOAL_FILE_PREVIEW_MAX_BYTES),
+    truncated: preview.length > GOAL_FILE_PREVIEW_MAX_BYTES,
+  }
+}
+
+function extractGoalPdfUtf16Text(buffer: Buffer): string {
+  return [...buffer.toString('latin1').matchAll(/<([0-9A-Fa-f]+)> Tj/g)]
+    .map((match) => {
+      const bytes = Buffer.from(match[1], 'hex')
+      let offset = bytes[0] === 0xFE && bytes[1] === 0xFF ? 2 : 0
+      let text = ''
+      for (; offset + 1 < bytes.length; offset += 2) {
+        text += String.fromCharCode((bytes[offset] << 8) | bytes[offset + 1])
+      }
+      return text
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{ content: string; truncated: boolean } | undefined> {
+  const extension = extname(filePath).toLowerCase()
+
+  if (extension === '.pdf') {
+    if (sizeBytes > GOAL_PDF_PREVIEW_MAX_BYTES) {
+      return {
+        content: `PDF output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      return await withTimeout(extractGoalPdfPreview(filePath), GOAL_PDF_PREVIEW_TIMEOUT_MS, 'Goal PDF preview conversion')
+    } catch {
+      return undefined
+    }
+  }
+
+  if (GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS.has(extension)) {
+    if (sizeBytes > GOAL_SPREADSHEET_PREVIEW_MAX_BYTES) {
+      return {
+        content: `Spreadsheet output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      const preview = createSpreadsheetMarkdownPreview(filePath, basename(filePath))
+      return {
+        content: preview.textContent,
+        truncated: !preview.fullConversionAllowed,
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  if (GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS.has(extension)) {
+    if (sizeBytes > GOAL_OFFICE_PREVIEW_MAX_BYTES) {
+      return {
+        content: `Office output is too large for automatic goal audit preview (${sizeBytes} bytes).`,
+        truncated: true,
+      }
+    }
+
+    try {
+      const markitdown = new MarkItDown()
+      const result = await withTimeout(markitdown.convert(filePath), GOAL_OFFICE_PREVIEW_TIMEOUT_MS, 'Goal Office preview conversion')
+      const content = result?.textContent?.trim()
+      return content ? { content, truncated: false } : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  if (!GOAL_FILE_PREVIEW_TEXT_EXTENSIONS.has(extension)) {
+    return undefined
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    handle = await open(filePath, 'r')
+    const bytesToRead = Math.min(sizeBytes, GOAL_FILE_PREVIEW_MAX_BYTES + 1)
+    const buffer = Buffer.alloc(bytesToRead)
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0)
+    if (bytesRead === 0) return undefined
+
+    const truncated = bytesRead > GOAL_FILE_PREVIEW_MAX_BYTES || sizeBytes > GOAL_FILE_PREVIEW_MAX_BYTES
+    const content = buffer
+      .subarray(0, Math.min(bytesRead, GOAL_FILE_PREVIEW_MAX_BYTES))
+      .toString('utf-8')
+      .replace(/\0/g, '')
+      .trim()
+
+    return content ? { content, truncated } : undefined
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+function buildGoalReviewAuditHistory(history: SessionGoalState['auditHistory']): string {
+  if (history.length === 0) {
+    return '(none)'
+  }
+
+  return history.slice(-3).map(result => {
+    const missing = result.missingCriteria.length > 0
+      ? `\n  Missing: ${result.missingCriteria.slice(0, 4).map(summarizeGoalReviewMessage).join('; ')}`
+      : ''
+    const correction = result.correctivePrompt
+      ? `\n  Correction: ${summarizeGoalReviewMessage(result.correctivePrompt)}`
+      : ''
+    return `Iteration ${result.iteration}: ${result.status} - ${summarizeGoalReviewMessage(result.summary)}${missing}${correction}`
+  }).join('\n')
+}
+
+function buildGoalReviewTurnContext(messages: Message[], finalAssistantId: string): string {
+  const lines = messages
+    .filter(message => message.id !== finalAssistantId)
+    .filter(message => message.role === 'user' || message.role === 'tool' || message.role === 'error' || message.role === 'info')
+    .slice(-8)
+    .map(message => {
+      if (message.role === 'tool') {
+        const label = message.toolName ? `tool ${message.toolName}` : 'tool'
+        const status = message.toolStatus ? ` (${message.toolStatus})` : ''
+        return `${label}${status}: ${summarizeGoalReviewMessage(message.toolResult ?? message.content)}`
+      }
+      return `${message.role}: ${summarizeGoalReviewMessage(message.content)}`
+    })
+
+  return lines.length > 0 ? lines.join('\n') : '(none)'
+}
+
+function summarizeGoalReviewMessage(value: unknown): string {
+  const text = typeof value === 'string'
+    ? value
+    : value == null
+    ? ''
+    : JSON.stringify(value)
+  return text.replace(/\s+/g, ' ').trim().slice(0, 1000) || '(empty)'
+}
+
+function parseGoalReviewResult(raw: string | null): GoalReviewResult {
+  if (!raw?.trim()) {
+    throw new Error('Goal reviewer returned empty output')
+  }
+
+  const jsonText = extractJsonObject(raw)
+  const parsed = JSON.parse(jsonText) as Record<string, unknown>
+  const status = normalizeGoalReviewStatus(parsed.status)
+
+  const missingCriteria = normalizeGoalReviewMissingCriteria(parsed.missingCriteria)
+  const correctivePrompt = normalizeGoalReviewCorrectivePrompt(parsed.correctivePrompt)
+
+  return {
+    status,
+    summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : `Reviewer returned ${status}.`,
+    missingCriteria,
+    correctivePrompt,
+  }
+}
+
+function normalizeGoalReviewStatus(value: unknown): GoalReviewResult['status'] {
+  if (typeof value !== 'string') {
+    throw new Error('Goal reviewer returned invalid status')
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  switch (normalized) {
+    case 'pass':
+    case 'passed':
+      return 'pass'
+    case 'fail':
+    case 'failed':
+    case 'needs_review':
+      return 'fail'
+    case 'uncertain':
+      return 'uncertain'
+    default:
+      throw new Error('Goal reviewer returned invalid status')
+  }
+}
+
+function normalizeGoalReviewMissingCriteria(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map(normalizeGoalReviewMissingCriterion)
+      .filter((item): item is string => item !== undefined)
+    return normalized.length > 0 ? normalized : undefined
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return [value.trim()]
+  }
+
+  if (value && typeof value === 'object') {
+    const direct = normalizeGoalReviewMissingCriterion(value)
+    if (direct) {
+      return [direct]
+    }
+
+    for (const key of ['items', 'criteria', 'missing', 'missingCriteria', 'reasons']) {
+      const nested = normalizeGoalReviewMissingCriteria((value as Record<string, unknown>)[key])
+      if (nested && nested.length > 0) {
+        return nested
+      }
+    }
+  }
+
+  return undefined
+}
+
+function normalizeGoalReviewMissingCriterion(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  if (value && typeof value === 'object') {
+    for (const key of ['text', 'message', 'criterion', 'reason']) {
+      const candidate = (value as Record<string, unknown>)[key]
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+    }
+  }
+
+  return undefined
+}
+
+function normalizeGoalReviewCorrectivePrompt(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  if (Array.isArray(value)) {
+    const lines = value
+      .map(item => normalizeGoalReviewCorrectivePrompt(item))
+      .filter((item): item is string => item !== undefined)
+    return lines.length > 0 ? lines.join('\n') : undefined
+  }
+
+  if (value && typeof value === 'object') {
+    for (const key of ['text', 'message', 'prompt', 'correction']) {
+      const candidate = (value as Record<string, unknown>)[key]
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+    }
+  }
+
+  return undefined
+}
+
+function extractJsonObject(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced?.[1] ?? raw
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('Goal reviewer output did not contain a JSON object')
+  }
+  return candidate.slice(start, end + 1)
+}
+
+function isWorkLikeGoalMessage(
+  message: string,
+  storedAttachments: StoredAttachment[] | undefined,
+  options: SendMessageOptions | undefined,
+): boolean {
+  const trimmed = message.trim()
+  if (!trimmed) return false
+
+  if ((storedAttachments?.length ?? 0) > 0 || (options?.skillSlugs?.length ?? 0) > 0) {
+    return true
+  }
+
+  if (options?.badges?.some(badge => badge.type === 'file' || badge.type === 'folder' || badge.type === 'skill')) {
+    return true
+  }
+
+  const workVerbPattern = /实现|修复|改造|生成|输出|撰写|整理|分析|总结|审查|检查|验证|测试|打包|发布|导出|转换|预览|设计|开发|优化|调研|编制|提取|评估|对比|风险|review|build|create|implement|fix|generate|write|draft|summari[sz]e|analy[sz]e|verify|test|package|release|export|convert|preview|design|develop|optimi[sz]e|research|extract|assess|evaluate|compare|risk/i
+  return workVerbPattern.test(trimmed)
+}
+
+function appendGoalObjectiveFollowUp(objective: string, message: string): string {
+  const followUp = `Follow-up: ${message.trim().slice(0, 1000)}`
+  if (!message.trim() || objective.includes(followUp)) return objective
+
+  const separator = '\n\n'
+  const maxLength = 4000
+  const remaining = maxLength - separator.length - followUp.length
+  if (remaining <= 0) return followUp.slice(0, maxLength)
+
+  const base = objective.trim().slice(0, remaining)
+  return `${base}${separator}${followUp}`.slice(0, maxLength)
+}
+
+function normalizeWorkspaceGoalLoopDefaultMode(value: unknown): WorkspaceGoalLoopDefaultMode | undefined {
+  return value === 'off' || value === 'check_only' || value === 'auto_improve'
+    ? value
+    : undefined
+}
+
+function normalizeSendGoalLoopMode(value: unknown): SessionGoalMode | undefined {
+  return value === 'off' || value === 'check_only' || value === 'auto_improve' || value === 'strict_work'
+    ? value
+    : undefined
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
+
+function summarizeGoalFileVerifierError(error: unknown): string {
+  return error instanceof Error
+    ? error.message.slice(0, 300)
+    : String(error).slice(0, 300)
+}
+
+function recoverStaleGoalStateOnRestore(goalState: SessionGoalState | undefined): SessionGoalState | undefined {
+  if (!goalState || (goalState.status !== 'auditing' && goalState.status !== 'improving')) {
+    return goalState
+  }
+
+  const now = Date.now()
+  const staleStatus = goalState.status
+  return {
+    ...goalState,
+    status: 'needs_review',
+    updatedAt: now,
+    auditHistory: [
+      ...goalState.auditHistory,
+      {
+        iteration: goalState.iteration,
+        status: 'uncertain',
+        summary: `Goal loop was interrupted before completion while ${staleStatus}; manual review is required before continuing.`,
+        missingCriteria: ['The previous automatic goal audit or improvement pass did not finish. Review the last output and continue the goal if needed.'],
+        evidence: [{
+          type: 'system',
+          label: 'stale_goal_state',
+          detail: staleStatus,
+        }],
+        createdAt: now,
+      },
+    ],
+  }
+}
+
 /**
  * Create a ManagedSession from any session-like source (SessionMetadata, SessionConfig, StoredSession).
  * Spreads all matching fields from the source so new persistent fields automatically propagate.
@@ -1029,6 +1635,7 @@ export function createManagedSession(
       delete sourceFields.thinkingLevel
     }
   }
+  sourceFields.goalState = recoverStaleGoalStateOnRestore(sourceFields.goalState)
 
   const managed = {
     // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
@@ -1164,6 +1771,7 @@ export class SessionManager implements ISessionManager {
    * subprocess can race the resulting `chat` against the still-pending update.
    */
   private agentRefreshLocks: Map<string, Promise<void>> = new Map()
+  private goalController = new GoalController()
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
@@ -2036,6 +2644,7 @@ export class SessionManager implements ISessionManager {
       if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
       if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
       if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
+      if (managed.goalState === undefined) managed.goalState = recoverStaleGoalStateOnRestore(stored.goalState)
       if (managed.sharedUrl === undefined) managed.sharedUrl = stored.sharedUrl
       if (managed.sharedId === undefined) managed.sharedId = stored.sharedId
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
@@ -2505,6 +3114,7 @@ export class SessionManager implements ISessionManager {
       managed.lastReadMessageId = storedSession.lastReadMessageId
       managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
       managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
+      managed.goalState = recoverStaleGoalStateOnRestore(storedSession.goalState)
       managed.sharedUrl = storedSession.sharedUrl
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading
@@ -2829,6 +3439,7 @@ export class SessionManager implements ISessionManager {
       sessionStatus: options?.sessionStatus,
       labels: options?.labels,
       isFlagged: options?.isFlagged,
+      goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
     })
@@ -2916,6 +3527,7 @@ export class SessionManager implements ISessionManager {
       thinkingLevel: defaultThinkingLevel,
       systemPromptPreset: options?.systemPromptPreset,
       enabledSourceSlugs: defaultEnabledSourceSlugs,
+      goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
       branchFromMessageId: validatedBranch?.sourceMessageId,
@@ -5058,15 +5670,13 @@ export class SessionManager implements ISessionManager {
 
     const assistantResponse = lastAssistantMsg?.content ?? ''
 
-    // Derive language from app's i18n setting for language-aware title generation
-    const titleLangCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode
-    const titleLangEntry = LOCALE_REGISTRY[titleLangCode]
-    const titleOptions = { language: titleLangEntry?.nativeName }
+    const titleLanguage = resolveTitleLanguageName()
+    const titleOptions = { language: titleLanguage }
     sessionLog.info(`[refreshTitle] language at call time`, {
       sessionId,
+      persistedUiLanguage: getPersistedUiLanguage() ?? null,
       resolvedLanguage: i18n.resolvedLanguage ?? null,
-      titleLangCode,
-      nativeName: titleLangEntry?.nativeName ?? null,
+      titleLanguage: titleLanguage ?? null,
     })
 
     // Use existing agent or create temporary one
@@ -5141,6 +5751,84 @@ export class SessionManager implements ISessionManager {
       // Signal async operation end
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
+    }
+  }
+
+  async optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      throw new Error('Session not found')
+    }
+
+    const input = request.input.trim()
+    if (!input) {
+      throw new Error('Prompt is empty')
+    }
+
+    const connectionSlug = managed.llmConnection
+    const connection = connectionSlug ? getLlmConnection(connectionSlug) : null
+    const context: OptimizePromptRequest = {
+      input,
+      attachments: request.attachments,
+      workingDirectory: request.workingDirectory ?? managed.workingDirectory,
+      model: request.model ?? managed.model,
+      connectionName: request.connectionName ?? connection?.name,
+    }
+    const fallbackPrompt = createPromptOptimizationFallback(context)
+
+    let agent: AgentInstance | null = managed.agent
+    let isTemporary = false
+
+    if (!agent && connectionSlug) {
+      try {
+        const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
+        agent = createBackendFromConnection(connectionSlug, {
+          workspace: managed.workspace,
+          miniModel: resolvedMiniModel,
+          session: {
+            id: `prompt-optimize-${managed.id}`,
+            workspaceRootPath: managed.workspace.rootPath,
+            llmConnection: connectionSlug,
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+          },
+          isHeadless: true,
+        }, buildBackendHostRuntimeContext()) as AgentInstance
+        await agent.postInit()
+        isTemporary = true
+      } catch (error) {
+        sessionLog.warn('optimizePrompt: failed to create temporary agent, using fallback:', error)
+      }
+    }
+
+    try {
+      if (!agent) {
+        return {
+          optimizedPrompt: fallbackPrompt,
+          changed: fallbackPrompt.trim() !== input,
+          fallback: true,
+        }
+      }
+
+      const instruction = buildPromptOptimizationInstruction(context)
+      const modelResult = normalizeOptimizedPrompt(await agent.runMiniCompletion(instruction))
+      const optimizedPrompt = modelResult || fallbackPrompt
+      return {
+        optimizedPrompt,
+        changed: optimizedPrompt.trim() !== input,
+        fallback: !modelResult,
+      }
+    } catch (error) {
+      sessionLog.warn('optimizePrompt: mini completion failed, using fallback:', error)
+      return {
+        optimizedPrompt: fallbackPrompt,
+        changed: fallbackPrompt.trim() !== input,
+        fallback: true,
+      }
+    } finally {
+      if (isTemporary && agent) {
+        agent.destroy()
+      }
     }
   }
 
@@ -5786,6 +6474,8 @@ export class SessionManager implements ISessionManager {
         // (waits briefly for agent creation if needed)
         this.generateTitle(managed, message)
       }
+
+      this.maybeInitializeGoalStateForUserMessage(managed, message, storedAttachments, options)
     }
 
     // Evaluate auto-label rules against the user message (common path for both
@@ -6453,6 +7143,65 @@ export class SessionManager implements ISessionManager {
         doneBpm.unbindAllForSession(sessionId)
       }
 
+      const goalStateBeforeAudit = managed.goalState
+      if (goalStateBeforeAudit && goalStateBeforeAudit.mode !== 'off') {
+        const auditingGoalState: SessionGoalState = {
+          ...goalStateBeforeAudit,
+          status: 'auditing',
+          iteration: goalStateBeforeAudit.iteration + 1,
+          updatedAt: Date.now(),
+        }
+        managed.goalState = auditingGoalState
+        this.persistSession(managed)
+        this.sendEvent({
+          type: 'goal_audit_started',
+          sessionId,
+          goalId: auditingGoalState.id,
+          iteration: auditingGoalState.iteration,
+          mode: auditingGoalState.mode,
+        }, managed.workspace.id)
+      }
+
+      const goalDecision = await this.goalController.onTurnStopped(goalStateBeforeAudit, {
+        messages: managed.messages,
+        turnStartFinalMessageId,
+        stoppedReason: reason,
+        reviewer: this.buildGoalReviewer(managed),
+        fileVerifier: this.buildGoalFileVerifier(),
+        expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
+      })
+      if (goalDecision.action !== 'skip') {
+        managed.goalState = goalDecision.goalState
+        this.sendEvent({
+          type: 'goal_audit_result',
+          sessionId,
+          goalId: goalDecision.goalState.id,
+          result: goalDecision.result,
+          goalState: goalDecision.goalState,
+        }, managed.workspace.id)
+
+        if (goalDecision.action === 'complete') {
+          this.sendEvent({
+            type: 'goal_completed',
+            sessionId,
+            goalId: goalDecision.goalState.id,
+            goalState: goalDecision.goalState,
+          }, managed.workspace.id)
+        } else if (goalDecision.action === 'needs_review') {
+          this.sendEvent({
+            type: 'goal_needs_review',
+            sessionId,
+            goalId: goalDecision.goalState.id,
+            goalState: goalDecision.goalState,
+            reason: goalDecision.reason,
+          }, managed.workspace.id)
+        } else {
+          this.scheduleGoalContinuation(sessionId, goalDecision.prompt, goalDecision.result.iteration)
+          this.persistSession(managed)
+          return
+        }
+      }
+
       // No queue - emit complete to UI (include tokenUsage and hasUnread for state updates)
       this.sendEvent({
         type: 'complete',
@@ -6470,6 +7219,363 @@ export class SessionManager implements ISessionManager {
    * Process the next message in the queue.
    * Called by onProcessingStopped when queue has messages.
    */
+  private buildGoalReviewer(managed: ManagedSession): ((input: GoalReviewInput) => Promise<GoalReviewResult>) | undefined {
+    if (!managed.agent || !managed.goalState?.criteria.some(criterion => criterion.required)) {
+      return undefined
+    }
+
+    return async (input) => {
+      const response = await withTimeout(
+        managed.agent!.runMiniCompletion(buildGoalReviewPrompt(input)),
+        GOAL_REVIEW_TIMEOUT_MS,
+        `Goal reviewer timed out after ${Math.floor(GOAL_REVIEW_TIMEOUT_MS / 1000)}s`,
+      )
+      return parseGoalReviewResult(response)
+    }
+  }
+
+  private buildGoalFileVerifier(): GoalFileVerifier {
+    return async (filePath) => {
+      try {
+        const info = await stat(filePath)
+        const isFile = info.isFile()
+        if (!isFile) {
+          return {
+            exists: true,
+            readable: true,
+            isFile: false,
+            sizeBytes: info.size,
+          }
+        }
+
+        try {
+          await access(filePath, FS_CONSTANTS.R_OK)
+        } catch (error) {
+          return {
+            exists: true,
+            readable: false,
+            isFile: true,
+            sizeBytes: info.size,
+            error: summarizeGoalFileVerifierError(error),
+          }
+        }
+
+        const preview = await readGoalFilePreview(filePath, info.size)
+
+        return {
+          exists: true,
+          readable: true,
+          isFile: true,
+          sizeBytes: info.size,
+          preview: preview?.content,
+          previewTruncated: preview?.truncated,
+        }
+      } catch (error) {
+        const code = getErrorCode(error)
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+          return {
+            exists: false,
+            readable: false,
+          }
+        }
+
+        return {
+          exists: true,
+          readable: false,
+          error: summarizeGoalFileVerifierError(error),
+        }
+      }
+    }
+  }
+
+  private maybeInitializeGoalStateForUserMessage(
+    managed: ManagedSession,
+    message: string,
+    storedAttachments: StoredAttachment[] | undefined,
+    options: SendMessageOptions | undefined,
+  ): void {
+    if (managed.hidden || managed.systemPromptPreset === 'mini') {
+      return
+    }
+
+    if (managed.goalState) {
+      this.maybeUpdateGoalStateForUserMessage(managed, message, storedAttachments, options)
+      return
+    }
+
+    const requestedMode = normalizeSendGoalLoopMode(options?.goalLoopMode)
+    if (requestedMode === 'off') {
+      return
+    }
+
+    if (!requestedMode && !isWorkLikeGoalMessage(message, storedAttachments, options)) {
+      return
+    }
+
+    const now = Date.now()
+    const criteria = buildGoalCriteriaFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    }).map(criterion => ({
+      id: randomUUID(),
+      ...criterion,
+    }))
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    })
+    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
+    const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
+    const mode = requestedMode ?? workspaceDefaultMode ?? policy.mode
+    if (mode === 'off') {
+      return
+    }
+
+    const goalState: SessionGoalState = {
+      id: randomUUID(),
+      objective: message.trim().slice(0, 4000),
+      mode,
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+      iteration: 0,
+      maxIterations: mode === 'check_only' ? 1 : policy.maxIterations,
+      criteria,
+      auditHistory: [],
+      budgets: {
+        maxWallClockMs: policy.maxWallClockMs,
+      },
+    }
+    managed.goalState = goalState
+    this.persistSession(managed)
+    this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
+    this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
+  }
+
+  private maybeUpdateGoalStateForUserMessage(
+    managed: ManagedSession,
+    message: string,
+    storedAttachments: StoredAttachment[] | undefined,
+    options: SendMessageOptions | undefined,
+  ): void {
+    const current = managed.goalState
+    if (!current || current.mode === 'off' || current.status === 'cancelled') {
+      return
+    }
+
+    if (!isWorkLikeGoalMessage(message, storedAttachments, options)) {
+      return
+    }
+
+    const existingCriteria = new Set(current.criteria.map(criterion => `${criterion.kind}\u0000${criterion.text}`))
+    const newCriteria = buildGoalCriteriaUpdateFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    })
+      .filter(criterion => !existingCriteria.has(`${criterion.kind}\u0000${criterion.text}`))
+      .map(criterion => ({
+        id: randomUUID(),
+        ...criterion,
+      }))
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+    })
+    const now = Date.now()
+    const elapsedWallClockMs = Math.max(0, now - current.createdAt)
+    const goalState: SessionGoalState = {
+      ...current,
+      objective: appendGoalObjectiveFollowUp(current.objective, message),
+      status: 'running',
+      updatedAt: now,
+      maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
+      criteria: [...current.criteria, ...newCriteria],
+      budgets: {
+        ...current.budgets,
+        maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, elapsedWallClockMs + policy.maxWallClockMs),
+      },
+    }
+
+    managed.goalState = goalState
+    this.persistSession(managed)
+    this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
+    this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
+  }
+
+  private scheduleGoalContinuation(sessionId: string, prompt: string, iteration: number): void {
+    setImmediate(() => {
+      this.runGoalContinuation(sessionId, prompt, iteration).catch(err => {
+        sessionLog.error('goal continuation failed', {
+          sessionId,
+          iteration,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        sessionRuntimeHooks.captureException(err, { errorSource: 'goal-continuation', sessionId })
+        this.onProcessingStopped(sessionId, 'error')
+      })
+    })
+  }
+
+  private getGoalContinuationAttachments(managed: ManagedSession): FileAttachment[] {
+    if (managed.lastSentAttachments && managed.lastSentAttachments.length > 0) {
+      return managed.lastSentAttachments
+    }
+
+    const storedAttachments = managed.lastSentStoredAttachments && managed.lastSentStoredAttachments.length > 0
+      ? managed.lastSentStoredAttachments
+      : [...managed.messages].reverse().find(message => message.role === 'user' && message.attachments?.length)?.attachments
+
+    if (!storedAttachments?.length) {
+      return []
+    }
+
+    const attachments: FileAttachment[] = []
+    for (const stored of storedAttachments) {
+      try {
+        const attachment = readFileAttachment(stored.storedPath)
+        if (attachment) attachments.push(attachment)
+      } catch (error) {
+        sessionLog.warn('Failed to restore stored attachment for goal continuation', {
+          sessionId: managed.id,
+          path: stored.storedPath,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return attachments
+  }
+
+  private async runGoalContinuation(sessionId: string, prompt: string, iteration: number): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    if (managed.isProcessing) {
+      sessionLog.info('goal continuation skipped because the session is already active', {
+        sessionId,
+        iteration,
+        isProcessing: managed.isProcessing,
+        queueLength: managed.messageQueue.length,
+      })
+      return
+    }
+
+    if (managed.messageQueue.length > 0) {
+      sessionLog.info('goal continuation yielded to queued user work', {
+        sessionId,
+        iteration,
+        queueLength: managed.messageQueue.length,
+      })
+      this.processNextQueuedMessage(sessionId)
+      return
+    }
+
+    if (!managed.goalState || managed.goalState.status !== 'improving' || managed.goalState.iteration !== iteration) {
+      sessionLog.info('goal continuation skipped because goal state changed', {
+        sessionId,
+        iteration,
+        goalIteration: managed.goalState?.iteration,
+        goalStatus: managed.goalState?.status,
+      })
+      this.sendEvent({
+        type: 'complete',
+        sessionId,
+        tokenUsage: managed.tokenUsage,
+        hasUnread: managed.hasUnread,
+      }, managed.workspace.id)
+      return
+    }
+
+    const infoMessage: Message = {
+      id: generateMessageId(),
+      role: 'info',
+      content: `Goal audit requested improvement pass ${iteration + 1}.`,
+      timestamp: this.monotonic(),
+      infoLevel: 'info',
+    }
+    managed.messages.push(infoMessage)
+    this.sendEvent({
+      type: 'info',
+      sessionId,
+      message: infoMessage.content,
+      level: infoMessage.infoLevel,
+      timestamp: infoMessage.timestamp,
+    }, managed.workspace.id)
+
+    managed.lastMessageAt = Date.now()
+    this.setProcessing(managed, true)
+    managed.streamingText = ''
+    managed.processingGeneration++
+    managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
+    const myGeneration = managed.processingGeneration
+    this.persistSession(managed)
+
+    const workspaceRootPath = managed.workspace.rootPath
+    const agent = await this.getOrCreateAgent(managed)
+
+    try {
+      const chatSessionDir = getSessionStoragePath(workspaceRootPath, sessionId)
+      toolMetadataStore.setSessionDir(chatSessionDir)
+
+      sessionLog.info('Starting goal continuation for session:', sessionId)
+      const chatIterator = agent.chat(prompt, this.getGoalContinuationAttachments(managed))
+
+      for await (const event of chatIterator) {
+        if (event.type !== 'text_delta') {
+          sessionLog.info('Goal continuation event:', event.type)
+        }
+
+        await this.processEvent(managed, event)
+
+        if (!managed.sdkSessionId) {
+          const sdkId = agent.getSessionId()
+          if (sdkId) {
+            managed.sdkSessionId = sdkId
+            this.persistSession(managed)
+            sessionPersistenceQueue.flush(managed.id)
+          }
+        }
+
+        if (event.type === 'complete') {
+          if (!managed.isProcessing) {
+            sessionLog.info('Goal continuation completed after explicit handoff/stop')
+            return
+          }
+
+          this.onProcessingStopped(sessionId, 'complete')
+          return
+        }
+      }
+
+      if (managed.isProcessing && managed.processingGeneration === myGeneration) {
+        this.onProcessingStopped(sessionId, managed.stopRequested ? 'interrupted' : 'error')
+      }
+    } catch (error) {
+      const isAbortError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message === 'Request was aborted.' ||
+        error.message.includes('aborted')
+      )
+
+      if (isAbortError) {
+        this.onProcessingStopped(sessionId, 'interrupted')
+        return
+      }
+
+      sessionLog.error('Error in goal continuation:', error)
+      sessionRuntimeHooks.captureException(error, { errorSource: 'goal-continuation', sessionId })
+      this.sendEvent({
+        type: 'error',
+        sessionId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, managed.workspace.id)
+      this.onProcessingStopped(sessionId, 'error')
+    }
+  }
+
   private processNextQueuedMessage(sessionId: string): void {
     const managed = this.sessions.get(sessionId)
     if (!managed || managed.messageQueue.length === 0) return
@@ -6835,6 +7941,159 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
+   * Set the goal loop mode for an existing session goal.
+   * Sessions without a goal keep legacy behavior until work-like auto-init creates one.
+   */
+  setSessionGoalMode(sessionId: string, mode: SessionGoalMode): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.goalState) {
+      return
+    }
+
+    const current = managed.goalState
+    const nextStatus = mode === 'off'
+      ? 'cancelled'
+      : current.status === 'cancelled'
+      ? 'running'
+      : current.status
+
+    managed.goalState = {
+      ...current,
+      mode,
+      status: nextStatus,
+      updatedAt: Date.now(),
+    }
+
+    sessionLog.info('Session goal mode changed', {
+      sessionId,
+      mode,
+      status: managed.goalState.status,
+    })
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+  }
+
+  /**
+   * Update the active goal objective and acceptance criteria.
+   */
+  updateSessionGoal(sessionId: string, update: SessionGoalUpdate): void {
+    const managed = this.sessions.get(sessionId)
+    const current = managed?.goalState
+    if (!managed || !current || current.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot edit a goal while the session is processing')
+    }
+
+    const objective = update.objective === undefined
+      ? current.objective
+      : update.objective.trim()
+    if (!objective) {
+      throw new Error('Goal objective is required')
+    }
+
+    const criteria = update.criteria === undefined
+      ? current.criteria
+      : update.criteria
+        .map(criterion => ({
+          id: criterion.id?.trim() || randomUUID(),
+          text: criterion.text.trim(),
+          kind: isSessionGoalCriterionKind(criterion.kind) ? criterion.kind : 'user_constraint',
+          required: criterion.required ?? true,
+        }))
+        .filter(criterion => criterion.text.length > 0)
+    if (criteria.length === 0) {
+      throw new Error('At least one goal criterion is required')
+    }
+
+    managed.goalState = {
+      ...current,
+      objective,
+      status: 'needs_review',
+      updatedAt: Date.now(),
+      criteria,
+    }
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+  }
+
+  /**
+   * Mark the current goal as accepted by the user.
+   */
+  acceptSessionGoal(sessionId: string): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.goalState || managed.goalState.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot accept a goal while the session is processing')
+    }
+
+    managed.goalState = {
+      ...managed.goalState,
+      status: 'passed',
+      updatedAt: Date.now(),
+    }
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.sendEvent({
+      type: 'goal_completed',
+      sessionId: managed.id,
+      goalId: managed.goalState.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+  }
+
+  /**
+   * Run one explicit hidden improvement pass from a manual review state.
+   */
+  runSessionGoalImprovement(sessionId: string): void {
+    const managed = this.sessions.get(sessionId)
+    const current = managed?.goalState
+    if (!managed || !current || current.mode === 'off') {
+      return
+    }
+    if (managed.isProcessing) {
+      throw new Error('Cannot run a goal improvement while the session is processing')
+    }
+    if (current.status !== 'needs_review' && current.status !== 'failed') {
+      return
+    }
+
+    const prompt = buildManualGoalImprovementPrompt(current)
+    managed.goalState = {
+      ...current,
+      status: 'improving',
+      maxIterations: current.iteration + 1,
+      updatedAt: Date.now(),
+    }
+
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+    this.persistSession(managed)
+    this.scheduleGoalContinuation(sessionId, prompt, current.iteration)
+  }
+
+  /**
    * Set labels for a session (additive tags, many-per-session).
    * Labels are IDs referencing workspace labels/config.json.
    */
@@ -6935,15 +8194,14 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      const genLangCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode
-      const genLangEntry = LOCALE_REGISTRY[genLangCode]
+      const titleLanguage = resolveTitleLanguageName()
       sessionLog.info(`[generateTitle] language at call time`, {
         sessionId: managed.id,
+        persistedUiLanguage: getPersistedUiLanguage() ?? null,
         resolvedLanguage: i18n.resolvedLanguage ?? null,
-        genLangCode,
-        nativeName: genLangEntry?.nativeName ?? null,
+        titleLanguage: titleLanguage ?? null,
       })
-      const title = await agent.generateTitle(userMessage, { language: genLangEntry?.nativeName })
+      const title = await agent.generateTitle(userMessage, { language: titleLanguage })
       if (title) {
         managed.name = title
         this.persistSession(managed)

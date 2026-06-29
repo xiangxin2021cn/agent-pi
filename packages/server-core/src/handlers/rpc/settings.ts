@@ -33,6 +33,10 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE,
   RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT,
   RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT,
+  RPC_CHANNELS.rtk.GET_ENABLED,
+  RPC_CHANNELS.rtk.SET_ENABLED,
+  RPC_CHANNELS.rtk.GET_STATUS,
+  RPC_CHANNELS.rtk.GET_GAIN,
   RPC_CHANNELS.sessions.GET_MODEL,
   RPC_CHANNELS.sessions.SET_MODEL,
   RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL,
@@ -114,20 +118,32 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
       defaultLlmConnection: config?.defaults?.defaultLlmConnection,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
+      goalLoop: config?.defaults?.goalLoop,
     }
   })
 
   // Update a workspace setting
   server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (_ctx, workspaceId: string, key: string, value: unknown) => {
     const workspace = getWorkspaceOrThrow(workspaceId)
-    const normalizedValue = key === 'workingDirectory' && typeof value === 'string'
+    let normalizedValue = key === 'workingDirectory' && typeof value === 'string'
       ? value.trim()
       : value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection']
+    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection', 'goalLoop']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
+    }
+
+    if (key === 'goalLoop' && normalizedValue !== undefined && normalizedValue !== null) {
+      if (typeof normalizedValue !== 'object' || Array.isArray(normalizedValue)) {
+        throw new Error('goalLoop must be an object')
+      }
+      const defaultMode = (normalizedValue as { defaultMode?: unknown }).defaultMode
+      if (defaultMode !== undefined && defaultMode !== 'off' && defaultMode !== 'check_only' && defaultMode !== 'auto_improve') {
+        throw new Error('goalLoop.defaultMode must be off, check_only, or auto_improve')
+      }
+      normalizedValue = { defaultMode }
     }
 
     // Validate defaultLlmConnection exists before saving

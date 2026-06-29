@@ -22,8 +22,11 @@ import type {
   PermissionModeState,
   UnreadSummary,
   ShareResult,
+  OptimizePromptRequest,
+  OptimizePromptResult,
+  SessionGoalUpdate,
 } from '@craft-agent/shared/protocol'
-import type { SessionBundle, DispatchMode } from '@craft-agent/shared/sessions'
+import type { SessionBundle, DispatchMode, SessionGoalMode } from '@craft-agent/shared/sessions'
 import type { EventSink } from '../transport'
 
 export interface ISessionManager {
@@ -67,6 +70,10 @@ export interface ISessionManager {
   // ---------------------------------------------------------------------------
 
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
+  setSessionGoalMode(sessionId: string, mode: SessionGoalMode): void
+  updateSessionGoal(sessionId: string, update: SessionGoalUpdate): void
+  acceptSessionGoal(sessionId: string): void
+  runSessionGoalImprovement(sessionId: string): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
   updateWorkingDirectory(sessionId: string, path: string): void
   setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>
@@ -189,6 +196,7 @@ export interface ISessionManager {
 
   getSessionPath(sessionId: string): string | null
   refreshTitle(sessionId: string): Promise<{ success: boolean; title?: string; error?: string }>
+  optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
   refreshBadge(): void
   getUnreadSummary(): UnreadSummary
 

@@ -1,7 +1,10 @@
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
 import { readFile, writeFile, stat, mkdir, copyFile, cp } from 'fs/promises'
 import { basename, extname, join, relative, resolve } from 'path'
 import {
   RPC_CHANNELS,
+  type CreateFileMemorySourceOptions,
+  type CreateFileMemorySourceResult,
   type FileAttachment,
   type PromoteSessionFileResult,
   type SendMessageOptions,
@@ -15,6 +18,21 @@ import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 import { getSessionOutputPathFromSessionPath } from '@craft-agent/shared/sessions'
+import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
+import {
+  handleFileMemorySourceCreate,
+  type FileMemorySourceCreateArgs,
+  type SessionToolContext,
+  type SourceConfig as SessionToolSourceConfig,
+  type StdioMcpConfig,
+  type StdioValidationResult,
+  type ToolResult,
+} from '@craft-agent/session-tools-core'
+import {
+  loadSourceConfig as loadWorkspaceSourceConfig,
+  saveSourceConfig as saveWorkspaceSourceConfig,
+  type FolderSourceConfig,
+} from '@craft-agent/shared/sources'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
@@ -203,6 +221,89 @@ async function getAvailableOutputPath(outputDir: string, requestedName: string):
   return candidate
 }
 
+function createRpcSessionToolContext(args: {
+  sessionId: string
+  workspaceRootPath: string
+  sessionPath: string
+  workingDirectory?: string
+  activateSourceInSession: (sourceSlug: string) => Promise<{ ok: boolean; reason?: string; availability?: 'next-turn' }>
+}): SessionToolContext {
+  const { sessionId, workspaceRootPath, sessionPath, workingDirectory, activateSourceInSession } = args
+
+  return {
+    sessionId,
+    workspacePath: workspaceRootPath,
+    get sourcesPath() { return join(workspaceRootPath, 'sources') },
+    get skillsPath() { return join(workspaceRootPath, 'skills') },
+    plansFolderPath: join(sessionPath, 'plans'),
+    sessionPath,
+    dataPath: join(sessionPath, 'data'),
+    workingDirectory,
+    callbacks: {
+      onPlanSubmitted: () => {},
+      onAuthRequest: () => {},
+    },
+    fs: {
+      exists: (path: string) => existsSync(path),
+      readFile: (path: string) => readFileSync(path, 'utf-8'),
+      readFileBuffer: (path: string) => readFileSync(path),
+      writeFile: (path: string, content: string) => writeFileSync(path, content, 'utf-8'),
+      isDirectory: (path: string) => existsSync(path) && statSync(path).isDirectory(),
+      readdir: (path: string) => readdirSync(path),
+      stat: (path: string) => {
+        const stats = statSync(path)
+        return {
+          size: stats.size,
+          isDirectory: () => stats.isDirectory(),
+        }
+      },
+    },
+    loadSourceConfig: (sourceSlug: string): SessionToolSourceConfig | null => {
+      return loadWorkspaceSourceConfig(workspaceRootPath, sourceSlug) as unknown as SessionToolSourceConfig | null
+    },
+    saveSourceConfig: (source: SessionToolSourceConfig) => {
+      saveWorkspaceSourceConfig(workspaceRootPath, source as unknown as FolderSourceConfig)
+    },
+    validateStdioMcpConnection: async (config: StdioMcpConfig): Promise<StdioValidationResult> => {
+      try {
+        const result = await validateStdioMcpConnectionImpl(config)
+        return {
+          success: result.success,
+          error: result.error,
+          toolCount: result.tools?.length,
+          toolNames: result.tools,
+          serverName: result.serverInfo?.name,
+          serverVersion: result.serverInfo?.version,
+        }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Validation failed' }
+      }
+    },
+    activateSourceInSession,
+  }
+}
+
+function readFileMemoryCreateResult(result: ToolResult): CreateFileMemorySourceResult {
+  const validationText = result.content.map(block => block.text).join('\n')
+  const payload = result.structuredContent ?? {}
+  const sourceSlug = typeof payload.sourceSlug === 'string'
+    ? payload.sourceSlug
+    : validationText.match(/^Created file memory source: (.+)$/m)?.[1]?.trim()
+
+  if (!sourceSlug) {
+    throw new Error('File memory source was created, but no source slug was returned')
+  }
+
+  return {
+    sourceSlug,
+    sourceConfigPath: typeof payload.sourceConfigPath === 'string' ? payload.sourceConfigPath : undefined,
+    manifestPath: typeof payload.manifestPath === 'string' ? payload.manifestPath : undefined,
+    chunkCount: typeof payload.chunkCount === 'number' ? payload.chunkCount : undefined,
+    validationText,
+    activated: payload.activated === true,
+  }
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
@@ -211,6 +312,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
+  RPC_CHANNELS.sessions.OPTIMIZE_PROMPT,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
@@ -223,6 +325,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET_FILES,
   RPC_CHANNELS.sessions.GET_OUTPUT_DIRECTORY,
   RPC_CHANNELS.sessions.PROMOTE_FILE,
+  RPC_CHANNELS.sessions.CREATE_FILE_MEMORY_SOURCE,
   RPC_CHANNELS.sessions.GET_NOTES,
   RPC_CHANNELS.sessions.SET_NOTES,
   RPC_CHANNELS.sessions.WATCH_FILES,
@@ -360,6 +463,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     })
   })
 
+  server.handle(RPC_CHANNELS.sessions.OPTIMIZE_PROMPT, async (_ctx, sessionId: string, request: import('@craft-agent/shared/protocol').OptimizePromptRequest) => {
+    return sessionManager.optimizePrompt(sessionId, request)
+  })
+
   // Cancel processing
   server.handle(RPC_CHANNELS.sessions.CANCEL, async (_ctx, sessionId: string, silent?: boolean) => {
     return sessionManager.cancelProcessing(sessionId, silent)
@@ -425,6 +532,14 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionManager.setActiveViewingSession(sessionId, command.workspaceId)
       case 'setPermissionMode':
         return sessionManager.setSessionPermissionMode(sessionId, command.mode)
+      case 'setGoalMode':
+        return sessionManager.setSessionGoalMode(sessionId, command.mode)
+      case 'updateGoal':
+        return sessionManager.updateSessionGoal(sessionId, command.goal)
+      case 'acceptGoal':
+        return sessionManager.acceptSessionGoal(sessionId)
+      case 'runGoalImprovement':
+        return sessionManager.runSessionGoalImprovement(sessionId)
       case 'setThinkingLevel':
         // Validate thinking level before passing to session manager
         if (!isValidThinkingLevel(command.level)) {
@@ -609,6 +724,55 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       outputDirectory: outputDir,
       outputPath,
     }
+  })
+
+  server.handle(RPC_CHANNELS.sessions.CREATE_FILE_MEMORY_SOURCE, async (
+    _ctx,
+    sessionId: string,
+    filePath: string,
+    options?: CreateFileMemorySourceOptions
+  ): Promise<CreateFileMemorySourceResult> => {
+    const sessionPath = sessionManager.getSessionPath(sessionId)
+    if (!sessionPath) {
+      throw new Error(`Session not found: ${sessionId}`)
+    }
+
+    const session = sessionManager.getSessions().find(s => s.id === sessionId)
+    if (!session) {
+      throw new Error(`Session metadata not found: ${sessionId}`)
+    }
+
+    const workspace = getWorkspaceByNameOrId(session.workspaceId) ?? getWorkspaceByNameOrId(session.workspaceName)
+    const workspaceRootPath = workspace?.rootPath ?? resolve(sessionPath, '..', '..')
+    const toolContext = createRpcSessionToolContext({
+      sessionId,
+      workspaceRootPath,
+      sessionPath,
+      workingDirectory: session.workingDirectory,
+      activateSourceInSession: async (sourceSlug: string) => {
+        const activeSession = sessionManager.getSessions().find(s => s.id === sessionId)
+        const currentSlugs = new Set(activeSession?.enabledSourceSlugs ?? [])
+        currentSlugs.add(sourceSlug)
+        await sessionManager.setSessionSources(sessionId, Array.from(currentSlugs))
+        return { ok: true, availability: 'next-turn' }
+      },
+    })
+
+    const args: FileMemorySourceCreateArgs = {
+      filePath,
+      name: options?.name,
+      sourceSlug: options?.sourceSlug,
+      chunkSize: options?.chunkSize,
+      overlap: options?.overlap,
+      autoEnable: options?.autoEnable ?? true,
+    }
+    const result = await handleFileMemorySourceCreate(toolContext, args)
+    if (result.isError) {
+      const message = result.content.map(block => block.text).join('\n') || 'Failed to create file memory source'
+      throw new Error(message)
+    }
+
+    return readFileMemoryCreateResult(result)
   })
 
   // Start watching a session directory for file changes (per client)

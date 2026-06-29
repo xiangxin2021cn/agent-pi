@@ -40,6 +40,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
 
   // file — native file dialog
   RPC_CHANNELS.file.OPEN_DIALOG,
+  RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG,
   // file — draft hydration for user-attached paths. Paths in drafts.json were captured
   // via webUtils.getPathForFile in the renderer, so they point at the user's local machine
   // — even when the workspace itself lives on a remote server. Routing this REMOTE_ELIGIBLE
@@ -234,6 +235,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
+  RPC_CHANNELS.sessions.OPTIMIZE_PROMPT,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
@@ -247,6 +249,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.GET_FILES,
   RPC_CHANNELS.sessions.GET_OUTPUT_DIRECTORY,
   RPC_CHANNELS.sessions.PROMOTE_FILE,
+  RPC_CHANNELS.sessions.CREATE_FILE_MEMORY_SOURCE,
   RPC_CHANNELS.sessions.GET_NOTES,
   RPC_CHANNELS.sessions.SET_NOTES,
   RPC_CHANNELS.sessions.WATCH_FILES,
@@ -269,6 +272,10 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // file — workspace files (not openDialog which is native)
   RPC_CHANNELS.file.READ,
+  RPC_CHANNELS.file.READ_PREVIEW,
+  RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW,
+  RPC_CHANNELS.file.WRITE_TEXT,
+  RPC_CHANNELS.file.EXPORT_MARKDOWN,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
   RPC_CHANNELS.file.READ_BINARY,

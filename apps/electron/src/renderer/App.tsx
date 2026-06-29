@@ -5,6 +5,7 @@ import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, LlmConnectionWithStatus, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
+import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -61,6 +62,7 @@ import {
   PlatformProvider,
   ImagePreviewOverlay,
   PDFPreviewOverlay,
+  SpreadsheetPreviewOverlay,
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
@@ -429,8 +431,9 @@ export default function App() {
 
       const hasNonDefaultMode = merged.permissionMode !== defaultSessionOptions.permissionMode
       const hasNonDefaultThinking = merged.thinkingLevel !== DEFAULT_THINKING_LEVEL
+      const hasGoalLoopMode = merged.goalLoopMode !== undefined
 
-      if (!hasNonDefaultMode && !hasNonDefaultThinking && merged.permissionModeVersion == null) {
+      if (!hasNonDefaultMode && !hasNonDefaultThinking && !hasGoalLoopMode && merged.permissionModeVersion == null) {
         next.delete(session.id)
       } else {
         next.set(session.id, merged)
@@ -1206,6 +1209,7 @@ export default function App() {
 
   const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
     try {
+      const optionsForSession = sessionOptionsRef.current.get(sessionId) ?? defaultSessionOptions
       // Capture pre-send processing state so we can flag mid-stream sends
       // for the queued badge (#616 follow-up — covers Pi steer path which
       // returns status 'accepted', not 'queued').
@@ -1352,6 +1356,7 @@ export default function App() {
         skillSlugs,
         badges: badges.length > 0 ? badges : undefined,
         optimisticMessageId: userMessage.id,
+        goalLoopMode: optionsForSession.goalLoopMode,
       })
     } catch (error) {
       console.error('Failed to send message:', error)
@@ -1650,6 +1655,7 @@ export default function App() {
     },
     readFile: (path) => window.electronAPI.readFile(path),
     readFilePreview: (path) => window.electronAPI.readFilePreview(path),
+    readSpreadsheetPreview: (path) => window.electronAPI.readSpreadsheetPreview(path),
     readFileDataUrl: (path) => window.electronAPI.readFileDataUrl(path),
     readFileBinary: (path) => window.electronAPI.readFileBinary(path),
   })
@@ -2052,6 +2058,8 @@ export default function App() {
               onClose={linkInterceptor.closePreview}
               loadDataUrl={linkInterceptor.readFileDataUrl}
               loadPdfData={linkInterceptor.readFileBinary}
+              saveTextFile={(path, content, expectedMtimeMs) => window.electronAPI.writeTextFile(path, content, { expectedMtimeMs })}
+              exportMarkdown={(path, options) => window.electronAPI.exportMarkdown(path, options)}
               isDark={isDark}
             />
           )}
@@ -2075,6 +2083,87 @@ function WindowCloseHandler() {
   return null
 }
 
+type MarkdownDocumentExportFormat = Extract<MarkdownExportFormat, 'pdf' | 'docx'>
+
+function splitFilePath(filePath: string): { dir: string; name: string; separator: string } {
+  const slashIndex = filePath.lastIndexOf('/')
+  const backslashIndex = filePath.lastIndexOf('\\')
+  const index = Math.max(slashIndex, backslashIndex)
+  const separator = backslashIndex > slashIndex ? '\\' : '/'
+  if (index === -1) return { dir: '', name: filePath, separator }
+  return {
+    dir: filePath.slice(0, index),
+    name: filePath.slice(index + 1),
+    separator,
+  }
+}
+
+function stripKnownMarkdownExtension(name: string): string {
+  return name.replace(/\.(md|markdown)$/i, '')
+}
+
+function sanitizeExportBaseName(name: string): string {
+  return stripKnownMarkdownExtension(name)
+    .replace(/[<>:"|?*\x00-\x1f]/g, '_')
+    .replace(/[\\/]/g, '_')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    || 'document'
+}
+
+function getDefaultMarkdownExportPath(sourcePath: string, format: MarkdownDocumentExportFormat): string {
+  const { dir, name, separator } = splitFilePath(sourcePath)
+  const filename = `${sanitizeExportBaseName(name)}.${format}`
+  return dir ? `${dir}${separator}${filename}` : filename
+}
+
+function getDefaultMarkdownDownloadPath(sourcePath: string): string {
+  const { dir, name, separator } = splitFilePath(sourcePath)
+  const filename = `${sanitizeExportBaseName(name)}-copy.md`
+  return dir ? `${dir}${separator}${filename}` : filename
+}
+
+function getMarkdownExportFilter(format: MarkdownDocumentExportFormat) {
+  return format === 'pdf'
+    ? { name: 'PDF Document', extensions: ['pdf'] }
+    : { name: 'Word Document', extensions: ['docx'] }
+}
+
+async function downloadMarkdownWithSaveDialog(sourcePath: string, content: string) {
+  const result = await window.electronAPI.saveTextFileWithDialog({
+    title: 'Download Markdown',
+    defaultPath: getDefaultMarkdownDownloadPath(sourcePath),
+    buttonLabel: 'Save',
+    filters: [
+      { name: 'Markdown Document', extensions: ['md', 'markdown'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    content,
+  })
+
+  if (result.canceled || !result.filePath) return null
+  return { path: result.filePath }
+}
+
+async function exportMarkdownWithSaveDialog(
+  sourcePath: string,
+  format: MarkdownDocumentExportFormat,
+  content: string,
+  exportMarkdown: (path: string, options: Parameters<typeof window.electronAPI.exportMarkdown>[1]) => ReturnType<typeof window.electronAPI.exportMarkdown>,
+) {
+  const result = await window.electronAPI.showSaveDialog({
+    title: `Export ${format.toUpperCase()}`,
+    defaultPath: getDefaultMarkdownExportPath(sourcePath, format),
+    buttonLabel: 'Export',
+    filters: [
+      getMarkdownExportFilter(format),
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+
+  if (result.canceled || !result.filePath) return null
+  return exportMarkdown(sourcePath, { format, content, targetPath: result.filePath })
+}
+
 /**
  * FilePreviewRenderer - Routes file preview state to the correct overlay component.
  *
@@ -2093,12 +2182,16 @@ function FilePreviewRenderer({
   onClose,
   loadDataUrl,
   loadPdfData,
+  saveTextFile,
+  exportMarkdown,
   isDark,
 }: {
   state: FilePreviewState
   onClose: () => void
   loadDataUrl: (path: string) => Promise<string>
   loadPdfData: (path: string) => Promise<Uint8Array>
+  saveTextFile: (path: string, content: string, expectedMtimeMs?: number) => Promise<{ mtimeMs: number }>
+  exportMarkdown: (path: string, options: Parameters<typeof window.electronAPI.exportMarkdown>[1]) => ReturnType<typeof window.electronAPI.exportMarkdown>
   isDark: boolean
 }) {
   const theme = isDark ? 'dark' : 'light' as const
@@ -2122,6 +2215,18 @@ function FilePreviewRenderer({
           onClose={onClose}
           filePath={state.filePath}
           loadPdfData={loadPdfData}
+          theme={theme}
+        />
+      )
+
+    case 'spreadsheet':
+      return (
+        <SpreadsheetPreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          preview={state.preview}
+          error={state.error}
           theme={theme}
         />
       )
@@ -2154,6 +2259,11 @@ function FilePreviewRenderer({
           filePath={state.filePath}
           variant={isPlanFile ? 'plan' : 'response'}
           error={state.error}
+          editable={!state.truncated}
+          sourceMtimeMs={state.mtimeMs}
+          onSave={(content, expectedMtimeMs) => saveTextFile(state.filePath, content, expectedMtimeMs)}
+          onDownload={(content) => downloadMarkdownWithSaveDialog(state.filePath, content)}
+          onExport={(format, content) => exportMarkdownWithSaveDialog(state.filePath, format, content, exportMarkdown)}
         />
       )
     }

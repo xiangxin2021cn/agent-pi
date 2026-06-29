@@ -256,8 +256,8 @@ describe('startup migration (integration)', () => {
     expect(connection).toBeDefined()
     expect(connection.modelSelectionMode).toBe('userDefined3Tier')
     const modelIds = getModelIds(connection)
-    expect(modelIds).toEqual(['pi/x-ai/grok-4', 'pi/openrouter/auto'])
-    expect(connection.defaultModel).toBe('pi/x-ai/grok-4')
+    expect(modelIds).toEqual(['pi/x-ai/grok-4.3', 'pi/openrouter/auto'])
+    expect(connection.defaultModel).toBe('pi/x-ai/grok-4.3')
   })
 })
 

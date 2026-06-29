@@ -2,9 +2,17 @@ import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
-import { ChevronDown, Info } from 'lucide-react'
+import {
+  SlashCommandMenu,
+  DEFAULT_SLASH_COMMAND_GROUPS,
+  getGoalLoopModeFromSlashCommandId,
+  getGoalLoopSlashCommandId,
+  type SlashCommandId,
+} from '@/components/ui/slash-command-menu'
+import { Check, CheckCircle2, ChevronDown, Info, Pencil, Plus, RotateCcw, Target, Trash2 } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 import type { BackgroundTask } from './ActiveTasksBar'
 import { LabelIcon, LabelValueTypeIcon } from '@/components/ui/label-icon'
 import { LabelValuePopover } from '@/components/ui/label-value-popover'
@@ -19,6 +27,18 @@ import { SessionStatusMenu } from '@/components/ui/session-status-menu'
 import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { openLabelLink } from '@/lib/open-label-link'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import {
+  buildGoalUpdateFromDraft,
+  createBlankGoalCriterionDraft,
+  createGoalEditDraft,
+  getGoalBadgeValue,
+  getGoalLatestAuditPreview,
+  getGoalManualActions,
+  getGoalModeDescription,
+  getGoalModeLabel,
+  type GoalCriterionEditDraft,
+  type GoalEditDraft,
+} from './goal-status-view-model'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -46,6 +66,20 @@ export interface ActiveOptionBadgesProps {
   permissionMode?: PermissionMode
   /** Callback when permission mode changes */
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Application-level goal audit state for this session */
+  goalState?: SessionGoalState
+  /** Optional per-session Goal Loop override for the next send */
+  goalLoopMode?: SessionGoalMode
+  /** Callback when the next-send Goal Loop override changes */
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  /** Callback when goal loop mode changes */
+  onGoalModeChange?: (mode: SessionGoalMode) => void
+  /** Callback when user accepts the current goal result */
+  onGoalAccept?: () => void
+  /** Callback when user requests one more goal improvement pass */
+  onGoalImprove?: () => void
+  /** Callback when user updates goal objective or criteria */
+  onGoalUpdate?: (update: SessionGoalUpdate) => void | Promise<void>
   /** Background tasks to display */
   tasks?: BackgroundTask[]
   /** Session ID for opening preview windows */
@@ -89,6 +123,13 @@ interface ResolvedLabelEntry {
 export function ActiveOptionBadges({
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalState,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
+  onGoalUpdate,
   tasks = [],
   sessionId,
   sessionFolderPath,
@@ -154,6 +195,23 @@ export function ActiveOptionBadges({
             <PermissionModeDropdown
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              goalMode={goalState?.mode}
+              goalLoopMode={goalLoopMode}
+              onGoalLoopModeChange={onGoalLoopModeChange}
+              onGoalModeChange={onGoalModeChange}
+              sessionId={sessionId}
+            />
+          </div>
+        )}
+
+        {goalState && (
+          <div className="shrink-0">
+            <GoalModeBadge
+              goalState={goalState}
+              onGoalModeChange={onGoalModeChange}
+              onGoalAccept={onGoalAccept}
+              onGoalImprove={onGoalImprove}
+              onGoalUpdate={onGoalUpdate}
               sessionId={sessionId}
             />
           </div>
@@ -225,6 +283,331 @@ export function ActiveOptionBadges({
       </div>
     </div>
   )
+}
+
+// ============================================================================
+// Goal Mode Badge Component
+// ============================================================================
+
+const VISIBLE_GOAL_MODES: SessionGoalMode[] = ['auto_improve', 'check_only', 'off']
+
+function GoalModeBadge({
+  goalState,
+  onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
+  onGoalUpdate,
+  sessionId,
+}: {
+  goalState: SessionGoalState
+  onGoalModeChange?: (mode: SessionGoalMode) => void
+  onGoalAccept?: () => void
+  onGoalImprove?: () => void
+  onGoalUpdate?: (update: SessionGoalUpdate) => void | Promise<void>
+  sessionId?: string
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState<GoalEditDraft>(() => createGoalEditDraft(goalState))
+  const activeMode = VISIBLE_GOAL_MODES.includes(goalState.mode) ? goalState.mode : 'auto_improve'
+  const manualActions = React.useMemo(() => getGoalManualActions(t, goalState), [goalState, t])
+  const latestAuditPreview = React.useMemo(() => getGoalLatestAuditPreview(goalState), [goalState])
+  const canSaveGoal = draft.objective.trim().length > 0 && draft.criteria.some(criterion => criterion.text.trim().length > 0)
+  const badgeColor = activeMode === 'off'
+    ? 'var(--foreground)'
+    : activeMode === 'check_only'
+    ? 'var(--info)'
+    : 'var(--accent)'
+
+  const handleSelect = React.useCallback((mode: SessionGoalMode) => {
+    setEditing(false)
+    setOpen(false)
+    onGoalModeChange?.(mode)
+  }, [onGoalModeChange])
+
+  const handleManualAction = React.useCallback((actionId: 'improve' | 'accept') => {
+    setEditing(false)
+    setOpen(false)
+    if (actionId === 'improve') {
+      onGoalImprove?.()
+    } else {
+      onGoalAccept?.()
+    }
+  }, [onGoalAccept, onGoalImprove])
+
+  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) {
+      setEditing(false)
+    }
+  }, [])
+
+  const handleStartEdit = React.useCallback(() => {
+    setDraft(createGoalEditDraft(goalState))
+    setEditing(true)
+  }, [goalState])
+
+  const handleCancelEdit = React.useCallback(() => {
+    setDraft(createGoalEditDraft(goalState))
+    setEditing(false)
+  }, [goalState])
+
+  const updateCriterion = React.useCallback((index: number, patch: Partial<GoalCriterionEditDraft>) => {
+    setDraft(current => ({
+      ...current,
+      criteria: current.criteria.map((criterion, currentIndex) =>
+        currentIndex === index ? { ...criterion, ...patch } : criterion
+      ),
+    }))
+  }, [])
+
+  const removeCriterion = React.useCallback((index: number) => {
+    setDraft(current => ({
+      ...current,
+      criteria: current.criteria.filter((_, currentIndex) => currentIndex !== index),
+    }))
+  }, [])
+
+  const addCriterion = React.useCallback(() => {
+    setDraft(current => ({
+      ...current,
+      criteria: [...current.criteria, createBlankGoalCriterionDraft()],
+    }))
+  }, [])
+
+  const handleSaveEdit = React.useCallback(async () => {
+    if (!canSaveGoal) return
+    try {
+      await onGoalUpdate?.(buildGoalUpdateFromDraft(draft))
+      setEditing(false)
+      setOpen(false)
+    } catch {
+      // Caller owns user-facing error handling; keep the editor open.
+    }
+  }, [canSaveGoal, draft, onGoalUpdate])
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <MetadataBadge
+          label={t('sessionInfo.goal')}
+          value={getGoalBadgeValue(t, goalState)}
+          badgeColor={badgeColor}
+          interactive
+          isActive={open}
+          showChevron
+          icon={<Target className="h-3.5 w-3.5" />}
+          className="pl-2.5"
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        className={cn(
+          "p-1 rounded-[8px] bg-background shadow-modal-small border border-border/60",
+          editing ? "w-[360px]" : "w-[240px]"
+        )}
+        side="top"
+        align="start"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent('craft:focus-input', {
+            detail: { sessionId }
+          }))
+        }}
+      >
+        {editing ? (
+          <div className="space-y-2 p-1">
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-muted-foreground">{t('sessionInfo.goalObjective')}</span>
+              <textarea
+                value={draft.objective}
+                onChange={event => setDraft(current => ({ ...current, objective: event.target.value }))}
+                rows={3}
+                className="w-full resize-none rounded-[6px] border border-border/70 bg-background px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-accent"
+              />
+            </label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-muted-foreground">{t('sessionInfo.goalCriteria')}</span>
+                <button
+                  type="button"
+                  className="inline-flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[11px] text-muted-foreground hover:bg-foreground/5"
+                  onClick={addCriterion}
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>{t('sessionInfo.goalAddCriterion')}</span>
+                </button>
+              </div>
+              <div className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
+                {draft.criteria.map((criterion, index) => (
+                  <div key={criterion.id ?? index} className="flex items-start gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={criterion.required}
+                      aria-label={t('sessionInfo.goalCriterionRequired')}
+                      className="mt-2 h-3.5 w-3.5 shrink-0 accent-[var(--accent)]"
+                      onChange={event => updateCriterion(index, { required: event.target.checked })}
+                    />
+                    <input
+                      value={criterion.text}
+                      onChange={event => updateCriterion(index, { text: event.target.value })}
+                      className="min-w-0 flex-1 rounded-[6px] border border-border/70 bg-background px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      aria-label={t('common.delete')}
+                      className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground hover:bg-foreground/5"
+                      onClick={() => removeCriterion(index)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-1 border-t border-border/60 pt-2">
+              <button
+                type="button"
+                className="h-7 rounded-[6px] px-2 text-[12px] text-muted-foreground hover:bg-foreground/5"
+                onClick={handleCancelEdit}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={!canSaveGoal}
+                className="h-7 rounded-[6px] bg-accent px-2 text-[12px] font-medium text-accent-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => { void handleSaveEdit() }}
+              >
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {latestAuditPreview && (
+              <div className="m-1 rounded-[7px] bg-foreground/[0.035] px-2 py-1.5">
+                <div className="flex items-center gap-2 text-[11px] font-medium text-foreground/80">
+                  <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {t('sessionInfo.goalAuditIteration', { iteration: latestAuditPreview.iteration })}
+                  </span>
+                  <span className={cn(
+                    "shrink-0",
+                    latestAuditPreview.status === 'pass'
+                      ? "text-success"
+                      : latestAuditPreview.status === 'fail'
+                      ? "text-destructive"
+                      : "text-info"
+                  )}>
+                    {getCompactGoalAuditStatusText(t, latestAuditPreview.status)}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+                  {latestAuditPreview.summary}
+                </div>
+                {latestAuditPreview.missingCriteria.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {latestAuditPreview.missingCriteria.map((criterion, index) => (
+                      <div key={`${index}-${criterion}`} className="truncate text-[11px] leading-4 text-foreground/70" title={criterion}>
+                        {criterion}
+                      </div>
+                    ))}
+                    {latestAuditPreview.hiddenMissingCriteriaCount > 0 && (
+                      <div className="text-[11px] text-muted-foreground">
+                        {t('sessionInfo.goalAuditMoreItems', { count: latestAuditPreview.hiddenMissingCriteriaCount })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  {t('sessionInfo.goalAuditEvidenceCount', { count: latestAuditPreview.evidenceCount })}
+                </div>
+              </div>
+            )}
+            {VISIBLE_GOAL_MODES.map(mode => {
+              const selected = mode === activeMode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={cn(
+                    "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                    "hover:bg-foreground/5 outline-none",
+                    selected && "bg-foreground/5"
+                  )}
+                  onClick={() => handleSelect(mode)}
+                >
+                  <Target className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-foreground">{getGoalModeLabel(t, mode)}</span>
+                    <span className="block text-xs text-muted-foreground leading-snug">{getGoalModeDescription(t, mode)}</span>
+                  </span>
+                  {selected && <Check className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+                </button>
+              )
+            })}
+          </>
+        )}
+        {!editing && goalState.mode !== 'off' && (
+          <div className="mt-1 border-t border-border/60 pt-1">
+            <button
+              type="button"
+              className={cn(
+                "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                "hover:bg-foreground/5 outline-none"
+              )}
+              onClick={handleStartEdit}
+            >
+              <Pencil className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-foreground">{t('sessionInfo.goalEditCriteria')}</span>
+                <span className="block text-xs text-muted-foreground leading-snug">{t('sessionInfo.goalEditCriteriaDesc')}</span>
+              </span>
+            </button>
+          </div>
+        )}
+        {!editing && manualActions.length > 0 && (
+          <div className="mt-1 border-t border-border/60 pt-1">
+            {manualActions.map(action => (
+              <button
+                key={action.id}
+                type="button"
+                className={cn(
+                  "w-full rounded-[6px] px-2 py-1.5 text-left flex items-start gap-2 text-[13px]",
+                  "hover:bg-foreground/5 outline-none"
+                )}
+                onClick={() => handleManualAction(action.id)}
+              >
+                {action.id === 'improve'
+                  ? <RotateCcw className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  : <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-foreground">{action.label}</span>
+                  <span className="block text-xs text-muted-foreground leading-snug">{action.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function getCompactGoalAuditStatusText(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: 'pass' | 'fail' | 'uncertain',
+): string {
+  switch (status) {
+    case 'pass':
+      return t('sessionInfo.goalAuditPass')
+    case 'fail':
+      return t('sessionInfo.goalAuditFail')
+    case 'uncertain':
+      return t('sessionInfo.goalAuditUncertain')
+  }
 }
 
 // ============================================================================
@@ -410,10 +793,22 @@ function FilesPopoverButton({ sessionId, sessionFolderPath }: { sessionId?: stri
 interface PermissionModeDropdownProps {
   permissionMode: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalMode?: SessionGoalMode
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  onGoalModeChange?: (mode: SessionGoalMode) => void
   sessionId?: string
 }
 
-function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessionId }: PermissionModeDropdownProps) {
+function PermissionModeDropdown({
+  permissionMode,
+  onPermissionModeChange,
+  goalMode,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  onGoalModeChange,
+  sessionId,
+}: PermissionModeDropdownProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   // Optimistic local state - updates immediately, syncs with prop
@@ -425,17 +820,32 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
   }, [permissionMode])
 
   const activeCommands = React.useMemo((): SlashCommandId[] => {
-    return [optimisticMode as SlashCommandId]
-  }, [optimisticMode])
+    const active: SlashCommandId[] = [optimisticMode as SlashCommandId]
+    const activeGoalMode = goalMode ?? goalLoopMode
+    const activeGoalCommand = activeGoalMode ? getGoalLoopSlashCommandId(activeGoalMode) : undefined
+    if (activeGoalCommand) active.push(activeGoalCommand)
+    return active
+  }, [goalLoopMode, goalMode, optimisticMode])
 
   // Handle command selection from dropdown
   const handleSelect = React.useCallback((commandId: SlashCommandId) => {
+    const nextGoalMode = getGoalLoopModeFromSlashCommandId(commandId)
+    if (nextGoalMode) {
+      if (goalMode) {
+        onGoalModeChange?.(nextGoalMode)
+      } else {
+        onGoalLoopModeChange?.(nextGoalMode)
+      }
+      setOpen(false)
+      return
+    }
+
     if (commandId === 'safe' || commandId === 'ask' || commandId === 'allow-all') {
       setOptimisticMode(commandId)
       onPermissionModeChange?.(commandId)
     }
     setOpen(false)
-  }, [onPermissionModeChange])
+  }, [goalMode, onGoalLoopModeChange, onGoalModeChange, onPermissionModeChange])
 
   // Get config for current mode (use optimistic state for instant UI update)
   const config = PERMISSION_MODE_CONFIG[optimisticMode]
@@ -503,4 +913,3 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
     </Popover>
   )
 }
-

@@ -83,6 +83,7 @@ Sentry.setUser({ id: machineId })
 
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@craft-agent/server-core/sessions'
 import { registerAllRpcHandlers } from './handlers/index'
@@ -112,7 +113,7 @@ import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
-import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog } from './logger'
+import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
 import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
@@ -207,7 +208,7 @@ if (isDebugMode) {
 }
 
 // Register Pi model resolver so llm-connections.ts can resolve Pi models
-// without importing @mariozechner/pi-ai (which breaks the Vite renderer build)
+// without importing @earendil-works/pi-ai (which breaks the Vite renderer build)
 registerPiModelResolver((piAuthProvider) =>
   piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
 )
@@ -554,6 +555,34 @@ app.whenReady().then(async () => {
         || BrowserWindow.getAllWindows()[0]
       const result = await dialog.showOpenDialog(win, spec)
       return { canceled: result.canceled, filePaths: result.filePaths }
+    })
+    ipcMain.handle('__dialog:showSaveDialog', async (event, spec) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showSaveDialog(win, spec)
+      return { canceled: result.canceled, filePath: result.filePath }
+    })
+    ipcMain.handle('__dialog:saveTextFileWithDialog', async (event, spec) => {
+      if (!spec || typeof spec.content !== 'string') {
+        throw new Error('Invalid text content')
+      }
+
+      const { content, ...dialogSpec } = spec
+      const win = BrowserWindow.fromWebContents(event.sender)
+        || BrowserWindow.getFocusedWindow()
+        || BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showSaveDialog(win, dialogSpec)
+      if (result.canceled || !result.filePath) {
+        return { canceled: true }
+      }
+
+      await writeFile(result.filePath, content, 'utf-8')
+      return {
+        canceled: false,
+        filePath: result.filePath,
+        bytes: Buffer.byteLength(content, 'utf-8'),
+      }
     })
 
     if (!isClientOnly) {
@@ -1203,13 +1232,20 @@ app.on('before-quit', async (event) => {
     } else {
       captureAndSaveWindowState('before-quit')
     }
-    // Diagnostic correlation with installUpdate's [update-flow] log.
-    mainLog.info('[update-flow] before-quit save', {
+    // Diagnostic correlation with installUpdate's update-flow log. During an
+    // update quit, keep this in the dedicated always-on auto-update log.
+    const isUpdateQuit = isUpdating()
+    const beforeQuitSave = {
       windowCount: windows.length,
       electronWindowCount: BrowserWindow.getAllWindows().length,
-      isUpdating: isUpdating(),
-      reason: isUpdating() ? 'update-quit' : 'user-quit',
-    })
+      isUpdating: isUpdateQuit,
+      reason: isUpdateQuit ? 'update-quit' : 'user-quit',
+    }
+    if (isUpdateQuit) {
+      autoUpdateLog.info('before-quit save', beforeQuitSave)
+    } else {
+      mainLog.info('[update-flow] before-quit save', beforeQuitSave)
+    }
   }
 
   // Flush all pending session writes before quitting

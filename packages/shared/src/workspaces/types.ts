@@ -13,6 +13,17 @@
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
+import type { SessionGoalMode } from '../sessions/types.ts';
+
+export type WorkspaceGoalLoopDefaultMode = Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>;
+
+export interface WorkspaceGoalLoopConfig {
+  /**
+   * Default goal-loop behavior for newly auto-detected work sessions.
+   * Undefined keeps the built-in heuristic default.
+   */
+  defaultMode?: WorkspaceGoalLoopDefaultMode;
+}
 
 /**
  * Local MCP server configuration
@@ -48,6 +59,7 @@ export interface WorkspaceConfig {
     workingDirectory?: string;
     thinkingLevel?: ThinkingLevel; // Default thinking level for new sessions (default: 'medium')
     colorTheme?: string; // Color theme override for this workspace (preset ID). Undefined = inherit from app default.
+    goalLoop?: WorkspaceGoalLoopConfig;
   };
 
   /**

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'bun:test'
-import { isEscapeDuringComposition } from '../rich-text-input'
+import {
+  isEscapeDuringComposition,
+  isInputDuringComposition,
+  shouldShowRichInputPlaceholder,
+} from '../rich-text-input'
 
 describe('isEscapeDuringComposition', () => {
   it('returns true for Escape when local composition ref is active', () => {
@@ -25,5 +29,30 @@ describe('isEscapeDuringComposition', () => {
 
   it('returns false for non-Escape keys even if composing', () => {
     expect(isEscapeDuringComposition({ key: 'Enter', isComposing: true }, true)).toBe(false)
+  })
+})
+
+describe('isInputDuringComposition', () => {
+  it('returns true when local composition ref is active', () => {
+    expect(isInputDuringComposition({}, true)).toBe(true)
+  })
+
+  it('returns true when nativeEvent.isComposing is true', () => {
+    expect(isInputDuringComposition({ nativeEvent: { isComposing: true } }, false)).toBe(true)
+  })
+
+  it('returns false when no composition signal is active', () => {
+    expect(isInputDuringComposition({}, false)).toBe(false)
+  })
+})
+
+describe('shouldShowRichInputPlaceholder', () => {
+  it('hides the placeholder while IME composition is active on an empty input', () => {
+    expect(shouldShowRichInputPlaceholder('', true)).toBe(false)
+  })
+
+  it('shows the placeholder only when the value is empty and not composing', () => {
+    expect(shouldShowRichInputPlaceholder('', false)).toBe(true)
+    expect(shouldShowRichInputPlaceholder('hello', false)).toBe(false)
   })
 })

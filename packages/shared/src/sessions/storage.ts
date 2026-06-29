@@ -204,6 +204,7 @@ export async function createSession(
     enabledSourceSlugs?: string[];
     model?: string;
     llmConnection?: string;
+    goalState?: SessionConfig['goalState'];
     hidden?: boolean;
     sessionStatus?: SessionConfig['sessionStatus'];
     labels?: string[];
@@ -237,6 +238,7 @@ export async function createSession(
     enabledSourceSlugs: options?.enabledSourceSlugs,
     model: options?.model,
     llmConnection: options?.llmConnection,
+    goalState: options?.goalState,
     hidden: options?.hidden,
     sessionStatus: options?.sessionStatus,
     labels: options?.labels,

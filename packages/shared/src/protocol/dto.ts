@@ -18,6 +18,12 @@ import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
+  SessionGoalAuditResult,
+  SessionGoalCriterionKind,
+  SessionGoalMode,
+  SessionGoalState,
+} from '../sessions/types'
+import type {
   AuthRequest as SharedAuthRequest,
   CredentialInputMode as SharedCredentialInputMode,
   CredentialAuthRequest as SharedCredentialAuthRequest,
@@ -73,6 +79,7 @@ export interface Session {
   sharedId?: string
   model?: string
   llmConnection?: string
+  goalState?: SessionGoalState
   thinkingLevel?: ThinkingLevel
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   lastFinalMessageId?: string
@@ -126,6 +133,8 @@ export interface CreateSessionOptions {
   workingDirectory?: string | 'user_default' | 'none'
   model?: string
   llmConnection?: string
+  /** Optional application-level goal audit state. Omitted/`off` keeps legacy completion behavior. */
+  goalState?: SessionGoalState
   systemPromptPreset?: 'default' | 'mini' | string
   hidden?: boolean
   sessionStatus?: SessionStatus
@@ -215,19 +224,37 @@ export type SessionEvent =
   | { type: 'auth_request'; sessionId: string; message: Message; request: SharedAuthRequest }
   | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
   | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
+  | { type: 'goal_audit_started'; sessionId: string; goalId: string; iteration: number; mode: SessionGoalMode }
+  | { type: 'goal_audit_result'; sessionId: string; goalId: string; result: SessionGoalAuditResult; goalState: SessionGoalState }
+  | { type: 'goal_completed'; sessionId: string; goalId: string; goalState: SessionGoalState }
+  | { type: 'goal_needs_review'; sessionId: string; goalId: string; goalState: SessionGoalState; reason: string }
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
   | { type: 'working_directory_error'; sessionId: string; error: string }
+  | { type: 'goal_state_changed'; sessionId: string; goalState: SessionGoalState }
 
 export interface SendMessageOptions {
   skillSlugs?: string[]
   badges?: ContentBadge[]
   optimisticMessageId?: string
+  goalLoopMode?: SessionGoalMode
 }
 
 // ---------------------------------------------------------------------------
 // Session commands (consolidated operations)
 // ---------------------------------------------------------------------------
+
+export interface SessionGoalCriterionUpdate {
+  id?: string
+  text: string
+  kind?: SessionGoalCriterionKind
+  required?: boolean
+}
+
+export interface SessionGoalUpdate {
+  objective?: string
+  criteria?: SessionGoalCriterionUpdate[]
+}
 
 export type SessionCommand =
   | { type: 'flag' }
@@ -240,6 +267,10 @@ export type SessionCommand =
   | { type: 'markUnread' }
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setPermissionMode'; mode: PermissionMode }
+  | { type: 'setGoalMode'; mode: SessionGoalMode }
+  | { type: 'updateGoal'; goal: SessionGoalUpdate }
+  | { type: 'acceptGoal' }
+  | { type: 'runGoalImprovement' }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
   | { type: 'setSources'; sourceSlugs: string[] }
@@ -332,6 +363,93 @@ export interface FileAttachment {
   thumbnailBase64?: string
 }
 
+export type AttachmentDialogMode = 'files' | 'folders'
+
+export interface AttachmentDialogResult {
+  attachments: FileAttachment[]
+  skippedCount: number
+  truncated: boolean
+  maxFiles: number
+}
+
+export interface FilePreviewReadResult {
+  content: string
+  truncated: boolean
+  originalSize: number
+  previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
+  mtimeMs?: number
+}
+
+export interface FileWriteTextOptions {
+  expectedMtimeMs?: number
+}
+
+export interface FileWriteTextResult {
+  path: string
+  bytes: number
+  mtimeMs: number
+}
+
+export interface SpreadsheetPreviewColumn {
+  key: string
+  label: string
+}
+
+export type SpreadsheetCellValue = string | number | boolean | null
+
+export interface SpreadsheetPreviewSheet {
+  name: string
+  columns: SpreadsheetPreviewColumn[]
+  rows: Record<string, SpreadsheetCellValue>[]
+  totalRows: number
+  totalCols: number
+  truncated: boolean
+}
+
+export interface SpreadsheetPreviewResult {
+  filePath: string
+  fileName: string
+  sheets: SpreadsheetPreviewSheet[]
+  activeSheet: string | null
+  truncated: boolean
+  originalSize?: number
+  mtimeMs?: number
+}
+
+export type MarkdownExportFormat = 'html' | 'docx' | 'pdf'
+
+export interface MarkdownExportOptions {
+  format: MarkdownExportFormat
+  targetPath?: string
+  content?: string
+}
+
+export interface MarkdownExportResult {
+  path: string
+  format: MarkdownExportFormat
+  bytes: number
+}
+
+export interface OptimizePromptAttachment {
+  name: string
+  type?: string
+  size?: number
+}
+
+export interface OptimizePromptRequest {
+  input: string
+  attachments?: OptimizePromptAttachment[]
+  workingDirectory?: string
+  model?: string
+  connectionName?: string
+}
+
+export interface OptimizePromptResult {
+  optimizedPrompt: string
+  changed: boolean
+  fallback?: boolean
+}
+
 export interface SessionFile {
   name: string
   path: string
@@ -362,6 +480,23 @@ export interface SessionOutputDirectory {
 export interface PromoteSessionFileResult {
   outputDirectory: string
   outputPath: string
+}
+
+export interface CreateFileMemorySourceOptions {
+  name?: string
+  sourceSlug?: string
+  chunkSize?: number
+  overlap?: number
+  autoEnable?: boolean
+}
+
+export interface CreateFileMemorySourceResult {
+  sourceSlug: string
+  sourceConfigPath?: string
+  manifestPath?: string
+  chunkCount?: number
+  validationText: string
+  activated: boolean
 }
 
 export interface FileSearchResult {
@@ -557,6 +692,9 @@ export interface WorkspaceSettings {
   localMcpEnabled?: boolean
   defaultLlmConnection?: string
   enabledSourceSlugs?: string[]
+  goalLoop?: {
+    defaultMode?: Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>
+  }
 }
 
 // ---------------------------------------------------------------------------

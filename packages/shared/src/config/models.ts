@@ -67,6 +67,8 @@ const DEPRECATED_MODEL_REPLACEMENTS: Record<string, string> = {
   'eu.anthropic.claude-opus-4-7-v1': 'eu.anthropic.claude-opus-4-7',
   'global.anthropic.claude-opus-4-6-v1': 'global.anthropic.claude-opus-4-8',
   'global.anthropic.claude-opus-4-7-v1': 'global.anthropic.claude-opus-4-7',
+  'grok-4': 'grok-4.3',
+  'x-ai/grok-4': 'x-ai/grok-4.3',
 };
 
 /** Normalize deprecated built-in model IDs to the current supported replacement. */
@@ -174,7 +176,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   // ----------------------------------------
   // Pi Models
   // No hardcoded entries — models are discovered dynamically:
-  //   - Pi: getModels(provider) from @mariozechner/pi-ai SDK
+  //   - Pi: getModels(provider) from @earendil-works/pi-ai SDK
   // See ModelRefreshService in apps/electron/src/main/model-fetchers/
   // ----------------------------------------
 ];

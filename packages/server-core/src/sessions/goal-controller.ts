@@ -1,0 +1,839 @@
+import type { Message } from '@craft-agent/core/types'
+import type {
+  SessionGoalAuditEvidence,
+  SessionGoalAuditResult,
+  SessionGoalState,
+} from '@craft-agent/shared/sessions'
+import { basename, extname } from 'path'
+import { pathStartsWith } from '@craft-agent/shared/utils'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+
+const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
+const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
+
+export type GoalControllerDecision =
+  | { action: 'skip' }
+  | { action: 'complete'; goalState: SessionGoalState; result: SessionGoalAuditResult }
+  | { action: 'needs_review'; goalState: SessionGoalState; result: SessionGoalAuditResult; reason: string }
+  | { action: 'continue'; goalState: SessionGoalState; result: SessionGoalAuditResult; prompt: string }
+
+export interface GoalReviewInput {
+  goalState: SessionGoalState
+  messages: Message[]
+  finalAssistant: Message
+  result: SessionGoalAuditResult
+}
+
+export interface GoalReviewResult {
+  status: SessionGoalAuditResult['status']
+  summary: string
+  missingCriteria?: string[]
+  correctivePrompt?: string
+  evidence?: SessionGoalAuditEvidence[]
+}
+
+export interface GoalFileVerificationResult {
+  exists: boolean
+  readable?: boolean
+  isFile?: boolean
+  sizeBytes?: number
+  preview?: string
+  previewTruncated?: boolean
+  error?: string
+}
+
+export type GoalFileVerifier = (filePath: string) => Promise<GoalFileVerificationResult> | GoalFileVerificationResult
+
+export interface GoalTurnSnapshot {
+  messages: Message[]
+  turnStartFinalMessageId?: string
+  stoppedReason: 'complete' | 'interrupted' | 'error' | 'timeout'
+  now?: number
+  expectedOutputDirectory?: string
+  reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
+  fileVerifier?: GoalFileVerifier
+}
+
+export class GoalController {
+  async onTurnStopped(goalState: SessionGoalState | undefined, snapshot: GoalTurnSnapshot): Promise<GoalControllerDecision> {
+    if (!goalState || goalState.mode === 'off') {
+      return { action: 'skip' }
+    }
+
+    const now = snapshot.now ?? Date.now()
+    const iteration = goalState.iteration + 1
+    const turnMessages = getMessagesAfterFinalAssistant(snapshot.messages, snapshot.turnStartFinalMessageId)
+    const finalAssistant = [...turnMessages].reverse().find(message =>
+      message.role === 'assistant' && !message.isIntermediate && message.content.trim().length > 0
+    )
+    const errorMessages = turnMessages.filter(message => message.role === 'error')
+    const failedTools = getUnresolvedFailedTools(turnMessages)
+
+    const evidence: SessionGoalAuditEvidence[] = []
+    const fileEvidencePaths = new Set<string>()
+    const outputFileEvidencePaths = new Set<string>()
+    if (finalAssistant) {
+      evidence.push({
+        type: 'message',
+        label: 'final_assistant_message',
+        detail: finalAssistant.id,
+      })
+    }
+    for (const message of turnMessages) {
+      if (message.role !== 'user') continue
+      for (const attachment of message.attachments ?? []) {
+        const path = attachment.storedPath.trim()
+        if (!path) continue
+        fileEvidencePaths.add(path)
+        evidence.push({
+          type: 'file',
+          label: 'user_attachment',
+          detail: path.slice(0, 500),
+        })
+      }
+    }
+    for (const message of turnMessages) {
+      if (message.role !== 'tool') continue
+      const inputPaths = extractFilePaths(message.toolInput)
+      const resultPaths = extractFilePathsFromText(message.toolResult)
+      const paths = new Set([
+        ...inputPaths,
+        ...resultPaths,
+      ])
+      for (const path of extractOutputFilePaths(message, inputPaths, resultPaths)) {
+        outputFileEvidencePaths.add(path)
+        paths.add(path)
+      }
+      for (const path of paths) {
+        fileEvidencePaths.add(path)
+        evidence.push({
+          type: 'file',
+          label: message.toolName ?? 'tool_file',
+          detail: path.slice(0, 500),
+        })
+      }
+    }
+
+    const fileVerificationIssues: string[] = []
+    const contentVerificationIssues: string[] = []
+    const toolVerificationIssues: string[] = []
+    if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
+      fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
+      evidence.push({
+        type: 'file',
+        label: 'file_evidence_missing',
+        detail: 'No file path was captured from tool input or tool output.',
+      })
+    }
+    if (requiresOutputFileEvidence(goalState) && snapshot.expectedOutputDirectory && outputFileEvidencePaths.size > 0) {
+      for (const filePath of outputFileEvidencePaths) {
+        if (pathStartsWith(filePath, snapshot.expectedOutputDirectory)) continue
+        fileVerificationIssues.push(`Requested output file was not written to the formal output directory: ${filePath} (expected under: ${snapshot.expectedOutputDirectory})`)
+        evidence.push({
+          type: 'file',
+          label: 'file_wrong_output_directory',
+          detail: filePath.slice(0, 500),
+        })
+      }
+    }
+    const requiredOutputFormats = getRequiredOutputFormats(goalState)
+    if (requiredOutputFormats.length > 0 && outputFileEvidencePaths.size > 0) {
+      const producedFormats = new Set([...outputFileEvidencePaths].flatMap(getOutputFormatsForPath))
+      for (const format of requiredOutputFormats) {
+        if (producedFormats.has(format)) continue
+        fileVerificationIssues.push(`Requested output format was not produced: ${format}.`)
+        evidence.push({
+          type: 'file',
+          label: 'file_wrong_output_format',
+          detail: [...outputFileEvidencePaths].join(', ').slice(0, 500),
+        })
+      }
+    }
+    const outputPreviewTexts: string[] = []
+    if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
+      for (const filePath of fileEvidencePaths) {
+        const verification = await snapshot.fileVerifier(filePath)
+        const issue = buildFileVerificationIssue(filePath, verification)
+        if (issue) {
+          fileVerificationIssues.push(issue)
+          evidence.push({
+            type: 'file',
+            label: buildFileVerificationEvidenceLabel(verification),
+            detail: filePath.slice(0, 500),
+          })
+        } else {
+          const size = typeof verification.sizeBytes === 'number' ? ` (${verification.sizeBytes} bytes)` : ''
+          evidence.push({
+            type: 'file',
+            label: 'file_verified',
+            detail: `${filePath}${size}`.slice(0, 500),
+          })
+          const preview = verification.preview?.trim()
+          if (preview) {
+            if (outputFileEvidencePaths.has(filePath)) {
+              outputPreviewTexts.push(preview)
+            }
+            evidence.push({
+              type: 'file',
+              label: buildFilePreviewEvidenceLabel(verification, outputFileEvidencePaths.has(filePath)),
+              detail: `${filePath}\n${preview}`.slice(0, 3000),
+            })
+          }
+        }
+      }
+    }
+    const sourceFileEvidencePaths = [...fileEvidencePaths].filter(filePath => !outputFileEvidencePaths.has(filePath))
+    if (
+      finalAssistant
+      && sourceFileEvidencePaths.length > 0
+      && requiresSourceCitationMarker(goalState)
+      && !hasSourceCitationMarker([finalAssistant.content, ...outputPreviewTexts], sourceFileEvidencePaths)
+    ) {
+      fileVerificationIssues.push('Final response did not include a source citation marker for required source evidence.')
+      evidence.push({
+        type: 'message',
+        label: 'source_citation_marker_missing',
+        detail: finalAssistant.id,
+      })
+    }
+    if (
+      finalAssistant
+      && requiresSubstantiveWorkProduct(goalState)
+      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputPreviewTexts])
+    ) {
+      contentVerificationIssues.push(SUBSTANTIVE_WORK_PRODUCT_MISSING)
+      evidence.push({
+        type: 'message',
+        label: 'substantive_content_missing',
+        detail: finalAssistant.id,
+      })
+    }
+    if (finalAssistant) {
+      for (const requirement of getExplicitUserRequirements(goalState)) {
+        if (hasExplicitUserRequirement([finalAssistant.content, ...outputPreviewTexts], requirement)) continue
+        contentVerificationIssues.push(`Final response or verified output preview did not address explicit user requirement: ${requirement}.`)
+        evidence.push({
+          type: 'message',
+          label: 'explicit_user_requirement_missing',
+          detail: requirement.slice(0, 500),
+        })
+      }
+    }
+    if (requiresToolVerificationEvidence(goalState)) {
+      const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
+      if (toolVerificationMessages.length === 0) {
+        toolVerificationIssues.push('No successful tool evidence was produced for the requested verification step.')
+        evidence.push({
+          type: 'tool',
+          label: 'tool_verification_missing',
+          detail: 'No completed verification, test, build, lint, typecheck, or validation tool run was captured.',
+        })
+      } else {
+        for (const message of toolVerificationMessages) {
+          evidence.push({
+            type: 'tool',
+            label: 'tool_verification_evidence',
+            detail: summarizeToolVerificationMessage(message),
+          })
+        }
+      }
+    }
+
+    for (const message of errorMessages) {
+      evidence.push({
+        type: 'system',
+        label: 'error_message',
+        detail: message.content.slice(0, 500),
+      })
+    }
+    for (const message of failedTools) {
+      evidence.push({
+        type: 'tool',
+        label: message.toolName ?? 'tool_error',
+        detail: message.toolResult?.slice(0, 500),
+      })
+    }
+
+    const missingCriteria: string[] = []
+    let status: SessionGoalAuditResult['status'] = 'pass'
+    let summary = 'Goal audit passed deterministic completion checks.'
+
+    if (snapshot.stoppedReason !== 'complete') {
+      status = 'fail'
+      missingCriteria.push(`Turn stopped with reason: ${snapshot.stoppedReason}`)
+      summary = `Goal audit failed because the turn stopped with reason: ${snapshot.stoppedReason}.`
+    }
+
+    if (!finalAssistant) {
+      status = 'fail'
+      missingCriteria.push('No final assistant response was produced in this turn.')
+      summary = 'Goal audit failed because no final assistant response was produced.'
+    }
+
+    if (errorMessages.length > 0 || failedTools.length > 0) {
+      status = 'fail'
+      if (errorMessages.length > 0) missingCriteria.push(`${errorMessages.length} error message(s) were produced.`)
+      if (failedTools.length > 0) missingCriteria.push(`${failedTools.length} tool failure(s) were produced.`)
+      summary = 'Goal audit failed because this turn produced errors.'
+    }
+
+    if (fileVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...fileVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because referenced file evidence could not be verified.'
+      }
+    }
+
+    if (contentVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...contentVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because the produced work product was too shallow for the requested quality criteria.'
+      }
+    }
+
+    if (toolVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...toolVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because requested verification tool evidence was missing.'
+      }
+    }
+
+    if (status === 'pass' && goalState.criteria.some(criterion => criterion.required)) {
+      status = 'uncertain'
+      missingCriteria.push(
+        ...goalState.criteria
+          .filter(criterion => criterion.required)
+          .map(criterion => criterion.text)
+      )
+      summary = 'Goal audit could not prove all explicit criteria with deterministic checks only.'
+    }
+
+    let result: SessionGoalAuditResult = {
+      iteration,
+      status,
+      summary,
+      missingCriteria,
+      evidence,
+      createdAt: now,
+    }
+
+    let reviewerFailed = false
+    if (status === 'uncertain' && finalAssistant && snapshot.reviewer) {
+      try {
+        const review = await snapshot.reviewer({
+          goalState,
+          messages: turnMessages,
+          finalAssistant,
+          result,
+        })
+        const reviewMissingCriteria = review.missingCriteria ?? (review.status === 'pass' ? [] : missingCriteria)
+        const contradictoryPass = review.status === 'pass' && (reviewMissingCriteria.length > 0 || review.correctivePrompt !== undefined)
+        status = contradictoryPass
+          ? 'uncertain'
+          : review.status
+        summary = contradictoryPass
+          ? 'Goal reviewer requested more work while marking the result as pass.'
+          : review.summary
+        result = {
+          ...result,
+          status,
+          summary,
+          missingCriteria: reviewMissingCriteria,
+          correctivePrompt: review.correctivePrompt,
+          evidence: review.evidence ? [...evidence, ...review.evidence] : evidence,
+        }
+      } catch (error) {
+        reviewerFailed = true
+        summary = 'Goal reviewer failed; manual review is required.'
+        result = {
+          ...result,
+          status: 'uncertain',
+          summary,
+          evidence: [
+            ...evidence,
+            {
+              type: 'system',
+              label: 'reviewer_error',
+              detail: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            },
+          ],
+        }
+      }
+    }
+
+    const repeatedFailure = hasRepeatedGoalFailure(goalState.auditHistory, result)
+    if (repeatedFailure) {
+      result = {
+        ...result,
+        evidence: [
+          ...result.evidence,
+          {
+            type: 'system',
+            label: 'repeated_goal_failure',
+            detail: 'The same missing criteria were reported in consecutive audits.',
+          },
+        ],
+      }
+    }
+
+    const shouldAutoImprove = !reviewerFailed
+      && !repeatedFailure
+      && snapshot.stoppedReason === 'complete'
+      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
+      && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
+    const hasRemainingIterations = iteration < goalState.maxIterations
+    const hasRemainingWallClock = goalState.budgets?.maxWallClockMs === undefined
+      || now - goalState.createdAt < goalState.budgets.maxWallClockMs
+    const correctivePrompt = shouldAutoImprove && hasRemainingIterations && hasRemainingWallClock
+      ? result.correctivePrompt ?? buildCorrectivePrompt(goalState, result)
+      : undefined
+    if (correctivePrompt) {
+      result.correctivePrompt = correctivePrompt
+    }
+
+    const nextGoalState: SessionGoalState = {
+      ...goalState,
+      status: status === 'pass' ? 'passed' : correctivePrompt ? 'improving' : 'needs_review',
+      iteration,
+      updatedAt: now,
+      auditHistory: [...goalState.auditHistory, result],
+    }
+
+    if (status === 'pass') {
+      return { action: 'complete', goalState: nextGoalState, result }
+    }
+
+    if (correctivePrompt) {
+      return {
+        action: 'continue',
+        goalState: nextGoalState,
+        result,
+        prompt: correctivePrompt,
+      }
+    }
+
+    const reason = repeatedFailure
+      ? 'Repeated the same goal audit failure; manual review is required.'
+      : shouldAutoImprove && !hasRemainingIterations
+      ? `Reached maximum goal iterations (${goalState.maxIterations}); manual review is required.`
+      : shouldAutoImprove && !hasRemainingWallClock
+      ? `Reached maximum goal wall-clock budget (${goalState.budgets?.maxWallClockMs}ms); manual review is required.`
+      : status === 'uncertain'
+      ? 'Deterministic audit could not prove the goal criteria.'
+      : result.summary
+
+    return {
+      action: 'needs_review',
+      goalState: nextGoalState,
+      result,
+      reason,
+    }
+  }
+}
+
+function buildFileVerificationIssue(filePath: string, verification: GoalFileVerificationResult): string | undefined {
+  if (!verification.exists) {
+    return `Referenced file was not found: ${filePath}`
+  }
+  if (verification.readable === false) {
+    const suffix = verification.error ? ` (${verification.error})` : ''
+    return `Referenced file could not be read: ${filePath}${suffix}`
+  }
+  if (verification.isFile === false) {
+    return `Referenced path is not a file: ${filePath}`
+  }
+  if (verification.sizeBytes === 0) {
+    return `Referenced file is empty: ${filePath}`
+  }
+  return undefined
+}
+
+function getUnresolvedFailedTools(messages: Message[]): Message[] {
+  const successfulToolKeys = new Set<string>()
+  const unresolved: Message[] = []
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'tool') continue
+
+    const key = getToolResolutionKey(message)
+    if (isSuccessfulTool(message)) {
+      if (key) successfulToolKeys.add(key)
+      continue
+    }
+
+    if (!isFailedTool(message)) continue
+    if (key && successfulToolKeys.has(key)) continue
+    unresolved.unshift(message)
+  }
+
+  return unresolved
+}
+
+function isFailedTool(message: Message): boolean {
+  return message.role === 'tool' && (message.toolStatus === 'error' || message.isError === true)
+}
+
+function isSuccessfulTool(message: Message): boolean {
+  return message.role === 'tool' && message.toolStatus === 'completed' && message.isError !== true
+}
+
+function getToolResolutionKey(message: Message): string | undefined {
+  const key = message.toolName?.trim() || message.toolUseId?.trim()
+  return key || undefined
+}
+
+function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'deliverable'
+    && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
+  )
+}
+
+function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'test'
+    && criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT
+  )
+}
+
+function requiresSourceCitationMarker(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'evidence'
+    && criterion.text.startsWith('Use and cite the referenced input material where relevant:')
+  )
+}
+
+function requiresSubstantiveWorkProduct(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'coverage'
+    && criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT
+  )
+}
+
+function hasSubstantiveWorkProduct(contents: string[]): boolean {
+  const raw = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
+  const normalized = raw.replace(/\s+/g, ' ').trim()
+  if (normalized.length >= 240) return true
+
+  const structuralMarkers = raw.match(/(?:^|\n)\s*(?:#{1,6}\s+|\d+[.)、]\s+|[-*]\s+|[一二三四五六七八九十]+[、.．])/g)?.length ?? 0
+  const paragraphCount = raw
+    .split(/\n\s*\n/)
+    .map(paragraph => paragraph.replace(/\s+/g, ' ').trim())
+    .filter(paragraph => paragraph.length >= 30)
+    .length
+  const sentenceCount = normalized.split(/[.!?。！？；;]/).filter(sentence => sentence.trim().length >= 12).length
+
+  return normalized.length >= 160
+    && (structuralMarkers >= 3 || paragraphCount >= 3 || sentenceCount >= 4)
+}
+
+function getExplicitUserRequirements(goalState: SessionGoalState): string[] {
+  return goalState.criteria
+    .filter(criterion =>
+      criterion.required
+      && criterion.kind === 'user_constraint'
+      && criterion.text.startsWith(EXPLICIT_USER_REQUIREMENT_PREFIX)
+    )
+    .map(criterion => criterion.text
+      .slice(EXPLICIT_USER_REQUIREMENT_PREFIX.length)
+      .replace(/\.$/, '')
+      .trim())
+    .filter(Boolean)
+}
+
+function hasExplicitUserRequirement(contents: string[], requirement: string): boolean {
+  const needle = normalizeRequirementText(requirement)
+  if (!needle) return true
+  return contents.some(content => normalizeRequirementText(content).includes(needle))
+}
+
+function normalizeRequirementText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\s"'`*_#>()[\]{}:：,，.。!！?？;；\-—_/\\|]+/g, '')
+    .trim()
+}
+
+function hasSourceCitationMarker(contents: string[], sourceFileEvidencePaths: string[]): boolean {
+  return contents.some(content => hasSourceCitationMarkerInText(content, sourceFileEvidencePaths))
+}
+
+function hasSourceCitationMarkerInText(content: string, sourceFileEvidencePaths: string[]): boolean {
+  const normalized = content.toLowerCase()
+  for (const filePath of sourceFileEvidencePaths) {
+    const name = basename(filePath).toLowerCase()
+    if (name && normalized.includes(name)) return true
+
+    const stem = name.slice(0, name.length - extname(name).length)
+    if (stem && stem.length >= 3 && normalized.includes(stem)) return true
+  }
+
+  return /来源|依据|引用|参考|条款|章节|第\s*\d+\s*页|source|according to|based on|citation|cite|clause|section|page|§|\[[^\]]+\]/i.test(content)
+}
+
+function getRequiredOutputFormats(goalState: SessionGoalState): string[] {
+  return [...new Set(goalState.criteria
+    .filter(criterion =>
+      criterion.required
+      && criterion.kind === 'format'
+      && criterion.text.startsWith(OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX)
+    )
+    .flatMap(criterion => criterion.text
+      .slice(OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX.length)
+      .replace(/\.$/, '')
+      .split(',')
+      .map(format => normalizeOutputFormatLabel(format))
+      .filter((format): format is string => format !== undefined)))]
+}
+
+function normalizeOutputFormatLabel(value: string): string | undefined {
+  const normalized = value.trim().replace(/^\.+|\.+$/g, '').toUpperCase()
+  return normalized || undefined
+}
+
+function getOutputFormatsForPath(filePath: string): string[] {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.pdf')) return ['PDF']
+  if (lower.endsWith('.doc') || lower.endsWith('.docx')) return ['DOCX']
+  if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) return ['XLSX']
+  if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) return ['PPTX']
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return ['MD']
+  if (lower.endsWith('.csv')) return ['CSV']
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return ['HTML']
+  if (lower.endsWith('.json')) return ['JSON']
+  if (lower.endsWith('.txt')) return ['TXT']
+  return []
+}
+
+const TOOL_VERIFICATION_EVIDENCE_PATTERN = /测试|单测|验证|检查|构建|类型检查|source_test|skill_validate|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b/i
+
+function getSuccessfulToolVerificationMessages(messages: Message[]): Message[] {
+  return messages.filter(message =>
+    isSuccessfulTool(message)
+    && TOOL_VERIFICATION_EVIDENCE_PATTERN.test(buildToolEvidenceText(message))
+  )
+}
+
+function buildToolEvidenceText(message: Message): string {
+  return [
+    message.toolName,
+    message.content,
+    stringifyToolEvidenceValue(message.toolInput),
+    stringifyToolEvidenceValue(message.toolResult),
+  ].filter(Boolean).join('\n')
+}
+
+function stringifyToolEvidenceValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value.slice(0, 4000)
+  try {
+    return JSON.stringify(value).slice(0, 4000)
+  } catch {
+    return String(value).slice(0, 4000)
+  }
+}
+
+function summarizeToolVerificationMessage(message: Message): string {
+  const label = message.toolName?.trim() || 'tool'
+  const result = typeof message.toolResult === 'string' && message.toolResult.trim()
+    ? ` - ${message.toolResult.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+    : ''
+  return `${label}${result}`.slice(0, 500)
+}
+
+function hasRepeatedGoalFailure(history: SessionGoalState['auditHistory'], result: SessionGoalAuditResult): boolean {
+  if (result.status === 'pass' || result.missingCriteria.length === 0) {
+    return false
+  }
+
+  const previous = [...history].reverse().find(item => item.status !== 'pass' && item.missingCriteria.length > 0)
+  if (!previous) {
+    return false
+  }
+
+  const currentMissing = normalizeMissingCriteria(result.missingCriteria)
+  const previousMissing = normalizeMissingCriteria(previous.missingCriteria)
+  return currentMissing.length > 0
+    && currentMissing.length === previousMissing.length
+    && currentMissing.every((criterion, index) => criterion === previousMissing[index])
+}
+
+function normalizeMissingCriteria(criteria: string[]): string[] {
+  return [...new Set(criteria
+    .map(criterion => criterion.replace(/\s+/g, ' ').trim().toLowerCase())
+    .filter(Boolean))]
+    .sort()
+}
+
+function buildFileVerificationEvidenceLabel(verification: GoalFileVerificationResult): string {
+  if (!verification.exists) return 'file_missing'
+  if (verification.readable === false) return 'file_unreadable'
+  if (verification.isFile === false) return 'file_not_file'
+  if (verification.sizeBytes === 0) return 'file_empty'
+  return 'file_verification_failed'
+}
+
+function buildFilePreviewEvidenceLabel(verification: GoalFileVerificationResult, isOutputFile: boolean): string {
+  const prefix = isOutputFile ? 'file_preview' : 'source_file_preview'
+  return verification.previewTruncated ? `${prefix}_truncated` : prefix
+}
+
+const FILE_PATH_INPUT_KEYS = new Set([
+  'file',
+  'file_path',
+  'file_paths',
+  'filepath',
+  'filepaths',
+  'files',
+  'filename',
+  'notebook_path',
+  'output',
+  'output_file',
+  'output_files',
+  'output_path',
+  'output_paths',
+  'path',
+  'paths',
+])
+
+const OUTPUT_FILE_PATH_INPUT_KEYS = new Set([
+  'destination',
+  'destination_file',
+  'destination_files',
+  'destination_path',
+  'destination_paths',
+  'output',
+  'output_file',
+  'output_files',
+  'output_path',
+  'output_paths',
+  'target',
+  'target_file',
+  'target_files',
+  'target_path',
+  'target_paths',
+])
+
+const OUTPUT_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:write|writemany|writefile|edit|multiedit|notebookedit|save|export|convert|generate|create|update|replace)(?:$|[_\-\s])/i
+const OUTPUT_RESULT_TEXT_PATTERN = /(?:created|wrote|written|saved|exported|converted|generated|updated|创建|生成|写入|保存|导出|转换|更新).{0,200}(?:[A-Za-z]:\\|\/)/i
+const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
+const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
+
+function extractOutputFilePaths(message: Message, inputPaths: string[], resultPaths: string[]): string[] {
+  if (!isSuccessfulTool(message)) {
+    return []
+  }
+
+  const paths = new Set<string>(extractFilePaths(message.toolInput, undefined, OUTPUT_FILE_PATH_INPUT_KEYS))
+  const toolName = message.toolName ?? ''
+  const toolResult = typeof message.toolResult === 'string' ? message.toolResult : ''
+
+  if (OUTPUT_TOOL_NAME_PATTERN.test(toolName)) {
+    for (const path of inputPaths) paths.add(path)
+    for (const path of resultPaths) paths.add(path)
+  } else if (OUTPUT_RESULT_TEXT_PATTERN.test(toolResult)) {
+    for (const path of resultPaths) paths.add(path)
+  }
+
+  return [...paths]
+}
+
+function extractFilePaths(value: unknown, key?: string, pathKeys = FILE_PATH_INPUT_KEYS): string[] {
+  if (typeof value === 'string') {
+    return key && pathKeys.has(key.toLowerCase()) && value.trim()
+      ? [value.trim()]
+      : []
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(item => extractFilePaths(item, key, pathKeys))
+  }
+
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([childKey, childValue]) => extractFilePaths(childValue, childKey, pathKeys))
+}
+
+function extractFilePathsFromText(value: unknown): string[] {
+  if (typeof value !== 'string' || !value.trim()) {
+    return []
+  }
+
+  return [...new Set([
+    ...[...value.matchAll(QUOTED_FILE_PATH_TEXT_PATTERN)].map(match => match[1]),
+    ...[...value.matchAll(FILE_PATH_TEXT_PATTERN)].map(match => match[0]),
+  ])]
+}
+
+function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessageId?: string): Message[] {
+  if (!turnStartFinalMessageId) return messages
+  const index = messages.findIndex(message => message.id === turnStartFinalMessageId)
+  return index === -1 ? messages : messages.slice(index + 1)
+}
+
+function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalAuditResult): string {
+  const missing = result.missingCriteria.length > 0
+    ? result.missingCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : '1. Re-check the deliverable against the original objective.'
+  const evidence = result.evidence.length > 0
+    ? result.evidence.map((item, index) => {
+        const detail = item.detail ? ` - ${item.detail}` : ''
+        return `${index + 1}. [${item.type}] ${item.label}${detail}`
+      }).join('\n')
+    : '(none)'
+  const previousAudits = buildPreviousAuditSummary(goalState.auditHistory)
+
+  return [
+    '<goal-audit>',
+    'This is an internal goal audit instruction, not a new user request.',
+    '',
+    'Objective:',
+    goalState.objective,
+    '',
+    'The previous response could not be proven complete.',
+    `Audit summary: ${result.summary}`,
+    '',
+    'Missing or unproven criteria:',
+    missing,
+    '',
+    'Audit evidence:',
+    evidence,
+    '',
+    'Previous goal audits:',
+    previousAudits,
+    '',
+    'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
+    '</goal-audit>',
+  ].join('\n')
+}
+
+function buildPreviousAuditSummary(history: SessionGoalState['auditHistory']): string {
+  if (history.length === 0) {
+    return '(none)'
+  }
+
+  return history.slice(-3).map(result => {
+    const missing = result.missingCriteria.length > 0
+      ? `\n  Missing: ${result.missingCriteria.slice(0, 4).map(summarizePromptText).join('; ')}`
+      : ''
+    const correction = result.correctivePrompt
+      ? `\n  Correction: ${summarizePromptText(result.correctivePrompt)}`
+      : ''
+    return `Iteration ${result.iteration}: ${result.status} - ${summarizePromptText(result.summary)}${missing}${correction}`
+  }).join('\n')
+}
+
+function summarizePromptText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 1000) || '(empty)'
+}

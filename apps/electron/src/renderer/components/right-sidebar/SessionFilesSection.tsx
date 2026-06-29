@@ -18,7 +18,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
-import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight } from 'lucide-react'
+import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight, Database } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   ContextMenu,
@@ -288,6 +288,7 @@ interface FileTreeItemProps {
   onFileDoubleClick: (file: SessionFile) => void
   onRevealInFileManager: (path: string) => void
   onPromoteFile: (file: SessionFile) => void
+  onCreateFileMemorySource: (file: SessionFile) => void
   /** Whether this item is inside an expanded folder (for stagger animation) */
   isNested?: boolean
 }
@@ -308,6 +309,7 @@ function FileTreeItem({
   onFileDoubleClick,
   onRevealInFileManager,
   onPromoteFile,
+  onCreateFileMemorySource,
   isNested,
 }: FileTreeItemProps) {
   const { t } = useTranslation()
@@ -403,6 +405,12 @@ function FileTreeItem({
               {t("chat.openFile")}
             </StyledContextMenuItem>
           )}
+          {file.type !== 'directory' && (
+            <StyledContextMenuItem onSelect={() => onCreateFileMemorySource(file)}>
+              <Database className="h-3.5 w-3.5" />
+              {t('chat.createFileMemorySource')}
+            </StyledContextMenuItem>
+          )}
           {file.source !== 'official-output' && (
             <StyledContextMenuItem onSelect={() => onPromoteFile(file)}>
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -454,6 +462,7 @@ function FileTreeItem({
                         onFileDoubleClick={onFileDoubleClick}
                         onRevealInFileManager={onRevealInFileManager}
                         onPromoteFile={onPromoteFile}
+                        onCreateFileMemorySource={onCreateFileMemorySource}
                         isNested={true}
                       />
                     </motion.div>
@@ -654,6 +663,19 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [loadFiles, saveExpandedPaths, sessionId, t])
 
+  const handleCreateFileMemorySource = useCallback(async (file: SessionFile) => {
+    if (!sessionId || file.type === 'directory') return
+    try {
+      const result = await window.electronAPI.createFileMemorySource(sessionId, file.path, { autoEnable: true })
+      toast.success(t('chat.fileMemorySourceCreated'), {
+        description: result.sourceSlug,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('chat.failedToCreateFileMemorySource'), { description: message })
+    }
+  }, [sessionId, t])
+
   if (!sessionId) {
     return null
   }
@@ -717,6 +739,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
                 onFileDoubleClick={handleFileDoubleClick}
                 onRevealInFileManager={handleRevealInFileManager}
                 onPromoteFile={handlePromoteFile}
+                onCreateFileMemorySource={handleCreateFileMemorySource}
               />
             ))}
           </nav>

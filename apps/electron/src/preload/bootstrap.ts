@@ -192,6 +192,8 @@ client.handleCapability(CLIENT_BROWSER_INVOKE, async (req: BrowserCapabilityRequ
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
 
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
+;(api as ElectronAPI).showSaveDialog = (spec) => ipcRenderer.invoke('__dialog:showSaveDialog', spec)
+;(api as ElectronAPI).saveTextFileWithDialog = (spec) => ipcRenderer.invoke('__dialog:saveTextFileWithDialog', spec)
 
 // ---------------------------------------------------------------------------
 // Transport connection state logging (for remote connections)

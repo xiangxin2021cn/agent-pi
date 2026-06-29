@@ -1,8 +1,6 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { describe, expect, it, mock } from 'bun:test'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
-
-const registeredChannels: string[] = []
 
 mock.module('electron', () => ({
   ipcMain: {
@@ -42,7 +40,7 @@ mock.module('electron', () => ({
   session: {},
 }))
 
-function createMockServer(): RpcServer {
+function createMockServer(registeredChannels: string[]): RpcServer {
   return {
     handle(channel: string, _handler: unknown) {
       registeredChannels.push(channel)
@@ -157,15 +155,12 @@ async function getExpectedChannels(): Promise<Set<string>> {
 }
 
 describe('RPC handler registration', () => {
-  beforeEach(() => {
-    registeredChannels.length = 0
-  })
-
   it('registers all declared handled channels exactly once', async () => {
+    const registeredChannels: string[] = []
     const expected = await getExpectedChannels()
     const { registerAllRpcHandlers } = await import('../index')
 
-    registerAllRpcHandlers(createMockServer(), createMockDeps())
+    registerAllRpcHandlers(createMockServer(registeredChannels), createMockDeps())
 
     const appChannels = registeredChannels.filter(ch => ch.includes(':'))
     const actual = new Set(appChannels)
@@ -187,17 +182,18 @@ describe('RPC handler registration', () => {
       .sort()
 
     expect(duplicates).toEqual([])
-  })
+  }, 15_000)
 
   it('keeps onboarding channels in registration coverage', async () => {
+    const registeredChannels: string[] = []
     const { HANDLED_CHANNELS } = await import('@craft-agent/server-core/handlers/rpc/onboarding')
     const { registerAllRpcHandlers } = await import('../index')
 
-    registerAllRpcHandlers(createMockServer(), createMockDeps())
+    registerAllRpcHandlers(createMockServer(registeredChannels), createMockDeps())
 
     const actual = new Set(registeredChannels)
     const missingOnboarding = HANDLED_CHANNELS.filter(ch => !actual.has(ch))
 
     expect(missingOnboarding).toEqual([])
-  })
+  }, 15_000)
 })

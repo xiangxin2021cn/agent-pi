@@ -4,6 +4,10 @@ import StarterKit from '@tiptap/starter-kit'
 import { Mathematics } from '@tiptap/extension-mathematics'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableCell } from '@tiptap/extension-table-cell'
 import Image from '@tiptap/extension-image'
 import { Markdown } from '@tiptap/markdown'
 import {
@@ -158,6 +162,50 @@ describe('official markdown + mathematics foundation', () => {
     expect(md).toContain('- [ ] Draft release notes')
     expect(md).toContain('- [x] Ship task list slash command')
     expect(md).toContain('  - [ ] Add follow-up docs')
+
+    editor.destroy()
+  })
+
+  it('round-trips GFM tables in official markdown mode', () => {
+    const source = [
+      '| # | 文件 | 金额 |',
+      '|---|---|---:|',
+      '| 1 | 1200_General_Requirements.md | 211,044,600 |',
+      '| 2 | 1300_Contractors_Establishment.md | 635,494,000 |',
+    ].join('\n')
+
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        Table.configure({ resizable: true }),
+        TableRow,
+        TableHeader,
+        TableCell,
+        Markdown.configure({
+          markedOptions: {
+            gfm: true,
+          },
+        }),
+      ],
+      content: source,
+      contentType: 'markdown',
+    })
+
+    const json = editor.getJSON()
+    const md = editor.getMarkdown()
+    const jsonText = JSON.stringify(json)
+
+    expect(jsonText).toContain('"type":"table"')
+    expect(jsonText).toContain('"type":"tableRow"')
+    expect(jsonText).toContain('"type":"tableHeader"')
+    expect(jsonText).toContain('"type":"tableCell"')
+    expect(md).toContain('| #')
+    expect(md).toContain('文件')
+    expect(md).toContain('金额')
+    expect(md).toContain('1200_General_Requirements.md')
+    expect(md).toContain('211,044,600')
+    expect(md).toContain('1300_Contractors_Establishment.md')
+    expect(md).toContain('635,494,000')
 
     editor.destroy()
   })

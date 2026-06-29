@@ -148,6 +148,7 @@ export {
   handleMermaidValidate,
   // Source Test
   handleSourceTest,
+  handleFileMemorySourceCreate,
   // OAuth Triggers
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -173,6 +174,7 @@ export type {
   SkillValidateArgs,
   MermaidValidateArgs,
   SourceTestArgs,
+  FileMemorySourceCreateArgs,
   SourceOAuthTriggerArgs,
   GoogleOAuthTriggerArgs,
   SlackOAuthTriggerArgs,
@@ -193,6 +195,7 @@ export {
   SkillValidateSchema,
   MermaidValidateSchema,
   SourceTestSchema,
+  FileMemorySourceCreateSchema,
   SourceOAuthTriggerSchema,
   CredentialPromptSchema,
   CallLlmSchema,

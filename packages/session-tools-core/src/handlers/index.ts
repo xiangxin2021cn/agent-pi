@@ -25,6 +25,10 @@ export type { MermaidValidateArgs } from './mermaid-validate.ts';
 export { handleSourceTest } from './source-test.ts';
 export type { SourceTestArgs } from './source-test.ts';
 
+// File Memory Source Create
+export { handleFileMemorySourceCreate } from './file-memory-source-create.ts';
+export type { FileMemorySourceCreateArgs } from './file-memory-source-create.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

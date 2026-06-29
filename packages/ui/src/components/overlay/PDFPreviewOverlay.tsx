@@ -1,26 +1,17 @@
 /**
- * PDFPreviewOverlay - In-app PDF preview using Mozilla's pdf.js via react-pdf.
+ * PDFPreviewOverlay - In-app PDF preview using Chromium's native PDF viewer.
  *
- * Renders PDFs using the react-pdf library, which wraps pdfjs-dist.
+ * Renders PDFs through a blob URL in an iframe. This avoids pdf.js worker URL
+ * issues in packaged Electron builds while still keeping the preview in-app.
  * Supports multiple items with arrow navigation in the header.
- *
- * The PDF is loaded from a Uint8Array (via IPC) and rendered to canvas.
- * The pdf.js worker handles decoding and rendering in a background thread.
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Document, Page, pdfjs } from 'react-pdf'
 import { FileText } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
 import { CopyButton } from './CopyButton'
 import { ItemNavigator } from './ItemNavigator'
-import 'react-pdf/dist/Page/AnnotationLayer.css'
-import 'react-pdf/dist/Page/TextLayer.css'
-
-// Configure pdf.js worker using Vite's ?url import for cross-platform dev/prod compatibility
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 interface PreviewItem {
   src: string
@@ -59,8 +50,7 @@ export function PDFPreviewOverlay({
   }, [items, filePath])
 
   const [activeIdx, setActiveIdx] = useState(initialIndex)
-  const [pdfData, setPdfData] = useState<Uint8Array | null>(null)
-  const [numPages, setNumPages] = useState<number>(0)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -78,15 +68,18 @@ export function PDFPreviewOverlay({
     if (!isOpen || !activeItem?.src) return
 
     let cancelled = false
+    let objectUrl: string | null = null
     setIsLoading(true)
     setError(null)
-    setPdfData(null)
-    setNumPages(0)
+    setPdfUrl(null)
 
     loadPdfData(activeItem.src)
       .then((data) => {
         if (!cancelled) {
-          setPdfData(data)
+          const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+          objectUrl = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }))
+          setPdfUrl(objectUrl)
           setIsLoading(false)
         }
       })
@@ -97,22 +90,15 @@ export function PDFPreviewOverlay({
         }
       })
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [isOpen, activeItem?.src, loadPdfData])
 
-  const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-    setNumPages(numPages)
+  const handleFrameLoad = useCallback(() => {
+    setIsLoading(false)
   }, [])
-
-  const onDocumentLoadError = useCallback((error: Error) => {
-    setError(`Failed to load PDF: ${error.message}`)
-  }, [])
-
-  // Memoize file object to prevent unnecessary re-renders (react-pdf uses === equality)
-  const fileObj = useMemo(() =>
-    pdfData ? { data: pdfData } : null,
-    [pdfData]
-  )
 
   // Header actions: item navigation + copy button
   const headerActions = (
@@ -136,27 +122,19 @@ export function PDFPreviewOverlay({
       error={error ? { label: 'Load Failed', message: error } : undefined}
       headerActions={headerActions}
     >
-      <div className="h-full flex flex-col items-center overflow-auto">
+      <div className="h-full min-h-[70vh] flex flex-col items-center overflow-hidden">
         {isLoading && (
-          <div className="text-muted-foreground text-sm">{t('preview.loadingPdf')}</div>
+          <div className="absolute z-10 mt-6 rounded-[6px] bg-background px-3 py-2 text-sm text-muted-foreground shadow-minimal">
+            {t('preview.loadingPdf')}
+          </div>
         )}
-        {fileObj && (
-          <Document
-            file={fileObj}
-            onLoadSuccess={onDocumentLoadSuccess}
-            onLoadError={onDocumentLoadError}
-            loading={<div className="text-muted-foreground text-sm">{t('common.rendering')}</div>}
-          >
-            {Array.from({ length: numPages }, (_, i) => (
-              <Page
-                key={i + 1}
-                pageNumber={i + 1}
-                renderTextLayer={true}
-                renderAnnotationLayer={true}
-                className="pdf-page"
-              />
-            ))}
-          </Document>
+        {pdfUrl && (
+          <iframe
+            src={pdfUrl}
+            title={activeItem?.label || activeItem?.src || filePath}
+            className="h-full min-h-[70vh] w-full border-0 bg-background"
+            onLoad={handleFrameLoad}
+          />
         )}
       </div>
     </PreviewOverlay>

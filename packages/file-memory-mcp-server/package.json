@@ -1,0 +1,23 @@
+{
+  "name": "@craft-agent/file-memory-mcp-server",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Read-only MCP server for a single indexed file memory source",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "bin": {
+    "file-memory-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir=dist --target=node --format=cjs",
+    "dev": "bun run src/index.ts",
+    "test": "bun test src/search.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

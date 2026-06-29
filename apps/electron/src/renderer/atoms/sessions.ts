@@ -12,6 +12,7 @@ import { atom } from 'jotai'
 import type { Getter, Setter } from 'jotai/vanilla'
 import { atomFamily } from 'jotai-family'
 import type { Session, Message } from '../../shared/types'
+import type { SessionGoalState } from '@craft-agent/shared/sessions'
 
 /**
  * Session metadata for list display (lightweight, no messages)
@@ -57,6 +58,8 @@ export interface SessionMeta {
   model?: string
   /** LLM connection slug for this session */
   llmConnection?: string
+  /** Application-level goal audit state for work-session completion checks */
+  goalState?: SessionGoalState
   /** Token usage stats (from JSONL header, available without loading messages) */
   tokenUsage?: {
     inputTokens: number

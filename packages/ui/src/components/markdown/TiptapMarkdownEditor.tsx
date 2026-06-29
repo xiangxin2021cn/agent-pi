@@ -4,6 +4,10 @@ import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from './extensions/AnimatedTaskItem'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableCell } from '@tiptap/extension-table-cell'
 import { Mathematics } from '@tiptap/extension-mathematics'
 import Image from '@tiptap/extension-image'
 import FileHandler from '@tiptap/extension-file-handler'
@@ -238,6 +242,12 @@ export function TiptapMarkdownEditor({
       TaskItem.configure({
         nested: true,
       }),
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
       tiptapCodeBlock.configure({
         themes: { light: 'github-light', dark: 'github-dark' },
       }),

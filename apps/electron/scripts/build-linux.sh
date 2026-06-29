@@ -18,6 +18,40 @@ require_path() {
     fi
 }
 
+stage_koffi_for_pi() {
+    local platform="$1"
+    local arch="$2"
+    local target_dir="${platform}_${arch}"
+    local pi_resource_dir="$ELECTRON_DIR/resources/pi-agent-server"
+    local koffi_source="$ROOT_DIR/node_modules/koffi"
+    local koffi_dest="$pi_resource_dir/node_modules/koffi"
+
+    if [ ! -d "$koffi_source" ]; then
+        echo "WARNING: koffi not found in node_modules. Pi SDK sessions may not work."
+        return
+    fi
+
+    echo "Staging koffi native dependency for ${target_dir}..."
+    rm -rf "$koffi_dest"
+    mkdir -p "$koffi_dest"
+
+    for entry in package.json index.js indirect.js index.d.ts lib; do
+        if [ -e "$koffi_source/$entry" ]; then
+            cp -r "$koffi_source/$entry" "$koffi_dest/"
+        fi
+    done
+
+    local native_source="$koffi_source/build/koffi/$target_dir"
+    local native_dest="$koffi_dest/build/koffi/$target_dir"
+    if [ -d "$native_source" ]; then
+        mkdir -p "$native_dest"
+        cp -r "$native_source/." "$native_dest/"
+    else
+        echo "WARNING: koffi native binary not found for ${target_dir}; copying all koffi native builds as fallback."
+        cp -r "$koffi_source/build" "$koffi_dest/"
+    fi
+}
+
 # Load environment variables from .env
 if [ -f "$ROOT_DIR/.env" ]; then
     set -a
@@ -191,6 +225,7 @@ done
 echo "Building Electron app..."
 cd "$ROOT_DIR"
 bun run electron:build
+stage_koffi_for_pi linux "$ARCH"
 
 # 7. Package with electron-builder
 echo "Packaging app with electron-builder..."
@@ -224,6 +259,15 @@ APPIMAGE_NAME="Agent-Pi-${ARCH}.AppImage"
 APPIMAGE_PATH="$ELECTRON_DIR/release/$APPIMAGE_NAME"
 mv "$BUILT_APPIMAGE_PATH" "$APPIMAGE_PATH"
 echo "Renamed $BUILT_APPIMAGE_NAME -> $APPIMAGE_NAME"
+
+if [ -f "$BUILT_APPIMAGE_PATH.blockmap" ]; then
+    mv "$BUILT_APPIMAGE_PATH.blockmap" "$APPIMAGE_PATH.blockmap"
+    echo "Renamed $BUILT_APPIMAGE_NAME.blockmap -> $APPIMAGE_NAME.blockmap"
+fi
+
+if [ -f "$ELECTRON_DIR/release/latest-linux.yml" ]; then
+    sed -i "s/$BUILT_APPIMAGE_NAME/$APPIMAGE_NAME/g" "$ELECTRON_DIR/release/latest-linux.yml"
+fi
 
 echo ""
 echo "=== Build Complete ==="

@@ -3,7 +3,21 @@ import { basename, extname, isAbsolute, join, resolve, dirname, parse as parsePa
 import { homedir } from 'os'
 import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
-import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
+import {
+  RPC_CHANNELS,
+  type AttachmentDialogMode,
+  type AttachmentDialogResult,
+  type FileAttachment,
+  type DirectoryListingResult,
+  type FilePreviewReadResult,
+  type FileWriteTextOptions,
+  type FileWriteTextResult,
+  type MarkdownExportFormat,
+  type MarkdownExportOptions,
+  type MarkdownExportResult,
+  type SpreadsheetCellValue,
+  type SpreadsheetPreviewResult,
+} from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, getSessionOutputPathFromSessionPath, validateSessionId } from '@craft-agent/shared/sessions'
@@ -12,11 +26,14 @@ import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { MarkItDown } from 'markitdown-js'
 import xlsx, { type WorkBook, type WorkSheet } from 'xlsx'
+import { marked } from 'marked'
+import { strToU8, zipSync } from 'fflate'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 
-const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls'])
+const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
+const MARKDOWN_EDIT_EXTENSIONS = new Set(['.md', '.markdown'])
 const OFFICE_PREVIEW_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
 const TEXT_PREVIEW_MAX_BYTES = 1 * 1024 * 1024
 const SPREADSHEET_PREVIEW_MAX_BYTES = 50 * 1024 * 1024
@@ -30,7 +47,49 @@ const SPREADSHEET_MAX_TOTAL_DECLARED_CELLS = 1_000_000
 const SPREADSHEET_SAMPLE_SHEETS = 8
 const SPREADSHEET_SAMPLE_ROWS = 12
 const SPREADSHEET_SAMPLE_COLS = 8
+const SPREADSHEET_TABLE_MAX_ROWS = 200
+const SPREADSHEET_TABLE_MAX_COLS = 50
 const SPREADSHEET_CELL_TEXT_LIMIT = 160
+const ATTACHMENT_DIALOG_MAX_FILES = 250
+const ATTACHMENT_DIALOG_MAX_DIRECTORIES = 1_000
+const ATTACHMENT_DIALOG_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+  'vendor',
+  'coverage',
+  '.turbo',
+  'out',
+])
+
+const ATTACHMENT_DIALOG_FILTERS = [
+  { name: 'All Files', extensions: ['*'] },
+  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'] },
+  { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'txt', 'md', 'rtf'] },
+  { name: 'Code', extensions: ['js', 'ts', 'tsx', 'jsx', 'py', 'json', 'css', 'html', 'xml', 'yaml', 'yml', 'sh', 'sql', 'go', 'rs', 'rb', 'php', 'java', 'c', 'cpp', 'h', 'swift', 'kt'] },
+]
+
+export function buildAttachmentDialogSpec(mode: AttachmentDialogMode = 'files') {
+  if (mode === 'folders') {
+    return {
+      title: 'Attach folder',
+      properties: ['openDirectory', 'multiSelections'],
+    }
+  }
+
+  return {
+    title: 'Attach files',
+    properties: ['openFile', 'multiSelections'],
+    filters: ATTACHMENT_DIALOG_FILTERS,
+  }
+}
 
 interface SpreadsheetCellRef {
   address: string
@@ -49,17 +108,10 @@ interface SpreadsheetSheetSummary {
   sampleRows: string[][]
 }
 
-interface SpreadsheetPreviewResult {
+interface SpreadsheetMarkdownPreviewResult {
   textContent: string
   fullConversionAllowed: boolean
   reason?: string
-}
-
-interface FilePreviewReadResult {
-  content: string
-  truncated: boolean
-  originalSize: number
-  previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
 }
 
 function clampCellText(value: unknown): string {
@@ -86,6 +138,15 @@ function formatBytes(bytes: number): string {
     unit = units[i]
   }
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function readUtf8Prefix(filePath: string, maxBytes: number): Promise<string> {
@@ -149,13 +210,223 @@ function getAllowedDirsForFileRequest(deps: HandlerDeps, workspaceId?: string | 
   ]
 }
 
-function buildPathBackedAttachment(filePath: string, size: number): FileAttachment {
+function buildPathBackedAttachment(filePath: string, size: number, name = basename(filePath)): FileAttachment {
   return {
     type: getFileType(filePath),
     path: filePath,
-    name: basename(filePath),
+    name,
     mimeType: getMimeType(filePath),
     size,
+  }
+}
+
+function shouldSkipFolderAttachmentEntry(name: string, isDirectory: boolean): boolean {
+  if (name.startsWith('.')) return true
+  return isDirectory && ATTACHMENT_DIALOG_SKIP_DIRS.has(name)
+}
+
+interface AttachmentDialogCollection {
+  attachments: FileAttachment[]
+  skippedCount: number
+  truncated: boolean
+}
+
+export async function collectAttachmentDialogFiles(
+  selectedPaths: string[],
+  options: { maxFiles?: number; maxDirectories?: number } = {},
+): Promise<AttachmentDialogCollection> {
+  const maxFiles = options.maxFiles ?? ATTACHMENT_DIALOG_MAX_FILES
+  const maxDirectories = options.maxDirectories ?? ATTACHMENT_DIALOG_MAX_DIRECTORIES
+  const attachments: FileAttachment[] = []
+  const seen = new Set<string>()
+  let skippedCount = 0
+  let truncated = false
+  let visitedDirectories = 0
+
+  const addFile = async (filePath: string, displayName?: string): Promise<void> => {
+    if (attachments.length >= maxFiles) {
+      truncated = true
+      return
+    }
+
+    const resolved = resolve(filePath)
+    if (seen.has(resolved)) return
+    seen.add(resolved)
+
+    const info = await stat(resolved).catch(() => null)
+    if (!info || !info.isFile()) {
+      skippedCount += 1
+      return
+    }
+
+    if (info.size === 0 || info.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
+      skippedCount += 1
+      return
+    }
+
+    attachments.push(buildPathBackedAttachment(resolved, info.size, displayName))
+  }
+
+  for (const selectedPath of selectedPaths) {
+    const selectedInfo = await stat(selectedPath).catch(() => null)
+    if (!selectedInfo) {
+      skippedCount += 1
+      continue
+    }
+
+    if (selectedInfo.isFile()) {
+      await addFile(selectedPath)
+      continue
+    }
+
+    if (!selectedInfo.isDirectory()) {
+      skippedCount += 1
+      continue
+    }
+
+    const rootPath = resolve(selectedPath)
+    const rootName = basename(rootPath)
+    const queue: Array<{ dir: string; relDir: string }> = [{ dir: rootPath, relDir: '' }]
+
+    while (queue.length > 0) {
+      if (attachments.length >= maxFiles) {
+        truncated = true
+        break
+      }
+
+      if (visitedDirectories >= maxDirectories) {
+        truncated = true
+        break
+      }
+
+      const current = queue.shift()!
+      visitedDirectories += 1
+
+      const entries = await readdir(current.dir, { withFileTypes: true }).catch(() => {
+        skippedCount += 1
+        return []
+      })
+
+      for (const entry of entries) {
+        if (attachments.length >= maxFiles) {
+          truncated = true
+          break
+        }
+
+        if (entry.isSymbolicLink()) {
+          skippedCount += 1
+          continue
+        }
+
+        const isDirectory = entry.isDirectory()
+        if (shouldSkipFolderAttachmentEntry(entry.name, isDirectory)) {
+          skippedCount += 1
+          continue
+        }
+
+        const relativePath = current.relDir ? `${current.relDir}/${entry.name}` : entry.name
+        const fullPath = join(current.dir, entry.name)
+
+        if (isDirectory) {
+          queue.push({ dir: fullPath, relDir: relativePath })
+        } else if (entry.isFile()) {
+          await addFile(fullPath, `${rootName}/${relativePath}`)
+        } else {
+          skippedCount += 1
+        }
+      }
+    }
+  }
+
+  return { attachments, skippedCount, truncated }
+}
+
+async function prepareImageAttachmentBuffer(
+  initialBuffer: Buffer,
+  attachment: Pick<FileAttachment, 'mimeType' | 'size'>,
+  deps: HandlerDeps,
+): Promise<{ buffer: Buffer; wasResized: boolean; resizedBase64?: string }> {
+  let decoded = initialBuffer
+  let wasResized = false
+
+  const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
+  const imageSize = imageInspection.status === 'ok'
+    ? { width: imageInspection.width, height: imageInspection.height }
+    : null
+
+  let shouldResize = false
+  let targetSize: { width: number; height: number } | undefined
+
+  if (imageInspection.status === 'processor_unavailable') {
+    deps.platform.logger.warn('Image processing unavailable while validating attachment:', imageInspection.error?.message ?? 'unknown error')
+    if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+      throw new Error('Image processing is unavailable, so oversized images cannot be validated or resized automatically. Please attach a smaller image.')
+    }
+  } else if (imageInspection.status === 'invalid_image') {
+    throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
+  } else {
+    const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
+
+    shouldResize = validation.needsResize ?? false
+    targetSize = validation.suggestedSize
+
+    if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
+      const maxDim = IMAGE_LIMITS.MAX_DIMENSION
+      const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
+      targetSize = {
+        width: Math.floor(imageSize!.width * scale),
+        height: Math.floor(imageSize!.height * scale),
+      }
+      shouldResize = true
+      deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
+    } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
+      shouldResize = true
+      deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
+    } else if (!validation.valid) {
+      throw new Error(validation.error)
+    }
+  }
+
+  if (shouldResize) {
+    const isPhoto = attachment.mimeType === 'image/jpeg'
+
+    if (targetSize) {
+      deps.platform.logger.info(`Resizing image from ${imageSize!.width}x${imageSize!.height} to ${targetSize.width}x${targetSize.height}`)
+      try {
+        decoded = await deps.platform.imageProcessor.process(decoded, {
+          resize: { width: targetSize.width, height: targetSize.height },
+          format: isPhoto ? 'jpeg' : 'png',
+          quality: isPhoto ? IMAGE_LIMITS.JPEG_QUALITY_HIGH : undefined,
+        })
+        wasResized = true
+
+        if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+          decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
+          if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
+            throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
+          }
+        }
+      } catch (resizeError) {
+        deps.platform.logger.error('Image resize failed:', resizeError)
+        const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
+        throw new Error(`Image too large (${imageSize!.width}x${imageSize!.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
+      }
+    } else {
+      const result = await resizeImageForAPI(decoded, { isPhoto })
+      if (!result) {
+        throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
+      }
+      decoded = result.buffer
+      wasResized = true
+    }
+
+    deps.platform.logger.info(`Image resized: ${attachment.size} -> ${decoded.length} bytes (${Math.round((1 - decoded.length / attachment.size) * 100)}% reduction)`)
+  }
+
+  return {
+    buffer: decoded,
+    wasResized,
+    resizedBase64: wasResized ? decoded.toString('base64') : undefined,
   }
 }
 
@@ -244,7 +515,7 @@ function markdownTable(headers: string[], rows: string[][]): string {
   ].join('\n')
 }
 
-export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook, filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook, filePath: string, originalName = basename(filePath)): SpreadsheetMarkdownPreviewResult {
   const sheetSummaries: SpreadsheetSheetSummary[] = []
   let totalDeclaredCells = 0
   for (const sheetName of workbook.SheetNames) {
@@ -315,7 +586,7 @@ export function createSpreadsheetMarkdownPreviewFromWorkbook(workbook: WorkBook,
   }
 }
 
-export function createSpreadsheetMarkdownPreview(filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+export function createSpreadsheetMarkdownPreview(filePath: string, originalName = basename(filePath)): SpreadsheetMarkdownPreviewResult {
   const workbook = xlsx.readFile(filePath, {
     cellDates: true,
     cellFormula: false,
@@ -327,13 +598,540 @@ export function createSpreadsheetMarkdownPreview(filePath: string, originalName 
   return createSpreadsheetMarkdownPreviewFromWorkbook(workbook, filePath, originalName)
 }
 
+function spreadsheetColumnLabel(index: number): string {
+  let n = index + 1
+  let label = ''
+  while (n > 0) {
+    const remainder = (n - 1) % 26
+    label = String.fromCharCode(65 + remainder) + label
+    n = Math.floor((n - 1) / 26)
+  }
+  return label
+}
+
+function normalizeSpreadsheetCell(value: unknown): SpreadsheetCellValue {
+  if (value == null) return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+  if (value instanceof Date) return value.toISOString()
+  return String(value)
+}
+
+export function createSpreadsheetTablePreviewFromWorkbook(
+  workbook: WorkBook,
+  filePath: string,
+  originalName = basename(filePath)
+): SpreadsheetPreviewResult {
+  const sheets = workbook.SheetNames.slice(0, SPREADSHEET_SAMPLE_SHEETS).map(sheetName => {
+    const worksheet = workbook.Sheets[sheetName]
+    const matrix = worksheet
+      ? xlsx.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: null, raw: true })
+      : []
+    const totalRows = matrix.length
+    const totalCols = matrix.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0)
+    const visibleCols = Math.min(totalCols, SPREADSHEET_TABLE_MAX_COLS)
+    const columns = Array.from({ length: visibleCols }, (_, index) => {
+      const label = spreadsheetColumnLabel(index)
+      return { key: label, label }
+    })
+    const rows = matrix.slice(0, SPREADSHEET_TABLE_MAX_ROWS).map(row => {
+      const record: Record<string, SpreadsheetCellValue> = {}
+      for (let col = 0; col < visibleCols; col += 1) {
+        const key = columns[col].key
+        record[key] = normalizeSpreadsheetCell(Array.isArray(row) ? row[col] : null)
+      }
+      return record
+    })
+
+    return {
+      name: sheetName,
+      columns,
+      rows,
+      totalRows,
+      totalCols,
+      truncated: totalRows > SPREADSHEET_TABLE_MAX_ROWS || totalCols > SPREADSHEET_TABLE_MAX_COLS,
+    }
+  })
+
+  return {
+    filePath,
+    fileName: originalName,
+    sheets,
+    activeSheet: sheets[0]?.name ?? null,
+    truncated: workbook.SheetNames.length > SPREADSHEET_SAMPLE_SHEETS || sheets.some(sheet => sheet.truncated),
+  }
+}
+
+export function createSpreadsheetTablePreview(filePath: string, originalName = basename(filePath)): SpreadsheetPreviewResult {
+  const workbook = xlsx.readFile(filePath, {
+    cellDates: true,
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+  })
+
+  return createSpreadsheetTablePreviewFromWorkbook(workbook, filePath, originalName)
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function escapeXml(value: string): string {
+  return escapeHtml(value).replace(/'/g, '&apos;')
+}
+
+type MarkdownExportBlock =
+  | { type: 'heading'; depth: number; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'listItem'; ordered: boolean; index: number; text: string }
+  | { type: 'code'; text: string }
+  | { type: 'quote'; text: string }
+  | { type: 'table'; header: string[]; rows: string[][] }
+  | { type: 'space' }
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+}
+
+function markdownInlineToText(value: string): string {
+  return decodeHtmlEntities(value)
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?[^>]+>/g, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function tokenText(token: any): string {
+  if (!token) return ''
+  if (typeof token.text === 'string') {
+    return markdownInlineToText(token.text)
+  }
+  if (Array.isArray(token.tokens)) {
+    return token.tokens.map(tokenText).filter(Boolean).join(' ')
+  }
+  if (typeof token.raw === 'string') {
+    return markdownInlineToText(token.raw)
+  }
+  return ''
+}
+
+export function renderMarkdownBlocksForExport(markdown: string): MarkdownExportBlock[] {
+  const blocks: MarkdownExportBlock[] = []
+  const tokens = marked.lexer(markdown.replace(/\r\n/g, '\n'), { gfm: true })
+
+  const appendTokens = (items: any[]) => {
+    for (const token of items) {
+      switch (token.type) {
+        case 'space':
+          if (blocks[blocks.length - 1]?.type !== 'space') {
+            blocks.push({ type: 'space' })
+          }
+          break
+        case 'heading':
+          blocks.push({
+            type: 'heading',
+            depth: Math.max(1, Math.min(6, Number(token.depth) || 1)),
+            text: tokenText(token),
+          })
+          break
+        case 'paragraph': {
+          const text = tokenText(token)
+          if (text) blocks.push({ type: 'paragraph', text })
+          break
+        }
+        case 'blockquote': {
+          const text = Array.isArray(token.tokens)
+            ? token.tokens.map(tokenText).filter(Boolean).join('\n')
+            : tokenText(token)
+          if (text) blocks.push({ type: 'quote', text })
+          break
+        }
+        case 'code':
+          blocks.push({ type: 'code', text: String(token.text ?? '').trimEnd() })
+          break
+        case 'list': {
+          const ordered = !!token.ordered
+          const start = typeof token.start === 'number' ? token.start : 1
+          const items = Array.isArray(token.items) ? token.items : []
+          items.forEach((item: any, offset: number) => {
+            const text = Array.isArray(item.tokens)
+              ? item.tokens.map(tokenText).filter(Boolean).join(' ')
+              : tokenText(item)
+            if (text) {
+              blocks.push({ type: 'listItem', ordered, index: start + offset, text })
+            }
+          })
+          break
+        }
+        case 'table': {
+          const header = (token.header ?? []).map((cell: any) => tokenText(cell))
+          const rows = (token.rows ?? []).map((row: any[]) => row.map((cell: any) => tokenText(cell)))
+          blocks.push({ type: 'table', header, rows })
+          break
+        }
+        case 'hr':
+          blocks.push({ type: 'space' })
+          break
+        default: {
+          const text = tokenText(token)
+          if (text) blocks.push({ type: 'paragraph', text })
+          break
+        }
+      }
+    }
+  }
+
+  appendTokens(tokens as any[])
+  while (blocks[0]?.type === 'space') blocks.shift()
+  while (blocks[blocks.length - 1]?.type === 'space') blocks.pop()
+  return blocks
+}
+
+async function createMarkdownHtml(content: string, title: string): Promise<string> {
+  const body = await Promise.resolve(marked.parse(content, { gfm: true, breaks: false }))
+  return [
+    '<!doctype html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<meta charset="utf-8">',
+    `<title>${escapeHtml(title)}</title>`,
+    '<style>',
+    '@page{size:A4;margin:18mm 16mm;}',
+    'html,body{margin:0;padding:0;background:#fff;}',
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;line-height:1.65;color:#202124;font-size:14px;}',
+    '.markdown-body{box-sizing:border-box;max-width:900px;margin:40px auto;padding:0 32px;}',
+    'h1,h2,h3,h4{line-height:1.25;margin:1.4em 0 .65em;break-after:avoid;}',
+    'h1{font-size:2em;} h2{font-size:1.55em;} h3{font-size:1.25em;}',
+    'p,ul,ol,blockquote,pre,table{margin:0 0 1em;}',
+    'ul,ol{padding-left:1.6em;} li{margin:.25em 0;}',
+    'a{color:#0969da;text-decoration:none;}',
+    'blockquote{border-left:4px solid #d0d7de;color:#57606a;padding:0 1em;}',
+    'table{border-collapse:collapse;width:100%;table-layout:fixed;page-break-inside:auto;}',
+    'tr{page-break-inside:avoid;page-break-after:auto;}',
+    'th,td{border:1px solid #d0d7de;padding:6px 8px;vertical-align:top;overflow-wrap:anywhere;word-break:break-word;}',
+    'th{background:#f6f8fa;font-weight:600;}',
+    'code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;background:#f6f8fa;border-radius:4px;}',
+    'code{padding:.15em .3em;} pre{padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;page-break-inside:avoid;} pre code{padding:0;background:transparent;}',
+    'img,svg,canvas{max-width:100%;height:auto;}',
+    '@media print{body{font-size:11pt;}.markdown-body{max-width:none;margin:0;padding:0;}a{color:#202124;}h1{font-size:22pt;}h2{font-size:17pt;}h3{font-size:14pt;}}',
+    '</style>',
+    '</head>',
+    '<body>',
+    '<main class="markdown-body">',
+    body,
+    '</main>',
+    '</body>',
+    '</html>',
+  ].join('\n')
+}
+
+function docxRun(text: string, options: { bold?: boolean; size?: number } = {}): string {
+  const props = [
+    options.bold ? '<w:b/>' : '',
+    options.size ? `<w:sz w:val="${options.size}"/>` : '',
+  ].filter(Boolean).join('')
+  return `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ''}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`
+}
+
+function docxParagraph(text: string, options: { bold?: boolean; size?: number; indent?: number; after?: number } = {}): string {
+  const pPr = [
+    options.indent ? `<w:ind w:left="${options.indent}"/>` : '',
+    `<w:spacing w:after="${options.after ?? 120}"/>`,
+  ].filter(Boolean).join('')
+  return `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ''}${docxRun(text, options)}</w:p>`
+}
+
+function docxTable(block: Extract<MarkdownExportBlock, { type: 'table' }>): string {
+  const rows = [block.header, ...block.rows]
+    .filter(row => row.length > 0)
+    .map((row, rowIndex) => [
+      '<w:tr>',
+      ...row.map(cell => [
+        '<w:tc>',
+        '<w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>',
+        docxParagraph(cell, { bold: rowIndex === 0, after: 0 }),
+        '</w:tc>',
+      ].join('')),
+      '</w:tr>',
+    ].join(''))
+    .join('')
+
+  if (!rows) return ''
+  return [
+    '<w:tbl>',
+    '<w:tblPr><w:tblBorders>',
+    '<w:top w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:left w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:right w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>',
+    '</w:tblBorders></w:tblPr>',
+    rows,
+    '</w:tbl>',
+  ].join('')
+}
+
+function createDocxBuffer(markdown: string): Buffer {
+  const blocks = renderMarkdownBlocksForExport(markdown)
+  const documentContent = blocks.map(block => {
+    switch (block.type) {
+      case 'heading':
+        return docxParagraph(block.text, {
+          bold: true,
+          size: block.depth === 1 ? 32 : block.depth === 2 ? 28 : 24,
+          after: 180,
+        })
+      case 'paragraph':
+        return docxParagraph(block.text)
+      case 'listItem':
+        return docxParagraph(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, { indent: 360 })
+      case 'quote':
+        return docxParagraph(block.text, { indent: 360 })
+      case 'code':
+        return docxParagraph(block.text, { indent: 360 })
+      case 'table':
+        return docxTable(block)
+      case 'space':
+        return '<w:p/>'
+    }
+  }).join('')
+
+  const files: Record<string, Uint8Array> = {
+    '[Content_Types].xml': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+      '<Default Extension="xml" ContentType="application/xml"/>',
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+      '</Types>',
+    ].join('')),
+    '_rels/.rels': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>',
+      '</Relationships>',
+    ].join('')),
+    'word/document.xml': strToU8([
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+      '<w:body>',
+      documentContent || '<w:p/>',
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
+      '</w:body>',
+      '</w:document>',
+    ].join('')),
+  }
+
+  return Buffer.from(zipSync(files))
+}
+
+function utf16BeHex(value: string): string {
+  const buffer = Buffer.alloc(value.length * 2)
+  for (let index = 0; index < value.length; index += 1) {
+    buffer.writeUInt16BE(value.charCodeAt(index), index * 2)
+  }
+  return buffer.toString('hex').toUpperCase()
+}
+
+function textWidthUnits(value: string): number {
+  let width = 0
+  for (const char of value) {
+    width += char.charCodeAt(0) > 255 ? 2 : 1
+  }
+  return width
+}
+
+function wrapPdfLine(line: string, maxUnits = 78): string[] {
+  if (!line) return ['']
+  const wrapped: string[] = []
+  let current = ''
+  let units = 0
+  for (const char of line) {
+    const charUnits = char.charCodeAt(0) > 255 ? 2 : 1
+    if (units + charUnits > maxUnits && current) {
+      wrapped.push(current)
+      current = ''
+      units = 0
+    }
+    current += char
+    units += charUnits
+  }
+  if (current) wrapped.push(current)
+  return wrapped
+}
+
+function createPdfBuffer(markdown: string): Buffer {
+  const blocks = renderMarkdownBlocksForExport(markdown)
+  const lines = blocks.flatMap(block => {
+    switch (block.type) {
+      case 'heading':
+        return wrapPdfLine(block.text, block.depth === 1 ? 44 : 56)
+          .map(text => ({ text, size: block.depth === 1 ? 18 : 15, indent: 0, after: 8 }))
+      case 'paragraph':
+        return wrapPdfLine(block.text).map(text => ({ text, size: 11, indent: 0, after: 2 }))
+      case 'listItem':
+        return wrapPdfLine(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, 72)
+          .map(text => ({ text, size: 11, indent: 18, after: 2 }))
+      case 'quote':
+        return wrapPdfLine(block.text, 72).map(text => ({ text, size: 11, indent: 18, after: 2 }))
+      case 'code':
+        return block.text.split('\n').flatMap(line =>
+          wrapPdfLine(line, 72).map(text => ({ text, size: 10, indent: 18, after: 1 }))
+        )
+      case 'table': {
+        const tableLines = [block.header, ...block.rows]
+          .filter(row => row.length > 0)
+          .map(row => row.join('  |  '))
+        return tableLines.flatMap((line, index) =>
+          wrapPdfLine(line, 68).map(text => ({ text, size: 10, indent: 0, after: index === 0 ? 4 : 1 }))
+        )
+      }
+      case 'space':
+        return [{ text: '', size: 11, indent: 0, after: 6 }]
+    }
+  })
+  const linesPerPage = 46
+  const pages = Math.max(1, Math.ceil(lines.length / linesPerPage))
+  const objects: Array<{ id: number; body: string }> = [
+    { id: 1, body: '<< /Type /Catalog /Pages 2 0 R >>' },
+    { id: 2, body: `<< /Type /Pages /Kids [${Array.from({ length: pages }, (_, index) => `${6 + index * 2} 0 R`).join(' ')}] /Count ${pages} >>` },
+    { id: 3, body: '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>' },
+    { id: 4, body: '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 5 >> /FontDescriptor 5 0 R /DW 1000 >>' },
+    { id: 5, body: '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>' },
+  ]
+
+  for (let page = 0; page < pages; page += 1) {
+    const pageLines = lines.slice(page * linesPerPage, (page + 1) * linesPerPage)
+    const commands = [
+      'BT',
+      '50 790 Td',
+      ...pageLines.flatMap((line, index) => {
+        const leading = Math.max(13, line.size + 4 + line.after)
+        const move = index === 0 ? [] : [`0 -${leading} Td`]
+        const indent = line.indent ? [`${line.indent} 0 Td`] : []
+        const resetIndent = line.indent ? [`-${line.indent} 0 Td`] : []
+        return [
+          ...move,
+          `/F1 ${line.size} Tf`,
+          ...indent,
+          ...(line.text ? [`<${utf16BeHex(line.text)}> Tj`] : []),
+          ...resetIndent,
+        ]
+      }),
+      'ET',
+    ].join('\n')
+    const contentId = 7 + page * 2
+    const pageId = 6 + page * 2
+    objects.push({
+      id: pageId,
+      body: `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`,
+    })
+    objects.push({
+      id: contentId,
+      body: `<< /Length ${Buffer.byteLength(commands, 'utf-8')} >>\nstream\n${commands}\nendstream`,
+    })
+  }
+
+  objects.sort((a, b) => a.id - b.id)
+  const chunks: string[] = ['%PDF-1.4\n% Agent Pi\n']
+  const offsets: number[] = [0]
+  for (const object of objects) {
+    offsets[object.id] = Buffer.byteLength(chunks.join(''), 'utf-8')
+    chunks.push(`${object.id} 0 obj\n${object.body}\nendobj\n`)
+  }
+  const xrefOffset = Buffer.byteLength(chunks.join(''), 'utf-8')
+  const maxId = Math.max(...objects.map(object => object.id))
+  chunks.push(`xref\n0 ${maxId + 1}\n`)
+  chunks.push('0000000000 65535 f \n')
+  for (let id = 1; id <= maxId; id += 1) {
+    chunks.push(`${String(offsets[id] ?? 0).padStart(10, '0')} 00000 n \n`)
+  }
+  chunks.push(`trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`)
+  return Buffer.from(chunks.join(''), 'utf-8')
+}
+
+async function getAvailableExportPath(sourcePath: string, format: MarkdownExportFormat, targetPath?: string): Promise<string> {
+  if (targetPath) return ensureExportExtension(targetPath, format)
+  const parsed = parsePath(sourcePath)
+  const baseName = sanitizeFilename(parsed.name || 'document')
+  const ext = format === 'html' ? '.html' : `.${format}`
+  let candidate = join(parsed.dir, `${baseName}${ext}`)
+  let counter = 2
+  while (await pathExists(candidate)) {
+    candidate = join(parsed.dir, `${baseName} ${counter}${ext}`)
+    counter += 1
+  }
+  return candidate
+}
+
+function ensureExportExtension(targetPath: string, format: MarkdownExportFormat): string {
+  const expectedExt = format === 'html' ? '.html' : `.${format}`
+  return extname(targetPath).toLowerCase() === expectedExt ? targetPath : `${targetPath}${expectedExt}`
+}
+
+function validateExportTargetPath(targetPath: string): string {
+  const formatCheck = validatePathFormat(targetPath)
+  if (!formatCheck.valid) {
+    throw new Error(formatCheck.reason ?? 'Invalid export target path')
+  }
+  return resolve(targetPath)
+}
+
+export async function buildMarkdownExport(args: {
+  sourcePath: string
+  content: string
+  format: MarkdownExportFormat
+  targetPath?: string
+  renderHtmlToPdf?: (html: string) => Promise<Buffer | Uint8Array>
+}): Promise<MarkdownExportResult> {
+  const targetPath = await getAvailableExportPath(args.sourcePath, args.format, args.targetPath)
+  const title = basename(args.sourcePath)
+  let output: string | Buffer
+
+  if (args.format === 'html') {
+    output = await createMarkdownHtml(args.content, title)
+  } else if (args.format === 'docx') {
+    output = createDocxBuffer(args.content)
+  } else {
+    const html = await createMarkdownHtml(args.content, title)
+    output = args.renderHtmlToPdf
+      ? Buffer.from(await args.renderHtmlToPdf(html))
+      : createPdfBuffer(args.content)
+  }
+
+  await mkdir(dirname(targetPath), { recursive: true })
+  await writeFile(targetPath, output)
+  const info = await stat(targetPath)
+  return { path: targetPath, format: args.format, bytes: info.size }
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
   RPC_CHANNELS.file.READ_PREVIEW,
+  RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW,
+  RPC_CHANNELS.file.WRITE_TEXT,
+  RPC_CHANNELS.file.EXPORT_MARKDOWN,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
   RPC_CHANNELS.file.READ_BINARY,
   RPC_CHANNELS.file.OPEN_DIALOG,
+  RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG,
   RPC_CHANNELS.file.READ_ATTACHMENT,
   RPC_CHANNELS.file.READ_USER_ATTACHMENT,
   RPC_CHANNELS.file.STORE_ATTACHMENT,
@@ -383,6 +1181,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             ),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'spreadsheet',
           }
         }
@@ -392,6 +1191,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: preview.textContent,
           truncated: !preview.fullConversionAllowed,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'spreadsheet',
         }
       }
@@ -406,6 +1206,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             ),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'office',
           }
         }
@@ -418,6 +1219,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             content: buildMetadataPreview(safePath, info.size, 'Office conversion returned no readable text.'),
             truncated: true,
             originalSize: info.size,
+            mtimeMs: info.mtimeMs,
             previewKind: 'office',
           }
         }
@@ -427,6 +1229,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: preview.content,
           truncated: preview.truncated,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'office',
         }
       }
@@ -437,6 +1240,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           content: `${content}\n\n---\nPreview truncated at ${formatBytes(TEXT_PREVIEW_MAX_BYTES)} of ${formatBytes(info.size)}. Open externally for the full file.`,
           truncated: true,
           originalSize: info.size,
+          mtimeMs: info.mtimeMs,
           previewKind: 'text',
         }
       }
@@ -445,12 +1249,114 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         content: await readFile(safePath, 'utf-8'),
         truncated: false,
         originalSize: info.size,
+        mtimeMs: info.mtimeMs,
         previewKind: 'text',
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger.error('readFilePreview error:', path, message)
       throw new Error(`Failed to read file preview: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW, async (ctx, path: string): Promise<SpreadsheetPreviewResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+      if (!isSpreadsheetPath(safePath)) {
+        throw new Error('Path is not a supported spreadsheet')
+      }
+      if (info.size > SPREADSHEET_PREVIEW_MAX_BYTES) {
+        return {
+          filePath: safePath,
+          fileName: basename(safePath),
+          sheets: [],
+          activeSheet: null,
+          truncated: true,
+          originalSize: info.size,
+          mtimeMs: info.mtimeMs,
+        }
+      }
+
+      const preview = createSpreadsheetTablePreview(safePath, basename(safePath))
+      return {
+        ...preview,
+        originalSize: info.size,
+        mtimeMs: info.mtimeMs,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('readSpreadsheetPreview error:', path, message)
+      throw new Error(`Failed to read spreadsheet preview: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.WRITE_TEXT, async (ctx, path: string, content: string, options?: FileWriteTextOptions): Promise<FileWriteTextResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const safePath = await validateFilePath(path, getAllowedDirsForFileRequest(deps, workspaceId))
+      const ext = extname(safePath).toLowerCase()
+      if (!MARKDOWN_EDIT_EXTENSIONS.has(ext)) {
+        throw new Error('Only Markdown files can be edited in preview')
+      }
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+      if (typeof options?.expectedMtimeMs === 'number' && Math.abs(info.mtimeMs - options.expectedMtimeMs) > 5) {
+        throw new Error('File changed on disk after preview was opened. Reopen the file before saving.')
+      }
+
+      await writeFile(safePath, content, 'utf-8')
+      const updated = await stat(safePath)
+      return {
+        path: safePath,
+        bytes: Buffer.byteLength(content, 'utf-8'),
+        mtimeMs: updated.mtimeMs,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('writeText error:', path, message)
+      throw new Error(`Failed to save file: ${message}`)
+    }
+  })
+
+  server.handle(RPC_CHANNELS.file.EXPORT_MARKDOWN, async (ctx, path: string, options: MarkdownExportOptions): Promise<MarkdownExportResult> => {
+    try {
+      const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+      const allowedDirs = getAllowedDirsForFileRequest(deps, workspaceId)
+      const safePath = await validateFilePath(path, allowedDirs)
+      const ext = extname(safePath).toLowerCase()
+      if (!MARKDOWN_EDIT_EXTENSIONS.has(ext)) {
+        throw new Error('Only Markdown files can be exported from preview')
+      }
+      if (!['html', 'docx', 'pdf'].includes(options.format)) {
+        throw new Error(`Unsupported Markdown export format: ${options.format}`)
+      }
+      const info = await stat(safePath)
+      if (!info.isFile()) {
+        throw new Error('Path is not a file')
+      }
+
+      const targetPath = options.targetPath
+        ? validateExportTargetPath(options.targetPath)
+        : undefined
+      const content = options.content ?? await readFile(safePath, 'utf-8')
+      return await buildMarkdownExport({
+        sourcePath: safePath,
+        content,
+        format: options.format,
+        targetPath,
+        renderHtmlToPdf: deps.platform.renderHtmlToPdf,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      deps.platform.logger.error('exportMarkdown error:', path, message)
+      throw new Error(`Failed to export Markdown: ${message}`)
     }
   })
 
@@ -506,7 +1412,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read a file as raw binary (Uint8Array) for react-pdf.
+  // Read a file as raw binary (Uint8Array) for in-app PDF previews.
   // The WS transport codec preserves Uint8Array payloads over JSON envelopes.
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
@@ -535,6 +1441,46 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       ]
     })
     return result.canceled ? [] : result.filePaths
+  })
+
+  // Open native attachment dialog for selecting files or folders. Windows native
+  // dialogs cannot reliably show files when openDirectory is mixed with openFile,
+  // so the renderer chooses an explicit mode before opening the picker.
+  // expanded into ordinary path-backed file attachments with hard caps so a
+  // mis-click on a project root cannot flood the composer.
+  server.handle(RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG, async (ctx, mode?: AttachmentDialogMode): Promise<AttachmentDialogResult> => {
+    const result = await requestClientOpenFileDialog(server, ctx.clientId, buildAttachmentDialogSpec(mode))
+
+    if (result.canceled) {
+      return {
+        attachments: [],
+        skippedCount: 0,
+        truncated: false,
+        maxFiles: ATTACHMENT_DIALOG_MAX_FILES,
+      }
+    }
+
+    const collected = await collectAttachmentDialogFiles(result.filePaths)
+
+    for (const attachment of collected.attachments) {
+      if (attachment.type !== 'image') continue
+      try {
+        const thumbBuffer = await deps.platform.imageProcessor.process(attachment.path, {
+          resize: { width: 200, height: 200 },
+          format: 'png',
+        })
+        attachment.thumbnailBase64 = thumbBuffer.toString('base64')
+      } catch {
+        // Image thumbnail is optional; attachment storage validates the image later.
+      }
+    }
+
+    return {
+      attachments: collected.attachments,
+      skippedCount: collected.skippedCount,
+      truncated: collected.truncated,
+      maxFiles: ATTACHMENT_DIALOG_MAX_FILES,
+    }
   })
 
   // Read file and return as FileAttachment with Quick Look thumbnail
@@ -666,96 +1612,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${decoded.length})`)
         }
 
-        // For images: validate and resize if needed for Claude API compatibility
         if (attachment.type === 'image') {
-          const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
-          const imageSize = imageInspection.status === 'ok'
-            ? { width: imageInspection.width, height: imageInspection.height }
-            : null
-
-          // Determine if we should resize
-          let shouldResize = false
-          let targetSize: { width: number; height: number } | undefined
-
-          if (imageInspection.status === 'processor_unavailable') {
-            deps.platform.logger.warn('Image processing unavailable while validating attachment:', imageInspection.error?.message ?? 'unknown error')
-            if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-              throw new Error('Image processing is unavailable, so oversized images cannot be validated or resized automatically. Please attach a smaller image.')
-            }
-          } else if (imageInspection.status === 'invalid_image') {
-            throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
-          } else {
-            // Validate image for Claude API
-            const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
-
-            shouldResize = validation.needsResize ?? false
-            targetSize = validation.suggestedSize
-
-            if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
-              // Image exceeds 8000px limit - calculate resize to fit within limits
-              const maxDim = IMAGE_LIMITS.MAX_DIMENSION
-              const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
-              targetSize = {
-                width: Math.floor(imageSize!.width * scale),
-                height: Math.floor(imageSize!.height * scale),
-              }
-              shouldResize = true
-              deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
-            } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
-              // File >5MB — try resize+compress instead of rejecting
-              shouldResize = true
-              deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
-            } else if (!validation.valid) {
-              throw new Error(validation.error)
-            }
-          }
-
-          // If resize is needed (either recommended or required), do it now
-          if (shouldResize) {
-            const isPhoto = attachment.mimeType === 'image/jpeg'
-
-            if (targetSize) {
-              // Dimension-exceeded: resize to specific target dimensions
-              deps.platform.logger.info(`Resizing image from ${imageSize!.width}x${imageSize!.height} to ${targetSize.width}x${targetSize.height}`)
-              try {
-                decoded = await deps.platform.imageProcessor.process(decoded, {
-                  resize: { width: targetSize.width, height: targetSize.height },
-                  format: isPhoto ? 'jpeg' : 'png',
-                  quality: isPhoto ? IMAGE_LIMITS.JPEG_QUALITY_HIGH : undefined,
-                })
-                wasResized = true
-                finalSize = decoded.length
-
-                // Re-validate final size after resize
-                if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-                  decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
-                  finalSize = decoded.length
-                  if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
-                    throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
-                  }
-                }
-              } catch (resizeError) {
-                deps.platform.logger.error('Image resize failed:', resizeError)
-                const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
-                throw new Error(`Image too large (${imageSize!.width}x${imageSize!.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
-              }
-            } else {
-              // Size-exceeded or optimal resize — use shared utility for full pipeline
-              const result = await resizeImageForAPI(decoded, { isPhoto })
-              if (!result) {
-                throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
-              }
-              decoded = result.buffer
-              wasResized = true
-              finalSize = decoded.length
-            }
-
-            deps.platform.logger.info(`Image resized: ${attachment.size} -> ${finalSize} bytes (${Math.round((1 - finalSize / attachment.size) * 100)}% reduction)`)
-
-            // Store resized base64 to return to renderer
-            // This is used when sending to Claude API instead of original large base64
-            resizedBase64 = decoded.toString('base64')
-          }
+          const prepared = await prepareImageAttachmentBuffer(decoded, attachment, deps)
+          decoded = prepared.buffer
+          wasResized = prepared.wasResized
+          finalSize = decoded.length
+          resizedBase64 = prepared.resizedBase64
         }
 
         await writeFile(storedPath, decoded)
@@ -776,8 +1638,16 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         if (sourceInfo.size > PATH_BACKED_ATTACHMENT_MAX_BYTES) {
           throw new Error(`Attachment too large (${formatBytes(sourceInfo.size)} > ${formatBytes(PATH_BACKED_ATTACHMENT_MAX_BYTES)})`)
         }
-        await copyFile(attachment.path, storedPath)
         finalSize = sourceInfo.size
+        if (attachment.type === 'image') {
+          const prepared = await prepareImageAttachmentBuffer(await readFile(attachment.path), attachment, deps)
+          await writeFile(storedPath, prepared.buffer)
+          wasResized = prepared.wasResized
+          finalSize = prepared.buffer.length
+          resizedBase64 = prepared.resizedBase64
+        } else {
+          await copyFile(attachment.path, storedPath)
+        }
         filesToCleanup.push(storedPath)
       } else {
         throw new Error('Attachment has no content or readable source path')

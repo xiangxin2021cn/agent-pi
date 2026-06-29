@@ -40,6 +40,7 @@ These files are used by electron-builder or the app directly, not synced to user
 | `generate-icons.sh` | Icon generation script |
 | `bridge-mcp-server/` | Bundled MCP server for Codex/Copilot API source bridge |
 | `session-mcp-server/` | Bundled MCP server for session tools |
+| `file-memory-mcp-server/` | Bundled MCP server for per-file read-only memory sources |
 
 ## Single Source of Truth
 

@@ -48,6 +48,9 @@ export interface PlatformServices {
   // -- Image processing (nativeImage on Electron, sharp on headless) --
   imageProcessor: ImageProcessor
 
+  // -- Document rendering (Electron can render HTML through Chromium) --
+  renderHtmlToPdf?(html: string): Promise<Buffer>
+
   // -- OS integration (no-ops on headless) --
   openPath?(path: string): Promise<void>
   openExternal?(url: string): Promise<void>

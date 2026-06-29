@@ -75,6 +75,26 @@ export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderTy
 // GUI-only types (not used by server/handler code)
 // =============================================================================
 
+export interface SaveDialogSpec {
+  title?: string
+  defaultPath?: string
+  buttonLabel?: string
+  filters?: Array<{ name: string; extensions: string[] }>
+}
+
+export interface SaveDialogResult {
+  canceled: boolean
+  filePath?: string
+}
+
+export interface SaveTextFileDialogSpec extends SaveDialogSpec {
+  content: string
+}
+
+export interface SaveTextFileDialogResult extends SaveDialogResult {
+  bytes?: number
+}
+
 /**
  * Browser toolbar window IPC channels (preload <-> BrowserPaneManager).
  * Kept separate from RPC_CHANNELS because these are scoped to toolbar windows.
@@ -181,7 +201,9 @@ import type {
   Session,
   UnreadSummary,
   CreateSessionOptions,
+  AttachmentDialogMode,
   FileAttachment,
+  AttachmentDialogResult,
   SendMessageOptions,
   SessionEvent,
   PermissionResponseOptions,
@@ -198,6 +220,8 @@ import type {
   SessionFile,
   SessionOutputDirectory,
   PromoteSessionFileResult,
+  CreateFileMemorySourceOptions,
+  CreateFileMemorySourceResult,
   OAuthResult,
   McpToolsResult,
   GitBashStatus,
@@ -213,6 +237,14 @@ import type {
   DirectoryListingResult,
   RemoteSessionTransferPayload,
   ImportRemoteSessionTransferResult,
+  FilePreviewReadResult,
+  FileWriteTextOptions,
+  FileWriteTextResult,
+  SpreadsheetPreviewResult,
+  MarkdownExportOptions,
+  MarkdownExportResult,
+  OptimizePromptRequest,
+  OptimizePromptResult,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -224,6 +256,7 @@ export interface ElectronAPI {
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
+  optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
@@ -303,19 +336,20 @@ export interface ElectronAPI {
   // File operations
   readFile(path: string): Promise<string>
   /** Read a size-bounded text/Office preview for in-app file preview overlays. */
-  readFilePreview(path: string): Promise<{
-    content: string
-    truncated: boolean
-    originalSize: number
-    previewKind: 'text' | 'spreadsheet' | 'office' | 'binary'
-  }>
+  readFilePreview(path: string): Promise<FilePreviewReadResult>
+  readSpreadsheetPreview(path: string): Promise<SpreadsheetPreviewResult>
+  writeTextFile(path: string, content: string, options?: FileWriteTextOptions): Promise<FileWriteTextResult>
+  exportMarkdown(path: string, options: MarkdownExportOptions): Promise<MarkdownExportResult>
   /** Read a file as binary data (Uint8Array) */
   readFileBinary(path: string): Promise<Uint8Array>
   /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
   readFileDataUrl(path: string): Promise<string>
   /** Read an image file as a size-bounded preview data URL for lightweight thumbnail rendering. */
   readFilePreviewDataUrl(path: string, maxSize?: number): Promise<string>
+  showSaveDialog(spec: SaveDialogSpec): Promise<SaveDialogResult>
+  saveTextFileWithDialog(spec: SaveTextFileDialogSpec): Promise<SaveTextFileDialogResult>
   openFileDialog(): Promise<string[]>
+  openAttachmentDialog(mode?: AttachmentDialogMode): Promise<AttachmentDialogResult>
   readFileAttachment(path: string): Promise<FileAttachment | null>
   /** Re-read a user-attached file by absolute path (bypasses workspace-dir validation).
    *  Used only by draft hydration for paths the user explicitly picked via OS dialog / drag. */
@@ -453,6 +487,7 @@ export interface ElectronAPI {
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionOutputDirectory(sessionId: string): Promise<SessionOutputDirectory | null>
   promoteSessionFile(sessionId: string, filePath: string, requestedName?: string): Promise<PromoteSessionFileResult>
+  createFileMemorySource(sessionId: string, filePath: string, options?: CreateFileMemorySourceOptions): Promise<CreateFileMemorySourceResult>
   getSessionNotes(sessionId: string): Promise<string>
   setSessionNotes(sessionId: string, content: string): Promise<void>
   watchSessionFiles(sessionId: string): Promise<void>

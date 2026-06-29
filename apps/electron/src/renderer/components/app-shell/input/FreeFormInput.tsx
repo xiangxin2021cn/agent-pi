@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
+import { toast } from 'sonner'
 import { Command as CommandPrimitive } from 'cmdk'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -12,6 +13,7 @@ import {
   ChevronUp,
   AlertCircle,
   Image as ImageIcon,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
@@ -74,8 +76,9 @@ import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingD
 import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
-import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
+import type { AttachmentDialogMode, FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
@@ -157,6 +160,9 @@ export interface FreeFormInputProps {
   // Advanced options
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  goalState?: SessionGoalState
   /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
   enabledModes?: PermissionMode[]
   // Controlled input value (for persisting across mode switches and conversation changes)
@@ -276,6 +282,9 @@ export function FreeFormInput({
   onThinkingLevelChange,
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  goalState,
   enabledModes = ['safe', 'ask', 'allow-all'],
   inputValue,
   onInputChange,
@@ -567,10 +576,12 @@ export function FreeFormInput({
 
   const [isDraggingOver, setIsDraggingOver] = React.useState(false)
   const [loadingCount, setLoadingCount] = React.useState(0)
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false)
   const [sourceDropdownOpen, setSourceDropdownOpen] = React.useState(false)
   const [isFocused, setIsFocused] = React.useState(false)
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
+  const [isOptimizingPrompt, setIsOptimizingPrompt] = React.useState(false)
 
   // Input settings (loaded from config)
   const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
@@ -1080,9 +1091,36 @@ export function FreeFormInput({
   }
 
   // File attachment handlers
-  const handleAttachClick = () => {
+  const handleAttachClick = async (mode: AttachmentDialogMode = 'files') => {
     if (disabled) return
-    fileInputRef.current?.click()
+    const canUseNativeAttachmentDialog =
+      hasElectronAPI &&
+      window.electronAPI.getRuntimeEnvironment?.() === 'electron' &&
+      typeof window.electronAPI.openAttachmentDialog === 'function'
+
+    if (!canUseNativeAttachmentDialog) {
+      if (mode === 'files') fileInputRef.current?.click()
+      return
+    }
+
+    setLoadingCount(prev => prev + 1)
+    try {
+      const result = await window.electronAPI.openAttachmentDialog(mode)
+      if (result.attachments.length > 0) {
+        setAttachments(prev => [...prev, ...result.attachments])
+      }
+
+      if (result.truncated) {
+        toast.warning(t('chat.attachDialogTruncated', { count: result.attachments.length, max: result.maxFiles }))
+      } else if (result.skippedCount > 0) {
+        toast.warning(t('chat.attachDialogSkipped', { count: result.skippedCount }))
+      }
+    } catch (error) {
+      console.error('[FreeFormInput] Failed to open attachment dialog:', error)
+      fileInputRef.current?.click()
+    } finally {
+      setLoadingCount(prev => Math.max(0, prev - 1))
+    }
   }
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1580,6 +1618,126 @@ export function FreeFormInput({
     && isCompatProvider(effectiveConnectionDetails.providerType)
     && !modelSupportsImages(effectiveConnectionDetails, currentModel)
 
+  const handleOptimizePrompt = React.useCallback(async () => {
+    const rawInput = input.trim()
+    if (!rawInput || !sessionId || disabled || isProcessing || isOptimizingPrompt) return
+
+    setIsOptimizingPrompt(true)
+    try {
+      const result = await window.electronAPI.optimizePrompt(sessionId, {
+        input: rawInput,
+        attachments: attachments.map(attachment => ({
+          name: attachment.name,
+          type: attachment.type,
+          size: attachment.size,
+        })),
+        workingDirectory,
+        model: currentModel,
+        connectionName: effectiveConnectionDetails?.name,
+      })
+      const optimized = coerceInputText(result.optimizedPrompt)
+      if (!optimized.trim()) {
+        throw new Error('Optimizer returned an empty prompt')
+      }
+      setInput(optimized)
+      syncToParent(optimized)
+      richInputRef.current?.focus()
+      window.setTimeout(() => {
+        richInputRef.current?.setSelectionRange(optimized.length, optimized.length)
+      }, 0)
+      toast.success(result.fallback ? t('chat.optimizePromptFallbackApplied') : t('chat.optimizePromptApplied'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      toast.error(t('chat.optimizePromptFailed'), { description: message })
+    } finally {
+      setIsOptimizingPrompt(false)
+    }
+  }, [
+    input,
+    disabled,
+    isProcessing,
+    isOptimizingPrompt,
+    sessionId,
+    attachments,
+    workingDirectory,
+    currentModel,
+    effectiveConnectionDetails?.name,
+    syncToParent,
+    t,
+  ])
+
+  const handleAttachmentMenuSelect = (mode: AttachmentDialogMode) => {
+    setAttachmentMenuOpen(false)
+    window.setTimeout(() => {
+      void handleAttachClick(mode)
+    }, 0)
+  }
+
+  const renderAttachmentControl = (isCompactToolbar: boolean) => {
+    const label = attachments.length > 0
+      ? t("chat.filesCount", { count: attachments.length })
+      : isCompactToolbar
+        ? t("chat.attach")
+        : t("chat.attachFiles")
+
+    return (
+      <div className="inline-flex shrink min-w-0 items-center">
+        <FreeFormInputContextBadge
+          icon={<Paperclip className="h-4 w-4" />}
+          label={label}
+          isExpanded={!isCompactToolbar && isEmptySession}
+          hasSelection={attachments.length > 0}
+          showChevron={false}
+          isOpen={false}
+          disabled={disabled}
+          onClick={() => void handleAttachClick('files')}
+          tooltip={t('chat.attachFilesTooltip')}
+          className="rounded-r-none border-r border-foreground/10"
+        />
+        <DropdownMenu open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={t('chat.attachFilesTooltip')}
+              disabled={disabled}
+              className={cn(
+                "input-toolbar-btn inline-flex h-7 w-6 shrink-0 items-center justify-center rounded-l-none rounded-r-[6px] text-foreground transition-colors",
+                "hover:bg-foreground/5 disabled:pointer-events-none disabled:opacity-50",
+                attachmentMenuOpen && "bg-foreground/5"
+              )}
+            >
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </button>
+          </DropdownMenuTrigger>
+          <StyledDropdownMenuContent align="start" minWidth="min-w-44">
+            <StyledDropdownMenuItem onSelect={() => handleAttachmentMenuSelect('files')}>
+              <Paperclip className="h-4 w-4" />
+              <span>{t('chat.attachFilesAction')}</span>
+            </StyledDropdownMenuItem>
+            <StyledDropdownMenuItem onSelect={() => handleAttachmentMenuSelect('folders')}>
+              <Icon_Folder className="h-4 w-4" />
+              <span>{t('chat.attachFolderAction')}</span>
+            </StyledDropdownMenuItem>
+          </StyledDropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    )
+  }
+
+  const renderOptimizePromptControl = (isCompactToolbar: boolean) => (
+    <FreeFormInputContextBadge
+      icon={isOptimizingPrompt ? <Spinner className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+      label={isCompactToolbar ? t('chat.optimizePromptShort') : t('chat.optimizePrompt')}
+      isExpanded={!isCompactToolbar && isEmptySession}
+      hasSelection={false}
+      showChevron={false}
+      isOpen={false}
+      disabled={disabled || isProcessing || isOptimizingPrompt || !sessionId || !input.trim()}
+      onClick={() => void handleOptimizePrompt()}
+      tooltip={t('chat.optimizePromptTooltip')}
+    />
+  )
+
   return (
     <form onSubmit={handleSubmit}>
       <div
@@ -1829,6 +1987,9 @@ export function FreeFormInput({
             <CompactPermissionModeSelector
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              goalMode={goalState?.mode}
+              goalLoopMode={goalLoopMode}
+              onGoalLoopModeChange={onGoalLoopModeChange}
             />
           )}
           {enableCompactModelPicker && (
@@ -1845,19 +2006,8 @@ export function FreeFormInput({
               contextStatus={contextStatus}
             />
           )}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? t("chat.filesCount", { count: attachments.length })
-              : t("chat.attach")
-            }
-            isExpanded={false}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
-            onClick={handleAttachClick}
-            tooltip={t("chat.attachFilesTooltip")}
-            disabled={disabled}
-          />
+          {renderAttachmentControl(true)}
+          {renderOptimizePromptControl(true)}
           {onSourcesChange && (
             <div className="relative shrink min-w-0">
               <FreeFormInputContextBadge
@@ -1945,19 +2095,8 @@ export function FreeFormInput({
           {!compactMode && (
           <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
           {/* 1. Attach Files Badge */}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? t("chat.filesCount", { count: attachments.length })
-              : t("chat.attachFiles")
-            }
-            isExpanded={isEmptySession}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
-            onClick={handleAttachClick}
-            tooltip={t("chat.attachFilesTooltip")}
-            disabled={disabled}
-          />
+          {renderAttachmentControl(false)}
+          {renderOptimizePromptControl(false)}
 
           {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (

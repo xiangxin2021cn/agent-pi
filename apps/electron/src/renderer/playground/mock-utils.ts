@@ -213,6 +213,11 @@ export const mockElectronAPI = {
     return [] // Let user use file input or drag-drop
   },
 
+  openAttachmentDialog: async (mode?: 'files' | 'folders') => {
+    console.log('[Playground] openAttachmentDialog called:', mode)
+    return { attachments: [], skippedCount: 0, truncated: false, maxFiles: 250 }
+  },
+
   readFileAttachment: async (path: string) => {
     console.log('[Playground] readFileAttachment called:', path)
     return null // Let FileReader API handle it
@@ -254,6 +259,17 @@ export const mockElectronAPI = {
     return {
       outputDirectory: `/mock/workspaces/playground-workspace/Agent Pi Outputs/${sessionId}`,
       outputPath: `/mock/workspaces/playground-workspace/Agent Pi Outputs/${sessionId}/${fileName}`,
+    }
+  },
+
+  createFileMemorySource: async (sessionId: string, filePath: string) => {
+    console.log('[Playground] createFileMemorySource called:', { sessionId, filePath })
+    const fileName = filePath.split(/[\\/]/).pop() || 'file'
+    const sourceSlug = `file-memory-${fileName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'file'}`
+    return {
+      sourceSlug,
+      validationText: `Created file memory source: ${sourceSlug}`,
+      activated: true,
     }
   },
 

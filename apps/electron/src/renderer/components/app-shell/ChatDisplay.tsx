@@ -45,6 +45,8 @@ import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
+import type { SessionGoalMode, SessionGoalState } from "@craft-agent/shared/sessions"
+import type { SessionGoalUpdate } from "@craft-agent/shared/protocol"
 import {
   TurnCard,
   UserMessageBubble,
@@ -167,6 +169,13 @@ interface ChatDisplayProps {
   /** Current permission mode */
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  goalState?: SessionGoalState
+  onGoalModeChange?: (mode: SessionGoalMode) => void
+  onGoalAccept?: () => void
+  onGoalImprove?: () => void
+  onGoalUpdate?: (update: SessionGoalUpdate) => void | Promise<void>
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
   // Input value preservation (controlled from parent)
@@ -455,6 +464,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Advanced options
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  goalState,
+  onGoalModeChange,
+  onGoalAccept,
+  onGoalImprove,
+  onGoalUpdate,
   enabledModes,
   // Input value preservation
   inputValue,
@@ -1917,6 +1933,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             compactMode={compactMode}
             permissionMode={permissionMode}
             onPermissionModeChange={onPermissionModeChange}
+            goalLoopMode={goalLoopMode}
+            onGoalLoopModeChange={onGoalLoopModeChange}
+            goalState={goalState ?? session.goalState}
+            onGoalModeChange={onGoalModeChange}
+            onGoalAccept={onGoalAccept}
+            onGoalImprove={onGoalImprove}
+            onGoalUpdate={onGoalUpdate}
             tasks={backgroundTasks}
             sessionId={session.id}
             sessionFolderPath={sessionFolderPath}

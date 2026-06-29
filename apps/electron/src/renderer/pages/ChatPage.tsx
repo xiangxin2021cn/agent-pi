@@ -28,6 +28,8 @@ import { ensureSessionMessagesLoadedAtom, forceSessionMessagesReloadAtom, loaded
 import { getSessionTitle } from '@/utils/session'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
+import type { SessionGoalMode } from '@craft-agent/shared/sessions'
+import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 
 export interface ChatPageProps {
   sessionId: string
@@ -511,6 +513,52 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSessionStatusChange(sessionId, state)
   }, [sessionId, onSessionStatusChange])
 
+  const handleGoalModeChange = React.useCallback(async (mode: SessionGoalMode) => {
+    setOption('goalLoopMode', mode)
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'setGoalMode', mode })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalModeUpdateFailed'))
+    }
+  }, [sessionId, setOption, t])
+
+  const handleGoalLoopModeChange = React.useCallback(async (mode: SessionGoalMode | undefined) => {
+    setOption('goalLoopMode', mode)
+    const currentGoalState = session?.goalState ?? sessionMeta?.goalState
+    if (!currentGoalState || mode === undefined) return
+
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'setGoalMode', mode })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalModeUpdateFailed'))
+    }
+  }, [session?.goalState, sessionId, sessionMeta?.goalState, setOption, t])
+
+  const handleGoalAccept = React.useCallback(async () => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'acceptGoal' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+    }
+  }, [sessionId, t])
+
+  const handleGoalImprove = React.useCallback(async () => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'runGoalImprovement' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+    }
+  }, [sessionId, t])
+
+  const handleGoalUpdate = React.useCallback(async (goal: SessionGoalUpdate) => {
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'updateGoal', goal })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalActionFailed'))
+      throw error
+    }
+  }, [sessionId, t])
+
   const handleLabelsChange = React.useCallback((newLabels: string[]) => {
     onSessionLabelsChange?.(sessionId, newLabels)
   }, [sessionId, onSessionLabelsChange])
@@ -754,6 +802,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         isFlagged: sessionMeta.isFlagged,
         workingDirectory: sessionMeta.workingDirectory,
         enabledSourceSlugs: sessionMeta.enabledSourceSlugs,
+        goalState: sessionMeta.goalState,
       }
 
       return (
@@ -779,6 +828,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                   onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
                   permissionMode={sessionOpts.permissionMode}
                   onPermissionModeChange={setPermissionMode}
+                  goalLoopMode={sessionOpts.goalLoopMode}
+                  onGoalLoopModeChange={handleGoalLoopModeChange}
+                  goalState={sessionMeta.goalState}
+                  onGoalModeChange={handleGoalModeChange}
                   enabledModes={enabledModes}
                   inputValue={inputValue}
                   onInputChange={handleInputChange}
@@ -859,6 +912,13 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
               permissionMode={sessionOpts.permissionMode}
               onPermissionModeChange={setPermissionMode}
+              goalLoopMode={sessionOpts.goalLoopMode}
+              onGoalLoopModeChange={handleGoalLoopModeChange}
+              goalState={session.goalState}
+              onGoalModeChange={handleGoalModeChange}
+              onGoalAccept={handleGoalAccept}
+              onGoalImprove={handleGoalImprove}
+              onGoalUpdate={handleGoalUpdate}
               enabledModes={enabledModes}
               inputValue={inputValue}
               onInputChange={handleInputChange}
