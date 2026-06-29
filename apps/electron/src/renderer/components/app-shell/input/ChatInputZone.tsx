@@ -16,6 +16,8 @@ interface ChatInputZoneProps {
   showOptionBadges?: boolean
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
@@ -41,6 +43,8 @@ export function ChatInputZone({
   showOptionBadges,
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalLoopMode,
+  onGoalLoopModeChange,
   goalState,
   onGoalModeChange,
   onGoalAccept,
@@ -92,6 +96,8 @@ export function ChatInputZone({
         <ActiveOptionBadges
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          goalLoopMode={goalLoopMode}
+          onGoalLoopModeChange={onGoalLoopModeChange}
           goalState={goalState}
           onGoalModeChange={onGoalModeChange}
           onGoalAccept={onGoalAccept}
@@ -127,6 +133,9 @@ export function ChatInputZone({
           compactMode={compactMode}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          goalLoopMode={goalLoopMode}
+          onGoalLoopModeChange={onGoalLoopModeChange}
+          goalState={goalState}
           labels={labels}
           sessionLabels={sessionLabels}
           onLabelAdd={handleLabelAdd}

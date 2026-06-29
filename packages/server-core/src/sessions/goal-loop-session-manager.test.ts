@@ -1301,6 +1301,33 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
   })
 
+  it('initializes a goal for a casual message when an explicit send goal mode is selected', async () => {
+    const sessionId = 'goal-explicit-send-mode'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '你好', undefined, undefined, { goalLoopMode: 'check_only' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('check_only')
+    expect(managed.goalState?.maxIterations).toBe(1)
+    expect(managed.goalState?.objective).toBe('你好')
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.id === managed.goalState?.id
+    )).toBe(true)
+  })
+
+  it('does not initialize a goal for a work-like message when explicit send goal mode is off', async () => {
+    const sessionId = 'goal-explicit-send-mode-off'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '请生成一份带验证结论的项目分析报告', undefined, undefined, { goalLoopMode: 'off' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBeUndefined()
+    expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
+  })
+
   it('initializes a check-only goal when the workspace goal loop default is check_only', async () => {
     saveWorkspaceGoalLoopDefault({ defaultMode: 'check_only' })
     const sessionId = 'goal-workspace-default-check-only'

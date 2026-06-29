@@ -2,7 +2,13 @@ import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
+import {
+  SlashCommandMenu,
+  DEFAULT_SLASH_COMMAND_GROUPS,
+  getGoalLoopModeFromSlashCommandId,
+  getGoalLoopSlashCommandId,
+  type SlashCommandId,
+} from '@/components/ui/slash-command-menu'
 import { Check, CheckCircle2, ChevronDown, Info, Pencil, Plus, RotateCcw, Target, Trash2 } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
@@ -62,6 +68,10 @@ export interface ActiveOptionBadgesProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   /** Application-level goal audit state for this session */
   goalState?: SessionGoalState
+  /** Optional per-session Goal Loop override for the next send */
+  goalLoopMode?: SessionGoalMode
+  /** Callback when the next-send Goal Loop override changes */
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
   /** Callback when goal loop mode changes */
   onGoalModeChange?: (mode: SessionGoalMode) => void
   /** Callback when user accepts the current goal result */
@@ -114,6 +124,8 @@ export function ActiveOptionBadges({
   permissionMode = 'ask',
   onPermissionModeChange,
   goalState,
+  goalLoopMode,
+  onGoalLoopModeChange,
   onGoalModeChange,
   onGoalAccept,
   onGoalImprove,
@@ -183,6 +195,10 @@ export function ActiveOptionBadges({
             <PermissionModeDropdown
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              goalMode={goalState?.mode}
+              goalLoopMode={goalLoopMode}
+              onGoalLoopModeChange={onGoalLoopModeChange}
+              onGoalModeChange={onGoalModeChange}
               sessionId={sessionId}
             />
           </div>
@@ -777,10 +793,22 @@ function FilesPopoverButton({ sessionId, sessionFolderPath }: { sessionId?: stri
 interface PermissionModeDropdownProps {
   permissionMode: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalMode?: SessionGoalMode
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  onGoalModeChange?: (mode: SessionGoalMode) => void
   sessionId?: string
 }
 
-function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessionId }: PermissionModeDropdownProps) {
+function PermissionModeDropdown({
+  permissionMode,
+  onPermissionModeChange,
+  goalMode,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  onGoalModeChange,
+  sessionId,
+}: PermissionModeDropdownProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   // Optimistic local state - updates immediately, syncs with prop
@@ -792,17 +820,32 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
   }, [permissionMode])
 
   const activeCommands = React.useMemo((): SlashCommandId[] => {
-    return [optimisticMode as SlashCommandId]
-  }, [optimisticMode])
+    const active: SlashCommandId[] = [optimisticMode as SlashCommandId]
+    const activeGoalMode = goalMode ?? goalLoopMode
+    const activeGoalCommand = activeGoalMode ? getGoalLoopSlashCommandId(activeGoalMode) : undefined
+    if (activeGoalCommand) active.push(activeGoalCommand)
+    return active
+  }, [goalLoopMode, goalMode, optimisticMode])
 
   // Handle command selection from dropdown
   const handleSelect = React.useCallback((commandId: SlashCommandId) => {
+    const nextGoalMode = getGoalLoopModeFromSlashCommandId(commandId)
+    if (nextGoalMode) {
+      if (goalMode) {
+        onGoalModeChange?.(nextGoalMode)
+      } else {
+        onGoalLoopModeChange?.(nextGoalMode)
+      }
+      setOpen(false)
+      return
+    }
+
     if (commandId === 'safe' || commandId === 'ask' || commandId === 'allow-all') {
       setOptimisticMode(commandId)
       onPermissionModeChange?.(commandId)
     }
     setOpen(false)
-  }, [onPermissionModeChange])
+  }, [goalMode, onGoalLoopModeChange, onGoalModeChange, onPermissionModeChange])
 
   // Get config for current mode (use optimistic state for instant UI update)
   const config = PERMISSION_MODE_CONFIG[optimisticMode]

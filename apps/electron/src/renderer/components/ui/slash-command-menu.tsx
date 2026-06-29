@@ -1,16 +1,20 @@
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { Command as CommandPrimitive } from 'cmdk'
-import { Check, Minimize2 } from 'lucide-react'
+import { Check, Minimize2, Target } from 'lucide-react'
 import { Icon_Folder } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, type PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode } from '@craft-agent/shared/sessions'
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type SlashCommandId = PermissionMode | 'compact'
+export type GoalSlashCommandId = 'goal-auto-improve' | 'goal-check-only' | 'goal-off'
+type VisibleGoalSlashMode = Exclude<SessionGoalMode, 'strict_work'>
+
+export type SlashCommandId = PermissionMode | GoalSlashCommandId | 'compact'
 
 /** Union type for all item types in the slash menu */
 export type SlashItemType = 'command' | 'folder'
@@ -79,6 +83,51 @@ function PermissionModeIcon({ mode, className }: PermissionModeIconProps) {
 // Icon size constant
 const MENU_ICON_SIZE = 'h-3.5 w-3.5'
 
+const GOAL_SLASH_COMMAND_TO_MODE: Record<GoalSlashCommandId, VisibleGoalSlashMode> = {
+  'goal-auto-improve': 'auto_improve',
+  'goal-check-only': 'check_only',
+  'goal-off': 'off',
+}
+
+const GOAL_MODE_TO_SLASH_COMMAND: Record<VisibleGoalSlashMode, GoalSlashCommandId> = {
+  auto_improve: 'goal-auto-improve',
+  check_only: 'goal-check-only',
+  off: 'goal-off',
+}
+
+const GOAL_COMMAND_TEXT: Record<GoalSlashCommandId, { labelKey: string; descriptionKey: string; label: string; description: string }> = {
+  'goal-auto-improve': {
+    labelKey: 'sessionInfo.goalModeAutoImprove',
+    descriptionKey: 'sessionInfo.goalModeAutoImproveDesc',
+    label: 'Goal: Auto improve',
+    description: 'Audit the answer and continue once when the result is incomplete.',
+  },
+  'goal-check-only': {
+    labelKey: 'sessionInfo.goalModeCheckOnly',
+    descriptionKey: 'sessionInfo.goalModeCheckOnlyDesc',
+    label: 'Goal: Check only',
+    description: 'Audit the final answer and stop for manual review.',
+  },
+  'goal-off': {
+    labelKey: 'sessionInfo.goalModeOff',
+    descriptionKey: 'sessionInfo.goalModeOffDesc',
+    label: 'Goal: Off',
+    description: 'Use normal chat completion without goal-loop audits.',
+  },
+}
+
+export function isGoalSlashCommandId(commandId: string): commandId is GoalSlashCommandId {
+  return commandId in GOAL_SLASH_COMMAND_TO_MODE
+}
+
+export function getGoalLoopModeFromSlashCommandId(commandId: string): SessionGoalMode | undefined {
+  return isGoalSlashCommandId(commandId) ? GOAL_SLASH_COMMAND_TO_MODE[commandId] : undefined
+}
+
+export function getGoalLoopSlashCommandId(mode: SessionGoalMode): GoalSlashCommandId | undefined {
+  return mode === 'strict_work' ? undefined : GOAL_MODE_TO_SLASH_COMMAND[mode]
+}
+
 // Generate permission mode commands from centralized config
 const permissionModeCommands: SlashCommand[] = PERMISSION_MODE_ORDER.map(mode => {
   const config = PERMISSION_MODE_CONFIG[mode]
@@ -87,6 +136,16 @@ const permissionModeCommands: SlashCommand[] = PERMISSION_MODE_ORDER.map(mode =>
     label: config.displayName,
     description: config.description,
     icon: <PermissionModeIcon mode={mode} className={MENU_ICON_SIZE} />,
+  }
+})
+
+const goalLoopCommands: SlashCommand[] = (Object.keys(GOAL_SLASH_COMMAND_TO_MODE) as GoalSlashCommandId[]).map(id => {
+  const text = GOAL_COMMAND_TEXT[id]
+  return {
+    id,
+    label: text.label,
+    description: text.description,
+    icon: <Target className={MENU_ICON_SIZE} />,
   }
 })
 
@@ -99,11 +158,13 @@ const compactCommand: SlashCommand = {
 
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
   ...permissionModeCommands,
+  ...goalLoopCommands,
   compactCommand,
 ]
 
 export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = [
   { id: 'modes', commands: permissionModeCommands },
+  { id: 'goal', commands: goalLoopCommands },
 ]
 
 // ============================================================================
@@ -166,7 +227,11 @@ const MODE_COMMAND_IDS = new Set<string>(['safe', 'ask', 'allow-all'])
 
 function CommandItemContent({ command, isActive }: { command: SlashCommand; isActive: boolean }) {
   const { t } = useTranslation()
-  const label = MODE_COMMAND_IDS.has(command.id) ? t(`mode.${command.id}`, command.label) : command.label
+  const label = MODE_COMMAND_IDS.has(command.id)
+    ? t(`mode.${command.id}`, command.label)
+    : isGoalSlashCommandId(command.id)
+    ? `${t('sessionInfo.goal', { defaultValue: 'Goal' })}: ${t(GOAL_COMMAND_TEXT[command.id].labelKey, { defaultValue: command.label })}`
+    : command.label
   return (
     <>
       <div className="shrink-0 text-muted-foreground">{command.icon}</div>
@@ -572,6 +637,12 @@ export function useInlineSlashCommand({
       id: 'modes',
       label: 'Modes',
       items: permissionModeCommands,
+    })
+
+    result.push({
+      id: 'goal',
+      label: 'Goal',
+      items: goalLoopCommands,
     })
 
     // Commands section

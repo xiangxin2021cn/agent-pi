@@ -237,6 +237,7 @@ export interface SendMessageOptions {
   skillSlugs?: string[]
   badges?: ContentBadge[]
   optimisticMessageId?: string
+  goalLoopMode?: SessionGoalMode
 }
 
 // ---------------------------------------------------------------------------

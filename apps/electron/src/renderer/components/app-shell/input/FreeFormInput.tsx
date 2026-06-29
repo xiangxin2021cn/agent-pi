@@ -78,6 +78,7 @@ import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
 import type { AttachmentDialogMode, FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
@@ -159,6 +160,9 @@ export interface FreeFormInputProps {
   // Advanced options
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  goalState?: SessionGoalState
   /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
   enabledModes?: PermissionMode[]
   // Controlled input value (for persisting across mode switches and conversation changes)
@@ -278,6 +282,9 @@ export function FreeFormInput({
   onThinkingLevelChange,
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalLoopMode,
+  onGoalLoopModeChange,
+  goalState,
   enabledModes = ['safe', 'ask', 'allow-all'],
   inputValue,
   onInputChange,
@@ -1980,6 +1987,9 @@ export function FreeFormInput({
             <CompactPermissionModeSelector
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              goalMode={goalState?.mode}
+              goalLoopMode={goalLoopMode}
+              onGoalLoopModeChange={onGoalLoopModeChange}
             />
           )}
           {enableCompactModelPicker && (

@@ -40,8 +40,16 @@ function Ensure-BundledBun {
         $ChecksumUrl = "https://github.com/oven-sh/bun/releases/download/$BunVersion/SHASUMS256.txt"
 
         Write-Host "Downloading from $ZipUrl..."
-        Invoke-WebRequest -Uri $ZipUrl -OutFile "$TempDir\$BunDownload.zip"
-        Invoke-WebRequest -Uri $ChecksumUrl -OutFile "$TempDir\SHASUMS256.txt"
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            & $curl.Source -L --fail --retry 3 --connect-timeout 20 --max-time 300 -o "$TempDir\$BunDownload.zip" $ZipUrl
+            if ($LASTEXITCODE -ne 0) { throw "curl download failed with exit code $LASTEXITCODE" }
+            & $curl.Source -L --fail --retry 3 --connect-timeout 20 --max-time 120 -o "$TempDir\SHASUMS256.txt" $ChecksumUrl
+            if ($LASTEXITCODE -ne 0) { throw "curl checksum download failed with exit code $LASTEXITCODE" }
+        } else {
+            Invoke-WebRequest -Uri $ZipUrl -OutFile "$TempDir\$BunDownload.zip"
+            Invoke-WebRequest -Uri $ChecksumUrl -OutFile "$TempDir\SHASUMS256.txt"
+        }
 
         Write-Host "Verifying checksum..."
         $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]

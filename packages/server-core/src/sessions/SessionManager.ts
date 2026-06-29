@@ -1563,6 +1563,12 @@ function normalizeWorkspaceGoalLoopDefaultMode(value: unknown): WorkspaceGoalLoo
     : undefined
 }
 
+function normalizeSendGoalLoopMode(value: unknown): SessionGoalMode | undefined {
+  return value === 'off' || value === 'check_only' || value === 'auto_improve' || value === 'strict_work'
+    ? value
+    : undefined
+}
+
 function getErrorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code)
@@ -7297,7 +7303,12 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    if (!isWorkLikeGoalMessage(message, storedAttachments, options)) {
+    const requestedMode = normalizeSendGoalLoopMode(options?.goalLoopMode)
+    if (requestedMode === 'off') {
+      return
+    }
+
+    if (!requestedMode && !isWorkLikeGoalMessage(message, storedAttachments, options)) {
       return
     }
 
@@ -7317,7 +7328,7 @@ export class SessionManager implements ISessionManager {
     })
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
-    const mode = workspaceDefaultMode ?? policy.mode
+    const mode = requestedMode ?? workspaceDefaultMode ?? policy.mode
     if (mode === 'off') {
       return
     }

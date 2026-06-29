@@ -514,12 +514,25 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   }, [sessionId, onSessionStatusChange])
 
   const handleGoalModeChange = React.useCallback(async (mode: SessionGoalMode) => {
+    setOption('goalLoopMode', mode)
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'setGoalMode', mode })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('sessionInfo.goalModeUpdateFailed'))
     }
-  }, [sessionId, t])
+  }, [sessionId, setOption, t])
+
+  const handleGoalLoopModeChange = React.useCallback(async (mode: SessionGoalMode | undefined) => {
+    setOption('goalLoopMode', mode)
+    const currentGoalState = session?.goalState ?? sessionMeta?.goalState
+    if (!currentGoalState || mode === undefined) return
+
+    try {
+      await window.electronAPI.sessionCommand(sessionId, { type: 'setGoalMode', mode })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessionInfo.goalModeUpdateFailed'))
+    }
+  }, [session?.goalState, sessionId, sessionMeta?.goalState, setOption, t])
 
   const handleGoalAccept = React.useCallback(async () => {
     try {
@@ -815,6 +828,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                   onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
                   permissionMode={sessionOpts.permissionMode}
                   onPermissionModeChange={setPermissionMode}
+                  goalLoopMode={sessionOpts.goalLoopMode}
+                  onGoalLoopModeChange={handleGoalLoopModeChange}
                   goalState={sessionMeta.goalState}
                   onGoalModeChange={handleGoalModeChange}
                   enabledModes={enabledModes}
@@ -897,6 +912,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
               permissionMode={sessionOpts.permissionMode}
               onPermissionModeChange={setPermissionMode}
+              goalLoopMode={sessionOpts.goalLoopMode}
+              onGoalLoopModeChange={handleGoalLoopModeChange}
               goalState={session.goalState}
               onGoalModeChange={handleGoalModeChange}
               onGoalAccept={handleGoalAccept}

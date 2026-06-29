@@ -226,6 +226,37 @@
   margin: 1rem 0;
 }
 
+/* Tables */
+.tiptap-editor .tiptap-prose .tableWrapper {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.tiptap-editor .tiptap-prose table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.875rem;
+}
+
+.tiptap-editor .tiptap-prose th,
+.tiptap-editor .tiptap-prose td {
+  border: 1px solid color-mix(in oklch, var(--foreground) 12%, transparent);
+  padding: 0.45rem 0.55rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.tiptap-editor .tiptap-prose th {
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  font-weight: 600;
+}
+
+.tiptap-editor .tiptap-prose .selectedCell::after {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
 /* Links */
 .tiptap-editor .tiptap-prose a {
   color: var(--accent);

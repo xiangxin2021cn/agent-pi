@@ -169,6 +169,8 @@ interface ChatDisplayProps {
   /** Current permission mode */
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
@@ -462,6 +464,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Advanced options
   permissionMode = 'ask',
   onPermissionModeChange,
+  goalLoopMode,
+  onGoalLoopModeChange,
   goalState,
   onGoalModeChange,
   onGoalAccept,
@@ -1929,6 +1933,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             compactMode={compactMode}
             permissionMode={permissionMode}
             onPermissionModeChange={onPermissionModeChange}
+            goalLoopMode={goalLoopMode}
+            onGoalLoopModeChange={onGoalLoopModeChange}
             goalState={goalState ?? session.goalState}
             onGoalModeChange={onGoalModeChange}
             onGoalAccept={onGoalAccept}

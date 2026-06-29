@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { Check } from 'lucide-react'
+import { Check, Target } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   Drawer,
   DrawerTrigger,
@@ -14,6 +15,8 @@ import {
   PERMISSION_MODE_ORDER,
   type PermissionMode,
 } from '@craft-agent/shared/agent/modes'
+import type { SessionGoalMode } from '@craft-agent/shared/sessions'
+import { getGoalModeDescription, getGoalModeLabel } from '../goal-status-view-model'
 
 // ============================================================================
 // Mode Icon (same SVG pattern as ActiveOptionBadges.PermissionModeIcon)
@@ -62,12 +65,19 @@ const MODE_STYLES: Record<PermissionMode, { className: string; shadowVar: string
 interface CompactPermissionModeSelectorProps {
   permissionMode: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  goalMode?: SessionGoalMode
+  goalLoopMode?: SessionGoalMode
+  onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
 }
 
 export function CompactPermissionModeSelector({
   permissionMode,
   onPermissionModeChange,
+  goalMode,
+  goalLoopMode,
+  onGoalLoopModeChange,
 }: CompactPermissionModeSelectorProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   // Optimistic local state — updates immediately, syncs with prop
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
@@ -81,6 +91,18 @@ export function CompactPermissionModeSelector({
     onPermissionModeChange?.(mode)
     setOpen(false)
   }, [onPermissionModeChange])
+
+  type GoalSelectorMode = SessionGoalMode | 'auto'
+  const visibleGoalModes = React.useMemo<GoalSelectorMode[]>(() => (
+    goalMode ? ['auto_improve', 'check_only', 'off'] : ['auto', 'auto_improve', 'check_only', 'off']
+  ), [goalMode])
+  const selectedGoalMode: GoalSelectorMode = goalMode ?? goalLoopMode ?? 'auto'
+  const hasGoalOverride = goalMode !== undefined || goalLoopMode !== undefined
+
+  const handleGoalSelect = React.useCallback((mode: GoalSelectorMode) => {
+    onGoalLoopModeChange?.(mode === 'auto' ? undefined : mode)
+    setOpen(false)
+  }, [onGoalLoopModeChange])
 
   const config = PERMISSION_MODE_CONFIG[optimisticMode]
   const style = MODE_STYLES[optimisticMode]
@@ -99,12 +121,18 @@ export function CompactPermissionModeSelector({
         >
           <ModeIcon mode={optimisticMode} className="h-3.5 w-3.5" />
           <span>{config.shortName}</span>
+          {hasGoalOverride && (
+            <Target className="h-3.5 w-3.5 opacity-70" />
+          )}
         </button>
       </DrawerTrigger>
 
       <DrawerContent>
         <DrawerHeader>
-          <DrawerTitle>Permission Mode</DrawerTitle>
+          <DrawerTitle>
+            {t('mode.permissionMode', { defaultValue: 'Permission Mode' })}
+            {onGoalLoopModeChange ? ` / ${t('settings.workspace.goalLoop')}` : null}
+          </DrawerTitle>
         </DrawerHeader>
 
         <div className="px-4 pb-6 flex flex-col gap-1">
@@ -135,6 +163,50 @@ export function CompactPermissionModeSelector({
               </DrawerClose>
             )
           })}
+          {onGoalLoopModeChange && (
+            <>
+              <div className="mx-1 my-2 border-t border-border/60" />
+              <div className="px-3 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {t('settings.workspace.goalLoop')}
+              </div>
+              {visibleGoalModes.map((mode) => {
+                const isAuto = mode === 'auto'
+                const isSelected = mode === selectedGoalMode
+                const label = isAuto
+                  ? t('sessionInfo.goalModeAuto', { defaultValue: 'Auto' })
+                  : getGoalModeLabel(t, mode)
+                const description = isAuto
+                  ? t('sessionInfo.goalModeAutoDesc', { defaultValue: 'Use automatic routing for work-like requests.' })
+                  : getGoalModeDescription(t, mode)
+                return (
+                  <DrawerClose asChild key={mode}>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex items-center gap-3 w-full px-3 py-3 rounded-lg text-left transition-colors",
+                        isSelected ? "bg-foreground/5" : "hover:bg-foreground/5",
+                      )}
+                      onClick={() => handleGoalSelect(mode)}
+                    >
+                      <span className={cn(
+                        "shrink-0",
+                        mode === 'off' ? "text-muted-foreground" : "text-accent",
+                      )}>
+                        <Target className="h-5 w-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{label}</div>
+                        <div className="text-xs text-muted-foreground">{description}</div>
+                      </div>
+                      {isSelected && (
+                        <Check className="h-4 w-4 shrink-0 text-foreground/60" />
+                      )}
+                    </button>
+                  </DrawerClose>
+                )
+              })}
+            </>
+          )}
         </div>
       </DrawerContent>
     </Drawer>
