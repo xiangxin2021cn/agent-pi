@@ -651,7 +651,13 @@ describe('GoalController', () => {
       ],
       stoppedReason: 'complete',
       now: 10,
-      fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 100 }),
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 100,
+        preview: 'Tender clause 4.2 requires a 14-day mobilization plan.',
+      }),
       reviewer: async (input) => {
         reviewPrompts.push(input.result.summary)
         return {
@@ -675,6 +681,11 @@ describe('GoalController', () => {
         type: 'file',
         label: 'file_verified',
         detail: '/tmp/tender.pdf (100 bytes)',
+      })
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'source_file_preview',
+        detail: '/tmp/tender.pdf\nTender clause 4.2 requires a 14-day mobilization plan.',
       })
     }
   })

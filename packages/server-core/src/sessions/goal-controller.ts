@@ -166,7 +166,7 @@ export class GoalController {
           if (preview) {
             evidence.push({
               type: 'file',
-              label: verification.previewTruncated ? 'file_preview_truncated' : 'file_preview',
+              label: buildFilePreviewEvidenceLabel(verification, outputFileEvidencePaths.has(filePath)),
               detail: `${filePath}\n${preview}`.slice(0, 3000),
             })
           }
@@ -548,6 +548,11 @@ function buildFileVerificationEvidenceLabel(verification: GoalFileVerificationRe
   if (verification.isFile === false) return 'file_not_file'
   if (verification.sizeBytes === 0) return 'file_empty'
   return 'file_verification_failed'
+}
+
+function buildFilePreviewEvidenceLabel(verification: GoalFileVerificationResult, isOutputFile: boolean): string {
+  const prefix = isOutputFile ? 'file_preview' : 'source_file_preview'
+  return verification.previewTruncated ? `${prefix}_truncated` : prefix
 }
 
 const FILE_PATH_INPUT_KEYS = new Set([

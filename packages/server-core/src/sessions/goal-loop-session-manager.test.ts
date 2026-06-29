@@ -687,6 +687,60 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.status).toBe('passed')
   })
 
+  it('includes source attachment previews in the reviewer prompt', async () => {
+    const sessionId = 'goal-reviewer-source-preview'
+    const workingDirectory = join(tmpRoot, 'project')
+    const sourcePath = join(workingDirectory, 'tender.md')
+    mkdirSync(workingDirectory, { recursive: true })
+    writeFileSync(sourcePath, 'Tender clause 4.2 requires a 14-day mobilization plan.')
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [{
+          id: 'crit-source',
+          text: 'The final response cites the tender mobilization requirement from the source file.',
+          kind: 'evidence',
+          required: true,
+        }],
+      }),
+    })
+    managed.workingDirectory = workingDirectory
+    managed.messages[0] = message('u1', 'user', 'Summarize the tender mobilization requirement.', {
+      attachments: [{
+        id: 'att-1',
+        type: 'text',
+        name: 'tender.md',
+        mimeType: 'text/markdown',
+        size: 58,
+        storedPath: sourcePath,
+      }],
+    })
+    captureEvents()
+    const reviewPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        reviewPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'The response cites the source tender requirement.',
+          missingCriteria: [],
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(reviewPrompts).toHaveLength(1)
+    expect(reviewPrompts[0]).toContain('source_file_preview')
+    expect(reviewPrompts[0]).toContain('Tender clause 4.2')
+    expect(reviewPrompts[0]).toContain('14-day mobilization plan')
+    expect(managed.goalState?.status).toBe('passed')
+  })
+
   it('includes verified spreadsheet output previews in the reviewer prompt', async () => {
     const sessionId = 'goal-reviewer-spreadsheet-preview'
     const workingDirectory = join(tmpRoot, 'project')

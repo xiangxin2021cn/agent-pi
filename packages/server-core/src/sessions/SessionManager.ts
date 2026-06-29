@@ -1059,6 +1059,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     'Rules:',
     '- Use "pass" only when the final response and verified artifacts clearly satisfy every required criterion.',
     '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',
+    '- When source_file_preview evidence is present, use it as source material for grounding and citation checks, not as proof that a requested output file was produced.',
     '- When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.',
     '- If any criterion is missing or any correctivePrompt is needed, status must not be "pass".',
     '- Use "fail" when concrete missing work can be fixed by another pass.',

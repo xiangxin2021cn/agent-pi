@@ -161,6 +161,7 @@ Current implementation slice:
 - Output-specific fields such as `destination_path` and `target_path` are also verified on disk, so a reviewer cannot pass an export whose file was never created.
 - Requests that name output formats such as PDF, Word, Excel, Markdown, CSV, HTML, JSON, TXT, or PowerPoint add an explicit format criterion; produced output paths must cover the requested extension family before reviewer approval.
 - Verified text, spreadsheet, Office, and text-extractable PDF outputs include a bounded content preview in audit evidence when readable, so the reviewer can inspect the actual artifact instead of relying only on the final assistant message.
+- Verified source attachments and non-output source files use `source_file_preview` evidence, so the reviewer can distinguish grounding material from the produced deliverable.
 - The reviewer prompt explicitly requires checking verified artifact previews when present, not just the final assistant response.
 - Consecutive audits with the same missing criteria stop in `needs_review` instead of burning the remaining retry budget on the same failure.
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
@@ -416,7 +417,7 @@ Success criteria:
 - Let goal audits verify output files, exports, previews, tests, and citations.
 - Add templates for code, long document writing, data extraction, and enterprise document analysis.
 
-Current status: first deterministic file-evidence verification is implemented without a full registry. The audit now checks user-uploaded attachments and file paths already surfaced by tool input or tool output, flags missing, unreadable, non-file, empty, wrong-location, or wrong-format output files, verifies requested deliverables land under `outputFolderPath` when the session exposes one, and feeds bounded previews of verified text, spreadsheet, readable Office, and text-extractable PDF outputs into reviewer evidence. Full artifact registry events, scanned/binary preview checks, and citation-level checks remain future work.
+Current status: first deterministic file-evidence verification is implemented without a full registry. The audit now checks user-uploaded attachments and file paths already surfaced by tool input or tool output, flags missing, unreadable, non-file, empty, wrong-location, or wrong-format output files, verifies requested deliverables land under `outputFolderPath` when the session exposes one, feeds bounded previews of verified text, spreadsheet, readable Office, and text-extractable PDF outputs into reviewer evidence, and labels non-output source previews separately from output artifact previews. Full artifact registry events, scanned/binary preview checks, and citation-level checks remain future work.
 
 Success criteria:
 
