@@ -153,6 +153,7 @@ Current implementation slice:
 - Real queued user messages still take priority over goal continuation.
 - `SessionManager` can use the active session agent's mini completion as a bounded reviewer for explicit required criteria.
 - The first real user message can conservatively initialize an `auto_improve` goal when it looks like a work task; casual chat, hidden sessions, and mini sessions are left alone.
+- Goal criteria now extract clearly listed user requirements such as "must include", "output requirements", and "acceptance criteria" into separate required user-constraint checks.
 - Workspace settings can set the default goal-loop strategy for newly auto-detected work sessions: off, check only, or auto improve.
 - User-uploaded attachments and file paths surfaced by tool input or tool output are verified against the local filesystem during goal audit. Missing, unreadable, non-file, or empty file evidence fails the audit and can trigger an automatic improvement pass.
 - Requests that explicitly ask to create, save, export, or convert an output file add a required file-output criterion; if the turn produces no verifiable file path evidence, the audit fails before any reviewer can mark it complete.
@@ -405,7 +406,7 @@ Success criteria:
 - Add settings for mode and budget.
 - Add audit events to session persistence.
 
-Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, latest audit summary, missing criteria, evidence count, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Workspace settings now expose the default strategy for newly auto-detected work sessions.
+Current status: implemented as a conservative default for work-like tasks. Work-like first user messages can initialize `auto_improve`; source-sensitive requests get evidence criteria; clearly listed output requirements are extracted as user-constraint criteria; follow-up work can add constraints and extend exhausted budgets. The input badge exposes `auto_improve`, `check_only`, and `off`, latest audit summary, missing criteria, evidence count, plus manual "run one more improvement", "accept as done", and goal criteria editing actions. The session info panel shows status and audit history. Workspace settings now expose the default strategy for newly auto-detected work sessions.
 
 Success criteria:
 

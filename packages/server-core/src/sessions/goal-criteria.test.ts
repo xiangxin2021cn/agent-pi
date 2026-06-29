@@ -160,6 +160,33 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
   })
 
+  it('adds separate criteria for explicit required deliverable items', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: [
+        '请生成施工方案报告，必须包含：',
+        '1. 工程概况',
+        '2. 风险清单',
+        '3. 引用页码',
+      ].join('\n'),
+    })
+
+    expect(criteria).toContainEqual({
+      text: 'Must satisfy explicit user requirement: 工程概况.',
+      kind: 'user_constraint',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: 'Must satisfy explicit user requirement: 风险清单.',
+      kind: 'user_constraint',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: 'Must satisfy explicit user requirement: 引用页码.',
+      kind: 'user_constraint',
+      required: true,
+    })
+  })
+
   it('does not add a coverage criterion for ordinary short analysis requests', () => {
     const criteria = buildGoalCriteriaFromMessage({
       message: '请分析这个项目的关键风险',
