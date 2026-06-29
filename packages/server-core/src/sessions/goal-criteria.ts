@@ -30,6 +30,7 @@ const SOURCE_GROUNDED_CRITERION: SessionGoalCriterionSpec = {
 export const FILE_OUTPUT_REQUIRED_CRITERION_TEXT = 'Create or update the requested output file(s), and leave verifiable file path evidence in the turn.'
 export const TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT = 'Run the requested verification command(s), and leave successful tool evidence in the turn.'
 export const COMPREHENSIVE_QUALITY_CRITERION_TEXT = 'Cover the requested scope comprehensively and in enough detail for the requested high-quality work product.'
+export const DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT = 'Pass a document quality audit for structure, evidence grounding, specificity, and visible gaps before completion.'
 export const OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX = 'Create output file(s) in the requested format(s):'
 
 const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
@@ -82,6 +83,14 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
   if (COMPREHENSIVE_PATTERN.test(message)) {
     criteria.push({
       text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+  }
+
+  if (DOCUMENT_WORK_PATTERN.test(message) && (referencedNames.length > 0 || SOURCE_SENSITIVE_PATTERN.test(message) || COMPREHENSIVE_PATTERN.test(message))) {
+    criteria.push({
+      text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
       required: true,
     })

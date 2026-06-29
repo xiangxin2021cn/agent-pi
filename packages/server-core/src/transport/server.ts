@@ -23,7 +23,7 @@ import {
   type PushTarget,
   type ErrorCode,
 } from '@craft-agent/shared/protocol'
-import type { RpcServer, HandlerFn, RequestContext } from './types'
+import type { RpcServer, HandlerFn, RequestContext, InvokeClientOptions } from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
 import { createLogger } from '@craft-agent/shared/utils'
 
@@ -58,7 +58,7 @@ interface PendingInvoke {
   clientId: string
   resolve: (value: any) => void
   reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
+  timeout: ReturnType<typeof setTimeout> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +217,15 @@ export class WsRpcServer implements RpcServer {
   }
 
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any> {
+    return this.invokeClientWithOptions(clientId, channel, {}, ...args)
+  }
+
+  invokeClientWithOptions(
+    clientId: string,
+    channel: string,
+    options: InvokeClientOptions,
+    ...args: any[]
+  ): Promise<any> {
     return new Promise((resolve, reject) => {
       const client = this.clients.get(clientId)
 
@@ -237,12 +246,15 @@ export class WsRpcServer implements RpcServer {
       }
 
       const id = randomUUID()
-      const timeout = setTimeout(() => {
-        this.pendingInvokes.delete(id)
-        const err = new Error(`Client request timeout: ${channel} (30000ms)`)
-        ;(err as any).code = 'CLIENT_REQUEST_TIMEOUT'
-        reject(err)
-      }, 30_000)
+      const timeoutMs = options.timeoutMs ?? 30_000
+      const timeout = timeoutMs > 0
+        ? setTimeout(() => {
+            this.pendingInvokes.delete(id)
+            const err = new Error(`Client request timeout: ${channel} (${timeoutMs}ms)`)
+            ;(err as any).code = 'CLIENT_REQUEST_TIMEOUT'
+            reject(err)
+          }, timeoutMs)
+        : null
 
       this.pendingInvokes.set(id, { clientId, resolve, reject, timeout })
 
@@ -341,7 +353,7 @@ export class WsRpcServer implements RpcServer {
     }
     // Reject all pending invokes before tearing down connections
     for (const [id, pending] of this.pendingInvokes) {
-      clearTimeout(pending.timeout)
+      if (pending.timeout) clearTimeout(pending.timeout)
       const err = new Error('Server shutting down')
       ;(err as any).code = 'CLIENT_DISCONNECTED'
       pending.reject(err)
@@ -856,7 +868,7 @@ export class WsRpcServer implements RpcServer {
     if (!pending) return
 
     this.pendingInvokes.delete(envelope.id)
-    clearTimeout(pending.timeout)
+    if (pending.timeout) clearTimeout(pending.timeout)
 
     if (envelope.error) {
       const err = new Error(envelope.error.message)
@@ -871,7 +883,7 @@ export class WsRpcServer implements RpcServer {
   private rejectPendingInvokesForClient(clientId: string): void {
     for (const [id, pending] of this.pendingInvokes) {
       if (pending.clientId !== clientId) continue
-      clearTimeout(pending.timeout)
+      if (pending.timeout) clearTimeout(pending.timeout)
       const err = new Error(`Client disconnected: ${clientId}`)
       ;(err as any).code = 'CLIENT_DISCONNECTED'
       pending.reject(err)

@@ -26,6 +26,7 @@ import { coerceInputText } from '@/lib/input-text'
 import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/session-load'
 import { ensureSessionMessagesLoadedAtom, forceSessionMessagesReloadAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { getSessionTitle } from '@/utils/session'
+import { isWindows } from '@/lib/platform'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
 import type { SessionGoalMode } from '@craft-agent/shared/sessions'
@@ -53,6 +54,12 @@ function joinPathForOpen(baseDir: string, relativePath: string): string {
 
 function lastPathSeparatorIndex(path: string): number {
   return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+}
+
+function normalizeWorkingDirectoryForCompare(path: string | undefined): string | undefined {
+  if (!path) return undefined
+  const normalized = path.replace(/[\\/]+/g, '/').replace(/\/+$/, '')
+  return isWindows ? normalized.toLowerCase() : normalized
 }
 
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
@@ -381,10 +388,23 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     () => workspaces.find((w) => w.id === activeWorkspaceId) || null,
     [workspaces, activeWorkspaceId]
   )
+  const sessionMessageCount = Math.max(
+    session?.messages?.length ?? 0,
+    session?.messageCount ?? 0,
+    sessionMeta?.messageCount ?? 0,
+  )
+  const workingDirectoryLocked = sessionMessageCount > 0 || !!session?.isProcessing || !!sessionMeta?.isProcessing
   const handleWorkingDirectoryChange = React.useCallback(async (path: string) => {
     if (!session) return
+    if (
+      workingDirectoryLocked &&
+      normalizeWorkingDirectoryForCompare(path) !== normalizeWorkingDirectoryForCompare(workingDirectory)
+    ) {
+      toast.error(t('chat.workingDirectoryLocked', { defaultValue: 'Working directory is locked for this session. Start a new session for another project folder.' }))
+      return
+    }
     await window.electronAPI.sessionCommand(session.id, { type: 'updateWorkingDirectory', dir: path })
-  }, [session])
+  }, [session, t, workingDirectory, workingDirectoryLocked])
 
   const handleOpenFile = React.useCallback(
     async (path: string) => {
@@ -803,6 +823,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         workingDirectory: sessionMeta.workingDirectory,
         enabledSourceSlugs: sessionMeta.enabledSourceSlugs,
         goalState: sessionMeta.goalState,
+        messageCount: sessionMeta.messageCount,
       }
 
       return (
@@ -845,6 +866,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                   onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
                   workingDirectory={sessionMeta.workingDirectory}
                   onWorkingDirectoryChange={handleWorkingDirectoryChange}
+                  workingDirectoryLocked={workingDirectoryLocked}
                   messagesLoading={messageLoadState.messagesLoading || (messagesRetrying && !messageLoadState.messagesReady)}
                   messagesLoadError={messageLoadState.error}
                   messagesRetrying={messagesRetrying}
@@ -934,6 +956,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
               workingDirectory={workingDirectory}
               onWorkingDirectoryChange={handleWorkingDirectoryChange}
+              workingDirectoryLocked={workingDirectoryLocked}
               sessionFolderPath={session?.sessionFolderPath}
               messagesLoading={messageLoadState.messagesLoading || (messagesRetrying && !messageLoadState.messagesReady)}
               messagesLoadError={messageLoadState.error}

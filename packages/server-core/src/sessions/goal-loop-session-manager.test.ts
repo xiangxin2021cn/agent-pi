@@ -133,6 +133,35 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(false)
   })
 
+  it('does not block goal continuation on project memory recording', async () => {
+    const sessionId = 'goal-continue-project-memory-background'
+    const managed = buildSession(sessionId)
+    const continuations: Array<{ sessionId: string; prompt: string; iteration: number }> = []
+
+    ;(sm as unknown as {
+      recordGoalAuditInProjectMemory: () => Promise<void>
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).recordGoalAuditInProjectMemory = async () => new Promise<void>(() => {})
+
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (id, prompt, iteration) => {
+      continuations.push({ sessionId: id, prompt, iteration })
+    }
+
+    const stopped = (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+    const outcome = await Promise.race([
+      stopped.then(() => 'resolved' as const),
+      new Promise<'hung'>(resolve => setTimeout(() => resolve('hung'), 50)),
+    ])
+
+    expect(outcome).toBe('resolved')
+    expect(managed.goalState?.status).toBe('improving')
+    expect(continuations).toHaveLength(1)
+  })
+
   it('continues automatically when a claimed output file is missing on disk', async () => {
     const sessionId = 'goal-missing-file-evidence'
     const missingPath = join(tmpRoot, 'missing-report.md')
@@ -281,6 +310,55 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['write a report'])
     expect(managed.messages.some(m => m.role === 'info' && m.content.includes('Goal audit requested'))).toBe(true)
     expect(managed.messages.some(m => m.role === 'assistant' && m.content === 'Improved report complete.')).toBe(true)
+  })
+
+  it('recovers processing state when goal continuation cannot create an agent', async () => {
+    const sessionId = 'goal-hidden-turn-agent-failure'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({
+      status: 'improving',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [],
+    })
+    const events = captureEvents()
+
+    ;(sm as unknown as {
+      getOrCreateAgent: () => Promise<never>
+    }).getOrCreateAgent = async () => {
+      throw new Error('agent boot failed')
+    }
+
+    await (sm as unknown as {
+      runGoalContinuation: (sessionId: string, prompt: string, iteration: number) => Promise<void>
+    }).runGoalContinuation(sessionId, '<goal-audit>improve</goal-audit>', 1)
+
+    expect(managed.isProcessing).toBe(false)
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'error' && event.error.includes('agent boot failed'))).toBe(true)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
+  })
+
+  it('does not silently drop a goal continuation when the session stays active', async () => {
+    const sessionId = 'goal-hidden-turn-still-active'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({
+      status: 'improving',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [],
+    })
+    managed.isProcessing = true
+    const events = captureEvents()
+
+    await (sm as unknown as {
+      runGoalContinuation: (sessionId: string, prompt: string, iteration: number, activeRetryCount: number) => Promise<void>
+    }).runGoalContinuation(sessionId, '<goal-audit>improve</goal-audit>', 1, 3)
+
+    expect(managed.isProcessing).toBe(false)
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(events.some(event => event.type === 'error' && event.error.includes('stayed active'))).toBe(true)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
   })
 
   it('reuses the last sent attachments for a hidden goal continuation', async () => {

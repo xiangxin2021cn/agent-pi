@@ -12,11 +12,11 @@
  * - Format user preferences for prompt injection
  */
 
-import { isLocalMcpEnabled } from '../../workspaces/storage.ts';
+import { isLocalMcpEnabled, loadWorkspaceConfig } from '../../workspaces/storage.ts';
 import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
-import { getSessionPlansPath, getSessionDataPath, getSessionOutputPath, getSessionPath } from '../../sessions/storage.ts';
+import { getSessionPlansPath, getSessionDataPath, getSessionOutputPath, getSessionPath, getProjectBrainPath, loadProjectMemoryContextForSession } from '../../sessions/storage.ts';
 import type {
   PromptBuilderConfig,
   ContextBlockOptions,
@@ -120,12 +120,20 @@ export class PromptBuilder {
       getSessionDataPath(this.workspaceRootPath, sessionId);
     const outputFolderPath = options.outputFolderPath ??
       getSessionOutputPath(this.workspaceRootPath, sessionId, this.config.session?.workingDirectory);
+    const projectBrainPath = getProjectBrainPath(this.config.session?.workingDirectory);
     parts.push(formatSessionState(sessionId, {
+      workingDirectory: this.config.session?.workingDirectory,
       plansFolderPath,
       dataFolderPath,
       outputFolderPath,
+      projectBrainPath,
       consumeModeChangeUserSignal: true,
     }));
+
+    const projectMemoryContext = loadProjectMemoryContextForSession(this.config.session?.workingDirectory);
+    if (projectMemoryContext) {
+      parts.push(projectMemoryContext);
+    }
 
     // Source state if provided
     if (sourceStateBlock) {
@@ -174,6 +182,19 @@ export class PromptBuilder {
       capabilities.push('local-mcp: enabled (stdio subprocess servers supported)');
     } else {
       capabilities.push('local-mcp: disabled (only HTTP/SSE servers)');
+    }
+
+    const projectMemory = loadWorkspaceConfig(this.workspaceRootPath)?.projectMemory;
+    const gbrain = projectMemory?.gbrain;
+    if (gbrain?.enabled) {
+      const backend = gbrain.backend === 'remote_mcp'
+        ? `remote MCP${gbrain.remoteMcpUrl ? ` (${gbrain.remoteMcpUrl})` : ''}`
+        : gbrain.backend === 'local_postgres'
+        ? 'local PostgreSQL + pgvector'
+        : `local PGLite${gbrain.localDatabasePath ? ` base (${gbrain.localDatabasePath})` : ' under the working directory'}`;
+      capabilities.push(`project-memory: Project Memory Lite + project gbrain backend enabled via source agent-pi-gbrain: ${backend}; runtime is bound to the selected workingDirectory namespace`);
+    } else {
+      capabilities.push('project-memory: Project Memory Lite enabled; gbrain advanced backend disabled');
     }
 
     return `<workspace_capabilities>\n${capabilities.join('\n')}\n</workspace_capabilities>`;

@@ -131,6 +131,9 @@ export async function requestClientOpenFileDialog(
   clientId: string,
   spec: FileDialogSpec,
 ): Promise<{ canceled: boolean; filePaths: string[] }> {
+  if (server.invokeClientWithOptions) {
+    return await server.invokeClientWithOptions(clientId, CLIENT_OPEN_FILE_DIALOG, { timeoutMs: 0 }, spec)
+  }
   return await server.invokeClient(clientId, CLIENT_OPEN_FILE_DIALOG, spec)
 }
 

@@ -17,7 +17,11 @@
  *     volatile builder — never by the stable builder.
  */
 import { describe, it, expect, afterEach } from 'bun:test'
-import { TestAgent, createMockBackendConfig } from './test-utils.ts'
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { PROJECT_MEMORY_DIR_NAME, PROJECT_MEMORY_BRAIN_DIR_NAME, PROJECT_MEMORY_ENTRIES_FILE_NAME } from '../../sessions/storage.ts'
+import { TestAgent, createMockBackendConfig, createMockSession, createMockWorkspace } from './test-utils.ts'
 import { cleanupModeState, initializeModeState, setPermissionMode } from '../mode-manager.ts'
 
 // Matches createMockSession() in test-utils.ts
@@ -77,5 +81,37 @@ describe('PromptBuilder volatile/stable context split (issue #862)', () => {
     const second = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
     expect(first).toContain('modeChangeUserSignal:')
     expect(second).not.toContain('modeChangeUserSignal:')
+  })
+
+  it('injects same-working-directory project memory only into volatile context', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-project-memory-context-'))
+    try {
+      const brainPath = join(workingDirectory, PROJECT_MEMORY_DIR_NAME, PROJECT_MEMORY_BRAIN_DIR_NAME)
+      await mkdir(brainPath, { recursive: true })
+      await writeFile(join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME), `${JSON.stringify({
+        type: 'formal_output_created',
+        title: 'Cost summary',
+        summary: 'The project established Schedule A as the dominant cost bucket.',
+        trust: 'verified',
+        outputPath: join(workingDirectory, 'Agent Pi Outputs', 'session-1', 'cost.md'),
+        sourcePaths: [join(workingDirectory, 'boq.xlsx')],
+      })}\n`, 'utf8')
+
+      const builder = new TestAgent(createMockBackendConfig({
+        workspace: createMockWorkspace({ rootPath: workingDirectory }),
+        session: createMockSession({
+          workspaceRootPath: workingDirectory,
+          workingDirectory,
+        }),
+      })).getPromptBuilder()
+      const volatileText = builder.buildVolatileContextParts(OPTS).join('\n')
+      const stableText = builder.buildStableContextParts().join('\n')
+
+      expect(volatileText).toContain('<project_memory_context>')
+      expect(volatileText).toContain('Schedule A as the dominant cost bucket')
+      expect(stableText).not.toContain('<project_memory_context>')
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
   })
 })

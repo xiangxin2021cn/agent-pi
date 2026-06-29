@@ -47,6 +47,26 @@ import { sessionPersistenceQueue } from './persistence-queue.ts';
 export type { SessionConfig } from './types.ts';
 
 export const FORMAL_OUTPUTS_DIR_NAME = 'Agent Pi Outputs';
+export const PROJECT_MEMORY_DIR_NAME = '.agent-pi';
+export const PROJECT_MEMORY_BRAIN_DIR_NAME = 'brain';
+export const PROJECT_MEMORY_ENTRIES_FILE_NAME = 'entries.jsonl';
+
+export interface ProjectMemoryContextEntry {
+  type: string;
+  id?: string;
+  title?: string;
+  summary?: string;
+  trust?: 'verified' | 'user_promoted' | 'needs_review' | 'unverified';
+  status?: string;
+  sessionId?: string;
+  goalAuditId?: string;
+  path?: string;
+  outputPath?: string;
+  reviewPath?: string;
+  sourcePaths?: string[];
+  missingCriteria?: string[];
+  createdAt?: number;
+}
 
 // ============================================================
 // Directory Utilities
@@ -92,6 +112,93 @@ export function getSessionOutputPathFromSessionPath(sessionPath: string, working
 
 export function getSessionOutputPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
   return getSessionOutputPathFromSessionPath(getSessionPath(workspaceRootPath, sessionId), workingDirectory);
+}
+
+export function getProjectBrainPath(workingDirectory?: string): string | undefined {
+  if (!workingDirectory) return undefined;
+  return join(workingDirectory, PROJECT_MEMORY_DIR_NAME, PROJECT_MEMORY_BRAIN_DIR_NAME);
+}
+
+export function getProjectMemoryEntriesPath(workingDirectory?: string): string | undefined {
+  const brainPath = getProjectBrainPath(workingDirectory);
+  return brainPath ? join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME) : undefined;
+}
+
+export function loadProjectMemoryContextForSession(
+  workingDirectory?: string,
+  options: { limit?: number; maxChars?: number } = {}
+): string | null {
+  const entriesPath = getProjectMemoryEntriesPath(workingDirectory);
+  const brainPath = getProjectBrainPath(workingDirectory);
+  if (!entriesPath || !brainPath || !existsSync(entriesPath)) return null;
+
+  const limit = Math.max(1, Math.min(options.limit ?? 12, 25));
+  const maxChars = Math.max(1000, Math.min(options.maxChars ?? 6000, 12000));
+  const entries = readProjectMemoryEntries(entriesPath).slice(-limit);
+  if (entries.length === 0) return null;
+
+  const lines = entries
+    .map(formatProjectMemoryEntryForPrompt)
+    .filter((line): line is string => Boolean(line));
+  if (lines.length === 0) return null;
+
+  const body = [
+    '<project_memory_context>',
+    `Memory home: ${brainPath}`,
+    'Scope: These entries are scoped to the current workingDirectory. Use them as project memory leads; verify critical facts against cited source/output paths before final claims.',
+    'Recent project memory entries:',
+    ...lines,
+    '</project_memory_context>',
+  ].join('\n');
+
+  return body.length > maxChars ? `${body.slice(0, maxChars)}\n...[project memory truncated]\n</project_memory_context>` : body;
+}
+
+function readProjectMemoryEntries(entriesPath: string): ProjectMemoryContextEntry[] {
+  try {
+    return readFileSync(entriesPath, 'utf8')
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        try {
+          const parsed = JSON.parse(line) as ProjectMemoryContextEntry;
+          return parsed && typeof parsed === 'object' && typeof parsed.type === 'string' ? parsed : undefined;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((entry): entry is ProjectMemoryContextEntry => entry !== undefined);
+  } catch {
+    return [];
+  }
+}
+
+function formatProjectMemoryEntryForPrompt(entry: ProjectMemoryContextEntry): string | undefined {
+  const title = normalizeProjectMemoryText(entry.title ?? entry.outputPath ?? entry.path ?? entry.id ?? entry.type);
+  const summary = normalizeProjectMemoryText(entry.summary ?? '');
+  if (!title && !summary) return undefined;
+
+  const parts = [`- [${normalizeProjectMemoryText(entry.type)}${entry.trust ? `/${entry.trust}` : ''}]`];
+  if (title) parts.push(title);
+  if (summary) parts.push(`- ${summary}`);
+
+  const paths = [
+    entry.outputPath ? `output: ${entry.outputPath}` : undefined,
+    entry.path ? `path: ${entry.path}` : undefined,
+    entry.reviewPath ? `review: ${entry.reviewPath}` : undefined,
+    ...(entry.sourcePaths ?? []).slice(0, 3).map(path => `source: ${path}`),
+  ].filter((value): value is string => value !== undefined);
+  if (paths.length > 0) parts.push(`(${paths.map(normalizeProjectMemoryText).join('; ')})`);
+
+  const missingCriteria = (entry.missingCriteria ?? []).slice(0, 2).map(normalizeProjectMemoryText).filter(Boolean);
+  if (missingCriteria.length > 0) parts.push(`open gaps: ${missingCriteria.join(' | ')}`);
+
+  return parts.join(' ');
+}
+
+function normalizeProjectMemoryText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 800);
 }
 
 /**

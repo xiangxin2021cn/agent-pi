@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -309,6 +309,119 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept reviewer pass for low-quality source-sensitive document work', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-document-quality',
+        text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '根据附件生成投标分析报告', {
+          attachments: [{
+            id: 'att-1',
+            type: 'pdf',
+            name: 'tender.pdf',
+            mimeType: 'application/pdf',
+            size: 100,
+            storedPath: '/tmp/tender.pdf',
+          }],
+        }),
+        message('a1', 'assistant', '报告完成，主要风险都已经分析。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'Looks complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria.some(item => item.includes('Document quality audit did not pass'))).toBe(true)
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'document_quality_report'
+        && (item.detail ?? '').includes('status: fail')
+      )).toBe(true)
+    }
+  })
+
+  test('passes document quality audit before reviewer decides remaining criteria', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+    const reportContent = [
+      '# 投标分析报告',
+      '## 一、项目范围与资料依据',
+      '本报告依据 tender.pdf 第 12 页的合同范围、BOQ 清单第 4 章的工程量项目，以及招标补遗中的工期要求形成。项目重点包括道路工程、结构工程、照明工程和社区参与安排。关键判断均按“来源、事实、影响、建议”四段记录，未见来源的内容明确列为假设。',
+      '## 二、关键风险清单',
+      '| 风险 | 来源 | 影响 | 建议 |',
+      '| --- | --- | --- | --- |',
+      '| 工期 60+3 个月但清单分部分项跨度较大 | tender.pdf 第 18 页 | 高峰资源投入可能集中 | 建议将道路、结构、照明分成独立流水段 |',
+      '| BOQ 金额集中在道路工程 | BOQ 第 1200-4200 节 | 报价偏差会放大总价风险 | 建议复核材料、机械、运输和管理费假设 |',
+      '## 三、数字与结论',
+      '根据 BOQ 工作簿，Schedule A 约占 52.4%，Schedule B 约占 38.0%，其余照明和 CPG 占比较低。该分布说明成本控制重点应放在道路工程的土方、路面、沥青和排水项目，并将结构工程作为第二控制面。以上比例用于指导审查优先级，不替代最终报价测算。',
+      '## 四、后续动作',
+      '下一步应把 tender.pdf 的合同条款、BOQ 的高金额条目、规范中的材料要求建立成审查清单。所有正式施工方案引用时应保留来源文件名、章节或页码，无法确认的数据应进入问题清单等待人工确认。',
+    ].join('\n\n')
+
+    const decision = await controller.onTurnStopped(goal({
+      criteria: [{
+        id: 'crit-document-quality',
+        text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '根据附件生成投标分析报告', {
+          attachments: [{
+            id: 'att-1',
+            type: 'pdf',
+            name: 'tender.pdf',
+            mimeType: 'application/pdf',
+            size: 100,
+            storedPath: '/tmp/tender.pdf',
+          }],
+        }),
+        message('a1', 'assistant', reportContent),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'Document quality and remaining criteria passed.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('complete')
+    expect(reviewPrompts).toHaveLength(1)
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'document_quality_report'
+        && (item.detail ?? '').includes('status: pass')
+      )).toBe(true)
+    }
+  })
+
   test('does not accept reviewer pass when explicit required user item is missing', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
@@ -545,6 +658,35 @@ describe('GoalController', () => {
         detail: '/tmp/missing-report.md',
       })
       expect(decision.prompt).toContain('Referenced file was not found: /tmp/missing-report.md')
+    }
+  })
+
+  test('does not verify web URLs as local file paths', async () => {
+    const controller = new GoalController()
+    const verifiedPaths: string[] = []
+
+    const decision = await controller.onTurnStopped(goal(), {
+      messages: [
+        message('u1', 'user', 'verify sources and write a summary'),
+        message('t1', 'tool', 'Fetched https://www.example.com/report.html and //www.example.org/source.pdf', {
+          toolName: 'WebFetch',
+          toolStatus: 'completed',
+          toolResult: 'Fetched https://www.example.com/report.html and //www.example.org/source.pdf',
+        }),
+        message('a1', 'assistant', 'Summary complete with cited web sources.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async (filePath) => {
+        verifiedPaths.push(filePath)
+        return { exists: false, readable: false }
+      },
+    })
+
+    expect(verifiedPaths).toEqual([])
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.missingCriteria).toEqual([])
     }
   })
 

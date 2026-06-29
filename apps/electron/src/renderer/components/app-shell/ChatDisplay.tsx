@@ -212,6 +212,8 @@ interface ChatDisplayProps {
   workingDirectory?: string
   /** Callback when working directory changes */
   onWorkingDirectoryChange?: (path: string) => void
+  /** Prevent changing working directory after a session has project-bound history */
+  workingDirectoryLocked?: boolean
   /** Session folder path (for "Reset to Session Root" option) */
   sessionFolderPath?: string
   // Lazy loading
@@ -492,6 +494,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Working directory
   workingDirectory,
   onWorkingDirectoryChange,
+  workingDirectoryLocked,
   sessionFolderPath,
   // Lazy loading
   messagesLoading = false,
@@ -1064,6 +1067,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Latest message metadata (for commit-time auto-scroll)
   const messageCount = session?.messages.length ?? 0
+  const persistedMessageCount = session?.messageCount ?? 0
+  const isEmptySessionForControls = messageCount === 0 && persistedMessageCount === 0
+  const isWorkingDirectoryLocked = workingDirectoryLocked ?? !isEmptySessionForControls
   const lastMessage = messageCount > 0 ? session?.messages[messageCount - 1] : undefined
   const lastMessageId = lastMessage?.id
   const lastMessageRole = lastMessage?.role
@@ -1978,9 +1984,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               workspaceId,
               workingDirectory,
               onWorkingDirectoryChange,
+              workingDirectoryLocked: isWorkingDirectoryLocked,
               disableSend: disableSend || connectionUnavailable,
               connectionUnavailable,
-              isEmptySession: session.messages.length === 0,
+              isEmptySession: isEmptySessionForControls,
               currentConnection: session.llmConnection,
               onConnectionChange,
               contextStatus: {

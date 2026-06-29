@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
 import { getGoalStatusText } from './goal-status-view-model'
-import type { SessionOutputDirectory } from '../../../shared/types'
+import type { ProjectMemorySessionStatusResult, SessionOutputDirectory } from '../../../shared/types'
 
 interface SessionInfoPopoverProps {
   sessionId: string
@@ -177,6 +177,7 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
   const session = useSession(sessionId)
   const { enabledSources, llmConnections, workspaceDefaultLlmConnection } = useAppShellContext()
   const [outputDirectory, setOutputDirectory] = React.useState<SessionOutputDirectory | null>(null)
+  const [projectMemoryStatus, setProjectMemoryStatus] = React.useState<ProjectMemorySessionStatusResult | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -190,7 +191,21 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     return () => {
       cancelled = true
     }
-  }, [sessionId])
+  }, [sessionId, session?.workingDirectory])
+
+  React.useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getSessionProjectMemoryStatus(sessionId)
+      .then(result => {
+        if (!cancelled) setProjectMemoryStatus(result)
+      })
+      .catch(() => {
+        if (!cancelled) setProjectMemoryStatus(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, session?.workingDirectory, session?.messageCount, session?.goalState?.updatedAt])
 
   const connection = React.useMemo(() => {
     const slug = session?.llmConnection ?? workspaceDefaultLlmConnection
@@ -208,6 +223,8 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     ? getGoalStatusText(t, session.goalState.status, session.goalState.iteration, session.goalState.maxIterations)
     : undefined
   const goalAuditItems = React.useMemo(() => getGoalAuditViewModels(session?.goalState), [session?.goalState])
+  const visibleGoalAuditItems = goalAuditItems.slice(0, 1)
+  const hiddenGoalAuditCount = Math.max(0, goalAuditItems.length - visibleGoalAuditItems.length)
 
   const progressItems = [
     {
@@ -238,10 +255,17 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       label: t('chat.workingDirectory'),
       value: session?.workingDirectory ?? sessionFolderPath ?? t('session.sessionFolderFallback'),
     },
+    ...(session?.workingDirectory ? [{
+      key: 'projectMemory',
+      icon: <DatabaseZap className="h-3.5 w-3.5" />,
+      label: t('sessionInfo.projectMemory', { defaultValue: 'Project memory' }),
+      value: getProjectMemoryStatusText(t, projectMemoryStatus),
+      active: projectMemoryStatus?.status === 'gbrain_imported',
+    }] : []),
   ]
 
   return (
-    <div className="shrink-0 px-3 py-3 space-y-3">
+    <div className="shrink-0 max-h-[300px] overflow-y-auto px-3 py-3 space-y-3">
       <InfoBlock title={t('sessionInfo.progress')}>
         {progressItems.map(item => (
           <InfoLine
@@ -253,16 +277,6 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
           />
         ))}
       </InfoBlock>
-
-      {goalAuditItems.length > 0 && (
-        <InfoBlock title={t('sessionInfo.goalAuditHistory')}>
-          <div className="space-y-1.5">
-            {goalAuditItems.map(item => (
-              <GoalAuditCard key={`${item.iteration}-${item.createdAt}`} item={item} />
-            ))}
-          </div>
-        </InfoBlock>
-      )}
 
       <InfoBlock title={t('sessionInfo.outputs')}>
         <InfoPathButton
@@ -308,6 +322,24 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
           />
         )}
       </InfoBlock>
+
+      {goalAuditItems.length > 0 && (
+        <InfoBlock title={t('sessionInfo.goalAuditHistory')}>
+          <div className="space-y-1.5">
+            {visibleGoalAuditItems.map(item => (
+              <GoalAuditCard key={`${item.iteration}-${item.createdAt}`} item={item} />
+            ))}
+            {hiddenGoalAuditCount > 0 && (
+              <div className="rounded-[6px] bg-foreground/[0.025] px-2 py-1 text-[11px] text-muted-foreground">
+                {t('sessionInfo.goalAuditOlderHidden', {
+                  count: hiddenGoalAuditCount,
+                  defaultValue: '{{count}} older audit rounds hidden to keep output files visible.',
+                })}
+              </div>
+            )}
+          </div>
+        </InfoBlock>
+      )}
     </div>
   )
 }
@@ -334,6 +366,9 @@ function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
       <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
         {item.summary}
       </div>
+      {item.documentExpertReport && (
+        <DocumentExpertReportCard report={item.documentExpertReport} />
+      )}
       {item.missingCriteria.length > 0 && (
         <div className="mt-1.5 space-y-1">
           <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
@@ -379,6 +414,53 @@ function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
   )
 }
 
+function DocumentExpertReportCard({ report }: { report: NonNullable<GoalAuditViewModel['documentExpertReport']> }) {
+  const { t } = useTranslation()
+  const dimensions = [
+    { key: 'structure', label: t('sessionInfo.documentExpertStructure', { defaultValue: 'Structure' }), value: report.dimensions.structure },
+    { key: 'evidence', label: t('sessionInfo.documentExpertEvidence', { defaultValue: 'Evidence' }), value: report.dimensions.evidence },
+    { key: 'numbers', label: t('sessionInfo.documentExpertNumbers', { defaultValue: 'Numbers' }), value: report.dimensions.numbers },
+    { key: 'specification', label: t('sessionInfo.documentExpertSpecification', { defaultValue: 'Spec' }), value: report.dimensions.specification },
+    { key: 'risk', label: t('sessionInfo.documentExpertRisk', { defaultValue: 'Risk' }), value: report.dimensions.risk },
+  ]
+
+  return (
+    <div className="mt-1.5 rounded-[6px] bg-background/70 px-2 py-1.5 ring-1 ring-border/50">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
+          {t('sessionInfo.documentExperts', { defaultValue: 'Document experts' })}
+        </span>
+        <span className={cn(
+          'text-[11px] font-semibold',
+          report.status === 'pass' ? 'text-success' : 'text-destructive',
+        )}>
+          {report.score}/{report.threshold}
+        </span>
+      </div>
+      <div className="mt-1 grid grid-cols-5 gap-1">
+        {dimensions.map(dimension => (
+          <div key={dimension.key} className="min-w-0 rounded-[5px] bg-foreground/[0.035] px-1 py-1 text-center">
+            <div className="truncate text-[9px] leading-3 text-muted-foreground" title={dimension.label}>
+              {dimension.label}
+            </div>
+            <div className={cn(
+              'text-[11px] font-medium leading-4',
+              dimension.value >= 75 ? 'text-success' : dimension.value >= 60 ? 'text-info' : 'text-destructive',
+            )}>
+              {dimension.value}
+            </div>
+          </div>
+        ))}
+      </div>
+      {report.issues.length > 0 && (
+        <div className="mt-1.5 line-clamp-2 text-[10px] leading-4 text-foreground/68">
+          {report.issues.join(' ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function getGoalAuditStatusText(t: ReturnType<typeof useTranslation>['t'], status: GoalAuditViewModel['status']): string {
   switch (status) {
     case 'pass':
@@ -403,6 +485,59 @@ function getGoalEvidenceTypeText(t: ReturnType<typeof useTranslation>['t'], type
     case 'tool':
       return t('sessionInfo.goalEvidenceTool')
   }
+}
+
+function getProjectMemoryStatusText(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: ProjectMemorySessionStatusResult | null,
+): string {
+  if (!status) {
+    return t('sessionInfo.projectMemoryChecking', { defaultValue: 'Checking memory status...' })
+  }
+
+  const suffix = typeof status.entryCount === 'number'
+    ? t('sessionInfo.projectMemoryEntries', { count: status.entryCount, defaultValue: '{{count}} entries' })
+    : undefined
+  const maintenance = formatProjectMemoryMaintenance(t, status)
+
+  switch (status.status) {
+    case 'gbrain_imported':
+      return [t('sessionInfo.projectMemoryGbrainReady', { defaultValue: 'gbrain refreshed' }), maintenance, suffix].filter(Boolean).join(' · ')
+    case 'gbrain_failed':
+      return [t('sessionInfo.projectMemoryGbrainFailed', { defaultValue: 'gbrain import failed' }), maintenance, suffix].filter(Boolean).join(' · ')
+    case 'lite_ready':
+      return [t('sessionInfo.projectMemoryLiteReady', { defaultValue: 'Lite memory refreshed' }), suffix].filter(Boolean).join(' · ')
+    case 'not_initialized':
+      return t('sessionInfo.projectMemoryNotInitialized', { defaultValue: 'Not initialized' })
+    case 'missing_working_directory':
+      return t('sessionInfo.projectMemoryNoWorkdir', { defaultValue: 'No working directory' })
+  }
+}
+
+function formatProjectMemoryMaintenance(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: ProjectMemorySessionStatusResult,
+): string | undefined {
+  const maintenance = status.gbrainMaintenance
+  if (!maintenance) return undefined
+  const parts = [
+    typeof maintenance.links === 'boolean'
+      ? maintenance.links
+        ? t('sessionInfo.projectMemoryLinksReady', { defaultValue: 'links ok' })
+        : t('sessionInfo.projectMemoryLinksPending', { defaultValue: 'links pending' })
+      : undefined,
+    typeof maintenance.facts === 'boolean'
+      ? maintenance.facts
+        ? t('sessionInfo.projectMemoryFactsReady', { defaultValue: 'facts ok' })
+        : t('sessionInfo.projectMemoryFactsPending', { defaultValue: 'facts pending' })
+      : undefined,
+    typeof maintenance.embeddings === 'boolean'
+      ? maintenance.embeddings
+        ? t('sessionInfo.projectMemoryEmbeddingsReady', { defaultValue: 'embed ok' })
+        : t('sessionInfo.projectMemoryEmbeddingsPending', { defaultValue: 'embed pending' })
+      : undefined,
+  ].filter((item): item is string => Boolean(item))
+  return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
 function InfoBlock({ title, children }: { title: string; children: React.ReactNode }) {

@@ -179,6 +179,8 @@ export const CHANNEL_MAP = {
   // Workspace Settings
   getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
   updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
+  getProjectGbrainStatus: invoke(RPC_CHANNELS.workspace.PROJECT_GBRAIN_STATUS),
+  initializeProjectGbrain: invoke(RPC_CHANNELS.workspace.PROJECT_GBRAIN_INITIALIZE),
 
   // Folder dialog
   openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER),
@@ -205,6 +207,7 @@ export const CHANNEL_MAP = {
   // Session Info Panel
   getSessionFiles: invoke(RPC_CHANNELS.sessions.GET_FILES),
   getSessionOutputDirectory: invoke(RPC_CHANNELS.sessions.GET_OUTPUT_DIRECTORY),
+  getSessionProjectMemoryStatus: invoke(RPC_CHANNELS.sessions.GET_PROJECT_MEMORY_STATUS),
   promoteSessionFile: invoke(RPC_CHANNELS.sessions.PROMOTE_FILE),
   createFileMemorySource: invoke(RPC_CHANNELS.sessions.CREATE_FILE_MEMORY_SOURCE),
   getSessionNotes: invoke(RPC_CHANNELS.sessions.GET_NOTES),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import {
   COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+  DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
   FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
   TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
   buildGoalCriteriaFromMessage,
@@ -39,6 +40,11 @@ describe('buildGoalCriteriaFromMessage', () => {
     expect(criteria.map(criterion => criterion.kind)).toContain('evidence')
     expect(criteria.map(criterion => criterion.kind)).toContain('format')
     expect(criteria.some(criterion => criterion.text.includes('tender.pdf'))).toBe(true)
+    expect(criteria).toContainEqual({
+      text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
   })
 
   it('adds verification criteria when the request asks for tests or validation', () => {
@@ -175,6 +181,11 @@ describe('buildGoalCriteriaFromMessage', () => {
 
     expect(criteria).toContainEqual({
       text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
       required: true,
     })

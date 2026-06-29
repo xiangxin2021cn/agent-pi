@@ -220,15 +220,32 @@ export const updateSessionMetaAtom = atom(
 export const replaceLoadedSessionAtom = atom(
   null,
   (get, set, session: Session) => {
-    set(sessionAtomFamily(session.id), session)
+    const existingSession = get(sessionAtomFamily(session.id))
+    const shouldPreserveExistingMessages = !!existingSession
+      && existingSession.messages.length > 0
+      && (!session.messages || session.messages.length === 0)
+    const nextSession = shouldPreserveExistingMessages
+      ? {
+          ...session,
+          messages: existingSession.messages,
+          lastMessageAt: Math.max(session.lastMessageAt || 0, existingSession.lastMessageAt || 0),
+          isProcessing: session.isProcessing || existingSession.isProcessing,
+          messageCount: (session.messageCount ?? 0) > 0
+            ? session.messageCount
+            : (existingSession.messageCount ?? existingSession.messages.length),
+          lastFinalMessageId: session.lastFinalMessageId ?? existingSession.lastFinalMessageId,
+        }
+      : session
+
+    set(sessionAtomFamily(session.id), nextSession)
 
     const metaMap = get(sessionMetaMapAtom)
     const newMetaMap = new Map(metaMap)
-    newMetaMap.set(session.id, extractSessionMeta(session))
+    newMetaMap.set(session.id, extractSessionMeta(nextSession))
     set(sessionMetaMapAtom, newMetaMap)
 
     const loadedSessions = get(loadedSessionsAtom)
-    if (!loadedSessions.has(session.id)) {
+    if (!shouldPreserveExistingMessages && !loadedSessions.has(session.id)) {
       const newLoadedSessions = new Set(loadedSessions)
       newLoadedSessions.add(session.id)
       set(loadedSessionsAtom, newLoadedSessions)

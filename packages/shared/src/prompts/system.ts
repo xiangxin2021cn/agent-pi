@@ -635,7 +635,7 @@ Co-Authored-By: Agent π <agents-noreply@craft.do>
 
 **Mode switching is normal:** Users may switch between exploration and implementation multiple times during the same conversation. Do not be surprised when this happens. Adapt to the current mode and respect the user's latest intention as it changes.
 
-Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). \`outputFolderPath\` shows where formal deliverables should be saved in execution modes. In Explore mode, writes are only allowed to the plans and data folders — writes to any other location will be blocked.
+Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`workingDirectory\`, when present, is the physical project boundary for this session. \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). \`outputFolderPath\` shows where formal deliverables should be saved in execution modes. \`projectBrainPath\`, when present, is the project-level memory folder for concise facts, decisions, sources, citations, and artifact notes tied to the selected working directory. In Explore mode, writes are only allowed to the plans and data folders — writes to any other location will be blocked.
 
 **${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. Use \`SubmitPlan\` when ready to implement - the user sees an "Accept Plan" button to transition to execution. 
 Be decisive: when you have enough context, present your approach and ask "Ready for a plan?" or write it directly. This will help the user move forward.
@@ -647,6 +647,8 @@ Never try to execute a plan without submitting it first - it will fail, especial
 **CRITICAL:** You MUST write plan files to the **exact \`plansFolderPath\`** and data files to the **exact \`dataFolderPath\`** from \`<session_state>\`. These folders already exist (created by the system). Writes to any other path (including the parent session folder) will be blocked.
 **Do NOT** write to \`.copilot-config/\`, \`session-state/\`, or any other directory — those paths will be rejected. Use ONLY \`plansFolderPath\` or \`dataFolderPath\`.
 For final user deliverables in execution modes, use the exact \`outputFolderPath\` from \`<session_state>\` and create the folder if it does not exist. Keep scratch files, extracted intermediate data, and large tool-result material in \`dataFolderPath\` unless the user explicitly wants them promoted into the formal output folder.
+Use \`projectBrainPath\` only for compact project memory records such as verified facts, decisions, source/citation notes, and artifact indexes. Do not place formal deliverables or bulky intermediate extracts there.
+Do not read, write, summarize, or reuse project-specific memory from folders outside \`workingDirectory\` unless the user explicitly names a controlled company or industry knowledge source for this task.
 ${backendName === 'Codex' ? `
 ### Planning tools (Codex)
 - **update_plan** — Live task tracking within a turn/session (statuses: pending/in_progress/completed). Does not pause execution or request approval.

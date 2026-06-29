@@ -228,6 +228,9 @@ import type {
   ClaudeOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
+  ProjectGbrainInitializeResult,
+  ProjectGbrainStatusResult,
+  ProjectMemorySessionStatusResult,
   PermissionModeState,
   BrowserInstanceInfo,
   DeepLinkNavigation,
@@ -469,6 +472,8 @@ export interface ElectronAPI {
   // Workspace Settings (per-workspace configuration)
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
   updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
+  getProjectGbrainStatus(workspaceId: string): Promise<ProjectGbrainStatusResult>
+  initializeProjectGbrain(workspaceId: string): Promise<ProjectGbrainInitializeResult>
 
   // Folder dialog
   openFolderDialog(): Promise<string | null>
@@ -486,6 +491,7 @@ export interface ElectronAPI {
   // Session Info Panel
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionOutputDirectory(sessionId: string): Promise<SessionOutputDirectory | null>
+  getSessionProjectMemoryStatus(sessionId: string): Promise<ProjectMemorySessionStatusResult | null>
   promoteSessionFile(sessionId: string, filePath: string, requestedName?: string): Promise<PromoteSessionFileResult>
   createFileMemorySource(sessionId: string, filePath: string, options?: CreateFileMemorySourceOptions): Promise<CreateFileMemorySourceResult>
   getSessionNotes(sessionId: string): Promise<string>

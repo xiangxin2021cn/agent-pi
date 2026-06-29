@@ -901,7 +901,11 @@ export default function App() {
               syncSessionOptionsFromSession(createdSession)
               return
             }
-            return window.electronAPI.getSessions().then(initializeSessions)
+            return refreshSessionListMetadataFromServer({
+              removeMissing: false,
+              reason: 'session-created-missing-payload',
+              selectedSessionId: sessionId,
+            })
           })
           .catch((error: unknown) => console.error('Failed to handle session_created event:', error))
         return

@@ -74,6 +74,24 @@ describe('mode transition session_state context', () => {
     cleanupModeState(sessionId);
   });
 
+  it('includes the project brain path when provided', () => {
+    const sessionId = `mode-project-brain-${Date.now()}`;
+
+    const stateBlock = formatSessionState(sessionId, {
+      workingDirectory: '/tmp/project',
+      plansFolderPath: '/tmp/plans',
+      dataFolderPath: '/tmp/data',
+      outputFolderPath: '/tmp/outputs',
+      projectBrainPath: '/tmp/project/.agent-pi/brain',
+    });
+
+    expect(stateBlock).toContain('workingDirectory: /tmp/project');
+    expect(stateBlock).toContain('projectBoundary: Treat workingDirectory as the physical project boundary');
+    expect(stateBlock).toContain('projectBrainPath: /tmp/project/.agent-pi/brain');
+
+    cleanupModeState(sessionId);
+  });
+
   it('restores modeTransition after rehydrating persisted previous mode', () => {
     const sessionId = `mode-rehydrate-${Date.now()}`;
 

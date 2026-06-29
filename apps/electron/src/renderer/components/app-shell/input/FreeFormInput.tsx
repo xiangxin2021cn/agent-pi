@@ -203,6 +203,8 @@ export interface FreeFormInputProps {
   workingDirectory?: string
   /** Callback when working directory changes */
   onWorkingDirectoryChange?: (path: string) => void
+  /** Prevent changing working directory after a session has project-bound history */
+  workingDirectoryLocked?: boolean
   /** Session folder path (for "Reset to Session Root" option) */
   sessionFolderPath?: string
   /** Session ID for scoping events like approve-plan */
@@ -303,6 +305,7 @@ export function FreeFormInput({
   workspaceId,
   workingDirectory,
   onWorkingDirectoryChange,
+  workingDirectoryLocked = false,
   sessionFolderPath,
   sessionId,
   currentSessionStatus,
@@ -953,11 +956,15 @@ export function FreeFormInput({
 
   // Handle folder selection from slash command menu
   const handleSlashFolderSelect = React.useCallback((path: string) => {
+    if (workingDirectoryLocked) {
+      toast.error(t('chat.workingDirectoryLocked', { defaultValue: 'Working directory is locked for this session. Start a new session for another project folder.' }))
+      return
+    }
     if (onWorkingDirectoryChange) {
       setRecentFolders(addRecentWorkingDir(path, workspaceId))
       onWorkingDirectoryChange(path)
     }
-  }, [onWorkingDirectoryChange, workspaceId])
+  }, [onWorkingDirectoryChange, t, workingDirectoryLocked, workspaceId])
 
   // Get recent folders and home directory for slash menu and mention menu
   const [recentFolders, setRecentFolders] = React.useState<string[]>([])
@@ -2083,6 +2090,7 @@ export function FreeFormInput({
             <CompactWorkingDirectorySelector
               workingDirectory={workingDirectory}
               onWorkingDirectoryChange={onWorkingDirectoryChange}
+              locked={workingDirectoryLocked}
               sessionFolderPath={sessionFolderPath}
               isEmptySession={false}
               workspaceId={workspaceId}
@@ -2180,6 +2188,7 @@ export function FreeFormInput({
             <WorkingDirectoryBadge
               workingDirectory={workingDirectory}
               onWorkingDirectoryChange={onWorkingDirectoryChange}
+              locked={workingDirectoryLocked}
               sessionFolderPath={sessionFolderPath}
               isEmptySession={isEmptySession}
               workspaceId={workspaceId}
@@ -2671,12 +2680,14 @@ function formatPathForDisplay(path: string | undefined, homeDir: string): string
 function WorkingDirectoryBadge({
   workingDirectory,
   onWorkingDirectoryChange,
+  locked = false,
   sessionFolderPath,
   isEmptySession = false,
   workspaceId,
 }: {
   workingDirectory?: string
   onWorkingDirectoryChange: (path: string) => void
+  locked?: boolean
   sessionFolderPath?: string
   isEmptySession?: boolean
   workspaceId?: string
@@ -2730,6 +2741,28 @@ function WorkingDirectoryBadge({
   const MENU_CONTAINER_STYLE = 'min-w-[200px] max-w-[400px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small p-0'
   const MENU_LIST_STYLE = 'max-h-[200px] overflow-y-auto p-1 [&_[cmdk-list-sizer]]:space-y-px'
   const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-2 rounded-[6px] px-3 py-1.5 text-[13px] outline-none'
+  const lockedMessage = t('chat.workingDirectoryLocked', { defaultValue: 'Working directory is locked for this session. Start a new session for another project folder.' })
+
+  if (locked) {
+    return (
+      <FreeFormInputContextBadge
+        icon={<Icon_Home className="h-4 w-4" />}
+        label={folderName ?? 'Work in Folder'}
+        isExpanded={isEmptySession}
+        hasSelection={hasFolder}
+        showChevron={false}
+        onClick={() => toast.info(lockedMessage)}
+        tooltip={
+          <span className="flex flex-col gap-0.5">
+            <span className="font-medium">{t("chat.workingDirectory")}</span>
+            {hasFolder && <span className="text-xs opacity-70">{formatPathForDisplay(workingDirectory, homeDir)}</span>}
+            <span className="text-xs opacity-70">{lockedMessage}</span>
+          </span>
+        }
+        className="opacity-75"
+      />
+    )
+  }
 
   return (
     <>

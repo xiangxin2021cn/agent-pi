@@ -25,6 +25,25 @@ export interface WorkspaceGoalLoopConfig {
   defaultMode?: WorkspaceGoalLoopDefaultMode;
 }
 
+export type WorkspaceGbrainBackend = 'local_pglite' | 'local_postgres' | 'remote_mcp';
+
+export interface WorkspaceGbrainConfig {
+  /**
+   * Optional project-level advanced memory backend. Disabled by default so
+   * Project Memory Lite stays the zero-config baseline; when enabled, runtime
+   * sessions bind it to their selected workingDirectory namespace.
+   */
+  enabled?: boolean;
+  backend?: WorkspaceGbrainBackend;
+  localDatabasePath?: string;
+  postgresUrl?: string;
+  remoteMcpUrl?: string;
+}
+
+export interface WorkspaceProjectMemoryConfig {
+  gbrain?: WorkspaceGbrainConfig;
+}
+
 /**
  * Local MCP server configuration
  * Controls whether stdio-based (local subprocess) MCP servers can be spawned.
@@ -68,6 +87,13 @@ export interface WorkspaceConfig {
    * Resolution order: ENV (CRAFT_LOCAL_MCP_ENABLED) > workspace config > default (true)
    */
   localMcpServers?: LocalMcpConfig;
+
+  /**
+   * Project memory settings. The built-in file-based Project Memory Lite layer
+   * is always available when a working directory is selected; gbrain is an
+   * optional advanced backend configured here.
+   */
+  projectMemory?: WorkspaceProjectMemoryConfig;
 
   createdAt: number;
   updatedAt: number;

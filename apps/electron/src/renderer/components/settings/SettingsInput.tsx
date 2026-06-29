@@ -158,6 +158,8 @@ export interface SettingsInputRowProps {
   className?: string
   /** Whether inside a card */
   inCard?: boolean
+  /** onBlur handler */
+  onBlur?: () => void
 }
 
 export function SettingsInputRow({
@@ -171,6 +173,7 @@ export function SettingsInputRow({
   error,
   className,
   inCard = true,
+  onBlur,
 }: SettingsInputRowProps) {
   const id = React.useId()
 
@@ -203,6 +206,7 @@ export function SettingsInputRow({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           disabled={disabled}
+          onBlur={onBlur}
           className="w-[200px] bg-muted/50 border-0 shadow-none focus-visible:ring-0 focus-visible:outline-none focus-visible:bg-transparent"
         />
       </div>

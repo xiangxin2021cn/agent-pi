@@ -39,6 +39,7 @@ export const RPC_CHANNELS = {
     SET_MODEL: 'session:setModel',
     GET_FILES: 'sessions:getFiles',
     GET_OUTPUT_DIRECTORY: 'sessions:getOutputDirectory',
+    GET_PROJECT_MEMORY_STATUS: 'sessions:getProjectMemoryStatus',
     PROMOTE_FILE: 'sessions:promoteFile',
     CREATE_FILE_MEMORY_SOURCE: 'sessions:createFileMemorySource',
     GET_NOTES: 'sessions:getNotes',
@@ -260,6 +261,8 @@ export const RPC_CHANNELS = {
     WRITE_IMAGE: 'workspace:writeImage',
     SETTINGS_GET: 'workspaceSettings:get',
     SETTINGS_UPDATE: 'workspaceSettings:update',
+    PROJECT_GBRAIN_STATUS: 'workspace:projectGbrainStatus',
+    PROJECT_GBRAIN_INITIALIZE: 'workspace:projectGbrainInitialize',
   },
   permissions: {
     GET_DEFAULTS: 'permissions:getDefaults',

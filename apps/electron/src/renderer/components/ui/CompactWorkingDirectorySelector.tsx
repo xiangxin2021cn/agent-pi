@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, X, Search } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Icon_Home, Icon_Folder } from '@craft-agent/ui'
 import {
@@ -19,6 +20,7 @@ import { cn } from '@/lib/utils'
 export interface CompactWorkingDirectorySelectorProps {
   workingDirectory?: string
   onWorkingDirectoryChange: (path: string) => void
+  locked?: boolean
   sessionFolderPath?: string
   isEmptySession?: boolean
   workspaceId?: string
@@ -38,6 +40,7 @@ export interface CompactWorkingDirectorySelectorProps {
 export function CompactWorkingDirectorySelector({
   workingDirectory,
   onWorkingDirectoryChange,
+  locked = false,
   sessionFolderPath,
   isEmptySession = false,
   workspaceId,
@@ -87,6 +90,28 @@ export function CompactWorkingDirectorySelector({
   }, [sortedRecent, filter])
 
   const displayFolderName = folderName ?? t('chat.chooseWorkingDirectory')
+  const lockedMessage = t('chat.workingDirectoryLocked', { defaultValue: 'Working directory is locked for this session. Start a new session for another project folder.' })
+
+  if (locked) {
+    return (
+      <FreeFormInputContextBadge
+        icon={<Icon_Home className="h-4 w-4" />}
+        label={displayFolderName}
+        isExpanded={isEmptySession}
+        hasSelection={hasFolder}
+        showChevron={false}
+        onClick={() => toast.info(lockedMessage)}
+        tooltip={
+          <span className="flex flex-col gap-0.5">
+            <span className="font-medium">{t('chat.workingDirectory')}</span>
+            {hasFolder && <span className="text-xs opacity-70">{formatPath(workingDirectory, homeDir)}</span>}
+            <span className="text-xs opacity-70">{lockedMessage}</span>
+          </span>
+        }
+        className="opacity-75"
+      />
+    )
+  }
 
   return (
     <>

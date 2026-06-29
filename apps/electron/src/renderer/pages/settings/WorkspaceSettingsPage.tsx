@@ -34,10 +34,12 @@ import { toast } from 'sonner'
 import {
   SettingsSection,
   SettingsCard,
+  SettingsInputRow,
   SettingsRow,
   SettingsToggle,
   SettingsMenuSelectRow,
 } from '@/components/settings'
+import type { ProjectGbrainStatusResult } from '../../../shared/types'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -45,6 +47,7 @@ export const meta: DetailsPageMeta = {
 }
 
 type GoalLoopDefaultMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['defaultMode']>
+type GbrainBackend = NonNullable<NonNullable<NonNullable<WorkspaceSettings['projectMemory']>['gbrain']>['backend']>
 
 // ============================================
 // Main Component
@@ -68,6 +71,14 @@ export default function WorkspaceSettingsPage() {
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
   const [goalLoopDefaultMode, setGoalLoopDefaultMode] = useState<GoalLoopDefaultMode>('auto_improve')
+  const [gbrainEnabled, setGbrainEnabled] = useState(false)
+  const [gbrainBackend, setGbrainBackend] = useState<GbrainBackend>('local_pglite')
+  const [gbrainLocalDatabasePath, setGbrainLocalDatabasePath] = useState('')
+  const [gbrainPostgresUrl, setGbrainPostgresUrl] = useState('')
+  const [gbrainRemoteMcpUrl, setGbrainRemoteMcpUrl] = useState('')
+  const [projectGbrainStatus, setProjectGbrainStatus] = useState<ProjectGbrainStatusResult | null>(null)
+  const [isCheckingProjectGbrain, setIsCheckingProjectGbrain] = useState(false)
+  const [isInitializingProjectGbrain, setIsInitializingProjectGbrain] = useState(false)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Default sources state
@@ -77,6 +88,26 @@ export default function WorkspaceSettingsPage() {
   // Mode cycling state
   const [enabledModes, setEnabledModes] = useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
   const [modeCyclingError, setModeCyclingError] = useState<string | null>(null)
+
+  const refreshProjectGbrainStatus = useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId) {
+      setProjectGbrainStatus(null)
+      return
+    }
+
+    setIsCheckingProjectGbrain(true)
+    try {
+      setProjectGbrainStatus(await window.electronAPI.getProjectGbrainStatus(activeWorkspaceId))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      setProjectGbrainStatus(null)
+      toast.error(t('settings.workspace.projectMemoryGbrainStatusFailed', { defaultValue: 'Failed to check project gbrain status' }), {
+        description: message,
+      })
+    } finally {
+      setIsCheckingProjectGbrain(false)
+    }
+  }, [activeWorkspaceId, t])
 
   // Load workspace settings when active workspace changes
   useEffect(() => {
@@ -96,6 +127,11 @@ export default function WorkspaceSettingsPage() {
           setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
           setGoalLoopDefaultMode(settings.goalLoop?.defaultMode ?? 'auto_improve')
+          setGbrainEnabled(settings.projectMemory?.gbrain?.enabled ?? false)
+          setGbrainBackend(settings.projectMemory?.gbrain?.backend ?? 'local_pglite')
+          setGbrainLocalDatabasePath(settings.projectMemory?.gbrain?.localDatabasePath ?? '')
+          setGbrainPostgresUrl(settings.projectMemory?.gbrain?.postgresUrl ?? '')
+          setGbrainRemoteMcpUrl(settings.projectMemory?.gbrain?.remoteMcpUrl ?? '')
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
             setEnabledModes(settings.cyclablePermissionModes)
@@ -115,6 +151,8 @@ export default function WorkspaceSettingsPage() {
           if (healedSlugs.length !== savedSlugs.length) {
             window.electronAPI.updateWorkspaceSetting(activeWorkspaceId, 'enabledSourceSlugs', healedSlugs)
           }
+
+          void refreshProjectGbrainStatus()
         }
 
         // Try to load workspace icon (check common extensions)
@@ -150,7 +188,7 @@ export default function WorkspaceSettingsPage() {
     }
 
     loadWorkspaceSettings()
-  }, [activeWorkspaceId])
+  }, [activeWorkspaceId, refreshProjectGbrainStatus])
 
   // Subscribe to live source changes (additions/removals)
   useEffect(() => {
@@ -258,8 +296,9 @@ export default function WorkspaceSettingsPage() {
     const saved = await updateWorkspaceSetting('workingDirectory', selectedPath)
     if (saved) {
       setWorkingDirectory(selectedPath)
+      void refreshProjectGbrainStatus()
     }
-  }, [updateWorkspaceSetting])
+  }, [refreshProjectGbrainStatus, updateWorkspaceSetting])
 
   const {
     pickDirectory: handleChangeWorkingDirectory,
@@ -275,8 +314,9 @@ export default function WorkspaceSettingsPage() {
     const saved = await updateWorkspaceSetting('workingDirectory', undefined)
     if (saved) {
       setWorkingDirectory('')
+      void refreshProjectGbrainStatus()
     }
-  }, [updateWorkspaceSetting])
+  }, [refreshProjectGbrainStatus, updateWorkspaceSetting])
 
   const handleLocalMcpEnabledChange = useCallback(
     async (enabled: boolean) => {
@@ -285,6 +325,71 @@ export default function WorkspaceSettingsPage() {
     },
     [updateWorkspaceSetting]
   )
+
+  const saveProjectMemorySetting = useCallback(async (patch: Partial<NonNullable<WorkspaceSettings['projectMemory']>['gbrain']>) => {
+    const nextGbrain = {
+      enabled: gbrainEnabled,
+      backend: gbrainBackend,
+      localDatabasePath: gbrainLocalDatabasePath,
+      postgresUrl: gbrainPostgresUrl,
+      remoteMcpUrl: gbrainRemoteMcpUrl,
+      ...patch,
+    }
+
+    const saved = await updateWorkspaceSetting('projectMemory', {
+      gbrain: nextGbrain,
+    })
+    if (saved) void refreshProjectGbrainStatus()
+    return saved
+  }, [gbrainBackend, gbrainEnabled, gbrainLocalDatabasePath, gbrainPostgresUrl, gbrainRemoteMcpUrl, refreshProjectGbrainStatus, updateWorkspaceSetting])
+
+  const handleGbrainEnabledChange = useCallback(async (enabled: boolean) => {
+    setGbrainEnabled(enabled)
+    const saved = await saveProjectMemorySetting({ enabled })
+    if (!saved) setGbrainEnabled(!enabled)
+  }, [saveProjectMemorySetting])
+
+  const handleGbrainBackendChange = useCallback(async (backend: GbrainBackend) => {
+    setGbrainBackend(backend)
+    const saved = await saveProjectMemorySetting({ backend })
+    if (!saved) setGbrainBackend(gbrainBackend)
+  }, [gbrainBackend, saveProjectMemorySetting])
+
+  const handleGbrainLocalDatabasePathBlur = useCallback(async () => {
+    await saveProjectMemorySetting({ localDatabasePath: gbrainLocalDatabasePath })
+  }, [gbrainLocalDatabasePath, saveProjectMemorySetting])
+
+  const handleGbrainPostgresUrlBlur = useCallback(async () => {
+    await saveProjectMemorySetting({ postgresUrl: gbrainPostgresUrl })
+  }, [gbrainPostgresUrl, saveProjectMemorySetting])
+
+  const handleGbrainRemoteMcpUrlBlur = useCallback(async () => {
+    await saveProjectMemorySetting({ remoteMcpUrl: gbrainRemoteMcpUrl })
+  }, [gbrainRemoteMcpUrl, saveProjectMemorySetting])
+
+  const handleInitializeProjectGbrain = useCallback(async () => {
+    if (!window.electronAPI || !activeWorkspaceId) return
+
+    setIsInitializingProjectGbrain(true)
+    try {
+      const result = await window.electronAPI.initializeProjectGbrain(activeWorkspaceId)
+      setProjectGbrainStatus(result)
+      if (result.initialized) {
+        toast.success(t('settings.workspace.projectMemoryGbrainInitialized', { defaultValue: 'Project gbrain initialized' }))
+      } else {
+        toast.error(t('settings.workspace.projectMemoryGbrainInitializeIncomplete', { defaultValue: 'Project gbrain is not ready yet' }), {
+          description: result.message,
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      toast.error(t('settings.workspace.projectMemoryGbrainInitializeFailed', { defaultValue: 'Failed to initialize project gbrain' }), {
+        description: message,
+      })
+    } finally {
+      setIsInitializingProjectGbrain(false)
+    }
+  }, [activeWorkspaceId, t])
 
   const handleGoalLoopDefaultModeChange = useCallback(
     async (mode: GoalLoopDefaultMode) => {
@@ -335,6 +440,15 @@ export default function WorkspaceSettingsPage() {
     },
     [enabledModes, updateWorkspaceSetting, t]
   )
+
+  const projectGbrainStatusDescription = projectGbrainStatus
+    ? [
+        projectGbrainStatus.message,
+        projectGbrainStatus.namespace ? `Namespace: ${projectGbrainStatus.namespace}` : undefined,
+        projectGbrainStatus.projectGbrainPath ? `Store: ${projectGbrainStatus.projectGbrainPath}` : undefined,
+      ].filter(Boolean).join(' ')
+    : t('settings.workspace.projectMemoryGbrainStatusDesc', { defaultValue: 'Check the selected working directory project memory backend.' })
+  const canInitializeProjectGbrain = Boolean(projectGbrainStatus?.canInitialize && gbrainEnabled && (gbrainBackend === 'local_pglite' || gbrainBackend === 'local_postgres'))
 
   // Show empty state if no workspace is active
   if (!activeWorkspaceId) {
@@ -573,6 +687,79 @@ export default function WorkspaceSettingsPage() {
                   description={t("settings.workspace.localMcpServersDesc")}
                   checked={localMcpEnabled}
                   onCheckedChange={handleLocalMcpEnabledChange}
+                />
+                <SettingsToggle
+                  label={t('settings.workspace.projectMemoryGbrain', { defaultValue: 'Project gbrain backend' })}
+                  description={t('settings.workspace.projectMemoryGbrainDesc', { defaultValue: 'Project-level graph/vector memory bound to each working directory. Use separate sources for company or industry knowledge.' })}
+                  checked={gbrainEnabled}
+                  onCheckedChange={handleGbrainEnabledChange}
+                />
+                <SettingsMenuSelectRow
+                  label={t('settings.workspace.projectMemoryGbrainBackend', { defaultValue: 'gbrain backend' })}
+                  description={t('settings.workspace.projectMemoryGbrainBackendDesc', { defaultValue: 'Choose local PGLite or remote MCP; Agent Pi injects a per-working-directory namespace.' })}
+                  value={gbrainBackend}
+                  onValueChange={(v) => handleGbrainBackendChange(v as GbrainBackend)}
+                  options={[
+                    { value: 'local_pglite', label: t('settings.workspace.projectMemoryGbrainLocalPglite', { defaultValue: 'Local PGLite' }), description: t('settings.workspace.projectMemoryGbrainLocalPgliteDesc', { defaultValue: 'Use a project-isolated local gbrain store.' }) },
+                    { value: 'local_postgres', label: t('settings.workspace.projectMemoryGbrainLocalPostgres', { defaultValue: 'Local PostgreSQL' }), description: t('settings.workspace.projectMemoryGbrainLocalPostgresDesc', { defaultValue: 'Use local PostgreSQL + pgvector with one derived gbrain database per project working directory.' }) },
+                    { value: 'remote_mcp', label: t('settings.workspace.projectMemoryGbrainRemoteMcp', { defaultValue: 'Remote MCP' }), description: t('settings.workspace.projectMemoryGbrainRemoteMcpDesc', { defaultValue: 'Connect to a gbrain-compatible remote MCP service with project namespace headers.' }) },
+                  ]}
+                />
+                {gbrainBackend === 'local_pglite' ? (
+                  <SettingsInputRow
+                    label={t('settings.workspace.projectMemoryGbrainLocalPath', { defaultValue: 'Local gbrain base folder' })}
+                    description={t('settings.workspace.projectMemoryGbrainLocalPathDesc', { defaultValue: 'Optional base folder for project gbrain stores. Defaults to <workingDirectory>/.agent-pi/gbrain.' })}
+                    value={gbrainLocalDatabasePath}
+                    onChange={setGbrainLocalDatabasePath}
+                    onBlur={handleGbrainLocalDatabasePathBlur}
+                    placeholder="Uses <workingDirectory>/.agent-pi/gbrain"
+                  />
+                ) : gbrainBackend === 'local_postgres' ? (
+                  <SettingsInputRow
+                    label={t('settings.workspace.projectMemoryGbrainPostgresUrl', { defaultValue: 'PostgreSQL URL' })}
+                    description={t('settings.workspace.projectMemoryGbrainPostgresUrlDesc', { defaultValue: 'PostgreSQL service URL used as a template. Agent Pi derives a separate database per project working directory, for example agent_pi_gbrain_<project-hash>.' })}
+                    value={gbrainPostgresUrl}
+                    onChange={setGbrainPostgresUrl}
+                    onBlur={handleGbrainPostgresUrlBlur}
+                    placeholder="postgres://user:password@127.0.0.1:5433/agent_pi_gbrain"
+                    type="password"
+                  />
+                ) : (
+                  <SettingsInputRow
+                    label={t('settings.workspace.projectMemoryGbrainRemoteUrl', { defaultValue: 'Remote MCP URL' })}
+                    description={t('settings.workspace.projectMemoryGbrainRemoteUrlDesc', { defaultValue: 'Required when remote MCP is enabled. Use an http(s) gbrain MCP endpoint; bearer auth is handled by the generated source.' })}
+                    value={gbrainRemoteMcpUrl}
+                    onChange={setGbrainRemoteMcpUrl}
+                    onBlur={handleGbrainRemoteMcpUrlBlur}
+                    placeholder="https://example.com/mcp"
+                    type="url"
+                  />
+                )}
+                <SettingsRow
+                  label={t('settings.workspace.projectMemoryGbrainStatus', { defaultValue: 'Project gbrain status' })}
+                  description={projectGbrainStatusDescription}
+                  action={
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={refreshProjectGbrainStatus}
+                        disabled={isCheckingProjectGbrain || isInitializingProjectGbrain}
+                        className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors disabled:opacity-50"
+                      >
+                        {isCheckingProjectGbrain ? t('common.checking', { defaultValue: 'Checking' }) : t('common.check', { defaultValue: 'Check' })}
+                      </button>
+                      {canInitializeProjectGbrain && (
+                        <button
+                          type="button"
+                          onClick={handleInitializeProjectGbrain}
+                          disabled={isInitializingProjectGbrain || isCheckingProjectGbrain}
+                          className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {isInitializingProjectGbrain ? t('common.initializing', { defaultValue: 'Initializing' }) : t('common.initialize', { defaultValue: 'Initialize' })}
+                        </button>
+                      )}
+                    </div>
+                  }
                 />
               </SettingsCard>
             </SettingsSection>

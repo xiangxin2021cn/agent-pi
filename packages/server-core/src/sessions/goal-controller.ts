@@ -6,7 +6,8 @@ import type {
 } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-quality'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
@@ -207,6 +208,22 @@ export class GoalController {
         label: 'substantive_content_missing',
         detail: finalAssistant.id,
       })
+    }
+    if (finalAssistant && requiresDocumentQualityAudit(goalState)) {
+      const report = analyzeDocumentQuality({
+        contents: outputPreviewTexts.length > 0 ? outputPreviewTexts : [finalAssistant.content],
+        sourceFilePaths: sourceFileEvidencePaths,
+        strict: goalState.mode === 'strict_work',
+      })
+      evidence.push({
+        type: 'system',
+        label: 'document_quality_report',
+        detail: formatDocumentQualityReport(report).slice(0, 3000),
+      })
+      if (!report.passed) {
+        const issueSummary = report.issues.length > 0 ? report.issues.join(' ') : 'Document quality score is below the required threshold.'
+        contentVerificationIssues.push(`Document quality audit did not pass (${report.score}/${report.threshold}): ${issueSummary}`)
+      }
     }
     if (finalAssistant) {
       for (const requirement of getExplicitUserRequirements(goalState)) {
@@ -518,6 +535,18 @@ function requiresSubstantiveWorkProduct(goalState: SessionGoalState): boolean {
   )
 }
 
+function requiresDocumentQualityAudit(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'coverage'
+    && criterion.text === DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT
+  )
+    || (goalState.mode === 'strict_work' && goalState.criteria.some(criterion =>
+      criterion.required
+      && (criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT || criterion.text.includes('structured, readable deliverable'))
+    ))
+}
+
 function hasSubstantiveWorkProduct(contents: string[]): boolean {
   const raw = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
   const normalized = raw.replace(/\s+/g, ' ').trim()
@@ -749,7 +778,7 @@ function extractOutputFilePaths(message: Message, inputPaths: string[], resultPa
 function extractFilePaths(value: unknown, key?: string, pathKeys = FILE_PATH_INPUT_KEYS): string[] {
   if (typeof value === 'string') {
     return key && pathKeys.has(key.toLowerCase()) && value.trim()
-      ? [value.trim()]
+      ? filterLocalFilePathCandidates([value.trim()])
       : []
   }
 
@@ -770,10 +799,21 @@ function extractFilePathsFromText(value: unknown): string[] {
     return []
   }
 
-  return [...new Set([
+  return filterLocalFilePathCandidates([...new Set([
     ...[...value.matchAll(QUOTED_FILE_PATH_TEXT_PATTERN)].map(match => match[1]),
     ...[...value.matchAll(FILE_PATH_TEXT_PATTERN)].map(match => match[0]),
-  ])]
+  ])])
+}
+
+function filterLocalFilePathCandidates(paths: string[]): string[] {
+  return paths
+    .map(path => path.trim())
+    .filter(path => path.length > 0 && !isWebUrlLikePath(path))
+}
+
+function isWebUrlLikePath(path: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(path)
+    || /^\/\/[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(path)
 }
 
 function getMessagesAfterFinalAssistant(messages: Message[], turnStartFinalMessageId?: string): Message[] {

@@ -59,6 +59,38 @@ describe('session message loading atoms', () => {
     expect(store.get(sessionMetaMapAtom).get(sessionId)?.messageCount).toBe(2)
   })
 
+  it('replaceLoadedSessionAtom does not wipe event-built messages with an empty hydrate payload', () => {
+    const store = createStore()
+    const sessionId = 'session-1'
+    const existingMessages = [msg('local-user'), msg('local-assistant', 'assistant')]
+
+    store.set(sessionAtomFamily(sessionId), makeSession({
+      id: sessionId,
+      name: 'Streaming title',
+      messages: existingMessages,
+      lastMessageAt: 200,
+      isProcessing: true,
+    }))
+
+    store.set(replaceLoadedSessionAtom, makeSession({
+      id: sessionId,
+      name: 'Hydrated title',
+      messages: [],
+      lastMessageAt: 100,
+      isProcessing: false,
+      messageCount: 0,
+    }))
+
+    const session = store.get(sessionAtomFamily(sessionId))
+    expect(session?.name).toBe('Hydrated title')
+    expect(session?.messages.map((message) => message.id)).toEqual(['local-user', 'local-assistant'])
+    expect(session?.messageCount).toBe(2)
+    expect(session?.lastMessageAt).toBe(200)
+    expect(session?.isProcessing).toBe(true)
+    expect(store.get(sessionMetaMapAtom).get(sessionId)?.messageCount).toBe(2)
+    expect(store.get(loadedSessionsAtom).has(sessionId)).toBe(false)
+  })
+
   it('forceSessionMessagesReloadAtom reloads an empty-but-loaded session', async () => {
     const store = createStore()
     const sessionId = 'session-1'

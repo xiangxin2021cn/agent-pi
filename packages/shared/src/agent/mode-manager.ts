@@ -2131,7 +2131,7 @@ export function getSessionState(sessionId: string): { permissionMode: Permission
  */
 export function formatSessionState(
   sessionId: string,
-  options?: { plansFolderPath?: string; dataFolderPath?: string; outputFolderPath?: string; consumeModeChangeUserSignal?: boolean }
+  options?: { workingDirectory?: string; plansFolderPath?: string; dataFolderPath?: string; outputFolderPath?: string; projectBrainPath?: string; consumeModeChangeUserSignal?: boolean }
 ): string {
   const diagnostics = getPermissionModeDiagnostics(sessionId);
 
@@ -2157,6 +2157,11 @@ export function formatSessionState(
     }
   }
 
+  if (options?.workingDirectory) {
+    result += `\nworkingDirectory: ${options.workingDirectory}`;
+    result += '\nprojectBoundary: Treat workingDirectory as the physical project boundary for this session. Do not read, write, summarize, or reuse memory from other project folders unless the user explicitly names a controlled company or industry knowledge source.';
+  }
+
   // Always include plans folder path so agent knows where plans are stored
   if (options?.plansFolderPath) {
     result += `\nplansFolderPath: ${options.plansFolderPath}`;
@@ -2170,6 +2175,10 @@ export function formatSessionState(
   // Formal deliverables should be written here in execution modes.
   if (options?.outputFolderPath) {
     result += `\noutputFolderPath: ${options.outputFolderPath}`;
+  }
+
+  if (options?.projectBrainPath) {
+    result += `\nprojectBrainPath: ${options.projectBrainPath}`;
   }
 
   result += '\n</session_state>';

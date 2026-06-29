@@ -12,10 +12,20 @@ export interface RequestContext {
 
 export type HandlerFn = (ctx: RequestContext, ...args: any[]) => Promise<any> | any
 
+export interface InvokeClientOptions {
+  /**
+   * Server-side timeout for client capability requests.
+   * Use 0 for user-driven native dialogs that should wait until the user chooses
+   * or cancels. Other calls should keep the default timeout.
+   */
+  timeoutMs?: number
+}
+
 export interface RpcServer {
   handle(channel: string, handler: HandlerFn): void
   push(channel: string, target: PushTarget, ...args: any[]): void
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any>
+  invokeClientWithOptions?(clientId: string, channel: string, options: InvokeClientOptions, ...args: any[]): Promise<any>
   updateClientWorkspace?(clientId: string, workspaceId: string): void
 
   /** Whether a connected client advertised the given capability on handshake. */

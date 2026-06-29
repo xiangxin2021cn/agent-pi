@@ -827,6 +827,38 @@ describe('invokeClient', () => {
     }
   })
 
+  test('invokeClientWithOptions times out when timeoutMs is positive', async () => {
+    const { server, client, clientId } = await createPair(
+      {},
+      { clientCapabilities: ['client:slow-timeout'] },
+    )
+
+    client.handleCapability('client:slow-timeout', () => new Promise(() => {}))
+
+    try {
+      await server.invokeClientWithOptions!(clientId, 'client:slow-timeout', { timeoutMs: 20 })
+      throw new Error('Should have thrown')
+    } catch (err: any) {
+      expect(err.code).toBe('CLIENT_REQUEST_TIMEOUT')
+      expect(err.message).toContain('20ms')
+    }
+  })
+
+  test('invokeClientWithOptions timeoutMs=0 waits for user-driven capabilities', async () => {
+    const { server, client, clientId } = await createPair(
+      {},
+      { clientCapabilities: ['client:native-dialog'] },
+    )
+
+    client.handleCapability('client:native-dialog', async () => {
+      await new Promise(r => setTimeout(r, 80))
+      return { canceled: false, filePaths: ['C:/project'] }
+    })
+
+    const result = await server.invokeClientWithOptions!(clientId, 'client:native-dialog', { timeoutMs: 0 })
+    expect(result).toEqual({ canceled: false, filePaths: ['C:/project'] })
+  })
+
   test('handshake with capabilities stores them on server', async () => {
     const { server, client, clientId } = await createPair(
       {},

@@ -17,6 +17,7 @@ import type {
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { CustomEndpointConfig } from '../config/llm-connections'
+import type { WorkspaceProjectMemoryConfig } from '../workspaces/types'
 import type {
   SessionGoalAuditResult,
   SessionGoalCriterionKind,
@@ -695,6 +696,66 @@ export interface WorkspaceSettings {
   goalLoop?: {
     defaultMode?: Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>
   }
+  projectMemory?: WorkspaceProjectMemoryConfig
+}
+
+export type ProjectGbrainRuntimeStatusValue =
+  | 'disabled'
+  | 'missing_working_directory'
+  | 'remote_configured'
+  | 'ready'
+  | 'needs_init'
+  | 'unavailable'
+  | 'error'
+
+export interface ProjectGbrainCommandStatus {
+  command: string
+  ok: boolean
+  stdout?: string
+  stderr?: string
+  code?: number | string
+}
+
+export interface ProjectGbrainStatusResult {
+  enabled: boolean
+  backend: 'local_pglite' | 'local_postgres' | 'remote_mcp'
+  status: ProjectGbrainRuntimeStatusValue
+  canInitialize: boolean
+  message: string
+  workingDirectory?: string
+  projectBrainPath?: string
+  projectGbrainPath?: string
+  namespace?: string
+  doctor?: ProjectGbrainCommandStatus
+}
+
+export interface ProjectGbrainInitializeResult extends ProjectGbrainStatusResult {
+  initialized: boolean
+  init?: ProjectGbrainCommandStatus
+}
+
+export type ProjectMemorySessionStatusValue =
+  | 'missing_working_directory'
+  | 'not_initialized'
+  | 'lite_ready'
+  | 'gbrain_imported'
+  | 'gbrain_failed'
+
+export interface ProjectMemorySessionStatusResult {
+  status: ProjectMemorySessionStatusValue
+  message: string
+  workingDirectory?: string
+  projectBrainPath?: string
+  manifestPath?: string
+  updatedAt?: number
+  entryCount?: number
+  gbrainImportStatus?: string
+  gbrainMaintenance?: {
+    links?: boolean
+    facts?: boolean
+    embeddings?: boolean
+  }
+  gbrainError?: string
 }
 
 // ---------------------------------------------------------------------------

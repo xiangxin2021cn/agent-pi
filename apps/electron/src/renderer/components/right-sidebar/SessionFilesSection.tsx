@@ -29,7 +29,7 @@ import {
 import type { SessionFile, SessionOutputDirectory } from '../../../shared/types'
 import { cn } from '@/lib/utils'
 import * as storage from '@/lib/local-storage'
-import { useAppShellContext } from '@/context/AppShellContext'
+import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
 import { restoreSessionFileWatch } from './session-files-watch'
 
@@ -486,6 +486,8 @@ function FileTreeItem({
  */
 export function SessionFilesSection({ sessionId, className, sessionFolderPath, hideHeader = false }: SessionFilesSectionProps) {
   const { t } = useTranslation()
+  const session = useSession(sessionId ?? '')
+  const workingDirectoryKey = session?.workingDirectory ?? ''
   const [files, setFiles] = useState<SessionFile[]>([])
   const [outputDirectory, setOutputDirectory] = useState<SessionOutputDirectory | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -536,6 +538,15 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       if (mountedRef.current) {
         setFiles(sessionFiles)
         setOutputDirectory(outputInfo)
+        if (outputInfo?.exists) {
+          setExpandedPaths((prev) => {
+            if (prev.has(outputInfo.path)) return prev
+            const next = new Set(prev)
+            next.add(outputInfo.path)
+            saveExpandedPaths(next)
+            return next
+          })
+        }
 
         // Default behavior: expand the entire folder tree when there's no saved state yet.
         if (!hasSavedExpandedState) {
@@ -558,7 +569,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         setIsLoading(false)
       }
     }
-  }, [sessionId, hasSavedExpandedState, saveExpandedPaths])
+  }, [sessionId, workingDirectoryKey, hasSavedExpandedState, saveExpandedPaths])
 
   // Initial load and file watcher setup
   useEffect(() => {
@@ -592,7 +603,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     return () => {
       mountedRef.current = false
     }
-  }, [sessionId, loadFiles])
+  }, [sessionId, workingDirectoryKey, loadFiles])
 
   // Use the link interceptor (via context) so file clicks show in-app previews
   // instead of always opening in the file manager / default app.

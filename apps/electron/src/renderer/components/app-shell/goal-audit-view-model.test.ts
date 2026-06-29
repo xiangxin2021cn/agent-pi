@@ -57,4 +57,50 @@ describe('goal audit view model', () => {
     expect(items[0].evidence).toHaveLength(4)
     expect(items[0].hiddenEvidenceCount).toBe(1)
   })
+
+  it('extracts document expert reports from goal evidence', () => {
+    const items = getGoalAuditViewModels(goalState({
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Document quality failed.',
+        missingCriteria: ['Document quality audit did not pass.'],
+        evidence: [
+          { type: 'file', label: 'file_verified', detail: '/tmp/source.pdf' },
+          {
+            type: 'system',
+            label: 'document_quality_report',
+            detail: [
+              'status: fail',
+              'score: 58/70',
+              'dimensions: structure=60, evidence=35, numbers=50, specification=45, risk=70',
+              'metrics: textLength=320, headings=1, paragraphs=2, citations=0, sourceRefs=0, numericClaims=6, tables=0, placeholders=0',
+              'issues:',
+              '- 缺少清晰章节结构。',
+              '- 没有看到对输入材料的来源标识或引用。',
+              'strengths:',
+              '- 包含可识别的风险建议。',
+            ].join('\n'),
+          },
+        ],
+        createdAt: 1,
+      }],
+    }))
+
+    expect(items[0].documentExpertReport).toEqual({
+      status: 'fail',
+      score: 58,
+      threshold: 70,
+      dimensions: {
+        structure: 60,
+        evidence: 35,
+        numbers: 50,
+        specification: 45,
+        risk: 70,
+      },
+      issues: ['缺少清晰章节结构。', '没有看到对输入材料的来源标识或引用。'],
+      strengths: ['包含可识别的风险建议。'],
+    })
+    expect(items[0].evidence.map(item => item.label)).toEqual(['file_verified'])
+  })
 })

@@ -27,6 +27,8 @@ export type {
   SessionGoalState,
 } from './types.ts';
 
+export type { ProjectMemoryContextEntry } from './storage.ts';
+
 // Field constants
 export { SESSION_PERSISTENT_FIELDS } from './types.ts';
 
@@ -41,7 +43,13 @@ export {
   getSessionPlansPath,
   getSessionOutputPath,
   getSessionOutputPathFromSessionPath,
+  getProjectBrainPath,
+  getProjectMemoryEntriesPath,
+  loadProjectMemoryContextForSession,
   FORMAL_OUTPUTS_DIR_NAME,
+  PROJECT_MEMORY_DIR_NAME,
+  PROJECT_MEMORY_BRAIN_DIR_NAME,
+  PROJECT_MEMORY_ENTRIES_FILE_NAME,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,
