@@ -145,6 +145,7 @@ export class GoalController {
         })
       }
     }
+    const outputPreviewTexts: string[] = []
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
@@ -165,6 +166,9 @@ export class GoalController {
           })
           const preview = verification.preview?.trim()
           if (preview) {
+            if (outputFileEvidencePaths.has(filePath)) {
+              outputPreviewTexts.push(preview)
+            }
             evidence.push({
               type: 'file',
               label: buildFilePreviewEvidenceLabel(verification, outputFileEvidencePaths.has(filePath)),
@@ -179,7 +183,7 @@ export class GoalController {
       finalAssistant
       && sourceFileEvidencePaths.length > 0
       && requiresSourceCitationMarker(goalState)
-      && !hasSourceCitationMarker(finalAssistant.content, sourceFileEvidencePaths)
+      && !hasSourceCitationMarker([finalAssistant.content, ...outputPreviewTexts], sourceFileEvidencePaths)
     ) {
       fileVerificationIssues.push('Final response did not include a source citation marker for required source evidence.')
       evidence.push({
@@ -471,7 +475,11 @@ function requiresSourceCitationMarker(goalState: SessionGoalState): boolean {
   )
 }
 
-function hasSourceCitationMarker(content: string, sourceFileEvidencePaths: string[]): boolean {
+function hasSourceCitationMarker(contents: string[], sourceFileEvidencePaths: string[]): boolean {
+  return contents.some(content => hasSourceCitationMarkerInText(content, sourceFileEvidencePaths))
+}
+
+function hasSourceCitationMarkerInText(content: string, sourceFileEvidencePaths: string[]): boolean {
   const normalized = content.toLowerCase()
   for (const filePath of sourceFileEvidencePaths) {
     const name = basename(filePath).toLowerCase()

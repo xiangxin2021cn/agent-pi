@@ -197,6 +197,75 @@ describe('GoalController', () => {
     }
   })
 
+  test('accepts required source citation markers from verified output previews', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-source-citation',
+        text: 'Use and cite the referenced input material where relevant: tender.md.',
+        kind: 'evidence',
+        required: true,
+      }, {
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Write a cited report from the tender.', {
+          attachments: [{
+            id: 'att-1',
+            type: 'text',
+            name: 'tender.md',
+            mimeType: 'text/markdown',
+            size: 58,
+            storedPath: '/tmp/tender.md',
+          }],
+        }),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.md' },
+        }),
+        message('a1', 'assistant', 'Saved the report.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async (filePath) => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 58,
+        preview: filePath.endsWith('report.md')
+          ? 'Mobilization period is 14 days.\n\n依据 tender.md: clause 4.2.'
+          : 'Tender clause 4.2 requires a 14-day mobilization plan.',
+      }),
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'The cited report is complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('complete')
+    expect(reviewPrompts).toHaveLength(1)
+    if (decision.action === 'complete') {
+      expect(decision.result.status).toBe('pass')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_preview',
+        detail: '/tmp/report.md\nMobilization period is 14 days.\n\n依据 tender.md: clause 4.2.',
+      })
+    }
+  })
+
   test('does not accept a reviewer pass that still reports missing criteria', async () => {
     const controller = new GoalController()
 
