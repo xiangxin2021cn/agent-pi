@@ -47,6 +47,7 @@ interface MarkdownPreview {
   filePath: string
   content: string | null
   mtimeMs?: number
+  truncated?: boolean
   error?: string
 }
 
@@ -196,8 +197,19 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     // Local filesystem reads are near-instant — no loading state needed.
     try {
       const preview = await optionsRef.current.readFilePreview(path)
-      const state = buildInitialTextState(type, path)
       const emptyPreviewError = getEmptyPreviewError(path, preview.content, preview.originalSize)
+      if (type === 'markdown') {
+        setPreviewState({
+          type,
+          filePath: path,
+          content: preview.content,
+          mtimeMs: preview.mtimeMs,
+          truncated: preview.truncated,
+          error: emptyPreviewError,
+        })
+        return
+      }
+      const state = buildInitialTextState(type, path)
       setPreviewState({ ...state, content: preview.content, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to read file'

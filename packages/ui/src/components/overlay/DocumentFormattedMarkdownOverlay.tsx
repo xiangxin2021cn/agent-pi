@@ -14,7 +14,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Download, Eye, Pencil, Save, ListTodo } from 'lucide-react'
 import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
-import { Markdown, TiptapMarkdownEditor } from '../markdown'
+import { Markdown } from '../markdown'
 import type { AnnotationV1 } from '@craft-agent/core'
 import type { ExternalOpenAnnotationRequest } from '../annotations/use-annotation-interaction-controller'
 import { FullscreenOverlayBase } from './FullscreenOverlayBase'
@@ -96,6 +96,23 @@ function HeaderIconButton({
     >
       {children}
     </button>
+  )
+}
+
+function MarkdownSourceEditor({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <textarea
+      value={value}
+      onChange={(event) => onChange(event.currentTarget.value)}
+      spellCheck={false}
+      className="min-h-[56vh] w-full resize-y rounded-[8px] border border-border/50 bg-background px-4 py-3 font-mono text-[13px] leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-ring focus:ring-1 focus:ring-ring"
+    />
   )
 }
 
@@ -268,12 +285,7 @@ export function DocumentFormattedMarkdownOverlay({
                   No preview content was returned for this file.
                 </div>
               ) : canEdit && mode === 'edit' ? (
-                <TiptapMarkdownEditor
-                  content={draftContent}
-                  onUpdate={setDraftContent}
-                  className="min-h-[56vh] rounded-[8px] border border-border/50 bg-background px-4 py-3"
-                  markdownEngine="official"
-                />
+                <MarkdownSourceEditor value={draftContent} onChange={setDraftContent} />
               ) : messageId && onAddAnnotation ? (
                 <AnnotatableMarkdownDocument
                   content={visibleContent}

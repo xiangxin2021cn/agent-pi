@@ -2256,7 +2256,7 @@ function FilePreviewRenderer({
           filePath={state.filePath}
           variant={isPlanFile ? 'plan' : 'response'}
           error={state.error}
-          editable
+          editable={!state.truncated}
           sourceMtimeMs={state.mtimeMs}
           onSave={(content, expectedMtimeMs) => saveTextFile(state.filePath, content, expectedMtimeMs)}
           onDownload={(content) => downloadMarkdownWithSaveDialog(state.filePath, content)}
