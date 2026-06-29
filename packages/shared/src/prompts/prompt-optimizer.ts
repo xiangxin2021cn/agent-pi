@@ -19,6 +19,11 @@ function formatAttachment(attachment: PromptOptimizationAttachment): string {
   return `- ${parts.join(', ')}`
 }
 
+function looksLikeStructuredPrompt(input: string): boolean {
+  return /^##\s*任务目标/m.test(input)
+    && /^##\s*(关键约束|执行步骤|输出格式|验收标准)/m.test(input)
+}
+
 export function buildPromptOptimizationInstruction(context: PromptOptimizationContext): string {
   const input = context.input.trim()
   const attachments = context.attachments?.length
@@ -64,6 +69,10 @@ export function buildPromptOptimizationInstruction(context: PromptOptimizationCo
 
 export function createPromptOptimizationFallback(context: PromptOptimizationContext): string {
   const input = context.input.trim()
+  if (looksLikeStructuredPrompt(input)) {
+    return input
+  }
+
   const attachments = context.attachments?.length
     ? context.attachments.map(formatAttachment).join('\n')
     : '未提供附件'

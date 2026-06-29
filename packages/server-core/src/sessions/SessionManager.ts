@@ -5856,9 +5856,15 @@ export class SessionManager implements ISessionManager {
       throw new Error('Prompt is empty')
     }
 
-    const connectionSlug = managed.llmConnection
-    const connection = connectionSlug ? getLlmConnection(connectionSlug) : null
-    const selectedModel = request.model ?? managed.model
+    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
+    const backendContext = resolveBackendContext({
+      sessionConnectionSlug: managed.llmConnection,
+      workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+      managedModel: request.model ?? managed.model,
+    })
+    const connection = backendContext.connection
+    const connectionSlug = connection?.slug
+    const selectedModel = request.model ?? managed.model ?? backendContext.resolvedModel
     const context: OptimizePromptRequest = {
       input,
       attachments: request.attachments,
@@ -5896,6 +5902,12 @@ export class SessionManager implements ISessionManager {
 
     try {
       if (!canQueryLlm(agent)) {
+        sessionLog.warn('optimizePrompt: no model query backend available, using fallback', {
+          sessionId,
+          hasManagedAgent: !!managed.agent,
+          connectionSlug,
+          model: selectedModel,
+        })
         return {
           optimizedPrompt: fallbackPrompt,
           changed: fallbackPrompt.trim() !== input,
@@ -5919,7 +5931,7 @@ export class SessionManager implements ISessionManager {
         fallback: !modelResult,
       }
     } catch (error) {
-      sessionLog.warn('optimizePrompt: mini completion failed, using fallback:', error)
+      sessionLog.warn('optimizePrompt: model optimization failed, using fallback:', error)
       return {
         optimizedPrompt: fallbackPrompt,
         changed: fallbackPrompt.trim() !== input,

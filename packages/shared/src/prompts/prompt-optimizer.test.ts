@@ -64,6 +64,18 @@ describe('prompt optimizer helpers', () => {
     expect(optimized).not.toContain('工程量')
   })
 
+  it('does not wrap an already structured fallback prompt again', () => {
+    const first = createPromptOptimizationFallback({
+      input: '请分析 gstack 对本应用有什么启发',
+    })
+    const second = createPromptOptimizationFallback({
+      input: first,
+    })
+
+    expect(second).toBe(first)
+    expect(second.match(/## 任务目标/g)).toHaveLength(1)
+  })
+
   it('normalizes fenced model output to plain prompt text', () => {
     expect(normalizeOptimizedPrompt('```markdown\n# 任务\n执行分析\n```')).toBe('# 任务\n执行分析')
   })
