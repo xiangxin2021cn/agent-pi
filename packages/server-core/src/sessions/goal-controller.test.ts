@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -262,6 +262,49 @@ describe('GoalController', () => {
         type: 'file',
         label: 'file_preview',
         detail: '/tmp/report.md\nMobilization period is 14 days.\n\n依据 tender.md: clause 4.2.',
+      })
+    }
+  })
+
+  test('does not accept reviewer pass for shallow comprehensive work output', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-quality',
+        text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Write a comprehensive report.'),
+        message('a1', 'assistant', 'Done.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'Looks complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Substantive work product was not produced for the requested high-quality comprehensive deliverable.')
+      expect(decision.prompt).toContain('Substantive work product was not produced')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'message',
+        label: 'substantive_content_missing',
+        detail: 'a1',
       })
     }
   })

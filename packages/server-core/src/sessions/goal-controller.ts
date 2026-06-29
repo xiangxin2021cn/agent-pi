@@ -6,7 +6,9 @@ import type {
 } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+
+const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -112,6 +114,7 @@ export class GoalController {
     }
 
     const fileVerificationIssues: string[] = []
+    const contentVerificationIssues: string[] = []
     const toolVerificationIssues: string[] = []
     if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
       fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
@@ -192,6 +195,18 @@ export class GoalController {
         detail: finalAssistant.id,
       })
     }
+    if (
+      finalAssistant
+      && requiresSubstantiveWorkProduct(goalState)
+      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputPreviewTexts])
+    ) {
+      contentVerificationIssues.push(SUBSTANTIVE_WORK_PRODUCT_MISSING)
+      evidence.push({
+        type: 'message',
+        label: 'substantive_content_missing',
+        detail: finalAssistant.id,
+      })
+    }
     if (requiresToolVerificationEvidence(goalState)) {
       const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
       if (toolVerificationMessages.length === 0) {
@@ -255,6 +270,14 @@ export class GoalController {
       missingCriteria.push(...fileVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because referenced file evidence could not be verified.'
+      }
+    }
+
+    if (contentVerificationIssues.length > 0) {
+      status = 'fail'
+      missingCriteria.push(...contentVerificationIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because the produced work product was too shallow for the requested quality criteria.'
       }
     }
 
@@ -473,6 +496,31 @@ function requiresSourceCitationMarker(goalState: SessionGoalState): boolean {
     && criterion.kind === 'evidence'
     && criterion.text.startsWith('Use and cite the referenced input material where relevant:')
   )
+}
+
+function requiresSubstantiveWorkProduct(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'coverage'
+    && criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT
+  )
+}
+
+function hasSubstantiveWorkProduct(contents: string[]): boolean {
+  const raw = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
+  const normalized = raw.replace(/\s+/g, ' ').trim()
+  if (normalized.length >= 240) return true
+
+  const structuralMarkers = raw.match(/(?:^|\n)\s*(?:#{1,6}\s+|\d+[.)、]\s+|[-*]\s+|[一二三四五六七八九十]+[、.．])/g)?.length ?? 0
+  const paragraphCount = raw
+    .split(/\n\s*\n/)
+    .map(paragraph => paragraph.replace(/\s+/g, ' ').trim())
+    .filter(paragraph => paragraph.length >= 30)
+    .length
+  const sentenceCount = normalized.split(/[.!?。！？；;]/).filter(sentence => sentence.trim().length >= 12).length
+
+  return normalized.length >= 160
+    && (structuralMarkers >= 3 || paragraphCount >= 3 || sentenceCount >= 4)
 }
 
 function hasSourceCitationMarker(contents: string[], sourceFileEvidencePaths: string[]): boolean {

@@ -168,6 +168,7 @@ Current implementation slice:
 - Tool errors still block automatic completion unless a later successful run of the same tool resolves the failure within the same turn.
 - Requests that explicitly ask to run tests, typecheck, build, lint, or validation add a required tool-verification criterion; if no successful verification tool evidence is captured, the audit fails before reviewer approval.
 - Comprehensive, detailed, or high-quality requests add a required coverage criterion so shallow outputs remain visible to the reviewer and auto-improvement loop.
+- Comprehensive, detailed, or high-quality requests now require a minimally substantive final response or verified output preview before reviewer approval, blocking obvious one-line completion claims.
 - Hidden auto-improvement turns reuse the previous turn's processed attachments, and can restore persisted user attachments after reload, so document/file-based work keeps source context without adding fake user messages.
 - The Goal badge popover surfaces the latest audit summary, missing criteria, and evidence count so users can see why a session is continuing or needs review without opening the full session info panel.
 
@@ -418,7 +419,7 @@ Success criteria:
 - Let goal audits verify output files, exports, previews, tests, and citations.
 - Add templates for code, long document writing, data extraction, and enterprise document analysis.
 
-Current status: first deterministic file-evidence verification is implemented without a full registry. The audit now checks user-uploaded attachments and file paths already surfaced by tool input or tool output, flags missing, unreadable, non-file, empty, wrong-location, or wrong-format output files, verifies requested deliverables land under `outputFolderPath` when the session exposes one, feeds bounded previews of verified text, spreadsheet, readable Office, and text-extractable PDF outputs into reviewer evidence, labels non-output source previews separately from output artifact previews, and blocks reviewer approval when explicit source-citation criteria have source evidence but neither the final response nor verified output previews include a citation marker. Full artifact registry events, scanned/binary preview checks, and citation-level checks remain future work.
+Current status: first deterministic file-evidence verification is implemented without a full registry. The audit now checks user-uploaded attachments and file paths already surfaced by tool input or tool output, flags missing, unreadable, non-file, empty, wrong-location, or wrong-format output files, verifies requested deliverables land under `outputFolderPath` when the session exposes one, feeds bounded previews of verified text, spreadsheet, readable Office, and text-extractable PDF outputs into reviewer evidence, labels non-output source previews separately from output artifact previews, blocks reviewer approval when explicit source-citation criteria have source evidence but neither the final response nor verified output previews include a citation marker, and rejects obvious one-line completion claims for comprehensive/high-quality work before reviewer approval. Full artifact registry events, scanned/binary preview checks, and citation-level checks remain future work.
 
 Success criteria:
 
