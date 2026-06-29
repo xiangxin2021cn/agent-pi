@@ -9,7 +9,7 @@ import { join } from 'path'
 import xlsx from 'xlsx'
 import { buildMarkdownExport } from '../handlers/rpc/files'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -1232,6 +1232,21 @@ describe('SessionManager goal loop routing', () => {
       event.type === 'goal_state_changed'
       && event.goalState.id === managed.goalState?.id
     )).toBe(true)
+  })
+
+  it('initializes tool verification criteria for code change requests', async () => {
+    const sessionId = 'goal-auto-init-code-verification'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请修复前端上传附件按钮的 bug').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.criteria).toContainEqual(expect.objectContaining({
+      text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+      kind: 'test',
+      required: true,
+    }))
   })
 
   it('uses a larger goal loop budget when the first work request asks to continue until done', async () => {

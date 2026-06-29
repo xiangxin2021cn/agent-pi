@@ -140,9 +140,29 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
   })
 
+  it('adds tool verification evidence criteria for code or app change requests', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请修复前端上传附件按钮的 bug',
+    })
+
+    expect(criteria).toContainEqual({
+      text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+      kind: 'test',
+      required: true,
+    })
+  })
+
   it('does not require tool verification evidence when the request only asks to describe validation', () => {
     const criteria = buildGoalCriteriaFromMessage({
       message: '请描述这个方案的验证思路',
+    })
+
+    expect(criteria.some(criterion => criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT)).toBe(false)
+  })
+
+  it('does not require tool verification evidence for ordinary document analysis', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请分析施工方案的关键风险',
     })
 
     expect(criteria.some(criterion => criterion.text === TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT)).toBe(false)

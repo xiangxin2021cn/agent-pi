@@ -37,6 +37,8 @@ const VERIFICATION_PATTERN = /验证|测试|检查|核对|复核|校验|verify|t
 const COMPREHENSIVE_PATTERN = /全面|详细|认真|深入|系统|高质量|复核|审稿|comprehensive|detailed|thorough|deep|high[- ]quality|review/i
 const UNTIL_DONE_PATTERN = /直到|直至|不达标不|满足要求再|反复|多轮|continue until|until .*done|until .*complete|until .*satisf/i
 const SOURCE_SENSITIVE_PATTERN = /招标|投标|合同|规范|条款|清单|工程量|图纸|报价|标书|附件|源文件|依据|boq|pdf|excel|xlsx?|csv|tender|contract|specification|clause|source|citation|cite|spreadsheet|workbook/i
+const CODE_CHANGE_ACTION_PATTERN = /实现|修复|改造|开发|重构|升级|集成|接入|调试|debug|implement|fix|refactor|upgrade|integrate|debug/i
+const CODE_CHANGE_SURFACE_PATTERN = /代码|源码|应用|程序|前端|后端|界面|按钮|组件|接口|路由|状态|构建|打包|脚本|测试|仓库|分支|提交|bug|崩溃|报错|typecheck|lint|build|electron|react|typescript|javascript|api|sdk|ui|button|component|frontend|backend|server|client|app|code|repo|branch|commit|crash|error/i
 const OUTPUT_FILE_REQUEST_PATTERN = /(?:生成|输出|导出|保存|写入|创建|另存|转换|generate|create|write|save|export|convert).{0,80}(?:文件|file|pdf|word|excel|markdown|md|docx?|xlsx?|pptx?|csv|html?|json|txt|\.pdf|\.md|\.docx?|\.xlsx?|\.pptx?|\.csv|\.html?|\.json|\.txt)/i
 const TOOL_VERIFICATION_REQUEST_PATTERN = /(?:运行|执行|跑|\b(?:run|execute)\b).{0,60}(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b)|(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build)\b).{0,40}(?:通过|成功|\b(?:pass|green|clean)\b)/i
 const OUTPUT_TARGET_SEGMENT_PATTERN = /(?:转换为|转换成|转为|转成|导出为|保存为|另存为|\bconvert\b.{0,60}\b(?:to|into|as)\b|\bexport\b.{0,60}\b(?:to|as)\b|\bsave\b.{0,60}\bas\b)(.{0,80})/i
@@ -101,7 +103,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (TOOL_VERIFICATION_REQUEST_PATTERN.test(message)) {
+  if (TOOL_VERIFICATION_REQUEST_PATTERN.test(message) || isCodeChangeRequest(message)) {
     criteria.push({
       text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
       kind: 'test',
@@ -193,6 +195,10 @@ function getRequestedOutputFormats(message: string): string[] {
   return OUTPUT_FORMAT_PATTERNS
     .filter(({ pattern }) => pattern.test(targetSegment))
     .map(({ label }) => label)
+}
+
+function isCodeChangeRequest(message: string): boolean {
+  return CODE_CHANGE_ACTION_PATTERN.test(message) && CODE_CHANGE_SURFACE_PATTERN.test(message)
 }
 
 function extractExplicitUserRequirements(message: string): string[] {
