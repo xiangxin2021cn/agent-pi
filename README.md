@@ -4,15 +4,15 @@
   <img src="docs/assets/agent-pi-logo.png" alt="AIPI Always π AI Studio" width="620" />
 </p>
 
-**Agent π 1.1 已正式发布。** 这是基于 Craft Agents OSS 深度改造的 Windows 桌面智能体工作台，面向长周期项目分析、招投标文件处理、工程资料研究、多模型协同和可追溯成果沉淀。
+**Agent π 1.1.1 已正式发布。** 这是基于 Craft Agents OSS 深度改造的 Windows 桌面智能体工作台，面向长周期项目分析、招投标文件处理、工程资料研究、多模型协同和可追溯成果沉淀。
 
 Agent π 的目标不是做一个普通聊天壳，而是把智能体升级为真实项目作业里的 **超级工作台**：主会话按工作目录组织，分支智能体折叠到主会话下，正式成果落回项目工作目录，过程文件可在应用内预览、编辑、导出，长任务由 Goal Loop 做自我审查和纠偏。
 
-## Agent π 1.1 发布
+## Agent π 1.1.1 发布
 
-[下载 Agent π 1.1 Windows 安装包](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+[下载 Agent π 1.1.1 Windows 安装包](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 
-V1.1 是 Agent π 进入 1.0 时代后的第一个质量修复与增强版本：继续强化长文档任务的 Goal Loop 自我纠偏，同时把项目记忆路线收敛为零配置的 **Project Memory Lite**，不要求用户配置数据库、向量库、外部 API Key 或 gbrain 服务。
+V1.1.1 是 Agent π 进入 1.0 时代后的质量修复与增强版本：继续强化长文档任务的 Goal Loop 自我纠偏，同时把项目记忆路线收敛为零配置的 **Project Memory Lite**，不要求用户配置数据库、向量库、外部 API Key 或 gbrain 服务。
 
 核心变化：
 
@@ -23,8 +23,17 @@ V1.1 是 Agent π 进入 1.0 时代后的第一个质量修复与增强版本：
 - **项目工作目录成果沉淀**：正式输出目录、文件来源标识、过程资料提升为正式成果，让智能体产物回到真实项目资料体系。
 - **项目物理隔离与轻量记忆**：会话开始后锁定工作目录，Project Memory Lite 固定写入该目录下 `.agent-pi/brain`，不同项目默认不共享记忆，避免跨工作目录污染。
 - **右侧面板修复**：正式输出文件优先展示并保持可预览，不再被 Goal Loop 阶段信息挤占。
+- **文件/目录选择超时修复**：上传附件、选择文件夹、选择工作目录会一直等待用户选择或取消，不再因为 30 秒 RPC 超时失效。
 - **核心运行时升级**：集成 Claude Agent SDK `0.3.195` 与 Pi `0.80.2`，并强化 Windows 打包中 Bun、Claude native binary、ripgrep 和 helper servers 的随包能力。
 - **面向专业长文写作**：重点服务招投标、合同审查、施工方案、BOQ/Excel 分析、技术报告、研究资料整理等高确定性工作场景。
+
+## 版本更新
+
+| 版本 | 重点更新 | 发布页 |
+| --- | --- | --- |
+| V1.1.1 | 修复文件选择、文件夹附件、工作目录选择的 30 秒超时问题；用户可慢慢选择，普通 RPC 仍保留超时保护。 | [v1.1.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.1) |
+| V1.1.0 | 强化 Goal Loop、Project Memory Lite、工作目录隔离、右侧正式输出预览，并修复提示词优化调用默认模型连接的问题。 | [v1.1.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.0) |
+| V1.0.0 | 首个重大工作台版本：引入 Goal Loop、渲染态 Markdown 编辑、PDF/DOCX 导出和长任务文档质量护栏。 | [v1.0.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.0.0) |
 
 ## 用户手册
 
