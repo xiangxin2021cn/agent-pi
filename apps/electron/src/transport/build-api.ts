@@ -13,7 +13,7 @@ import type { ElectronAPI } from '../shared/types'
 // ---------------------------------------------------------------------------
 
 export type ChannelMapEntry =
-  | { type: 'invoke'; channel: string; transform?: (result: any) => any }
+  | { type: 'invoke'; channel: string; transform?: (result: any) => any; timeoutMs?: number }
   | { type: 'listener'; channel: string }
 
 export type ChannelMap = Record<string, ChannelMapEntry>
@@ -36,9 +36,9 @@ export function buildClientApi(
       fn = (cb: (...args: any[]) => void) => client.on(entry.channel, cb)
     } else if (entry.transform) {
       const t = entry.transform
-      fn = async (...args: any[]) => t(await client.invoke(entry.channel, ...args))
+      fn = async (...args: any[]) => t(await invokeClient(client, entry.channel, entry.timeoutMs, ...args))
     } else {
-      fn = (...args: any[]) => client.invoke(entry.channel, ...args)
+      fn = (...args: any[]) => invokeClient(client, entry.channel, entry.timeoutMs, ...args)
     }
 
     // Dotted keys like "browserPane.create" become nested: api.browserPane.create
@@ -62,4 +62,11 @@ export function buildClientApi(
   api.isChannelAvailable = isChannelAvailable ?? (() => true)
 
   return api as ElectronAPI
+}
+
+function invokeClient(client: RpcClient, channel: string, timeoutMs: number | undefined, ...args: any[]): Promise<any> {
+  if (timeoutMs !== undefined && client.invokeWithOptions) {
+    return client.invokeWithOptions(channel, { timeoutMs }, ...args)
+  }
+  return client.invoke(channel, ...args)
 }

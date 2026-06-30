@@ -11,7 +11,7 @@
  */
 
 import type { WsRpcClient, TransportConnectionState } from './client'
-import type { RpcClient } from '@craft-agent/server-core/transport'
+import type { InvokeOptions, RpcClient } from '@craft-agent/server-core/transport'
 import type { RemoteServerConfig } from '@craft-agent/core/types'
 import { isLocalOnly, RPC_CHANNELS } from '@craft-agent/shared/protocol'
 
@@ -93,6 +93,10 @@ export class RoutedClient implements RpcClient {
   // -------------------------------------------------------------------------
 
   async invoke(channel: string, ...args: any[]): Promise<any> {
+    return this.invokeWithOptions(channel, {}, ...args)
+  }
+
+  async invokeWithOptions(channel: string, options: InvokeOptions, ...args: any[]): Promise<any> {
     const isLocal = isLocalOnly(channel)
     const target = isLocal ? this.localClient : this.workspaceClient
 
@@ -112,7 +116,9 @@ export class RoutedClient implements RpcClient {
         })
       : args
 
-    const result = await target.invoke(channel, ...translatedArgs)
+    const result = target.invokeWithOptions
+      ? await target.invokeWithOptions(channel, options, ...translatedArgs)
+      : await target.invoke(channel, ...translatedArgs)
 
     // Intercept SWITCH_WORKSPACE response to swap workspace client
     if (channel === RPC_CHANNELS.window.SWITCH_WORKSPACE) {

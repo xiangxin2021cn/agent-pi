@@ -12,6 +12,15 @@ export interface RequestContext {
 
 export type HandlerFn = (ctx: RequestContext, ...args: any[]) => Promise<any> | any
 
+export interface InvokeOptions {
+  /**
+   * Client-side request timeout in ms.
+   * Use 0 only for user-driven operations, such as native file/folder pickers,
+   * that should wait until the user chooses or cancels.
+   */
+  timeoutMs?: number
+}
+
 export interface InvokeClientOptions {
   /**
    * Server-side timeout for client capability requests.
@@ -37,6 +46,7 @@ export interface RpcServer {
 
 export interface RpcClient {
   invoke(channel: string, ...args: any[]): Promise<any>
+  invokeWithOptions?(channel: string, options: InvokeOptions, ...args: any[]): Promise<any>
   on(channel: string, callback: (...args: any[]) => void): () => void
   handleCapability(channel: string, handler: (...args: any[]) => Promise<any> | any): void
 }

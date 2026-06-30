@@ -8,9 +8,11 @@
 import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
-function invoke(channel: string, transform?: (result: any) => any) {
-  return { type: 'invoke' as const, channel, ...(transform && { transform }) }
+function invoke(channel: string, transform?: (result: any) => any, options?: { timeoutMs?: number }) {
+  return { type: 'invoke' as const, channel, ...(transform && { transform }), ...(options && { timeoutMs: options.timeoutMs }) }
 }
+
+const WAIT_FOR_USER_DIALOG = { timeoutMs: 0 } as const
 
 function listener(channel: string) {
   return { type: 'listener' as const, channel }
@@ -78,8 +80,8 @@ export const CHANNEL_MAP = {
   readFileDataUrl: invoke(RPC_CHANNELS.file.READ_DATA_URL),
   readFilePreviewDataUrl: invoke(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL),
   readFileBinary: invoke(RPC_CHANNELS.file.READ_BINARY),
-  openFileDialog: invoke(RPC_CHANNELS.file.OPEN_DIALOG),
-  openAttachmentDialog: invoke(RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG),
+  openFileDialog: invoke(RPC_CHANNELS.file.OPEN_DIALOG, undefined, WAIT_FOR_USER_DIALOG),
+  openAttachmentDialog: invoke(RPC_CHANNELS.file.OPEN_ATTACHMENT_DIALOG, undefined, WAIT_FOR_USER_DIALOG),
   readFileAttachment: invoke(RPC_CHANNELS.file.READ_ATTACHMENT),
   readUserAttachment: invoke(RPC_CHANNELS.file.READ_USER_ATTACHMENT),
   storeAttachment: invoke(RPC_CHANNELS.file.STORE_ATTACHMENT),
@@ -181,7 +183,7 @@ export const CHANNEL_MAP = {
   updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
 
   // Folder dialog
-  openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER),
+  openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER, undefined, WAIT_FOR_USER_DIALOG),
 
   // Filesystem search
   searchFiles: invoke(RPC_CHANNELS.fs.SEARCH),

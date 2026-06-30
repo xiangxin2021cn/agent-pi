@@ -234,6 +234,18 @@ describe('RPC', () => {
     expect(r3).toBe('third')
   })
 
+  test('invokeWithOptions timeoutMs=0 waits past the default client request timeout', async () => {
+    const { server, client } = await createPair(undefined, { requestTimeout: 20 })
+
+    server.handle('user:dialog', async () => {
+      await new Promise(r => setTimeout(r, 80))
+      return 'selected'
+    })
+
+    const result = await client.invokeWithOptions('user:dialog', { timeoutMs: 0 })
+    expect(result).toBe('selected')
+  })
+
   test('Uint8Array response payload roundtrips intact', async () => {
     const { server, client } = await createPair()
 

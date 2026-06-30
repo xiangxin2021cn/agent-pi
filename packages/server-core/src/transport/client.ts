@@ -17,7 +17,7 @@ import {
   type ErrorCode,
   type MessageEnvelope,
 } from '@craft-agent/shared/protocol'
-import type { RpcClient } from './types'
+import type { InvokeOptions, RpcClient } from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ import { serializeEnvelope, deserializeEnvelope } from './codec'
 interface PendingRequest {
   resolve: (value: any) => void
   reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
+  timeout: ReturnType<typeof setTimeout> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +175,10 @@ export class WsRpcClient implements RpcClient {
   // -------------------------------------------------------------------------
 
   async invoke(channel: string, ...args: any[]): Promise<any> {
+    return this.invokeWithOptions(channel, {}, ...args)
+  }
+
+  async invokeWithOptions(channel: string, options: InvokeOptions, ...args: any[]): Promise<any> {
     await this.ensureConnected(channel)
 
     return await new Promise((resolve, reject) => {
@@ -184,10 +188,13 @@ export class WsRpcClient implements RpcClient {
       }
 
       const id = crypto.randomUUID()
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`Request timeout: ${channel} (${this.requestTimeout}ms)`))
-      }, this.requestTimeout)
+      const timeoutMs = options.timeoutMs ?? this.requestTimeout
+      const timeout = timeoutMs > 0
+        ? setTimeout(() => {
+            this.pending.delete(id)
+            reject(new Error(`Request timeout: ${channel} (${timeoutMs}ms)`))
+          }, timeoutMs)
+        : null
 
       this.pending.set(id, { resolve, reject, timeout })
 
@@ -200,7 +207,7 @@ export class WsRpcClient implements RpcClient {
 
       if (!this.trySendEnvelope(this.ws, envelope)) {
         this.pending.delete(id)
-        clearTimeout(timeout)
+        if (timeout) clearTimeout(timeout)
         reject(new Error(`Not connected (channel: ${channel})`))
       }
     })
@@ -474,7 +481,7 @@ export class WsRpcClient implements RpcClient {
 
     // Reject all pending requests
     for (const [id, req] of this.pending) {
-      clearTimeout(req.timeout)
+      if (req.timeout) clearTimeout(req.timeout)
       req.reject(new Error('Client destroyed'))
     }
     this.pending.clear()
@@ -571,7 +578,7 @@ export class WsRpcClient implements RpcClient {
         const req = this.pending.get(envelope.id)
         if (req) {
           this.pending.delete(envelope.id)
-          clearTimeout(req.timeout)
+          if (req.timeout) clearTimeout(req.timeout)
           if (envelope.error) {
             const err = new Error(envelope.error.message)
             ;(err as any).code = envelope.error.code
@@ -747,7 +754,7 @@ export class WsRpcClient implements RpcClient {
     // Reject all pending requests
     if (wasConnected) {
       for (const [id, req] of this.pending) {
-        clearTimeout(req.timeout)
+        if (req.timeout) clearTimeout(req.timeout)
         req.reject(new Error('Connection lost'))
       }
       this.pending.clear()
