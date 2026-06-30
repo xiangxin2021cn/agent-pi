@@ -6,7 +6,7 @@ import type {
 } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
 import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-quality'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
@@ -118,6 +118,13 @@ export class GoalController {
     const fileVerificationIssues: string[] = []
     const contentVerificationIssues: string[] = []
     const toolVerificationIssues: string[] = []
+    if (goalState.taskContract) {
+      evidence.push({
+        type: 'system',
+        label: 'task_contract',
+        detail: formatTaskContractForPrompt(goalState.taskContract).slice(0, 3000),
+      })
+    }
     if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
       fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
       evidence.push({
@@ -224,6 +231,14 @@ export class GoalController {
         const issueSummary = report.issues.length > 0 ? report.issues.join(' ') : 'Document quality score is below the required threshold.'
         contentVerificationIssues.push(`Document quality audit did not pass (${report.score}/${report.threshold}): ${issueSummary}`)
       }
+    }
+    if (finalAssistant && goalState.taskContract && hasObviousScopeReduction([finalAssistant.content, ...outputPreviewTexts])) {
+      contentVerificationIssues.push('Task contract appears to have been reduced to a summary, outline, placeholder, or deferred follow-up instead of the requested deliverable.')
+      evidence.push({
+        type: 'message',
+        label: 'task_contract_scope_reduced',
+        detail: finalAssistant.id,
+      })
     }
     if (finalAssistant) {
       for (const requirement of getExplicitUserRequirements(goalState)) {
@@ -833,6 +848,7 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
       }).join('\n')
     : '(none)'
   const previousAudits = buildPreviousAuditSummary(goalState.auditHistory)
+  const taskContract = formatTaskContractForPrompt(goalState.taskContract)
 
   return [
     '<goal-audit>',
@@ -840,6 +856,9 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     '',
     'Objective:',
     goalState.objective,
+    '',
+    'Task contract:',
+    taskContract,
     '',
     'The previous response could not be proven complete.',
     `Audit summary: ${result.summary}`,
@@ -853,9 +872,15 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Previous goal audits:',
     previousAudits,
     '',
-    'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
+    'Continue from the existing conversation. Improve the actual deliverable while preserving the full task contract, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
   ].join('\n')
+}
+
+const OBVIOUS_SCOPE_REDUCTION_PATTERN = /(?:由于篇幅|篇幅有限|这里只能|先给(?:你)?(?:一个)?(?:框架|大纲|示例|简版)|简化版|精简版|概要版|后续(?:再|可|可以).{0,20}(?:补充|完善)|placeholder|outline only|high[- ]level outline|brief sketch|will be completed later)/i
+
+function hasObviousScopeReduction(contents: string[]): boolean {
+  return contents.some(content => OBVIOUS_SCOPE_REDUCTION_PATTERN.test(content))
 }
 
 function buildPreviousAuditSummary(history: SessionGoalState['auditHistory']): string {

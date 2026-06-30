@@ -104,6 +104,42 @@ export interface SessionGoalCriterion {
   required: boolean;
 }
 
+export type SessionTaskContractType =
+  | 'document'
+  | 'code'
+  | 'data'
+  | 'research'
+  | 'file'
+  | 'automation'
+  | 'general';
+
+export interface SessionTaskContract {
+  originalRequest: string;
+  followUpRequests?: string[];
+  taskType: SessionTaskContractType;
+  documentPlan?: SessionDocumentPlan;
+  deliverables: string[];
+  mustPreserve: string[];
+  evidenceRequirements: string[];
+  outputFormats: string[];
+  acceptanceCriteria: string[];
+  forbiddenShortcuts: string[];
+  workingDirectory?: string;
+}
+
+export interface SessionDocumentPlan {
+  title?: string;
+  audience?: string;
+  tone?: string;
+  length?: string;
+  sections: string[];
+  tables: string[];
+  charts: string[];
+  enhancements: string[];
+  citations: string[];
+  deliveryFormats: string[];
+}
+
 export interface SessionGoalAuditEvidence {
   type: 'message' | 'file' | 'tool' | 'test' | 'system';
   label: string;
@@ -130,6 +166,7 @@ export interface SessionGoalState {
   iteration: number;
   maxIterations: number;
   criteria: SessionGoalCriterion[];
+  taskContract?: SessionTaskContract;
   auditHistory: SessionGoalAuditResult[];
   budgets?: {
     maxExtraTurns?: number;

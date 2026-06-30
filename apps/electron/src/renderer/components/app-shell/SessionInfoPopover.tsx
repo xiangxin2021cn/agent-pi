@@ -8,6 +8,7 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
+import { getDocumentPlanStatusText } from './document-enhancement-view-model'
 import { getGoalStatusText } from './goal-status-view-model'
 import type { ProjectMemorySessionStatusResult, SessionOutputDirectory } from '../../../shared/types'
 
@@ -225,6 +226,10 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
   const goalAuditItems = React.useMemo(() => getGoalAuditViewModels(session?.goalState), [session?.goalState])
   const visibleGoalAuditItems = goalAuditItems.slice(0, 1)
   const hiddenGoalAuditCount = Math.max(0, goalAuditItems.length - visibleGoalAuditItems.length)
+  const documentPlanStatus = React.useMemo(
+    () => getDocumentPlanStatusText(t, session?.goalState),
+    [session?.goalState, t],
+  )
 
   const progressItems = [
     {
@@ -248,6 +253,13 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       label: t('sessionInfo.goal'),
       value: goalStatus,
       active: ['running', 'auditing', 'improving'].includes(session.goalState.status),
+    }] : []),
+    ...(documentPlanStatus ? [{
+      key: 'documentPlan',
+      icon: <FileText className="h-3.5 w-3.5" />,
+      label: t('sessionInfo.documentPlan', { defaultValue: 'Document Plan' }),
+      value: documentPlanStatus,
+      active: true,
     }] : []),
     {
       key: 'workdir',

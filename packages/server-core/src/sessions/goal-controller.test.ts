@@ -1158,6 +1158,95 @@ describe('GoalController', () => {
     }
   })
 
+  test('includes the task contract in automatic improvement prompts', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成完整项目分析报告，必须包含风险清单。',
+        taskType: 'document',
+        deliverables: ['Produce a structured, readable work product.'],
+        mustPreserve: ['Explicit requirement: 风险清单'],
+        evidenceRequirements: ['Ground key facts in source material.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[user_constraint] Must satisfy explicit user requirement: 风险清单.'],
+        forbiddenShortcuts: ['Do not silently simplify, summarize away, or omit explicit user requirements.'],
+        workingDirectory: '/tmp/project-a',
+      },
+      criteria: [{
+        id: 'crit-user-requirement',
+        text: 'Must satisfy explicit user requirement: 风险清单.',
+        kind: 'user_constraint',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请生成完整项目分析报告，必须包含风险清单。'),
+        message('a1', 'assistant', '项目分析报告已完成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Task contract:')
+      expect(decision.prompt).toContain('Explicit requirement: 风险清单')
+      expect(decision.prompt).toContain('/tmp/project-a')
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'system',
+        label: 'task_contract',
+      }))
+    }
+  })
+
+  test('does not accept obvious scope reduction against the task contract', async () => {
+    const controller = new GoalController()
+    const reviewPrompts: string[] = []
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请全面生成正式报告。',
+        taskType: 'document',
+        deliverables: ['Produce a structured, readable work product.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: ['Do not replace the requested work product with a high-level outline.'],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请全面生成正式报告。'),
+        message('a1', 'assistant', '由于篇幅有限，这里先给一个框架，后续可以补充完善。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async (input) => {
+        reviewPrompts.push(input.result.summary)
+        return {
+          status: 'pass',
+          summary: 'Looks complete.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    expect(reviewPrompts).toEqual([])
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Task contract appears to have been reduced to a summary, outline, placeholder, or deferred follow-up instead of the requested deliverable.')
+      expect(decision.result.evidence).toContainEqual({
+        type: 'message',
+        label: 'task_contract_scope_reduced',
+        detail: 'a1',
+      })
+    }
+  })
+
   test('stops for review when auto_improve reaches max iterations', async () => {
     const controller = new GoalController()
 

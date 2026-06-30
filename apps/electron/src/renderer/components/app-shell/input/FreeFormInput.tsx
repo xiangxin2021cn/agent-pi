@@ -13,6 +13,7 @@ import {
   ChevronUp,
   AlertCircle,
   Image as ImageIcon,
+  FileText,
   Sparkles,
   X,
 } from 'lucide-react'
@@ -93,6 +94,7 @@ import {
 import { useWorkingDirectoryState } from './use-working-directory-state'
 import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
 import { CompactModelSelector } from './CompactModelSelector'
+import { getDocumentEnhancementViewModel } from '../document-enhancement-view-model'
 import {
   formatTokenCount,
   groupConnectionsByProvider,
@@ -1745,6 +1747,11 @@ export function FreeFormInput({
     />
   )
 
+  const documentEnhancement = React.useMemo(() => getDocumentEnhancementViewModel(t, {
+    input,
+    goalState,
+  }), [goalState, input, t])
+
   return (
     <form onSubmit={handleSubmit}>
       <div
@@ -1964,6 +1971,33 @@ export function FreeFormInput({
           data-tutorial="chat-input"
           spellCheck={spellCheck}
         />
+        )}
+
+        {!isCollapsedInCompact && documentEnhancement && (
+          <div className="flex items-center gap-1.5 px-3 pb-2 text-[11px] text-muted-foreground">
+            <Tooltip delayDuration={250}>
+              <TooltipTrigger asChild>
+                <div className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-[6px] border border-accent/10 bg-accent/5 px-2 py-1 text-accent">
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                  <span className="shrink-0 font-medium">{documentEnhancement.title}</span>
+                  <span className="min-w-0 truncate text-foreground/70">{documentEnhancement.summary}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[420px] text-xs">
+                {documentEnhancement.tooltip}
+              </TooltipContent>
+            </Tooltip>
+            <div className="hidden min-w-0 items-center gap-1 md:flex">
+              {documentEnhancement.chips.slice(0, 5).map(chip => (
+                <span
+                  key={chip}
+                  className="inline-flex h-5 shrink-0 items-center rounded-[5px] bg-foreground/[0.045] px-1.5 text-[10px] font-medium text-foreground/60"
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Bottom Row: Controls - wrapped in relative container for status slot overlay */}

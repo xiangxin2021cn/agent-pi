@@ -7,6 +7,8 @@ import {
   TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
   buildGoalCriteriaFromMessage,
   buildGoalExecutionPolicyFromMessage,
+  buildTaskContractFromMessage,
+  mergeTaskContracts,
 } from './goal-criteria'
 
 function attachment(name: string): StoredAttachment {
@@ -274,5 +276,80 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
 
     expect(policy.maxIterations).toBe(4)
     expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
+  })
+})
+
+describe('buildTaskContractFromMessage', () => {
+  it('captures deliverables, hard requirements, evidence, and formats without using a domain-specific template', () => {
+    const contract = buildTaskContractFromMessage({
+      message: [
+        '请根据附件生成 PDF 和 Word 版分析报告，必须包含：',
+        '1. 风险清单',
+        '2. 引用页码',
+        '不要精简。',
+      ].join('\n'),
+      storedAttachments: [attachment('source.pdf')],
+      workingDirectory: '/project-a',
+    })
+
+    expect(contract.taskType).toBe('document')
+    expect(contract.workingDirectory).toBe('/project-a')
+    expect(contract.outputFormats).toEqual(['PDF', 'DOCX'])
+    expect(contract.documentPlan?.sections).toContain('风险清单')
+    expect(contract.documentPlan?.sections).toContain('引用页码')
+    expect(contract.documentPlan?.deliveryFormats).toEqual(['PDF', 'DOCX'])
+    expect(contract.documentPlan?.tables.some(item => item.includes('风险清单'))).toBe(true)
+    expect(contract.documentPlan?.citations).toContain('Cite or reference source.pdf where it supports key facts.')
+    expect(contract.deliverables.some(item => item.includes('structured'))).toBe(true)
+    expect(contract.deliverables.some(item => item.includes('output file'))).toBe(true)
+    expect(contract.mustPreserve).toContain('Explicit requirement: 风险清单')
+    expect(contract.mustPreserve).toContain('Explicit requirement: 引用页码')
+    expect(contract.mustPreserve).toContain('Referenced material: source.pdf')
+    expect(contract.evidenceRequirements).toContain('Use the referenced material where relevant: source.pdf.')
+    expect(contract.forbiddenShortcuts.some(item => item.includes('high-level outline'))).toBe(true)
+  })
+
+  it('merges follow-up requests into the same contract without losing the original contract boundary', () => {
+    const current = buildTaskContractFromMessage({
+      message: '请生成项目分析报告',
+      workingDirectory: '/project-a',
+    })
+    const next = buildTaskContractFromMessage({
+      message: '补充风险清单，必须包含预算风险',
+      workingDirectory: '/project-a',
+    })
+
+    const merged = mergeTaskContracts(current, next)
+
+    expect(merged.originalRequest).toBe('请生成项目分析报告')
+    expect(merged.followUpRequests).toEqual(['补充风险清单，必须包含预算风险'])
+    expect(merged.mustPreserve).toContain('Explicit requirement: 预算风险')
+    expect(merged.documentPlan?.sections).toContain('预算风险')
+    expect(merged.workingDirectory).toBe('/project-a')
+  })
+
+  it('captures chart and audience hints for formal document production', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请面向管理层生成研究简报，包含趋势图和对比表，语气正式，篇幅 5 页，导出为 PPTX。',
+    })
+
+    expect(contract.documentPlan?.audience).toBe('管理层')
+    expect(contract.documentPlan?.tone).toBe('正式')
+    expect(contract.documentPlan?.length).toBe('5 页')
+    expect(contract.documentPlan?.charts).toContain('Generate chart specs from verified data first, then render charts as inspectable SVG/PNG before embedding in formal documents.')
+    expect(contract.documentPlan?.enhancements).toContain('Use structured chart specifications such as chart.json before rendering visual assets; every data point must come from verified source data.')
+    expect(contract.documentPlan?.tables).toContain('Use readable native tables for key structured data instead of plain text table-like paragraphs.')
+    expect(contract.documentPlan?.deliveryFormats).toEqual(['PPTX'])
+  })
+
+  it('keeps visual and HTML enhancements bound to verified data', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '执行文档任务时请用图表和 HTML 内嵌增强专业可读性，但切记不能编造数据。',
+    })
+
+    expect(contract.documentPlan?.enhancements).toContain('Use structured chart specifications such as chart.json before rendering visual assets; every data point must come from verified source data.')
+    expect(contract.documentPlan?.enhancements).toContain('HTML or embedded visual blocks may improve readability, but they must be based on verified data and remain inspectable.')
+    expect(contract.evidenceRequirements).toContain('Create visual enhancements only from verified source data; if data is unavailable, state that the visualization cannot be supported.')
+    expect(contract.forbiddenShortcuts).toContain('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')
   })
 })

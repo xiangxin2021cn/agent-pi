@@ -1005,6 +1005,17 @@ describe('SessionManager goal loop routing', () => {
     managed.goalState = goal({
       mode: 'check_only',
       iteration: 1,
+      taskContract: {
+        originalRequest: '请生成完整分析报告，必须包含风险清单。',
+        taskType: 'document',
+        deliverables: ['Produce a structured, readable work product.'],
+        mustPreserve: ['Explicit requirement: 风险清单'],
+        evidenceRequirements: ['Ground key facts in source material.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[user_constraint] Must satisfy explicit user requirement: 风险清单.'],
+        forbiddenShortcuts: ['Do not silently simplify, summarize away, or omit explicit user requirements.'],
+        workingDirectory: '/tmp/project-a',
+      },
       auditHistory: [{
         iteration: 1,
         status: 'fail',
@@ -1039,6 +1050,9 @@ describe('SessionManager goal loop routing', () => {
 
     expect(reviewPrompts).toHaveLength(1)
     expect(reviewPrompts[0]).toContain('Previous goal audits:')
+    expect(reviewPrompts[0]).toContain('Task contract:')
+    expect(reviewPrompts[0]).toContain('Explicit requirement: 风险清单')
+    expect(reviewPrompts[0]).toContain('/tmp/project-a')
     expect(reviewPrompts[0]).toContain('Iteration 1: fail - The spreadsheet citation was still missing.')
     expect(reviewPrompts[0]).toContain('Missing: The final report cites the source spreadsheet.')
     expect(reviewPrompts[0]).toContain('Correction: Add a concrete citation to source.xlsx.')
@@ -1305,6 +1319,12 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.maxIterations).toBe(2)
     expect(managed.goalState?.budgets?.maxWallClockMs).toBe(15 * 60 * 1000)
     expect(managed.goalState?.objective).toBe('请生成一份带验证结论的项目分析报告')
+    expect(managed.goalState?.taskContract).toMatchObject({
+      originalRequest: '请生成一份带验证结论的项目分析报告',
+      taskType: 'document',
+    })
+    expect(managed.goalState?.taskContract?.deliverables.some(item => item.includes('structured'))).toBe(true)
+    expect(managed.goalState?.taskContract?.evidenceRequirements.some(item => item.includes('verification evidence'))).toBe(true)
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toEqual(['deliverable', 'format', 'test'])
     expect(events.some(event =>
       event.type === 'goal_state_changed'
@@ -1440,6 +1460,9 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.status).toBe('running')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('user_constraint')
     expect(managed.goalState?.criteria.map(criterion => criterion.kind)).toContain('test')
+    expect(managed.goalState?.taskContract?.originalRequest).toBe('请整理一份项目分析报告')
+    expect(managed.goalState?.taskContract?.followUpRequests).toEqual(['另外请验证结果并引用 source.xlsx'])
+    expect(managed.goalState?.taskContract?.evidenceRequirements.some(item => item.includes('verification evidence'))).toBe(true)
     expect(events.some(event =>
       event.type === 'goal_state_changed'
       && event.goalState.id === managed.goalState?.id

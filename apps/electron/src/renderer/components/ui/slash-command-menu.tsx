@@ -99,14 +99,14 @@ const GOAL_COMMAND_TEXT: Record<GoalSlashCommandId, { labelKey: string; descript
   'goal-auto-improve': {
     labelKey: 'sessionInfo.goalModeAutoImprove',
     descriptionKey: 'sessionInfo.goalModeAutoImproveDesc',
-    label: 'Goal: Auto improve',
-    description: 'Audit the answer and continue once when the result is incomplete.',
+    label: 'Goal loop',
+    description: 'Audit the deliverable and continue when sections, citations, formats, or chart evidence are incomplete.',
   },
   'goal-check-only': {
     labelKey: 'sessionInfo.goalModeCheckOnly',
     descriptionKey: 'sessionInfo.goalModeCheckOnlyDesc',
-    label: 'Goal: Check only',
-    description: 'Audit the final answer and stop for manual review.',
+    label: 'Document review',
+    description: 'Check sections, chart evidence, citations, and delivery formats without auto-continuing.',
   },
   'goal-off': {
     labelKey: 'sessionInfo.goalModeOff',

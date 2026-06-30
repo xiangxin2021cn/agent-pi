@@ -106,7 +106,7 @@ import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
-import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage } from './goal-criteria'
+import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, recordProjectMemoryGoalAudit } from '../project-memory-lite'
@@ -1045,6 +1045,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     : '(none)'
   const previousAudits = buildGoalReviewAuditHistory(input.goalState.auditHistory)
   const recentTurnContext = buildGoalReviewTurnContext(input.messages, input.finalAssistant.id)
+  const taskContract = formatTaskContractForPrompt(input.goalState.taskContract)
 
   return [
     'You are reviewing whether an agent response completed the user objective.',
@@ -1053,6 +1054,9 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '',
     'Objective:',
     input.goalState.objective,
+    '',
+    'Task contract:',
+    taskContract,
     '',
     'Required criteria:',
     requiredCriteria || '(none)',
@@ -1073,6 +1077,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     input.finalAssistant.content.slice(0, 12000),
     '',
     'Rules:',
+    '- Treat the task contract as binding. Do not accept scope reduction, skipped granularity, missing deliverables, or omitted hard constraints.',
     '- Use "pass" only when the final response and verified artifacts clearly satisfy every required criterion.',
     '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',
     '- When source_file_preview evidence is present, use it as source material for grounding and citation checks, not as proof that a requested output file was produced.',
@@ -1092,6 +1097,7 @@ function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
   const corrective = latestAudit?.correctivePrompt?.trim()
     ? latestAudit.correctivePrompt.trim()
     : 'Improve the current deliverable against the missing or unproven criteria.'
+  const taskContract = formatTaskContractForPrompt(goalState.taskContract)
 
   return [
     '<goal-audit>',
@@ -1099,6 +1105,9 @@ function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
     '',
     'Objective:',
     goalState.objective,
+    '',
+    'Task contract:',
+    taskContract,
     '',
     'The user requested one more improvement pass from the current goal review state.',
     latestAudit ? `Last audit summary: ${latestAudit.summary}` : 'Last audit summary: (none)',
@@ -7458,6 +7467,12 @@ export class SessionManager implements ISessionManager {
       storedAttachments,
       badges: options?.badges,
     })
+    const taskContract = buildTaskContractFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+      workingDirectory: managed.workingDirectory,
+    })
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
     const mode = requestedMode ?? workspaceDefaultMode ?? policy.mode
@@ -7475,6 +7490,7 @@ export class SessionManager implements ISessionManager {
       iteration: 0,
       maxIterations: mode === 'check_only' ? 1 : policy.maxIterations,
       criteria,
+      taskContract,
       auditHistory: [],
       budgets: {
         maxWallClockMs: policy.maxWallClockMs,
@@ -7517,6 +7533,16 @@ export class SessionManager implements ISessionManager {
       storedAttachments,
       badges: options?.badges,
     })
+    const taskContract = buildTaskContractFromMessage({
+      message,
+      storedAttachments,
+      badges: options?.badges,
+      workingDirectory: managed.workingDirectory,
+    })
+    const existingTaskContract = current.taskContract ?? buildTaskContractFromMessage({
+      message: current.objective,
+      workingDirectory: managed.workingDirectory,
+    })
     const now = Date.now()
     const elapsedWallClockMs = Math.max(0, now - current.createdAt)
     const goalState: SessionGoalState = {
@@ -7526,6 +7552,7 @@ export class SessionManager implements ISessionManager {
       updatedAt: now,
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
+      taskContract: mergeTaskContracts(existingTaskContract, taskContract),
       budgets: {
         ...current.budgets,
         maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, elapsedWallClockMs + policy.maxWallClockMs),
