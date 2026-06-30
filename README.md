@@ -89,10 +89,6 @@ Agent π 适合这些场景：
 - 需要在 DeepSeek、Qwen、Mimo、Claude 兼容接口等已配置模型之间按任务能力切换。
 - 需要对智能体生成和读取过的文件做来源识别、预览和归档。
 
-## 品牌
-
-本项目使用 **AIPI / Always π AI Studio** 工作室标识。`AIPI-logo.png` 是当前品牌源图，应用左下角品牌面板和 GitHub 首页展示图均由该图同步生成。
-
 ## 开发
 
 安装依赖：
@@ -124,3 +120,13 @@ apps/electron/release/Agent-Pi-x64.exe
 ## 许可证
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## 版权与联系
+
+<p align="center">
+  <img src="AIPI-logo.png" alt="Always π AI Studio" width="360" />
+</p>
+
+© 2026 Always π AI Studio. Agent π is released under the Apache-2.0 license.
+
+作者/维护者联系：567601@qq.com
