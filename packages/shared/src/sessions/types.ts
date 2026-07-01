@@ -146,11 +146,19 @@ export interface SessionGoalAuditEvidence {
   detail?: string;
 }
 
+export type SessionGoalFailureCategory =
+  | 'scope_gap'
+  | 'evidence_gap'
+  | 'verification_gap'
+  | 'shallow_output'
+  | 'tool_failure';
+
 export interface SessionGoalAuditResult {
   iteration: number;
   status: 'pass' | 'fail' | 'uncertain';
   summary: string;
   missingCriteria: string[];
+  failureCategories?: SessionGoalFailureCategory[];
   correctivePrompt?: string;
   evidence: SessionGoalAuditEvidence[];
   createdAt: number;

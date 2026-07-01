@@ -96,7 +96,7 @@ describe('resolveClaudeThinkingOptions', () => {
     })
   })
 
-  // --- Mythos-class models (Fable 5): adaptive thinking always on -----------
+  // --- Adaptive-always-on models (Sonnet 5 / Fable 5): adaptive thinking always on -----------
   // These reject `thinking: { type: 'disabled' }`, so the "off"/minimize case
   // must fall back to adaptive + lowest effort instead of disabling.
 
@@ -134,6 +134,20 @@ describe('resolveClaudeThinkingOptions', () => {
       model: 'claude-fable-5',
       providerType: 'anthropic',
       minimizeThinking: true,
+    })
+
+    expect(result).toEqual({
+      thinking: { type: 'adaptive' },
+      effort: 'low',
+    })
+  })
+
+  it('never disables thinking on Sonnet 5 when level is off (adaptive + low instead)', () => {
+    const result = resolveClaudeThinkingOptions({
+      thinkingLevel: 'off',
+      model: 'claude-sonnet-5',
+      providerType: 'anthropic',
+      minimizeThinking: false,
     })
 
     expect(result).toEqual({

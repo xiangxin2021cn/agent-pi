@@ -147,9 +147,8 @@ export function resolveClaudeThinkingOptions(args: {
   const effort = THINKING_TO_EFFORT[thinkingLevel];
   const isHaiku = model.toLowerCase().includes('haiku');
   const supportsAdaptiveThinking = isClaude && !isHaiku;
-  // Mythos-class models (Fable 5 / Mythos 5) have adaptive thinking ALWAYS ON and
-  // reject `thinking: { type: 'disabled' }`. There's no way to turn thinking off;
-  // the lowest we can go is adaptive + 'low' effort.
+  // Some models have adaptive thinking ALWAYS ON and reject
+  // `thinking: { type: 'disabled' }`. The lowest we can go is adaptive + 'low' effort.
   const adaptiveAlwaysOn = isAdaptiveThinkingAlwaysOnModel(model);
 
   if (minimizeThinking || !isClaude || !effort) {

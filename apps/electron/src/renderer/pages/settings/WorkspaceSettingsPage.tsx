@@ -38,6 +38,10 @@ import {
   SettingsToggle,
   SettingsMenuSelectRow,
 } from '@/components/settings'
+import {
+  buildGoalLoopSettingsPayload,
+  resolveGoalLoopMaxExtraReviewers,
+} from './workspace-goal-loop-settings-view-model'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -45,6 +49,8 @@ export const meta: DetailsPageMeta = {
 }
 
 type GoalLoopDefaultMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['defaultMode']>
+type GoalLoopQualityMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['qualityMode']>
+type GoalLoopReviewerBudget = '0' | '1' | '2'
 
 // ============================================
 // Main Component
@@ -68,6 +74,9 @@ export default function WorkspaceSettingsPage() {
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
   const [goalLoopDefaultMode, setGoalLoopDefaultMode] = useState<GoalLoopDefaultMode>('auto_improve')
+  const [goalLoopQualityMode, setGoalLoopQualityMode] = useState<GoalLoopQualityMode>('council')
+  const [goalLoopMaxExtraReviewers, setGoalLoopMaxExtraReviewers] = useState(1)
+  const [goalLoopReviewerModels, setGoalLoopReviewerModels] = useState<Record<string, string> | undefined>(undefined)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Default sources state
@@ -96,6 +105,9 @@ export default function WorkspaceSettingsPage() {
           setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
           setGoalLoopDefaultMode(settings.goalLoop?.defaultMode ?? 'auto_improve')
+          setGoalLoopQualityMode(settings.goalLoop?.qualityMode ?? 'council')
+          setGoalLoopMaxExtraReviewers(resolveGoalLoopMaxExtraReviewers(settings.goalLoop?.maxExtraReviewers))
+          setGoalLoopReviewerModels(settings.goalLoop?.reviewerModels)
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
             setEnabledModes(settings.cyclablePermissionModes)
@@ -290,9 +302,50 @@ export default function WorkspaceSettingsPage() {
   const handleGoalLoopDefaultModeChange = useCallback(
     async (mode: GoalLoopDefaultMode) => {
       setGoalLoopDefaultMode(mode)
-      await updateWorkspaceSetting('goalLoop', { defaultMode: mode })
+      await updateWorkspaceSetting('goalLoop', buildGoalLoopSettingsPayload({
+        current: {
+          defaultMode: goalLoopDefaultMode,
+          qualityMode: goalLoopQualityMode,
+          maxExtraReviewers: goalLoopMaxExtraReviewers,
+          reviewerModels: goalLoopReviewerModels,
+        },
+        patch: { defaultMode: mode },
+      }))
     },
-    [updateWorkspaceSetting]
+    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+  )
+
+  const handleGoalLoopQualityModeChange = useCallback(
+    async (mode: GoalLoopQualityMode) => {
+      setGoalLoopQualityMode(mode)
+      await updateWorkspaceSetting('goalLoop', buildGoalLoopSettingsPayload({
+        current: {
+          defaultMode: goalLoopDefaultMode,
+          qualityMode: goalLoopQualityMode,
+          maxExtraReviewers: goalLoopMaxExtraReviewers,
+          reviewerModels: goalLoopReviewerModels,
+        },
+        patch: { qualityMode: mode },
+      }))
+    },
+    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+  )
+
+  const handleGoalLoopReviewerBudgetChange = useCallback(
+    async (value: GoalLoopReviewerBudget) => {
+      const maxExtraReviewers = Number(value)
+      setGoalLoopMaxExtraReviewers(maxExtraReviewers)
+      await updateWorkspaceSetting('goalLoop', buildGoalLoopSettingsPayload({
+        current: {
+          defaultMode: goalLoopDefaultMode,
+          qualityMode: goalLoopQualityMode,
+          maxExtraReviewers: goalLoopMaxExtraReviewers,
+          reviewerModels: goalLoopReviewerModels,
+        },
+        patch: { maxExtraReviewers },
+      }))
+    },
+    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
   )
 
   const handleSourceToggle = useCallback(
@@ -471,6 +524,27 @@ export default function WorkspaceSettingsPage() {
                     { value: 'auto_improve', label: t("settings.workspace.goalLoopAutoImprove"), description: t("settings.workspace.goalLoopAutoImproveDesc") },
                     { value: 'check_only', label: t("settings.workspace.goalLoopCheckOnly"), description: t("settings.workspace.goalLoopCheckOnlyDesc") },
                     { value: 'off', label: t("settings.workspace.goalLoopOff"), description: t("settings.workspace.goalLoopOffDesc") },
+                  ]}
+                />
+                <SettingsMenuSelectRow
+                  label={t("settings.workspace.goalLoopQuality")}
+                  description={t("settings.workspace.goalLoopQualityDesc")}
+                  value={goalLoopQualityMode}
+                  onValueChange={(v) => handleGoalLoopQualityModeChange(v as GoalLoopQualityMode)}
+                  options={[
+                    { value: 'council', label: t("settings.workspace.goalLoopQualityCouncil"), description: t("settings.workspace.goalLoopQualityCouncilDesc") },
+                    { value: 'standard', label: t("settings.workspace.goalLoopQualityStandard"), description: t("settings.workspace.goalLoopQualityStandardDesc") },
+                  ]}
+                />
+                <SettingsMenuSelectRow
+                  label={t("settings.workspace.goalLoopReviewerBudget")}
+                  description={t("settings.workspace.goalLoopReviewerBudgetDesc")}
+                  value={String(goalLoopMaxExtraReviewers)}
+                  onValueChange={(v) => handleGoalLoopReviewerBudgetChange(v as GoalLoopReviewerBudget)}
+                  options={[
+                    { value: '1', label: t("settings.workspace.goalLoopReviewerBudgetBalanced"), description: t("settings.workspace.goalLoopReviewerBudgetBalancedDesc") },
+                    { value: '0', label: t("settings.workspace.goalLoopReviewerBudgetCost"), description: t("settings.workspace.goalLoopReviewerBudgetCostDesc") },
+                    { value: '2', label: t("settings.workspace.goalLoopReviewerBudgetStrict"), description: t("settings.workspace.goalLoopReviewerBudgetStrictDesc") },
                   ]}
                 />
               </SettingsCard>

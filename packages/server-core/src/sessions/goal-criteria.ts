@@ -35,8 +35,9 @@ export const DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT = 'Pass a document quality
 export const OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX = 'Create output file(s) in the requested format(s):'
 
 const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
+const RESEARCH_WORK_PATTERN = /调研|搜索|尽调|研究|资料|research|investigate|survey/i
 const VERIFICATION_PATTERN = /验证|测试|检查|核对|复核|校验|verify|test|check|validate/i
-const COMPREHENSIVE_PATTERN = /全面|详细|认真|深入|系统|高质量|复核|审稿|comprehensive|detailed|thorough|deep|high[- ]quality|review/i
+const COMPREHENSIVE_PATTERN = /全面|详细|认真|深入|深度|系统|高质量|复核|审稿|comprehensive|detailed|thorough|deep|high[- ]quality|review/i
 const UNTIL_DONE_PATTERN = /直到|直至|不达标不|满足要求再|反复|多轮|continue until|until .*done|until .*complete|until .*satisf/i
 const SOURCE_SENSITIVE_PATTERN = /招标|投标|合同|规范|条款|清单|工程量|图纸|报价|标书|附件|源文件|依据|boq|pdf|excel|xlsx?|csv|tender|contract|specification|clause|source|citation|cite|spreadsheet|workbook/i
 const CODE_CHANGE_ACTION_PATTERN = /实现|修复|改造|开发|重构|升级|集成|接入|调试|debug|implement|fix|refactor|upgrade|integrate|debug/i
@@ -72,6 +73,10 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
   const criteria: SessionGoalCriterionSpec[] = [BASE_DELIVERABLE_CRITERION]
   const message = input.message.trim()
   const referencedNames = getReferencedNames(input)
+  const isDocumentWork = DOCUMENT_WORK_PATTERN.test(message)
+  const isResearchWork = RESEARCH_WORK_PATTERN.test(message)
+  const isComprehensiveWork = COMPREHENSIVE_PATTERN.test(message)
+  const isSourceSensitive = SOURCE_SENSITIVE_PATTERN.test(message)
 
   if (referencedNames.length > 0) {
     criteria.push({
@@ -79,11 +84,11 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
       kind: 'evidence',
       required: true,
     })
-  } else if (SOURCE_SENSITIVE_PATTERN.test(message)) {
+  } else if (isSourceSensitive || isResearchWork) {
     criteria.push(SOURCE_GROUNDED_CRITERION)
   }
 
-  if (DOCUMENT_WORK_PATTERN.test(message)) {
+  if (isDocumentWork || (isResearchWork && isComprehensiveWork)) {
     criteria.push({
       text: 'Produce a structured, readable deliverable with clear sections and enough detail for the requested work product.',
       kind: 'format',
@@ -91,7 +96,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (COMPREHENSIVE_PATTERN.test(message)) {
+  if (isComprehensiveWork) {
     criteria.push({
       text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
       kind: 'coverage',
@@ -99,7 +104,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (DOCUMENT_WORK_PATTERN.test(message) && (referencedNames.length > 0 || SOURCE_SENSITIVE_PATTERN.test(message) || COMPREHENSIVE_PATTERN.test(message))) {
+  if ((isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
     criteria.push({
       text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
@@ -298,6 +303,9 @@ function buildTaskContractEvidenceRequirements(
   } else if (SOURCE_SENSITIVE_PATTERN.test(message)) {
     requirements.push('Ground key facts, figures, clauses, and requirements in available source material; mark unsupported claims as assumptions.')
   }
+  if (taskType === 'research') {
+    requirements.push('Ground research claims in cited sources or clearly mark unavailable evidence and assumptions.')
+  }
   if (taskType === 'code') {
     requirements.push('Inspect the actual implementation before changing code and verify with the narrowest meaningful checks.')
   }
@@ -471,7 +479,7 @@ function buildForbiddenShortcuts(message: string, taskType: SessionTaskContractT
   if (COMPREHENSIVE_PATTERN.test(message) || DOCUMENT_WORK_PATTERN.test(message)) {
     shortcuts.push('Do not replace the requested document-quality work product with a high-level outline, template, or brief note.')
   }
-  if (SOURCE_SENSITIVE_PATTERN.test(message)) {
+  if (SOURCE_SENSITIVE_PATTERN.test(message) || taskType === 'research') {
     shortcuts.push('Do not invent facts, figures, clauses, page numbers, file names, dates, prices, or technical parameters.')
   }
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {

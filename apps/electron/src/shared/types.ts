@@ -229,6 +229,7 @@ import type {
   UpdateInfo,
   WorkspaceSettings,
   ProjectMemorySessionStatusResult,
+  ProjectMemoryQualityTelemetryResetResult,
   PermissionModeState,
   BrowserInstanceInfo,
   DeepLinkNavigation,
@@ -488,6 +489,7 @@ export interface ElectronAPI {
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionOutputDirectory(sessionId: string): Promise<SessionOutputDirectory | null>
   getSessionProjectMemoryStatus(sessionId: string): Promise<ProjectMemorySessionStatusResult | null>
+  resetSessionProjectMemoryQualityTelemetry(sessionId: string): Promise<ProjectMemoryQualityTelemetryResetResult | null>
   promoteSessionFile(sessionId: string, filePath: string, requestedName?: string): Promise<PromoteSessionFileResult>
   createFileMemorySource(sessionId: string, filePath: string, options?: CreateFileMemorySourceOptions): Promise<CreateFileMemorySourceResult>
   getSessionNotes(sessionId: string): Promise<string>

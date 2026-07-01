@@ -13,6 +13,7 @@ import {
 describe('isClaudeModel', () => {
   // Direct Anthropic model IDs
   it('detects direct Anthropic Claude model IDs', () => {
+    expect(isClaudeModel('claude-sonnet-5')).toBe(true);
     expect(isClaudeModel('claude-sonnet-4-6')).toBe(true);
     expect(isClaudeModel('claude-opus-4-8')).toBe(true);
     expect(isClaudeModel('claude-haiku-4-5-20251001')).toBe(true);
@@ -63,6 +64,7 @@ describe('isClaudeModel', () => {
 describe('getModelShortName', () => {
   it('returns registry shortName for known models', () => {
     expect(getModelShortName('claude-opus-4-8')).toBe('Opus');
+    expect(getModelShortName('claude-sonnet-5')).toBe('Sonnet');
     expect(getModelShortName('claude-sonnet-4-6')).toBe('Sonnet');
     expect(getModelShortName('claude-haiku-4-5-20251001')).toBe('Haiku');
   });
@@ -94,10 +96,12 @@ describe('getModelShortName', () => {
 });
 
 describe('Opus registry', () => {
-  it('includes Opus 4.8 and keeps Opus 4.7, but excludes deprecated Opus 4.6', () => {
+  it('includes current Opus and Sonnet models, but excludes deprecated Opus 4.6', () => {
     const ids = ANTHROPIC_MODELS.map(m => m.id);
     expect(ids).toContain('claude-opus-4-8');
     expect(ids).toContain('claude-opus-4-7');
+    expect(ids).toContain('claude-sonnet-5');
+    expect(ids).toContain('claude-sonnet-4-6');
     expect(ids).not.toContain('claude-opus-4-6');
   });
 

@@ -13,6 +13,7 @@ import {
   type SessionFileSource,
   type SessionOutputDirectory,
   type ProjectMemorySessionStatusResult,
+  type ProjectMemoryQualityTelemetryResetResult,
 } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
@@ -34,7 +35,7 @@ import {
   saveSourceConfig as saveWorkspaceSourceConfig,
   type FolderSourceConfig,
 } from '@craft-agent/shared/sources'
-import { recordProjectMemoryFormalOutput } from '../../project-memory-lite'
+import { recordProjectMemoryFormalOutput, resetProjectMemoryQualityTelemetry } from '../../project-memory-lite'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
@@ -741,6 +742,28 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const session = sessionManager.getSessions().find(s => s.id === sessionId)
     if (!session) return null
     return getProjectMemoryStatusForWorkingDirectory(session.workingDirectory)
+  })
+
+  server.handle(RPC_CHANNELS.sessions.RESET_PROJECT_MEMORY_QUALITY_TELEMETRY, async (_ctx, sessionId: string): Promise<ProjectMemoryQualityTelemetryResetResult | null> => {
+    const session = sessionManager.getSessions().find(s => s.id === sessionId)
+    if (!session) return null
+    if (!session.workingDirectory) {
+      return {
+        status: 'missing_working_directory',
+        message: 'No working directory is bound to this session.',
+      }
+    }
+
+    const result = await resetProjectMemoryQualityTelemetry(session.workingDirectory)
+    return {
+      status: 'reset',
+      message: `Reset ${result.removedCount} learned quality telemetry facts.`,
+      workingDirectory: session.workingDirectory,
+      projectBrainPath: result.brainPath,
+      factsPath: result.factsPath,
+      removedCount: result.removedCount,
+      retainedCount: result.retainedCount,
+    }
   })
 
   server.handle(RPC_CHANNELS.sessions.PROMOTE_FILE, async (ctx, sessionId: string, filePath: string, requestedName?: string): Promise<PromoteSessionFileResult> => {

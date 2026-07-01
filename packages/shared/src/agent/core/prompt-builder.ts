@@ -17,6 +17,8 @@ import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
 import { getSessionPlansPath, getSessionDataPath, getSessionOutputPath, getSessionPath, getProjectBrainPath, loadProjectMemoryContextForSession } from '../../sessions/storage.ts';
+import { getContextPressureSignal } from '../../sessions/context-pressure.ts';
+import { formatTaskContractContext } from '../../sessions/task-contract-context.ts';
 import type {
   PromptBuilderConfig,
   ContextBlockOptions,
@@ -134,10 +136,18 @@ export class PromptBuilder {
     if (projectMemoryContext) {
       parts.push(projectMemoryContext);
     }
+    const goalContractContext = formatTaskContractContext(this.config.session?.goalState?.taskContract);
+    if (goalContractContext) {
+      parts.push(goalContractContext);
+    }
 
     // Source state if provided
     if (sourceStateBlock) {
       parts.push(sourceStateBlock);
+    }
+    const contextPressureGuidance = this.buildContextPressureGuidance();
+    if (contextPressureGuidance) {
+      parts.push(contextPressureGuidance);
     }
 
     return parts;
@@ -167,6 +177,23 @@ export class PromptBuilder {
     }
 
     return parts;
+  }
+
+  private buildContextPressureGuidance(): string | undefined {
+    const enabledSourceCount = this.config.session?.enabledSourceSlugs?.length ?? 0;
+    const signal = getContextPressureSignal({ enabledSourceCount });
+    if (!signal) return undefined;
+
+    return [
+      `<context_pressure level="${signal.level}">`,
+      signal.detail,
+      'Execution guidance:',
+      '- Before using source tools, identify which enabled sources are actually needed for this request.',
+      '- Prefer direct project files, attachments, or already verified evidence before broad source/tool exploration.',
+      '- If many sources are irrelevant, narrow enabled sources or ask the user before spending tool calls across them.',
+      '- Summarize source evidence before final synthesis so the final answer is grounded and compact.',
+      '</context_pressure>',
+    ].join('\n');
   }
 
   /**

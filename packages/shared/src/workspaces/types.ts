@@ -16,6 +16,7 @@ import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import type { SessionGoalMode } from '../sessions/types.ts';
 
 export type WorkspaceGoalLoopDefaultMode = Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>;
+export type WorkspaceGoalLoopQualityMode = 'standard' | 'council';
 
 export interface WorkspaceGoalLoopConfig {
   /**
@@ -23,6 +24,21 @@ export interface WorkspaceGoalLoopConfig {
    * Undefined keeps the built-in heuristic default.
    */
   defaultMode?: WorkspaceGoalLoopDefaultMode;
+  /**
+   * Reviewer depth for completion audits.
+   * Undefined keeps the v1.1.3 ability-first default: use council review when available.
+   */
+  qualityMode?: WorkspaceGoalLoopQualityMode;
+  /**
+   * Optional role-specific model routing for council reviewers.
+   * Keys are reviewer role names such as code_implementation_reviewer.
+   */
+  reviewerModels?: Record<string, string>;
+  /**
+   * Maximum learned-routing reviewer roles that can be added beyond the base council.
+   * Undefined keeps the conservative v1.1.3 default of one extra reviewer.
+   */
+  maxExtraReviewers?: number;
 }
 
 /**

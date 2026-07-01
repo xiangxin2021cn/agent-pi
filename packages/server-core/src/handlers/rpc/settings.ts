@@ -143,7 +143,41 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       if (defaultMode !== undefined && defaultMode !== 'off' && defaultMode !== 'check_only' && defaultMode !== 'auto_improve') {
         throw new Error('goalLoop.defaultMode must be off, check_only, or auto_improve')
       }
-      normalizedValue = { defaultMode }
+      const qualityMode = (normalizedValue as { qualityMode?: unknown }).qualityMode
+      if (qualityMode !== undefined && qualityMode !== 'standard' && qualityMode !== 'council') {
+        throw new Error('goalLoop.qualityMode must be standard or council')
+      }
+      const rawReviewerModels = (normalizedValue as { reviewerModels?: unknown }).reviewerModels
+      let reviewerModels: Record<string, string> | undefined
+      if (rawReviewerModels !== undefined) {
+        if (typeof rawReviewerModels !== 'object' || rawReviewerModels === null || Array.isArray(rawReviewerModels)) {
+          throw new Error('goalLoop.reviewerModels must be an object')
+        }
+        reviewerModels = {}
+        for (const [role, model] of Object.entries(rawReviewerModels)) {
+          if (typeof model !== 'string') {
+            throw new Error('goalLoop.reviewerModels values must be strings')
+          }
+          const normalizedRole = role.trim()
+          const normalizedModel = model.trim()
+          if (normalizedRole && normalizedModel) {
+            reviewerModels[normalizedRole] = normalizedModel
+          }
+        }
+      }
+      const maxExtraReviewers = (normalizedValue as { maxExtraReviewers?: unknown }).maxExtraReviewers
+      if (
+        maxExtraReviewers !== undefined
+        && (typeof maxExtraReviewers !== 'number' || !Number.isFinite(maxExtraReviewers) || maxExtraReviewers < 0)
+      ) {
+        throw new Error('goalLoop.maxExtraReviewers must be a non-negative number')
+      }
+      normalizedValue = {
+        defaultMode,
+        qualityMode,
+        ...(reviewerModels && Object.keys(reviewerModels).length > 0 ? { reviewerModels } : {}),
+        ...(maxExtraReviewers !== undefined ? { maxExtraReviewers: Math.floor(maxExtraReviewers) } : {}),
+      }
     }
 
     // Validate defaultLlmConnection exists before saving
@@ -177,7 +211,14 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}
-      ;(config.defaults as Record<string, unknown>)[key] = normalizedValue
+      if (key === 'goalLoop') {
+        ;(config.defaults as Record<string, unknown>)[key] = {
+          ...config.defaults.goalLoop,
+          ...(normalizedValue as Record<string, unknown>),
+        }
+      } else {
+        ;(config.defaults as Record<string, unknown>)[key] = normalizedValue
+      }
     }
 
     // Save the config

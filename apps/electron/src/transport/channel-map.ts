@@ -208,6 +208,7 @@ export const CHANNEL_MAP = {
   getSessionFiles: invoke(RPC_CHANNELS.sessions.GET_FILES),
   getSessionOutputDirectory: invoke(RPC_CHANNELS.sessions.GET_OUTPUT_DIRECTORY),
   getSessionProjectMemoryStatus: invoke(RPC_CHANNELS.sessions.GET_PROJECT_MEMORY_STATUS),
+  resetSessionProjectMemoryQualityTelemetry: invoke(RPC_CHANNELS.sessions.RESET_PROJECT_MEMORY_QUALITY_TELEMETRY),
   promoteSessionFile: invoke(RPC_CHANNELS.sessions.PROMOTE_FILE),
   createFileMemorySource: invoke(RPC_CHANNELS.sessions.CREATE_FILE_MEMORY_SOURCE),
   getSessionNotes: invoke(RPC_CHANNELS.sessions.GET_NOTES),

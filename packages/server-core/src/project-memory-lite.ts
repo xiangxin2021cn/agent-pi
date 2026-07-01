@@ -1,4 +1,4 @@
-import { open, mkdir, appendFile, writeFile } from 'fs/promises'
+import { open, mkdir, appendFile, writeFile, readFile } from 'fs/promises'
 import { basename, dirname, extname, join } from 'path'
 import type { ProjectMemoryContextEntry, SessionGoalAuditEvidence, SessionGoalAuditResult, SessionGoalState } from '@craft-agent/shared/sessions'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath } from '@craft-agent/shared/sessions'
@@ -30,6 +30,13 @@ export interface ProjectMemoryLiteWriteResult {
   brainPath: string
   entriesPath: string
   entryCount: number
+}
+
+export interface ProjectMemoryQualityTelemetryResetResult {
+  brainPath: string
+  factsPath: string
+  removedCount: number
+  retainedCount: number
 }
 
 const PROJECT_MEMORY_SUBDIRECTORIES = ['sources', 'artifacts', 'outputs', 'outputs/reviews'] as const
@@ -74,6 +81,8 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
   const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory)
   const auditId = `${input.sessionId}:${input.goalState.id}:${input.result.iteration}`
   const documentQuality = parseDocumentQualityEvidence(input.result.evidence)
+  const qualityReviewerFacts = parseQualityReviewerEvidence(input.result.evidence)
+  const qualityRouteFacts = parseQualityRouteEvidence(input.result.evidence)
   const sourceEvidence = input.result.evidence
     .filter(isSourceEvidence)
     .map(evidenceToFileRecord)
@@ -113,6 +122,7 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
     objective: input.goalState.objective,
     summary: input.result.summary,
     missingCriteria: input.result.missingCriteria,
+    failureCategories: input.result.failureCategories,
     documentQuality,
     evidence: input.result.evidence.map(evidence => ({
       type: evidence.type,
@@ -128,6 +138,7 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
     goalId: input.goalState.id,
     iteration: input.result.iteration,
     status: input.result.status,
+    failureCategories: input.result.failureCategories,
     createdAt: input.result.createdAt,
   })
 
@@ -174,6 +185,7 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
       goalAuditId: auditId,
       path: output.path,
       sourcePaths: sourceEvidence.map(source => source.path),
+      failureCategories: input.result.failureCategories,
       createdAt: input.result.createdAt,
     })
     await appendJsonl(join(brainPath, 'artifacts', 'events.jsonl'), {
@@ -184,6 +196,7 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
       outputPath: output.path,
       reviewPath: review?.reviewPath,
       sourcePaths: sourceEvidence.map(source => source.path),
+      failureCategories: input.result.failureCategories,
       createdAt: input.result.createdAt,
     })
   }
@@ -213,6 +226,42 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
       threshold: documentQuality.threshold,
       status: documentQuality.status,
       dimensions: documentQuality.dimensions,
+      sessionId: input.sessionId,
+      goalAuditId: auditId,
+      createdAt: input.result.createdAt,
+    })
+  }
+
+  for (const reviewerFact of qualityReviewerFacts) {
+    await appendJsonl(join(brainPath, 'facts.jsonl'), {
+      type: 'quality_reviewer_fact',
+      role: reviewerFact.role,
+      model: reviewerFact.model,
+      requestedModel: reviewerFact.requestedModel,
+      fallbackModel: reviewerFact.fallbackModel,
+      status: reviewerFact.status,
+      taskType: input.goalState.taskContract?.taskType,
+      failureCategories: reviewerFact.failureCategories,
+      latencyMs: reviewerFact.latencyMs,
+      inputTokens: reviewerFact.inputTokens,
+      outputTokens: reviewerFact.outputTokens,
+      summary: reviewerFact.summary,
+      sessionId: input.sessionId,
+      goalAuditId: auditId,
+      createdAt: input.result.createdAt,
+    })
+  }
+
+  for (const routeFact of qualityRouteFacts) {
+    await appendJsonl(join(brainPath, 'facts.jsonl'), {
+      type: 'quality_route_fact',
+      taskType: routeFact.taskType ?? input.goalState.taskContract?.taskType,
+      status: input.result.status,
+      roles: routeFact.roles,
+      modelAssignments: routeFact.modelAssignments,
+      telemetryRoles: routeFact.telemetryRoles,
+      commonGaps: routeFact.commonGaps,
+      failureCategories: input.result.failureCategories,
       sessionId: input.sessionId,
       goalAuditId: auditId,
       createdAt: input.result.createdAt,
@@ -315,6 +364,7 @@ export function extractProjectMemoryEntries(
     goalAuditId: auditId,
     sourcePaths,
     missingCriteria: input.result.missingCriteria,
+    failureCategories: input.result.failureCategories,
     createdAt: input.result.createdAt,
   }]
 
@@ -337,6 +387,7 @@ export function extractProjectMemoryEntries(
       reviewPath: review?.reviewPath,
       sourcePaths,
       missingCriteria: input.result.missingCriteria,
+      failureCategories: input.result.failureCategories,
       createdAt: input.result.createdAt,
     })
     if (preview && sourcePaths.length > 0) {
@@ -354,6 +405,7 @@ export function extractProjectMemoryEntries(
         reviewPath: review?.reviewPath,
         sourcePaths,
         missingCriteria: input.result.missingCriteria,
+        failureCategories: input.result.failureCategories,
         createdAt: input.result.createdAt,
       })
     }
@@ -370,6 +422,7 @@ export function extractProjectMemoryEntries(
       sessionId: input.sessionId,
       goalAuditId: auditId,
       sourcePaths,
+      failureCategories: input.result.failureCategories,
       createdAt: input.result.createdAt,
     })
   }
@@ -391,6 +444,90 @@ export async function writeProjectMemoryLite(
     brainPath,
     entriesPath,
     entryCount: entries.length,
+  }
+}
+
+export async function loadProjectMemoryReviewerPerformanceSummary(
+  workingDirectory: string | undefined,
+  limit = 8,
+): Promise<string | undefined> {
+  const brainPath = workingDirectory ? getProjectBrainPath(workingDirectory) : undefined
+  if (!brainPath || limit <= 0) return undefined
+
+  let content: string
+  try {
+    content = await readFile(join(brainPath, 'facts.jsonl'), 'utf8')
+  } catch {
+    return undefined
+  }
+
+  const reviewerFacts = content
+    .split('\n')
+    .map(line => parseQualityReviewerFactLine(line))
+    .filter((fact): fact is ProjectMemoryQualityReviewerFact => fact !== undefined)
+    .slice(-limit)
+  const routeFacts = content
+    .split('\n')
+    .map(line => parseQualityRouteFactLine(line))
+    .filter((fact): fact is ProjectMemoryQualityRouteFact => fact !== undefined)
+    .slice(-limit)
+
+  if (reviewerFacts.length === 0 && routeFacts.length === 0) return undefined
+
+  const sections: string[] = []
+  if (reviewerFacts.length > 0) {
+    sections.push(
+      'Reviewer performance aggregates:',
+      formatQualityReviewerAggregateSummary(reviewerFacts),
+      '',
+      'Recent reviewer facts:',
+      reviewerFacts.map(formatQualityReviewerFactSummary).join('\n'),
+    )
+  }
+  if (routeFacts.length > 0) {
+    if (sections.length > 0) sections.push('')
+    sections.push(
+      'Quality route outcome aggregates:',
+      formatQualityRouteAggregateSummary(routeFacts),
+    )
+  }
+
+  return sections.join('\n')
+}
+
+export async function resetProjectMemoryQualityTelemetry(
+  workingDirectory: string,
+): Promise<ProjectMemoryQualityTelemetryResetResult> {
+  const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+  const factsPath = join(brainPath, 'facts.jsonl')
+  const content = await readFile(factsPath, 'utf8')
+  const retainedLines: string[] = []
+  let removedCount = 0
+
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue
+    if (isProjectMemoryQualityTelemetryLine(line)) {
+      removedCount += 1
+    } else {
+      retainedLines.push(line)
+    }
+  }
+
+  await writeFile(factsPath, retainedLines.length > 0 ? `${retainedLines.join('\n')}\n` : '', 'utf8')
+  return {
+    brainPath,
+    factsPath,
+    removedCount,
+    retainedCount: retainedLines.length,
+  }
+}
+
+function isProjectMemoryQualityTelemetryLine(line: string): boolean {
+  try {
+    const parsed = JSON.parse(line) as { type?: unknown }
+    return parsed.type === 'quality_reviewer_fact' || parsed.type === 'quality_route_fact'
+  } catch {
+    return false
   }
 }
 
@@ -436,6 +573,243 @@ interface FormalOutputReviewInput {
 interface FormalOutputReviewRecord {
   outputPath: string
   reviewPath: string
+}
+
+interface ProjectMemoryQualityReviewerFact {
+  type: 'quality_reviewer_fact'
+  role?: string
+  model?: string
+  requestedModel?: string
+  fallbackModel?: boolean
+  status?: string
+  taskType?: string
+  failureCategories?: unknown
+  latencyMs?: unknown
+  inputTokens?: unknown
+  outputTokens?: unknown
+  summary?: string
+}
+
+interface ProjectMemoryQualityRouteFact {
+  type: 'quality_route_fact'
+  taskType?: string
+  status?: string
+  roles?: unknown
+  modelAssignments?: unknown
+  telemetryRoles?: unknown
+  commonGaps?: unknown
+  failureCategories?: unknown
+}
+
+function parseQualityReviewerFactLine(line: string): ProjectMemoryQualityReviewerFact | undefined {
+  const trimmed = line.trim()
+  if (!trimmed) return undefined
+
+  try {
+    const parsed = JSON.parse(trimmed) as ProjectMemoryQualityReviewerFact
+    return parsed?.type === 'quality_reviewer_fact' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function parseQualityRouteFactLine(line: string): ProjectMemoryQualityRouteFact | undefined {
+  const trimmed = line.trim()
+  if (!trimmed) return undefined
+
+  try {
+    const parsed = JSON.parse(trimmed) as ProjectMemoryQualityRouteFact
+    return parsed?.type === 'quality_route_fact' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function formatQualityReviewerFactSummary(fact: ProjectMemoryQualityReviewerFact): string {
+  const role = typeof fact.role === 'string' && fact.role.trim() ? fact.role.trim() : 'unknown_role'
+  const model = typeof fact.model === 'string' && fact.model.trim() ? ` via ${fact.model.trim()}` : ''
+  const requestedModel = typeof fact.requestedModel === 'string' && fact.requestedModel.trim()
+    ? ` requested=${fact.requestedModel.trim()}`
+    : ''
+  const fallback = fact.fallbackModel === true ? ' fallback=true' : ''
+  const status = typeof fact.status === 'string' && fact.status.trim() ? fact.status.trim() : 'unknown'
+  const taskType = typeof fact.taskType === 'string' && fact.taskType.trim()
+    ? ` task=${fact.taskType.trim()}`
+    : ''
+  const categories = Array.isArray(fact.failureCategories)
+    ? fact.failureCategories.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).join(',')
+    : ''
+  const latency = typeof fact.latencyMs === 'number' && Number.isFinite(fact.latencyMs)
+    ? ` latency=${fact.latencyMs}ms`
+    : ''
+  const tokens = typeof fact.inputTokens === 'number' && typeof fact.outputTokens === 'number'
+    ? ` tokens=${fact.inputTokens}/${fact.outputTokens}`
+    : ''
+  const summary = typeof fact.summary === 'string' && fact.summary.trim()
+    ? ` - ${fact.summary.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+    : ''
+
+  return `${role}${model}: ${status}${requestedModel}${fallback}${taskType}${categories ? ` ${categories}` : ''}${latency}${tokens}${summary}`
+}
+
+function formatQualityReviewerAggregateSummary(facts: ProjectMemoryQualityReviewerFact[]): string {
+  const groups = new Map<string, {
+    taskType: string
+    role: string
+    total: number
+    pass: number
+    fail: number
+    uncertain: number
+    fallbackCount: number
+    gapCounts: Map<string, number>
+    latencyTotal: number
+    latencyCount: number
+  }>()
+
+  for (const fact of facts) {
+    const taskType = normalizeQualityReviewerText(fact.taskType, 'unknown')
+    const role = normalizeQualityReviewerText(fact.role, 'unknown_role')
+    const key = `${taskType}\u0000${role}`
+    const group = groups.get(key) ?? {
+      taskType,
+      role,
+      total: 0,
+      pass: 0,
+      fail: 0,
+      uncertain: 0,
+      fallbackCount: 0,
+      gapCounts: new Map<string, number>(),
+      latencyTotal: 0,
+      latencyCount: 0,
+    }
+
+    group.total += 1
+    const status = normalizeQualityReviewerStatus(fact.status)
+    if (status === 'pass') group.pass += 1
+    else if (status === 'fail') group.fail += 1
+    else group.uncertain += 1
+    if (fact.fallbackModel === true) group.fallbackCount += 1
+
+    for (const category of getQualityReviewerFailureCategories(fact)) {
+      group.gapCounts.set(category, (group.gapCounts.get(category) ?? 0) + 1)
+    }
+
+    if (typeof fact.latencyMs === 'number' && Number.isFinite(fact.latencyMs)) {
+      group.latencyTotal += fact.latencyMs
+      group.latencyCount += 1
+    }
+
+    groups.set(key, group)
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => left.taskType.localeCompare(right.taskType) || left.role.localeCompare(right.role))
+    .map(group => {
+      const commonGaps = [...group.gapCounts.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .slice(0, 3)
+        .map(([category]) => category)
+      const gaps = commonGaps.length > 0 ? ` common_gaps=${commonGaps.join(',')}` : ''
+      const fallbacks = group.fallbackCount > 0 ? ` fallbacks=${group.fallbackCount}` : ''
+      const latency = group.latencyCount > 0
+        ? ` avg_latency=${Math.round(group.latencyTotal / group.latencyCount)}ms`
+        : ''
+
+      return `task=${group.taskType} role=${group.role} total=${group.total} pass=${group.pass} fail=${group.fail} uncertain=${group.uncertain}${fallbacks}${gaps}${latency}`
+    })
+    .join('\n')
+}
+
+function formatQualityRouteAggregateSummary(facts: ProjectMemoryQualityRouteFact[]): string {
+  const groups = new Map<string, {
+    taskType: string
+    roles: string[]
+    models: string
+    total: number
+    pass: number
+    fail: number
+    uncertain: number
+    gapCounts: Map<string, number>
+  }>()
+
+  for (const fact of facts) {
+    const taskType = normalizeQualityReviewerText(fact.taskType, 'unknown')
+    const roles = getQualityRouteStringArray(fact.roles)
+    const models = formatQualityRouteModels(fact.modelAssignments)
+    const key = `${taskType}\u0000${roles.join(',')}\u0000${models}`
+    const group = groups.get(key) ?? {
+      taskType,
+      roles,
+      models,
+      total: 0,
+      pass: 0,
+      fail: 0,
+      uncertain: 0,
+      gapCounts: new Map<string, number>(),
+    }
+
+    group.total += 1
+    const status = normalizeQualityReviewerStatus(fact.status)
+    if (status === 'pass') group.pass += 1
+    else if (status === 'fail') group.fail += 1
+    else group.uncertain += 1
+
+    for (const category of [
+      ...getQualityRouteStringArray(fact.commonGaps),
+      ...getQualityRouteStringArray(fact.failureCategories),
+    ]) {
+      group.gapCounts.set(category, (group.gapCounts.get(category) ?? 0) + 1)
+    }
+
+    groups.set(key, group)
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => left.taskType.localeCompare(right.taskType) || left.roles.join(',').localeCompare(right.roles.join(',')))
+    .map(group => {
+      const commonGaps = [...group.gapCounts.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .slice(0, 3)
+        .map(([category]) => category)
+      const roles = group.roles.length > 0 ? ` roles=${group.roles.join(',')}` : ''
+      const models = group.models ? ` models=${group.models}` : ''
+      const gaps = commonGaps.length > 0 ? ` common_gaps=${commonGaps.join(',')}` : ''
+
+      return `task=${group.taskType} total=${group.total} pass=${group.pass} fail=${group.fail} uncertain=${group.uncertain}${roles}${models}${gaps}`
+    })
+    .join('\n')
+}
+
+function getQualityRouteStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+}
+
+function formatQualityRouteModels(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  return Object.entries(value)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[0].trim().length > 0 && entry[1].trim().length > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([role, model]) => `${role.trim()}:${model.trim()}`)
+    .join(',')
+}
+
+function normalizeQualityReviewerText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+function normalizeQualityReviewerStatus(value: unknown): 'pass' | 'fail' | 'uncertain' {
+  const status = normalizeQualityReviewerText(value, 'uncertain').toLowerCase()
+  if (status === 'pass') return 'pass'
+  if (status === 'fail') return 'fail'
+  return 'uncertain'
+}
+
+function getQualityReviewerFailureCategories(fact: ProjectMemoryQualityReviewerFact): string[] {
+  return Array.isArray(fact.failureCategories)
+    ? fact.failureCategories.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
 }
 
 function isSourceEvidence(evidence: SessionGoalAuditEvidence): boolean {
@@ -499,6 +873,126 @@ function parseDocumentQualityEvidence(evidence: SessionGoalAuditEvidence[]): {
       },
     } : {}),
   }
+}
+
+interface QualityReviewerFact {
+  role: string
+  model?: string
+  requestedModel?: string
+  fallbackModel?: boolean
+  status?: string
+  failureCategories?: string[]
+  latencyMs?: number
+  inputTokens?: number
+  outputTokens?: number
+  summary?: string
+}
+
+interface QualityRouteFact {
+  taskType?: string
+  roles: string[]
+  modelAssignments: Record<string, string>
+  telemetryRoles: string[]
+  commonGaps: string[]
+}
+
+function parseQualityReviewerEvidence(evidence: SessionGoalAuditEvidence[]): QualityReviewerFact[] {
+  return evidence
+    .filter(item => item.label.startsWith('quality_role_'))
+    .map(item => parseQualityReviewerFact(item))
+    .filter((fact): fact is QualityReviewerFact => fact !== undefined)
+}
+
+function parseQualityReviewerFact(evidence: SessionGoalAuditEvidence): QualityReviewerFact | undefined {
+  const role = evidence.label.slice('quality_role_'.length)
+  if (!role) return undefined
+
+  const fields = parseEvidenceDetailFields(evidence.detail)
+  const latencyMs = parseOptionalNumber(fields.get('latency_ms'))
+  const inputTokens = parseOptionalNumber(fields.get('input_tokens'))
+  const outputTokens = parseOptionalNumber(fields.get('output_tokens'))
+  const categories = fields.get('categories')
+    ?.split(',')
+    .map(category => category.trim())
+    .filter(Boolean)
+
+  return {
+    role,
+    model: fields.get('model'),
+    requestedModel: fields.get('requested_model'),
+    fallbackModel: fields.get('fallback_model') === 'true' ? true : undefined,
+    status: fields.get('status'),
+    failureCategories: categories && categories.length > 0 ? categories : undefined,
+    latencyMs,
+    inputTokens,
+    outputTokens,
+    summary: fields.get('summary'),
+  }
+}
+
+function parseQualityRouteEvidence(evidence: SessionGoalAuditEvidence[]): QualityRouteFact[] {
+  return evidence
+    .filter(item => item.label === 'quality_route')
+    .map(item => parseQualityRouteFact(item))
+    .filter((fact): fact is QualityRouteFact => fact !== undefined)
+}
+
+function parseQualityRouteFact(evidence: SessionGoalAuditEvidence): QualityRouteFact | undefined {
+  const fields = parseEvidenceDetailFields(evidence.detail)
+  const roles = parseCommaList(fields.get('roles'))
+  if (roles.length === 0) return undefined
+
+  return {
+    taskType: normalizeOptionalRouteField(fields.get('task')),
+    roles,
+    modelAssignments: parseRouteModelAssignments(fields.get('models')),
+    telemetryRoles: parseCommaList(fields.get('telemetry_roles')).filter(value => value !== 'none'),
+    commonGaps: parseCommaList(fields.get('common_gaps')).filter(value => value !== 'none'),
+  }
+}
+
+function parseCommaList(value: string | undefined): string[] {
+  return value
+    ?.split(',')
+    .map(item => item.trim())
+    .filter(Boolean) ?? []
+}
+
+function normalizeOptionalRouteField(value: string | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized && normalized !== 'unknown' && normalized !== 'none' ? normalized : undefined
+}
+
+function parseRouteModelAssignments(value: string | undefined): Record<string, string> {
+  const assignments: Record<string, string> = {}
+  for (const item of parseCommaList(value)) {
+    if (item === 'none') continue
+    const index = item.indexOf(':')
+    if (index <= 0) continue
+    const role = item.slice(0, index).trim()
+    const model = item.slice(index + 1).trim()
+    if (role && model) assignments[role] = model
+  }
+  return assignments
+}
+
+function parseEvidenceDetailFields(detail: string | undefined): Map<string, string> {
+  const fields = new Map<string, string>()
+  for (const segment of detail?.split(';') ?? []) {
+    const index = segment.indexOf('=')
+    if (index <= 0) continue
+
+    const key = segment.slice(0, index).trim()
+    const value = segment.slice(index + 1).trim()
+    if (key && value) fields.set(key, value)
+  }
+  return fields
+}
+
+function parseOptionalNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const number = Number(value)
+  return Number.isFinite(number) ? number : undefined
 }
 
 async function writeFormalOutputReviewReports(input: FormalOutputReviewInput): Promise<FormalOutputReviewRecord[]> {

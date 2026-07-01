@@ -11,6 +11,10 @@ $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 $BunVersion = "bun-v1.3.9"  # Pinned version for reproducible builds
 $BunDownload = "bun-windows-x64-baseline"
 $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
+$GitForWindowsVersion = "2.55.0"
+$GitForWindowsInstallerName = "Git-$GitForWindowsVersion-64-bit.exe"
+$GitForWindowsUrl = "https://github.com/git-for-windows/git/releases/download/v$GitForWindowsVersion.windows.1/$GitForWindowsInstallerName"
+$GitForWindowsInstallerPath = "$ElectronDir\resources\installers\windows\$GitForWindowsInstallerName"
 
 function Add-BundledBunToPath {
     $BunDir = Split-Path -Parent $BunExePath
@@ -87,6 +91,43 @@ function Ensure-BundledBun {
     }
 
     Add-BundledBunToPath
+}
+
+function Ensure-BundledGitInstaller {
+    if (Test-Path $GitForWindowsInstallerPath) {
+        Unblock-File -Path $GitForWindowsInstallerPath -ErrorAction SilentlyContinue
+        Write-Host "Using bundled Git for Windows installer: $GitForWindowsInstallerPath" -ForegroundColor Green
+        return
+    }
+
+    Write-Host "Downloading Git for Windows $GitForWindowsVersion x64 installer..."
+    $GitInstallerDir = Split-Path -Parent $GitForWindowsInstallerPath
+    New-Item -ItemType Directory -Force -Path $GitInstallerDir | Out-Null
+
+    $TempDir = Join-Path $env:TEMP "git-for-windows-download-$(Get-Random)"
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+    $TempInstaller = Join-Path $TempDir $GitForWindowsInstallerName
+
+    try {
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            & $curl.Source -L --fail --retry 3 --connect-timeout 20 --max-time 600 -o $TempInstaller $GitForWindowsUrl
+            if ($LASTEXITCODE -ne 0) { throw "curl Git installer download failed with exit code $LASTEXITCODE" }
+        } else {
+            Invoke-WebRequest -Uri $GitForWindowsUrl -OutFile $TempInstaller
+        }
+
+        $installerSize = (Get-Item $TempInstaller).Length
+        if ($installerSize -lt 50000000) {
+            throw "Downloaded Git installer is too small: $installerSize bytes"
+        }
+
+        Move-Item -Force $TempInstaller $GitForWindowsInstallerPath
+        Unblock-File -Path $GitForWindowsInstallerPath -ErrorAction SilentlyContinue
+        Write-Host "Git for Windows installer staged: $([math]::Round($installerSize / 1MB, 2)) MB" -ForegroundColor Green
+    } finally {
+        Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "=== Building Agent π Windows Installer using electron-builder ===" -ForegroundColor Cyan
@@ -182,6 +223,7 @@ try {
 
 # 3. Bun is already staged before dependency install so builds work without a global Bun.
 Ensure-BundledBun
+Ensure-BundledGitInstaller
 
 # 4. Copy SDK from root node_modules (monorepo hoisting).
 # Since SDK 0.2.113: thin core + per-platform binary package.

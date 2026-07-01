@@ -4,7 +4,9 @@ copyright: Copyright © 2026 xiangxin2021cn
 
 electronVersion: "39.2.7"
 
-# Hook to compile macOS 26+ Liquid Glass icon after packaging
+# Build hooks: stage Windows prerequisites before packaging, then apply
+# optional macOS 26+ Liquid Glass icon handling after packaging.
+beforePack: scripts/beforePack.cjs
 afterPack: scripts/afterPack.cjs
 
 directories:
@@ -182,11 +184,14 @@ win:
       to: vendor/bun/bun.exe
     - from: resources/bin/win32-x64
       to: app/resources/bin/win32-x64
+    - from: resources/installers/windows
+      to: installers/windows
     # WhatsApp worker subprocess (self-contained; Baileys bundled in).
     - from: ../../packages/messaging-whatsapp-worker/dist/worker.cjs
       to: messaging-whatsapp-worker/worker.cjs
 
 nsis:
+  include: build/install-git.nsh
   oneClick: true
   # Per-user install to %LOCALAPPDATA%\Programs\ (not Program Files).
   # Bun subprocess cannot read/write files in Program Files due to Windows permissions.

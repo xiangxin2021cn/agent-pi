@@ -482,7 +482,7 @@ export function SessionList({
             rows: [],
             label: getProjectGroupLabel(normalizedPath, t('session.noWorkingDirectory')),
             description: normalizedPath ?? t('session.sessionFolderFallback'),
-            latestAt: 0,
+            latestAt: meta.latestAt ?? 0,
           })
         }
       }

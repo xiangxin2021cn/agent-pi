@@ -26,6 +26,7 @@ export type {
   SessionTaskContract,
   SessionDocumentPlan,
   SessionGoalAuditEvidence,
+  SessionGoalFailureCategory,
   SessionGoalAuditResult,
   SessionGoalState,
 } from './types.ts';
@@ -34,6 +35,12 @@ export type { ProjectMemoryContextEntry } from './storage.ts';
 
 // Field constants
 export { SESSION_PERSISTENT_FIELDS } from './types.ts';
+export type {
+  ContextPressureInput,
+  ContextPressureSignal,
+} from './context-pressure.ts';
+export { getContextPressureSignal } from './context-pressure.ts';
+export { formatTaskContractContext } from './task-contract-context.ts';
 
 // Storage functions
 export {

@@ -6,8 +6,10 @@ import { tmpdir } from 'os'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath } from '@craft-agent/shared/sessions'
 import {
   ensureProjectMemoryLite,
+  loadProjectMemoryReviewerPerformanceSummary,
   recordProjectMemoryFormalOutput,
   recordProjectMemoryGoalAudit,
+  resetProjectMemoryQualityTelemetry,
   writeProjectMemoryLite,
 } from './project-memory-lite'
 
@@ -66,6 +68,16 @@ describe('ensureProjectMemoryLite', () => {
           iteration: 1,
           maxIterations: 3,
           criteria: [],
+          taskContract: {
+            originalRequest: 'Create tender report',
+            taskType: 'document',
+            deliverables: ['Tender report'],
+            mustPreserve: [],
+            evidenceRequirements: ['Cite source evidence.'],
+            outputFormats: ['MD'],
+            acceptanceCriteria: ['[evidence] Cite sources.'],
+            forbiddenShortcuts: ['Do not create a brief outline.'],
+          },
           auditHistory: [],
         },
         result: {
@@ -73,6 +85,7 @@ describe('ensureProjectMemoryLite', () => {
           status: 'fail',
           summary: 'Document quality failed.',
           missingCriteria: ['Need source citations.'],
+          failureCategories: ['evidence_gap', 'shallow_output'],
           evidence: [
             { type: 'file', label: 'source_file_preview', detail: `${sourcePath}\nClause preview` },
             { type: 'file', label: 'file_preview', detail: `${outputPath}\nReport preview` },
@@ -90,6 +103,16 @@ describe('ensureProjectMemoryLite', () => {
                 '- 包含可审查的数字性表述。',
               ].join('\n'),
             },
+            {
+              type: 'system',
+              label: 'quality_role_artifact_reviewer',
+              detail: 'model=cheap-artifact-reviewer; requested_model=strong-artifact-reviewer; fallback_model=true; status=fail; categories=evidence_gap,shallow_output; latency_ms=42; input_tokens=321; output_tokens=76; summary=Missing source citations.',
+            },
+            {
+              type: 'system',
+              label: 'quality_route',
+              detail: 'task=document; roles=acceptance_reviewer,artifact_reviewer,risk_reviewer; models=artifact_reviewer:cheap-artifact-reviewer; telemetry_roles=artifact_reviewer; common_gaps=evidence_gap',
+            },
           ],
           createdAt: 10,
         },
@@ -102,6 +125,7 @@ describe('ensureProjectMemoryLite', () => {
       const review = readFirstJsonLine(join(brainPath, 'outputs', 'reviews.jsonl'))
       const citation = readFirstJsonLine(join(brainPath, 'citations.jsonl'))
       const fact = readFirstJsonLine(join(brainPath, 'facts.jsonl'))
+      const facts = readJsonLines(join(brainPath, 'facts.jsonl'))
       const entries = readJsonLines(join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME))
       const events = readJsonLines(join(brainPath, 'artifacts', 'events.jsonl'))
 
@@ -113,7 +137,36 @@ describe('ensureProjectMemoryLite', () => {
           score: 58,
           threshold: 70,
         },
+        failureCategories: ['evidence_gap', 'shallow_output'],
       })
+      await expect(events).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'GoalAuditCompleted',
+          failureCategories: ['evidence_gap', 'shallow_output'],
+        }),
+        expect.objectContaining({
+          type: 'ArtifactCreated',
+          path: outputPath,
+          failureCategories: ['evidence_gap', 'shallow_output'],
+        }),
+        expect.objectContaining({
+          type: 'FormalOutputCreated',
+          outputPath,
+          failureCategories: ['evidence_gap', 'shallow_output'],
+        }),
+      ]))
+      await expect(entries).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'goal_audit_completed',
+          goalAuditId: 'session-1:goal-1:1',
+          failureCategories: ['evidence_gap', 'shallow_output'],
+        }),
+        expect.objectContaining({
+          type: 'known_gap',
+          summary: 'Need source citations.',
+          failureCategories: ['evidence_gap', 'shallow_output'],
+        }),
+      ]))
       await expect(source).resolves.toMatchObject({
         type: 'source_evidence',
         path: sourcePath,
@@ -138,6 +191,32 @@ describe('ensureProjectMemoryLite', () => {
         value: 58,
         threshold: 70,
       })
+      await expect(facts).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'quality_reviewer_fact',
+          role: 'artifact_reviewer',
+          model: 'cheap-artifact-reviewer',
+          requestedModel: 'strong-artifact-reviewer',
+          fallbackModel: true,
+          status: 'fail',
+          taskType: 'document',
+          failureCategories: ['evidence_gap', 'shallow_output'],
+          latencyMs: 42,
+          inputTokens: 321,
+          outputTokens: 76,
+          goalAuditId: 'session-1:goal-1:1',
+        }),
+        expect.objectContaining({
+          type: 'quality_route_fact',
+          taskType: 'document',
+          status: 'fail',
+          roles: ['acceptance_reviewer', 'artifact_reviewer', 'risk_reviewer'],
+          modelAssignments: { artifact_reviewer: 'cheap-artifact-reviewer' },
+          telemetryRoles: ['artifact_reviewer'],
+          commonGaps: ['evidence_gap'],
+          goalAuditId: 'session-1:goal-1:1',
+        }),
+      ]))
       await expect(entries).resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({
           type: 'goal_audit_completed',
@@ -209,6 +288,212 @@ describe('ensureProjectMemoryLite', () => {
           sourcePath,
         }),
       ]))
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  test('summarizes quality reviewer facts for future goal reviews', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-brain-'))
+    try {
+      const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+      await writeFile(join(brainPath, 'facts.jsonl'), [
+        JSON.stringify({
+          type: 'quality_reviewer_fact',
+          role: 'artifact_reviewer',
+          model: 'cheap-artifact-reviewer',
+          status: 'fail',
+          taskType: 'research',
+          failureCategories: ['evidence_gap'],
+          latencyMs: 42,
+          inputTokens: 321,
+          outputTokens: 76,
+          summary: 'Missing source citations.',
+          goalAuditId: 'session-1:goal-1:1',
+          createdAt: 10,
+        }),
+        JSON.stringify({
+          type: 'document_quality_fact',
+          subject: 'Other fact',
+          createdAt: 11,
+        }),
+      ].join('\n') + '\n')
+
+      const summary = await loadProjectMemoryReviewerPerformanceSummary(workingDirectory)
+
+      expect(summary).toContain('artifact_reviewer')
+      expect(summary).toContain('cheap-artifact-reviewer')
+      expect(summary).toContain('fail')
+      expect(summary).toContain('task=research')
+      expect(summary).toContain('evidence_gap')
+      expect(summary).toContain('latency=42ms')
+      expect(summary).toContain('tokens=321/76')
+      expect(summary).toContain('Missing source citations.')
+      expect(summary).not.toContain('document_quality_fact')
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  test('aggregates reviewer performance by task type and role', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-brain-'))
+    try {
+      const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+      await writeFile(join(brainPath, 'facts.jsonl'), [
+        JSON.stringify({
+          type: 'quality_reviewer_fact',
+          role: 'research_source_reviewer',
+          model: 'source-model-a',
+          requestedModel: 'strong-source-reviewer',
+          fallbackModel: true,
+          status: 'fail',
+          taskType: 'research',
+          failureCategories: ['evidence_gap'],
+          latencyMs: 40,
+          inputTokens: 100,
+          outputTokens: 20,
+          summary: 'Missing citations.',
+          createdAt: 10,
+        }),
+        JSON.stringify({
+          type: 'quality_reviewer_fact',
+          role: 'research_source_reviewer',
+          model: 'source-model-a',
+          requestedModel: 'strong-source-reviewer',
+          fallbackModel: true,
+          status: 'pass',
+          taskType: 'research',
+          failureCategories: [],
+          latencyMs: 60,
+          inputTokens: 120,
+          outputTokens: 30,
+          summary: 'Sources were grounded.',
+          createdAt: 11,
+        }),
+        JSON.stringify({
+          type: 'quality_reviewer_fact',
+          role: 'code_implementation_reviewer',
+          model: 'code-model-b',
+          status: 'fail',
+          taskType: 'code',
+          failureCategories: ['verification_gap'],
+          latencyMs: 50,
+          inputTokens: 140,
+          outputTokens: 40,
+          summary: 'Missing typecheck evidence.',
+          createdAt: 12,
+        }),
+      ].join('\n') + '\n')
+
+      const summary = await loadProjectMemoryReviewerPerformanceSummary(workingDirectory)
+
+      expect(summary).toContain('Reviewer performance aggregates:')
+      expect(summary).toContain('task=research role=research_source_reviewer total=2 pass=1 fail=1 uncertain=0')
+      expect(summary).toContain('fallbacks=2')
+      expect(summary).toContain('common_gaps=evidence_gap')
+      expect(summary).toContain('avg_latency=50ms')
+      expect(summary).toContain('task=code role=code_implementation_reviewer total=1 pass=0 fail=1 uncertain=0')
+      expect(summary).toContain('Recent reviewer facts:')
+      expect(summary).toContain('Missing citations.')
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  test('aggregates quality route outcomes for learned routing', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-brain-'))
+    try {
+      const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+      await writeFile(join(brainPath, 'facts.jsonl'), [
+        JSON.stringify({
+          type: 'quality_route_fact',
+          taskType: 'research',
+          status: 'fail',
+          roles: ['acceptance_reviewer', 'artifact_reviewer', 'risk_reviewer', 'research_source_reviewer'],
+          modelAssignments: { research_source_reviewer: 'source-model-a' },
+          telemetryRoles: ['research_source_reviewer'],
+          commonGaps: ['evidence_gap'],
+          failureCategories: ['evidence_gap'],
+          createdAt: 10,
+        }),
+        JSON.stringify({
+          type: 'quality_route_fact',
+          taskType: 'research',
+          status: 'pass',
+          roles: ['acceptance_reviewer', 'artifact_reviewer', 'risk_reviewer', 'research_source_reviewer'],
+          modelAssignments: { research_source_reviewer: 'source-model-a' },
+          telemetryRoles: ['research_source_reviewer'],
+          commonGaps: [],
+          failureCategories: [],
+          createdAt: 11,
+        }),
+        JSON.stringify({
+          type: 'quality_route_fact',
+          taskType: 'code',
+          status: 'fail',
+          roles: ['acceptance_reviewer', 'artifact_reviewer', 'risk_reviewer', 'code_implementation_reviewer'],
+          modelAssignments: { code_implementation_reviewer: 'code-model-b' },
+          telemetryRoles: [],
+          commonGaps: ['verification_gap'],
+          failureCategories: ['verification_gap'],
+          createdAt: 12,
+        }),
+      ].join('\n') + '\n')
+
+      const summary = await loadProjectMemoryReviewerPerformanceSummary(workingDirectory)
+
+      expect(summary).toContain('Quality route outcome aggregates:')
+      expect(summary).toContain('task=research total=2 pass=1 fail=1 uncertain=0')
+      expect(summary).toContain('roles=acceptance_reviewer,artifact_reviewer,risk_reviewer,research_source_reviewer')
+      expect(summary).toContain('models=research_source_reviewer:source-model-a')
+      expect(summary).toContain('common_gaps=evidence_gap')
+      expect(summary).toContain('task=code total=1 pass=0 fail=1 uncertain=0')
+      expect(summary).toContain('common_gaps=verification_gap')
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  test('resets learned quality telemetry without deleting other project facts', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-brain-'))
+    try {
+      const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+      await writeFile(join(brainPath, 'facts.jsonl'), [
+        JSON.stringify({
+          type: 'document_quality_fact',
+          subject: 'Risk report',
+          value: 72,
+          createdAt: 10,
+        }),
+        JSON.stringify({
+          type: 'quality_reviewer_fact',
+          role: 'artifact_reviewer',
+          status: 'fail',
+          taskType: 'research',
+          createdAt: 11,
+        }),
+        JSON.stringify({
+          type: 'quality_route_fact',
+          taskType: 'research',
+          status: 'fail',
+          roles: ['acceptance_reviewer'],
+          createdAt: 12,
+        }),
+        'not-json-but-user-owned',
+      ].join('\n') + '\n')
+
+      const result = await resetProjectMemoryQualityTelemetry(workingDirectory)
+      const facts = await readFile(join(brainPath, 'facts.jsonl'), 'utf8')
+
+      expect(result).toMatchObject({
+        removedCount: 2,
+        retainedCount: 2,
+      })
+      expect(facts).toContain('document_quality_fact')
+      expect(facts).toContain('not-json-but-user-owned')
+      expect(facts).not.toContain('quality_reviewer_fact')
+      expect(facts).not.toContain('quality_route_fact')
+      await expect(loadProjectMemoryReviewerPerformanceSummary(workingDirectory)).resolves.toBeUndefined()
     } finally {
       await rm(workingDirectory, { recursive: true, force: true })
     }

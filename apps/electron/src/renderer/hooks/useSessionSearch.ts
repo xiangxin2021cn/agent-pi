@@ -39,6 +39,7 @@ export interface ContentSearchResult {
 export interface CollapsedGroupMeta {
   key: string
   count: number
+  latestAt?: number
 }
 
 export interface UseSessionSearchOptions {
@@ -119,8 +120,15 @@ function groupSessionsByDate(sessions: SessionMeta[]): DateGroup[] {
     }))
 }
 
+function normalizeProjectPath(path?: string): string | null {
+  const trimmed = path?.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/[\\/]+$/, '')
+}
+
 function getProjectGroupKey(item: SessionMeta): string {
-  return item.workingDirectory ? `project-${item.workingDirectory}` : 'project-none'
+  const normalized = normalizeProjectPath(item.workingDirectory)
+  return normalized ? `project-${normalized}` : 'project-none'
 }
 
 function getCollapseGroupKey(item: SessionMeta, groupingMode?: 'date' | 'status' | 'unread' | 'project'): string {
@@ -176,20 +184,24 @@ export function computeCollapsedPagination(
   }
 
   const expandedItems: SessionMeta[] = []
-  const collapsedCounts = new Map<string, number>()
+  const collapsedMetaByKey = new Map<string, { count: number; latestAt: number }>()
 
   for (const item of items) {
     const groupKey = getCollapseGroupKey(item, groupingMode)
 
     if (effectiveCollapsedKeys.has(groupKey)) {
-      collapsedCounts.set(groupKey, (collapsedCounts.get(groupKey) || 0) + 1)
+      const existing = collapsedMetaByKey.get(groupKey) ?? { count: 0, latestAt: 0 }
+      collapsedMetaByKey.set(groupKey, {
+        count: existing.count + 1,
+        latestAt: Math.max(existing.latestAt, item.lastMessageAt || item.createdAt || 0),
+      })
     } else {
       expandedItems.push(item)
     }
   }
 
-  const meta: CollapsedGroupMeta[] = Array.from(collapsedCounts.entries()).map(
-    ([key, count]) => ({ key, count })
+  const meta: CollapsedGroupMeta[] = Array.from(collapsedMetaByKey.entries()).map(
+    ([key, value]) => ({ key, count: value.count, latestAt: value.latestAt || undefined })
   )
 
   return {

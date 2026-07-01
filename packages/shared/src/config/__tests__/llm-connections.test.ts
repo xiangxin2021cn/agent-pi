@@ -136,6 +136,7 @@ describe('isPiProvider', () => {
 describe('toBedrockNativeId', () => {
   it('maps bare Anthropic IDs to US inference profile IDs', () => {
     expect(toBedrockNativeId('claude-opus-4-8')).toBe('us.anthropic.claude-opus-4-8')
+    expect(toBedrockNativeId('claude-sonnet-5')).toBe('us.anthropic.claude-sonnet-5')
     expect(toBedrockNativeId('claude-sonnet-4-6')).toBe('us.anthropic.claude-sonnet-4-6')
     expect(toBedrockNativeId('claude-haiku-4-5-20251001')).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0')
   })
@@ -153,6 +154,7 @@ describe('toBedrockNativeId', () => {
 
   it('maps base Bedrock IDs to US inference profile IDs', () => {
     expect(toBedrockNativeId('anthropic.claude-opus-4-8')).toBe('us.anthropic.claude-opus-4-8')
+    expect(toBedrockNativeId('anthropic.claude-sonnet-5')).toBe('us.anthropic.claude-sonnet-5')
     expect(toBedrockNativeId('anthropic.claude-sonnet-4-6')).toBe('us.anthropic.claude-sonnet-4-6')
   })
 
@@ -167,6 +169,7 @@ describe('toBedrockNativeId', () => {
 
   it('maps to EU inference profiles when regionPrefix is eu', () => {
     expect(toBedrockNativeId('claude-opus-4-8', 'eu')).toBe('eu.anthropic.claude-opus-4-8')
+    expect(toBedrockNativeId('claude-sonnet-5', 'eu')).toBe('eu.anthropic.claude-sonnet-5')
     expect(toBedrockNativeId('claude-sonnet-4-6', 'eu')).toBe('eu.anthropic.claude-sonnet-4-6')
   })
 
@@ -207,13 +210,14 @@ describe('Bedrock preferred defaults ordering', () => {
     if (models.length === 0) return // Pi resolver not registered in test env
     const firstId = typeof models[0] === 'string' ? models[0] : (models[0] as any).id
     // First model should be a preferred model (claude-opus or claude-sonnet), not a deprecated one
-    expect(firstId).toMatch(/claude-(opus|sonnet)-4/)
+    expect(firstId).toMatch(/claude-(opus-4|sonnet-(5|4))/)
   })
 })
 
 describe('fromBedrockNativeId', () => {
   it('maps US inference profile IDs back to bare Anthropic', () => {
     expect(fromBedrockNativeId('us.anthropic.claude-opus-4-8')).toBe('claude-opus-4-8')
+    expect(fromBedrockNativeId('us.anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
     expect(fromBedrockNativeId('us.anthropic.claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
     expect(fromBedrockNativeId('us.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe('claude-haiku-4-5-20251001')
   })
@@ -239,6 +243,7 @@ describe('fromBedrockNativeId', () => {
 describe('normalizeBedrockModelId', () => {
   it('strips pi/ prefix and maps to US inference profile', () => {
     expect(normalizeBedrockModelId('pi/claude-opus-4-8')).toBe('us.anthropic.claude-opus-4-8')
+    expect(normalizeBedrockModelId('pi/claude-sonnet-5')).toBe('us.anthropic.claude-sonnet-5')
     expect(normalizeBedrockModelId('pi/claude-sonnet-4-6')).toBe('us.anthropic.claude-sonnet-4-6')
   })
 
@@ -266,6 +271,7 @@ describe('normalizeBedrockModelId', () => {
 
   it('respects regionPrefix for EU', () => {
     expect(normalizeBedrockModelId('pi/claude-opus-4-8', 'eu')).toBe('eu.anthropic.claude-opus-4-8')
+    expect(normalizeBedrockModelId('pi/claude-sonnet-5', 'eu')).toBe('eu.anthropic.claude-sonnet-5')
     expect(normalizeBedrockModelId('claude-sonnet-4-6', 'eu')).toBe('eu.anthropic.claude-sonnet-4-6')
   })
 })
@@ -277,6 +283,7 @@ describe('normalizeBedrockModelId', () => {
 describe('Bedrock-native model display', () => {
   it('getModelDisplayName resolves US inference profile IDs', () => {
     expect(getModelDisplayName('us.anthropic.claude-opus-4-8')).toBe('Opus 4.8')
+    expect(getModelDisplayName('us.anthropic.claude-sonnet-5')).toBe('Sonnet 5')
     expect(getModelDisplayName('us.anthropic.claude-sonnet-4-6')).toBe('Sonnet 4.6')
     expect(getModelDisplayName('us.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe('Haiku 4.5')
   })
@@ -288,11 +295,13 @@ describe('Bedrock-native model display', () => {
 
   it('getModelShortName resolves Bedrock IDs', () => {
     expect(getModelShortName('us.anthropic.claude-opus-4-8')).toBe('Opus')
+    expect(getModelShortName('us.anthropic.claude-sonnet-5')).toBe('Sonnet')
     expect(getModelShortName('us.anthropic.claude-sonnet-4-6')).toBe('Sonnet')
   })
 
   it('getModelContextWindow resolves Bedrock IDs', () => {
     expect(getModelContextWindow('us.anthropic.claude-opus-4-8')).toBe(1_000_000)
+    expect(getModelContextWindow('us.anthropic.claude-sonnet-5')).toBe(1_000_000)
     expect(getModelContextWindow('us.anthropic.claude-sonnet-4-6')).toBe(200_000)
   })
 
@@ -338,5 +347,24 @@ describe('Claude Fable 5', () => {
     expect(fromBedrockNativeId('anthropic.claude-fable-5')).toBe('claude-fable-5')
     // Bedrock-native id resolves to display metadata too
     expect(getModelDisplayName('us.anthropic.claude-fable-5')).toBe('Fable 5')
+  })
+})
+
+describe('Claude Sonnet 5', () => {
+  it('is registered as the primary Sonnet with 1M context', () => {
+    const sonnet = ANTHROPIC_MODELS.find(m => m.id === 'claude-sonnet-5')
+    expect(sonnet).toBeDefined()
+    expect(sonnet!.provider).toBe('anthropic')
+    expect(sonnet!.name).toBe('Sonnet 5')
+    expect(sonnet!.shortName).toBe('Sonnet')
+    expect(sonnet!.contextWindow).toBe(1_000_000)
+  })
+
+  it('round-trips through Bedrock inference-profile mapping', () => {
+    expect(toBedrockNativeId('claude-sonnet-5')).toBe('us.anthropic.claude-sonnet-5')
+    expect(toBedrockNativeId('claude-sonnet-5', 'eu')).toBe('eu.anthropic.claude-sonnet-5')
+    expect(fromBedrockNativeId('us.anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
+    expect(fromBedrockNativeId('global.anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
+    expect(getModelDisplayName('us.anthropic.claude-sonnet-5')).toBe('Sonnet 5')
   })
 })

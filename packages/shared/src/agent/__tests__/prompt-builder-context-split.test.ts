@@ -65,6 +65,75 @@ describe('PromptBuilder volatile/stable context split (issue #862)', () => {
     expect(stableText).not.toContain('permissionMode:')
   })
 
+  it('injects context pressure strategy only into volatile context for large enabled source sets', () => {
+    cleanupModeState(SESSION_ID)
+    const builder = new TestAgent(createMockBackendConfig({
+      session: createMockSession({
+        enabledSourceSlugs: Array.from({ length: 12 }, (_, index) => `source-${index + 1}`),
+      }),
+    })).getPromptBuilder()
+
+    const volatileText = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
+    const stableText = builder.buildStableContextParts().join('\n')
+
+    expect(volatileText).toContain('<context_pressure')
+    expect(volatileText).toContain('12 sources')
+    expect(volatileText).toContain('narrow enabled sources')
+    expect(stableText).not.toContain('<context_pressure')
+  })
+
+  it('does not inject context pressure strategy for small enabled source sets', () => {
+    cleanupModeState(SESSION_ID)
+    const builder = new TestAgent(createMockBackendConfig({
+      session: createMockSession({
+        enabledSourceSlugs: ['github', 'linear'],
+      }),
+    })).getPromptBuilder()
+
+    const volatileText = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
+
+    expect(volatileText).not.toContain('<context_pressure')
+  })
+
+  it('injects a bounded goal contract only into volatile context', () => {
+    cleanupModeState(SESSION_ID)
+    const builder = new TestAgent(createMockBackendConfig({
+      session: createMockSession({
+        goalState: {
+          id: 'goal-1',
+          objective: 'Create a cited market research report',
+          mode: 'auto_improve',
+          status: 'running',
+          createdAt: 1,
+          updatedAt: 1,
+          iteration: 0,
+          maxIterations: 2,
+          criteria: [],
+          auditHistory: [],
+          taskContract: {
+            originalRequest: 'Deeply research the market and produce a cited report.',
+            taskType: 'research',
+            deliverables: ['Produce a structured report.'],
+            mustPreserve: ['Explicit requirement: cite primary sources.'],
+            evidenceRequirements: ['Cite source URLs for factual claims.'],
+            outputFormats: ['MD'],
+            acceptanceCriteria: ['[evidence] Ground key facts in available source material.'],
+            forbiddenShortcuts: ['Do not provide a generic outline instead of the requested report.'],
+          },
+        },
+      }),
+    })).getPromptBuilder()
+
+    const volatileText = builder.buildVolatileContextParts(OPTS, SOURCE_BLOCK).join('\n')
+    const stableText = builder.buildStableContextParts().join('\n')
+
+    expect(volatileText).toContain('<goal_contract taskType="research">')
+    expect(volatileText).toContain('Produce a structured report.')
+    expect(volatileText).toContain('cite primary sources')
+    expect(volatileText).toContain('Do not provide a generic outline')
+    expect(stableText).not.toContain('<goal_contract')
+  })
+
   it('consumes the one-shot mode-change signal exactly once, only on the volatile path', () => {
     initializeModeState(SESSION_ID, 'safe')
     setPermissionMode(SESSION_ID, 'allow-all', {

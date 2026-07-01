@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, Loader2, Target } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, Loader2, RotateCcw, Target } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,8 @@ import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
 import { getDocumentPlanStatusText } from './document-enhancement-view-model'
 import { getGoalStatusText } from './goal-status-view-model'
+import { getContextPressureViewModel, resolveModelContextWindow } from './context-pressure-view-model'
+import { getProjectMemoryTelemetryResetAction } from './project-memory-view-model'
 import type { ProjectMemorySessionStatusResult, SessionOutputDirectory } from '../../../shared/types'
 
 interface SessionInfoPopoverProps {
@@ -179,6 +181,13 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
   const { enabledSources, llmConnections, workspaceDefaultLlmConnection } = useAppShellContext()
   const [outputDirectory, setOutputDirectory] = React.useState<SessionOutputDirectory | null>(null)
   const [projectMemoryStatus, setProjectMemoryStatus] = React.useState<ProjectMemorySessionStatusResult | null>(null)
+  const [projectMemoryResetting, setProjectMemoryResetting] = React.useState(false)
+  const [projectMemoryResetMessage, setProjectMemoryResetMessage] = React.useState<string | undefined>()
+
+  const refreshProjectMemoryStatus = React.useCallback(async () => {
+    const result = await window.electronAPI.getSessionProjectMemoryStatus(sessionId)
+    setProjectMemoryStatus(result)
+  }, [sessionId])
 
   React.useEffect(() => {
     let cancelled = false
@@ -206,7 +215,7 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     return () => {
       cancelled = true
     }
-  }, [sessionId, session?.workingDirectory, session?.messageCount, session?.goalState?.updatedAt])
+  }, [refreshProjectMemoryStatus, session?.workingDirectory, session?.messageCount, session?.goalState?.updatedAt])
 
   const connection = React.useMemo(() => {
     const slug = session?.llmConnection ?? workspaceDefaultLlmConnection
@@ -230,6 +239,37 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     () => getDocumentPlanStatusText(t, session?.goalState),
     [session?.goalState, t],
   )
+  const contextPressure = React.useMemo(() => getContextPressureViewModel({
+    enabledSourceCount: sourceNames.length,
+    contextWindow: session?.tokenUsage?.contextWindow ?? resolveModelContextWindow({
+      sessionModel: session?.model,
+      connection,
+    }),
+    inputTokens: session?.tokenUsage?.inputTokens,
+  }), [connection, session?.model, session?.tokenUsage?.contextWindow, session?.tokenUsage?.inputTokens, sourceNames.length])
+  const projectMemoryResetAction = React.useMemo(() => getProjectMemoryTelemetryResetAction({
+    status: projectMemoryStatus,
+    isResetting: projectMemoryResetting,
+  }), [projectMemoryResetting, projectMemoryStatus])
+  const handleResetProjectMemoryTelemetry = React.useCallback(async () => {
+    if (!projectMemoryResetAction.enabled) return
+    setProjectMemoryResetting(true)
+    setProjectMemoryResetMessage(undefined)
+    try {
+      const result = await window.electronAPI.resetSessionProjectMemoryQualityTelemetry(sessionId)
+      if (result?.status === 'reset') {
+        setProjectMemoryResetMessage(t('sessionInfo.projectMemoryResetTelemetryDone', {
+          count: result.removedCount ?? 0,
+          defaultValue: 'Reset {{count}} learned telemetry facts.',
+        }))
+      }
+      await refreshProjectMemoryStatus()
+    } catch {
+      setProjectMemoryResetMessage(t('sessionInfo.projectMemoryResetTelemetryFailed', { defaultValue: 'Reset failed.' }))
+    } finally {
+      setProjectMemoryResetting(false)
+    }
+  }, [projectMemoryResetAction.enabled, refreshProjectMemoryStatus, sessionId, t])
 
   const progressItems = [
     {
@@ -261,6 +301,13 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       value: documentPlanStatus,
       active: true,
     }] : []),
+    ...(contextPressure ? [{
+      key: 'contextPressure',
+      icon: <AlertTriangle className="h-3.5 w-3.5" />,
+      label: contextPressure.label,
+      value: contextPressure.detail,
+      active: contextPressure.level === 'high',
+    }] : []),
     {
       key: 'workdir',
       icon: <FolderOpen className="h-3.5 w-3.5" />,
@@ -271,8 +318,14 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       key: 'projectMemory',
       icon: <DatabaseZap className="h-3.5 w-3.5" />,
       label: t('sessionInfo.projectMemory', { defaultValue: 'Project memory' }),
-      value: getProjectMemoryStatusText(t, projectMemoryStatus),
+      value: projectMemoryResetMessage ?? getProjectMemoryStatusText(t, projectMemoryStatus),
       active: projectMemoryStatus?.status === 'lite_ready',
+      action: {
+        icon: projectMemoryResetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />,
+        label: t(projectMemoryResetAction.labelKey, { defaultValue: projectMemoryResetAction.defaultLabel }),
+        disabled: !projectMemoryResetAction.enabled,
+        onClick: handleResetProjectMemoryTelemetry,
+      },
     }] : []),
   ]
 
@@ -286,6 +339,7 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
             label={item.label}
             value={item.value}
             active={item.active}
+            action={item.action}
           />
         ))}
       </InfoBlock>
@@ -381,6 +435,26 @@ function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
       {item.documentExpertReport && (
         <DocumentExpertReportCard report={item.documentExpertReport} />
       )}
+      {item.qualityRoute && (
+        <QualityRouteCard route={item.qualityRoute} />
+      )}
+      {item.failureCategories.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {item.failureCategories.map(category => (
+            <span
+              key={category.id}
+              className="inline-flex items-center rounded-[5px] bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning"
+            >
+              {t(category.labelKey)}
+            </span>
+          ))}
+          {item.hiddenFailureCategoryCount > 0 && (
+            <span className="inline-flex items-center rounded-[5px] bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {t('sessionInfo.goalAuditMoreItems', { count: item.hiddenFailureCategoryCount })}
+            </span>
+          )}
+        </div>
+      )}
       {item.missingCriteria.length > 0 && (
         <div className="mt-1.5 space-y-1">
           <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
@@ -420,6 +494,59 @@ function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
               {t('sessionInfo.goalAuditMoreItems', { count: item.hiddenEvidenceCount })}
             </span>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function QualityRouteCard({ route }: { route: NonNullable<GoalAuditViewModel['qualityRoute']> }) {
+  const { t } = useTranslation()
+  const healthTone = route.health === 'degraded'
+    ? 'text-warning'
+    : route.health === 'mixed'
+    ? 'text-info'
+    : 'text-muted-foreground'
+  const budgetText = `${route.extraReviewersUsed}/${route.extraReviewersLimit}`
+  const detail = route.commonGaps.length > 0
+    ? route.commonGaps.join(', ')
+    : route.routeHistory || route.task
+
+  return (
+    <div className="mt-1.5 rounded-[6px] bg-background/70 px-2 py-1.5 ring-1 ring-border/50">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
+          {t('sessionInfo.qualityRoute', { defaultValue: 'Quality route' })}
+        </span>
+        <span className={cn('text-[11px] font-semibold', healthTone)}>
+          {t(`sessionInfo.qualityRouteHealth.${route.health}`, {
+            defaultValue: route.health.replace(/_/g, ' '),
+          })}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        <span className="inline-flex min-w-0 items-center rounded-[5px] bg-foreground/[0.035] px-1.5 py-0.5 text-[10px] text-foreground/70">
+          <span className="mr-1 text-muted-foreground">{t('sessionInfo.qualityRouteTask', { defaultValue: 'Task' })}</span>
+          <span className="truncate">{route.task}</span>
+        </span>
+        <span className="inline-flex min-w-0 items-center rounded-[5px] bg-foreground/[0.035] px-1.5 py-0.5 text-[10px] text-foreground/70">
+          <span className="mr-1 text-muted-foreground">{t('sessionInfo.qualityRouteExtraReviewers', { defaultValue: 'Extra reviewers' })}</span>
+          <span>{budgetText}</span>
+        </span>
+        {route.addedRouteHistoryReviewer && (
+          <span className="inline-flex min-w-0 items-center rounded-[5px] bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+            {t('sessionInfo.qualityRouteHistoryReviewerAdded', { defaultValue: 'History reviewer added' })}
+          </span>
+        )}
+        {!route.addedRouteHistoryReviewer && route.health === 'degraded' && route.extraReviewersLimit === 0 && (
+          <span className="inline-flex min-w-0 items-center rounded-[5px] bg-foreground/[0.035] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {t('sessionInfo.qualityRouteBudgetDisabled', { defaultValue: 'Budget disabled' })}
+          </span>
+        )}
+      </div>
+      {detail && (
+        <div className="mt-1 line-clamp-1 text-[10px] leading-4 text-muted-foreground" title={detail}>
+          {detail}
         </div>
       )}
     </div>
@@ -539,11 +666,18 @@ function InfoLine({
   label,
   value,
   active,
+  action,
 }: {
   icon: React.ReactNode
   label: string
   value: string
   active?: boolean
+  action?: {
+    icon: React.ReactNode
+    label: string
+    disabled?: boolean
+    onClick: () => void
+  }
 }) {
   return (
     <div className="flex items-start gap-2 rounded-[7px] px-2 py-1.5 bg-foreground/[0.025]">
@@ -554,6 +688,21 @@ function InfoLine({
         <div className="text-[12px] font-medium text-foreground/82 truncate">{label}</div>
         <div className="text-[11px] leading-4 text-muted-foreground truncate" title={value}>{value}</div>
       </div>
+      {action ? (
+        <button
+          type="button"
+          disabled={action.disabled}
+          onClick={action.onClick}
+          title={action.label}
+          aria-label={action.label}
+          className={cn(
+            "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground transition-colors",
+            action.disabled ? "cursor-default opacity-45" : "hover:bg-foreground/8 hover:text-foreground"
+          )}
+        >
+          {action.icon}
+        </button>
+      ) : null}
     </div>
   )
 }

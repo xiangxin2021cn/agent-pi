@@ -694,6 +694,9 @@ export interface WorkspaceSettings {
   enabledSourceSlugs?: string[]
   goalLoop?: {
     defaultMode?: Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>
+    qualityMode?: 'standard' | 'council'
+    reviewerModels?: Record<string, string>
+    maxExtraReviewers?: number
   }
 }
 
@@ -709,6 +712,16 @@ export interface ProjectMemorySessionStatusResult {
   projectBrainPath?: string
   updatedAt?: number
   entryCount?: number
+}
+
+export interface ProjectMemoryQualityTelemetryResetResult {
+  status: 'missing_working_directory' | 'reset'
+  message: string
+  workingDirectory?: string
+  projectBrainPath?: string
+  factsPath?: string
+  removedCount?: number
+  retainedCount?: number
 }
 
 // ---------------------------------------------------------------------------

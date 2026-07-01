@@ -35,6 +35,7 @@ import type {
   SessionTokenUsage,
   SessionHeader,
   SessionStatus,
+  SessionGoalFailureCategory,
 } from './types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
@@ -65,6 +66,7 @@ export interface ProjectMemoryContextEntry {
   reviewPath?: string;
   sourcePaths?: string[];
   missingCriteria?: string[];
+  failureCategories?: SessionGoalFailureCategory[];
   createdAt?: number;
 }
 
@@ -134,7 +136,7 @@ export function loadProjectMemoryContextForSession(
 
   const limit = Math.max(1, Math.min(options.limit ?? 12, 25));
   const maxChars = Math.max(1000, Math.min(options.maxChars ?? 6000, 12000));
-  const entries = readProjectMemoryEntries(entriesPath).slice(-limit);
+  const entries = selectProjectMemoryContextEntries(readProjectMemoryEntries(entriesPath), limit);
   if (entries.length === 0) return null;
 
   const lines = entries
@@ -172,6 +174,44 @@ function readProjectMemoryEntries(entriesPath: string): ProjectMemoryContextEntr
   } catch {
     return [];
   }
+}
+
+function selectProjectMemoryContextEntries(
+  entries: ProjectMemoryContextEntry[],
+  limit: number,
+): ProjectMemoryContextEntry[] {
+  return entries
+    .filter(isProjectMemoryPromptWorthy)
+    .sort(compareProjectMemoryContextEntries)
+    .slice(0, limit)
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+}
+
+function isProjectMemoryPromptWorthy(entry: ProjectMemoryContextEntry): boolean {
+  if (entry.status === 'archived' || entry.status === 'stale') return false;
+  if (entry.trust === 'unverified') return false;
+  if (entry.trust === 'verified' || entry.trust === 'user_promoted') return true;
+  if (entry.trust === 'needs_review') {
+    return (entry.missingCriteria?.length ?? 0) > 0 || (entry.failureCategories?.length ?? 0) > 0;
+  }
+  return entry.type === 'known_gap' || entry.type === 'goal_audit_completed';
+}
+
+function compareProjectMemoryContextEntries(a: ProjectMemoryContextEntry, b: ProjectMemoryContextEntry): number {
+  const scoreDelta = getProjectMemoryPromptScore(b) - getProjectMemoryPromptScore(a);
+  if (scoreDelta !== 0) return scoreDelta;
+  return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+}
+
+function getProjectMemoryPromptScore(entry: ProjectMemoryContextEntry): number {
+  let score = 0;
+  if (entry.trust === 'verified') score += 40;
+  if (entry.trust === 'user_promoted') score += 35;
+  if (entry.trust === 'needs_review') score += 20;
+  if ((entry.missingCriteria?.length ?? 0) > 0) score += 10;
+  if ((entry.failureCategories?.length ?? 0) > 0) score += 8;
+  if (entry.outputPath || entry.path || entry.reviewPath || (entry.sourcePaths?.length ?? 0) > 0) score += 5;
+  return score;
 }
 
 function formatProjectMemoryEntryForPrompt(entry: ProjectMemoryContextEntry): string | undefined {

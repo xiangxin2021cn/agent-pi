@@ -39,7 +39,7 @@ import {
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
-import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode } from '@craft-agent/shared/workspaces'
+import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode, type WorkspaceGoalLoopQualityMode } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -76,6 +76,7 @@ import {
   type SessionGoalCriterionKind,
   type SessionGoalAuditResult,
   type SessionGoalState,
+  type SessionGoalFailureCategory,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -107,9 +108,10 @@ import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntr
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
+import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
-import { ensureProjectMemoryLite, recordProjectMemoryGoalAudit } from '../project-memory-lite'
+import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -915,6 +917,8 @@ interface ManagedSession {
   backgroundShellCommands: Map<string, string>
   // Map of taskId -> output info for background task results
   backgroundTaskOutputs: Map<string, { outputFile: string; summary: string; status: string; completedAt: number }>
+  // Runtime-only Project Memory Lite writes that should settle before session flush/cleanup.
+  pendingProjectMemoryWrites: Set<Promise<void>>
   // Whether messages have been loaded from disk (for lazy loading)
   messagesLoaded: boolean
   // Pending auth request tracking (for unified auth flow)
@@ -1046,11 +1050,12 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
   const previousAudits = buildGoalReviewAuditHistory(input.goalState.auditHistory)
   const recentTurnContext = buildGoalReviewTurnContext(input.messages, input.finalAssistant.id)
   const taskContract = formatTaskContractForPrompt(input.goalState.taskContract)
+  const reviewerPerformanceMemory = input.reviewerPerformanceMemory?.trim() || '(none)'
 
   return [
     'You are reviewing whether an agent response completed the user objective.',
     'Return only compact JSON with this exact shape:',
-    '{"status":"pass|fail|uncertain","summary":"...","missingCriteria":["..."],"correctivePrompt":"..."}',
+    '{"status":"pass|fail|uncertain","summary":"...","missingCriteria":["..."],"failureCategories":["scope_gap|evidence_gap|verification_gap|shallow_output|tool_failure"],"correctivePrompt":"..."}',
     '',
     'Objective:',
     input.goalState.objective,
@@ -1070,6 +1075,9 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     'Previous goal audits:',
     previousAudits,
     '',
+    'Reviewer performance memory:',
+    reviewerPerformanceMemory,
+    '',
     'Recent turn context:',
     recentTurnContext,
     '',
@@ -1086,6 +1094,11 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '- Use "fail" when concrete missing work can be fixed by another pass.',
     '- Use "uncertain" when the evidence is insufficient or the task needs human input.',
     '- Keep missingCriteria specific and grounded in the required criteria.',
+    '- Use evidence_gap for missing citations, source grounding, files, or artifact proof.',
+    '- Use verification_gap for missing test/build/check evidence.',
+    '- Use scope_gap for unmet requested scope or omitted requirements.',
+    '- Use shallow_output for outline-level, placeholder, or insufficiently detailed work.',
+    '- Use tool_failure only for failed tools or execution errors.',
   ].join('\n')
 }
 
@@ -1098,6 +1111,8 @@ function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
     ? latestAudit.correctivePrompt.trim()
     : 'Improve the current deliverable against the missing or unproven criteria.'
   const taskContract = formatTaskContractForPrompt(goalState.taskContract)
+  const correctiveFocus = buildManualGoalFailureCategoryGuidance(latestAudit?.failureCategories)
+  const requiredCheckpoints = buildManualGoalRequiredCheckpoints(latestAudit)
 
   return [
     '<goal-audit>',
@@ -1118,9 +1133,65 @@ function buildManualGoalImprovementPrompt(goalState: SessionGoalState): string {
     'Corrective action:',
     corrective,
     '',
+    'Corrective focus:',
+    correctiveFocus,
+    '',
+    'Required checkpoints:',
+    requiredCheckpoints,
+    '',
     'Continue from the existing conversation. Improve the actual deliverable, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
   ].join('\n')
+}
+
+function buildManualGoalFailureCategoryGuidance(categories: SessionGoalFailureCategory[] | undefined): string {
+  if (!categories || categories.length === 0) {
+    return '1. Re-check the missing criteria and produce verifiable improvements.'
+  }
+
+  const guidance: Record<SessionGoalFailureCategory, string> = {
+    scope_gap: 'Restore the full requested scope and explicitly cover each omitted requirement.',
+    evidence_gap: 'Add concrete citations, source references, file paths, or artifact evidence that prove the claims.',
+    verification_gap: 'Run or cite the required tests, builds, checks, validations, or other verification evidence.',
+    shallow_output: 'Expand the deliverable with specific, substantive content instead of an outline or placeholder.',
+    tool_failure: 'Resolve the failed tool or execution error before claiming the task is complete.',
+  }
+
+  return categories
+    .filter(category => guidance[category])
+    .map((category, index) => `${index + 1}. ${guidance[category]}`)
+    .join('\n') || '1. Re-check the missing criteria and produce verifiable improvements.'
+}
+
+function buildManualGoalRequiredCheckpoints(latestAudit: SessionGoalAuditResult | undefined): string {
+  const categories = new Set(latestAudit?.failureCategories ?? [])
+  const checkpoints: string[] = []
+  const councilDisagreement = latestAudit?.evidence.find(item => item.label === 'quality_council_disagreement')?.detail
+
+  if (categories.has('tool_failure')) {
+    checkpoints.push('Resolve the failed tool or command and confirm the later attempt succeeded.')
+  }
+  if (councilDisagreement) {
+    checkpoints.push(`Resolve the Quality Council reviewer disagreement by addressing each failing or uncertain role before finalizing: ${councilDisagreement}.`)
+  }
+  if (categories.has('scope_gap')) {
+    checkpoints.push('Map the original requested scope to concrete sections, files, or outputs that now satisfy it.')
+  }
+  if (categories.has('shallow_output')) {
+    checkpoints.push('Replace outlines, placeholders, or generic summaries with substantive task-specific content.')
+  }
+  if (categories.has('evidence_gap')) {
+    checkpoints.push('Identify the exact source, file, artifact, or citation that proves the corrected claim.')
+  }
+  if (categories.has('verification_gap')) {
+    checkpoints.push('Run the requested verification or equivalent check and capture the concrete result.')
+  }
+  if (checkpoints.length === 0) {
+    checkpoints.push('Re-check every missing criterion against the updated deliverable.')
+  }
+  checkpoints.push('Do not produce the final response until every checkpoint above is satisfied or explicitly reported as blocked.')
+
+  return checkpoints.map((checkpoint, index) => `${index + 1}. ${checkpoint}`).join('\n')
 }
 
 const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
@@ -1146,6 +1217,23 @@ const GOAL_OFFICE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
 const GOAL_OFFICE_PREVIEW_TIMEOUT_MS = 20_000
 const GOAL_PDF_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
 const GOAL_PDF_PREVIEW_TIMEOUT_MS = 20_000
+const PROJECT_MEMORY_FLUSH_GRACE_MS = 1_000
+
+async function waitForProjectMemoryWrites(writes: Set<Promise<void>>): Promise<void> {
+  if (!writes.size) return
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled([...writes]).then(() => undefined),
+      new Promise<void>(resolve => {
+        timeout = setTimeout(resolve, PROJECT_MEMORY_FLUSH_GRACE_MS)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
 const GOAL_FILE_PREVIEW_SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm'])
 const GOAL_FILE_PREVIEW_OFFICE_EXTENSIONS = new Set(['.docx', '.doc', '.pptx', '.ppt', '.rtf'])
 const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
@@ -1437,6 +1525,7 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
   const status = normalizeGoalReviewStatus(parsed.status)
 
   const missingCriteria = normalizeGoalReviewMissingCriteria(parsed.missingCriteria)
+  const failureCategories = normalizeGoalReviewFailureCategories(parsed.failureCategories)
   const correctivePrompt = normalizeGoalReviewCorrectivePrompt(parsed.correctivePrompt)
 
   return {
@@ -1445,6 +1534,7 @@ function parseGoalReviewResult(raw: string | null): GoalReviewResult {
       ? parsed.summary.trim()
       : `Reviewer returned ${status}.`,
     missingCriteria,
+    failureCategories,
     correctivePrompt,
   }
 }
@@ -1540,6 +1630,25 @@ function normalizeGoalReviewCorrectivePrompt(value: unknown): string | undefined
   return undefined
 }
 
+function normalizeGoalReviewFailureCategories(value: unknown): SessionGoalFailureCategory[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const valid = new Set<SessionGoalFailureCategory>([
+    'scope_gap',
+    'evidence_gap',
+    'verification_gap',
+    'shallow_output',
+    'tool_failure',
+  ])
+  const categories = [...new Set(value
+    .map(item => typeof item === 'string' ? item.trim().toLowerCase().replace(/[\s-]+/g, '_') : '')
+    .filter((item): item is SessionGoalFailureCategory => valid.has(item as SessionGoalFailureCategory)))]
+
+  return categories.length > 0 ? categories : undefined
+}
+
 function extractJsonObject(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const candidate = fenced?.[1] ?? raw
@@ -1587,6 +1696,26 @@ function appendGoalObjectiveFollowUp(objective: string, message: string): string
 function normalizeWorkspaceGoalLoopDefaultMode(value: unknown): WorkspaceGoalLoopDefaultMode | undefined {
   return value === 'off' || value === 'check_only' || value === 'auto_improve'
     ? value
+    : undefined
+}
+
+function normalizeWorkspaceGoalLoopQualityMode(value: unknown): WorkspaceGoalLoopQualityMode | undefined {
+  return value === 'standard' || value === 'council'
+    ? value
+    : undefined
+}
+
+function normalizeWorkspaceGoalLoopReviewerModels(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const entries = Object.entries(value)
+    .map(([role, model]) => [role.trim(), typeof model === 'string' ? model.trim() : ''] as const)
+    .filter(([role, model]) => role.length > 0 && model.length > 0)
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function normalizeWorkspaceGoalLoopMaxExtraReviewers(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
     : undefined
 }
 
@@ -1680,6 +1809,7 @@ export function createManagedSession(
     messageQueue: [],
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
+    pendingProjectMemoryWrites: new Set(),
     messagesLoaded: false,
     tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
       log: (msg) => sessionLog.debug(msg),
@@ -1865,12 +1995,16 @@ export class SessionManager implements ISessionManager {
     result: SessionGoalAuditResult,
     goalState: SessionGoalState,
   ): void {
-    void this.recordGoalAuditInProjectMemory(managed, result, goalState).catch(error => {
+    const write = this.recordGoalAuditInProjectMemory(managed, result, goalState).catch(error => {
       sessionLog.warn('Failed to record Goal audit in Project Memory Lite', {
         sessionId: managed.id,
         workingDirectory: managed.workingDirectory,
         error: error instanceof Error ? error.message : String(error),
       })
+    })
+    managed.pendingProjectMemoryWrites.add(write)
+    void write.finally(() => {
+      managed.pendingProjectMemoryWrites.delete(write)
     })
   }
 
@@ -2805,6 +2939,8 @@ export class SessionManager implements ISessionManager {
   // Cold-persist hydration is synchronous, so by the time we reach here the
   // queue already has an entry whenever persistSession was just called.
   async flushSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed?.pendingProjectMemoryWrites.size) await waitForProjectMemoryWrites(managed.pendingProjectMemoryWrites)
     await sessionPersistenceQueue.flush(sessionId)
   }
 
@@ -7308,6 +7444,11 @@ export class SessionManager implements ISessionManager {
         reviewer: this.buildGoalReviewer(managed),
         fileVerifier: this.buildGoalFileVerifier(),
         expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
+        contextPressure: {
+          enabledSourceCount: managed.enabledSourceSlugs?.length ?? 0,
+          contextWindow: managed.tokenUsage?.contextWindow,
+          inputTokens: managed.tokenUsage?.inputTokens,
+        },
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
@@ -7365,9 +7506,36 @@ export class SessionManager implements ISessionManager {
       return undefined
     }
 
+    const agent = managed.agent
+    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
+    const qualityMode = normalizeWorkspaceGoalLoopQualityMode(workspaceConfig?.defaults?.goalLoop?.qualityMode)
+    const reviewerModels = normalizeWorkspaceGoalLoopReviewerModels(workspaceConfig?.defaults?.goalLoop?.reviewerModels)
+    const maxExtraReviewers = normalizeWorkspaceGoalLoopMaxExtraReviewers(workspaceConfig?.defaults?.goalLoop?.maxExtraReviewers)
+    if (qualityMode !== 'standard' && canQueryLlm(agent)) {
+      return async (input) => withTimeout(
+        runGoalQualityCouncilReview({
+          input: {
+            ...input,
+            reviewerPerformanceMemory: await loadProjectMemoryReviewerPerformanceSummary(managed.workingDirectory),
+          },
+          queryLlm: agent.queryLlm.bind(agent),
+          route: {
+            reviewerModels,
+            maxExtraReviewers,
+          },
+        }),
+        GOAL_REVIEW_TIMEOUT_MS,
+        `Goal quality council timed out after ${Math.floor(GOAL_REVIEW_TIMEOUT_MS / 1000)}s`,
+      )
+    }
+
     return async (input) => {
+      const reviewerPerformanceMemory = await loadProjectMemoryReviewerPerformanceSummary(managed.workingDirectory)
       const response = await withTimeout(
-        managed.agent!.runMiniCompletion(buildGoalReviewPrompt(input)),
+        managed.agent!.runMiniCompletion(buildGoalReviewPrompt({
+          ...input,
+          reviewerPerformanceMemory,
+        })),
         GOAL_REVIEW_TIMEOUT_MS,
         `Goal reviewer timed out after ${Math.floor(GOAL_REVIEW_TIMEOUT_MS / 1000)}s`,
       )

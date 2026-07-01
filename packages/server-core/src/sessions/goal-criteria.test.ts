@@ -193,6 +193,28 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
   })
 
+  it('adds source grounding and quality gates for deep research improvement plans', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请深度调研 Hermes Agent 和 MoA，形成 1.1.3 改进方案',
+    })
+
+    expect(criteria).toContainEqual({
+      text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+      kind: 'evidence',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+  })
+
   it('adds separate criteria for explicit required deliverable items', () => {
     const criteria = buildGoalCriteriaFromMessage({
       message: [
@@ -340,6 +362,18 @@ describe('buildTaskContractFromMessage', () => {
     expect(contract.documentPlan?.enhancements).toContain('Use structured chart specifications such as chart.json before rendering visual assets; every data point must come from verified source data.')
     expect(contract.documentPlan?.tables).toContain('Use readable native tables for key structured data instead of plain text table-like paragraphs.')
     expect(contract.documentPlan?.deliveryFormats).toEqual(['PPTX'])
+  })
+
+  it('requires sources and uncertainty separation for research contracts without attachments', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请深度调研 Hermes Agent 和 MoA，形成 1.1.3 改进方案',
+    })
+
+    expect(contract.taskType).toBe('research')
+    expect(contract.evidenceRequirements).toContain('Ground research claims in cited sources or clearly mark unavailable evidence and assumptions.')
+    expect(contract.documentPlan?.sections).toContain('Evidence and sources')
+    expect(contract.documentPlan?.sections).toContain('Risks or uncertainties')
+    expect(contract.forbiddenShortcuts).toContain('Do not invent facts, figures, clauses, page numbers, file names, dates, prices, or technical parameters.')
   })
 
   it('keeps visual and HTML enhancements bound to verified data', () => {

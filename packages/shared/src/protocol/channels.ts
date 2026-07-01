@@ -40,6 +40,7 @@ export const RPC_CHANNELS = {
     GET_FILES: 'sessions:getFiles',
     GET_OUTPUT_DIRECTORY: 'sessions:getOutputDirectory',
     GET_PROJECT_MEMORY_STATUS: 'sessions:getProjectMemoryStatus',
+    RESET_PROJECT_MEMORY_QUALITY_TELEMETRY: 'sessions:resetProjectMemoryQualityTelemetry',
     PROMOTE_FILE: 'sessions:promoteFile',
     CREATE_FILE_MEMORY_SOURCE: 'sessions:createFileMemorySource',
     GET_NOTES: 'sessions:getNotes',

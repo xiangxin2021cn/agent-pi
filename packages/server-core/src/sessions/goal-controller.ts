@@ -1,9 +1,12 @@
 import type { Message } from '@craft-agent/core/types'
 import type {
   SessionGoalAuditEvidence,
+  SessionGoalFailureCategory,
   SessionGoalAuditResult,
   SessionGoalState,
+  ContextPressureInput,
 } from '@craft-agent/shared/sessions'
+import { getContextPressureSignal } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
 import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
@@ -23,12 +26,14 @@ export interface GoalReviewInput {
   messages: Message[]
   finalAssistant: Message
   result: SessionGoalAuditResult
+  reviewerPerformanceMemory?: string
 }
 
 export interface GoalReviewResult {
   status: SessionGoalAuditResult['status']
   summary: string
   missingCriteria?: string[]
+  failureCategories?: SessionGoalFailureCategory[]
   correctivePrompt?: string
   evidence?: SessionGoalAuditEvidence[]
 }
@@ -53,6 +58,7 @@ export interface GoalTurnSnapshot {
   expectedOutputDirectory?: string
   reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
   fileVerifier?: GoalFileVerifier
+  contextPressure?: ContextPressureInput
 }
 
 export class GoalController {
@@ -69,6 +75,9 @@ export class GoalController {
     )
     const errorMessages = turnMessages.filter(message => message.role === 'error')
     const failedTools = getUnresolvedFailedTools(turnMessages)
+    const codeVerificationDiagnosticTools = getCodeVerificationDiagnosticTools(goalState, failedTools)
+    const codeVerificationDiagnosticIds = new Set(codeVerificationDiagnosticTools.map(getMessageIdentity))
+    const blockingFailedTools = failedTools.filter(message => !codeVerificationDiagnosticIds.has(getMessageIdentity(message)))
 
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
@@ -118,11 +127,20 @@ export class GoalController {
     const fileVerificationIssues: string[] = []
     const contentVerificationIssues: string[] = []
     const toolVerificationIssues: string[] = []
+    const deterministicFailureCategories = new Set<SessionGoalFailureCategory>()
     if (goalState.taskContract) {
       evidence.push({
         type: 'system',
         label: 'task_contract',
         detail: formatTaskContractForPrompt(goalState.taskContract).slice(0, 3000),
+      })
+    }
+    const contextPressure = getContextPressureSignal(snapshot.contextPressure ?? { enabledSourceCount: 0 })
+    if (contextPressure) {
+      evidence.push({
+        type: 'system',
+        label: `context_pressure_${contextPressure.level}`,
+        detail: contextPressure.detail,
       })
     }
     if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
@@ -131,6 +149,15 @@ export class GoalController {
         type: 'file',
         label: 'file_evidence_missing',
         detail: 'No file path was captured from tool input or tool output.',
+      })
+    }
+    const previousEvidenceCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'evidence_gap')
+    if (previousEvidenceCheckpointRequired && fileEvidencePaths.size === 0) {
+      fileVerificationIssues.push('Previous audit required file, source, or artifact evidence, but none was captured in this turn.')
+      evidence.push({
+        type: 'file',
+        label: 'previous_evidence_checkpoint_missing',
+        detail: 'No file path, source attachment, or artifact path was captured from the current turn.',
       })
     }
     if (requiresOutputFileEvidence(goalState) && snapshot.expectedOutputDirectory && outputFileEvidencePaths.size > 0) {
@@ -216,6 +243,19 @@ export class GoalController {
         detail: finalAssistant.id,
       })
     }
+    const previousShallowOutputCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'shallow_output')
+    if (
+      finalAssistant
+      && previousShallowOutputCheckpointRequired
+      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputPreviewTexts])
+    ) {
+      contentVerificationIssues.push('Previous audit required substantive content, but this turn still produced a shallow deliverable.')
+      evidence.push({
+        type: 'message',
+        label: 'previous_shallow_output_checkpoint_missing',
+        detail: finalAssistant.id,
+      })
+    }
     if (finalAssistant && requiresDocumentQualityAudit(goalState)) {
       const report = analyzeDocumentQuality({
         contents: outputPreviewTexts.length > 0 ? outputPreviewTexts : [finalAssistant.content],
@@ -232,11 +272,21 @@ export class GoalController {
         contentVerificationIssues.push(`Document quality audit did not pass (${report.score}/${report.threshold}): ${issueSummary}`)
       }
     }
-    if (finalAssistant && goalState.taskContract && hasObviousScopeReduction([finalAssistant.content, ...outputPreviewTexts])) {
+    const outputTexts = finalAssistant ? [finalAssistant.content, ...outputPreviewTexts] : outputPreviewTexts
+    const previousScopeCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'scope_gap')
+    if (finalAssistant && goalState.taskContract && hasObviousScopeReduction(outputTexts)) {
       contentVerificationIssues.push('Task contract appears to have been reduced to a summary, outline, placeholder, or deferred follow-up instead of the requested deliverable.')
       evidence.push({
         type: 'message',
         label: 'task_contract_scope_reduced',
+        detail: finalAssistant.id,
+      })
+    }
+    if (finalAssistant && previousScopeCheckpointRequired && hasObviousScopeReduction(outputTexts)) {
+      contentVerificationIssues.push('Previous audit required restoring full scope, but this turn still narrowed or deferred the requested deliverable.')
+      evidence.push({
+        type: 'message',
+        label: 'previous_scope_checkpoint_missing',
         detail: finalAssistant.id,
       })
     }
@@ -251,13 +301,16 @@ export class GoalController {
         })
       }
     }
-    if (requiresToolVerificationEvidence(goalState)) {
-      const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
+    const toolVerificationMessages = getSuccessfulToolVerificationMessages(turnMessages)
+    const previousVerificationCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'verification_gap')
+    if (requiresToolVerificationEvidence(goalState) || previousVerificationCheckpointRequired) {
       if (toolVerificationMessages.length === 0) {
-        toolVerificationIssues.push('No successful tool evidence was produced for the requested verification step.')
+        toolVerificationIssues.push(previousVerificationCheckpointRequired
+          ? 'Previous audit required verification evidence, but no successful tool evidence was produced in this turn.'
+          : 'No successful tool evidence was produced for the requested verification step.')
         evidence.push({
           type: 'tool',
-          label: 'tool_verification_missing',
+          label: previousVerificationCheckpointRequired ? 'previous_verification_checkpoint_missing' : 'tool_verification_missing',
           detail: 'No completed verification, test, build, lint, typecheck, or validation tool run was captured.',
         })
       } else {
@@ -285,6 +338,13 @@ export class GoalController {
         detail: message.toolResult?.slice(0, 500),
       })
     }
+    if (codeVerificationDiagnosticTools.length > 0) {
+      evidence.push({
+        type: 'tool',
+        label: 'code_verification_diagnostics',
+        detail: codeVerificationDiagnosticTools.map(summarizeToolVerificationMessage).join('\n').slice(0, 1200),
+      })
+    }
 
     const missingCriteria: string[] = []
     let status: SessionGoalAuditResult['status'] = 'pass'
@@ -292,25 +352,52 @@ export class GoalController {
 
     if (snapshot.stoppedReason !== 'complete') {
       status = 'fail'
+      deterministicFailureCategories.add('tool_failure')
       missingCriteria.push(`Turn stopped with reason: ${snapshot.stoppedReason}`)
       summary = `Goal audit failed because the turn stopped with reason: ${snapshot.stoppedReason}.`
     }
 
     if (!finalAssistant) {
       status = 'fail'
+      deterministicFailureCategories.add('scope_gap')
       missingCriteria.push('No final assistant response was produced in this turn.')
       summary = 'Goal audit failed because no final assistant response was produced.'
     }
 
-    if (errorMessages.length > 0 || failedTools.length > 0) {
+    if (errorMessages.length > 0 || blockingFailedTools.length > 0) {
       status = 'fail'
+      deterministicFailureCategories.add('tool_failure')
       if (errorMessages.length > 0) missingCriteria.push(`${errorMessages.length} error message(s) were produced.`)
-      if (failedTools.length > 0) missingCriteria.push(`${failedTools.length} tool failure(s) were produced.`)
+      if (blockingFailedTools.length > 0) missingCriteria.push(`${blockingFailedTools.length} tool failure(s) were produced.`)
       summary = 'Goal audit failed because this turn produced errors.'
+    }
+
+    if (codeVerificationDiagnosticTools.length > 0) {
+      status = 'fail'
+      deterministicFailureCategories.add('verification_gap')
+      missingCriteria.push('Code verification diagnostics failed and must be fixed before completion.')
+      if (summary === 'Goal audit passed deterministic completion checks.' || summary === 'Goal audit failed because requested verification tool evidence was missing.') {
+        summary = 'Goal audit failed because code verification diagnostics reported errors.'
+      }
+    }
+
+    if (latestFailedAuditHasCategory(goalState.auditHistory, 'tool_failure') && !turnMessages.some(isSuccessfulTool)) {
+      status = 'fail'
+      deterministicFailureCategories.add('tool_failure')
+      missingCriteria.push('Previous audit required resolving a failed tool, but no successful tool execution was captured in this turn.')
+      evidence.push({
+        type: 'tool',
+        label: 'previous_tool_failure_checkpoint_missing',
+        detail: 'No completed tool execution was captured after a prior tool failure.',
+      })
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because the previous tool failure was not resolved with successful tool evidence.'
+      }
     }
 
     if (fileVerificationIssues.length > 0) {
       status = 'fail'
+      deterministicFailureCategories.add('evidence_gap')
       missingCriteria.push(...fileVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because referenced file evidence could not be verified.'
@@ -319,6 +406,7 @@ export class GoalController {
 
     if (contentVerificationIssues.length > 0) {
       status = 'fail'
+      deterministicFailureCategories.add(contentVerificationIssues.some(issue => issue.includes('scope') || issue.includes('contract')) ? 'scope_gap' : 'shallow_output')
       missingCriteria.push(...contentVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because the produced work product was too shallow for the requested quality criteria.'
@@ -327,6 +415,7 @@ export class GoalController {
 
     if (toolVerificationIssues.length > 0) {
       status = 'fail'
+      deterministicFailureCategories.add('verification_gap')
       missingCriteria.push(...toolVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because requested verification tool evidence was missing.'
@@ -348,6 +437,9 @@ export class GoalController {
       status,
       summary,
       missingCriteria,
+      failureCategories: status === 'pass' || deterministicFailureCategories.size === 0
+        ? undefined
+        : [...deterministicFailureCategories],
       evidence,
       createdAt: now,
     }
@@ -374,6 +466,7 @@ export class GoalController {
           status,
           summary,
           missingCriteria: reviewMissingCriteria,
+          failureCategories: mergeFailureCategories(result.failureCategories, review.failureCategories),
           correctivePrompt: review.correctivePrompt,
           evidence: review.evidence ? [...evidence, ...review.evidence] : evidence,
         }
@@ -397,6 +490,7 @@ export class GoalController {
     }
 
     const repeatedFailure = hasRepeatedGoalFailure(goalState.auditHistory, result)
+    const repeatedFailureCategories = getRepeatedFailureCategories(goalState.auditHistory, result)
     if (repeatedFailure) {
       result = {
         ...result,
@@ -410,17 +504,30 @@ export class GoalController {
         ],
       }
     }
+    if (repeatedFailureCategories.length > 0) {
+      result = {
+        ...result,
+        evidence: [
+          ...result.evidence,
+          {
+            type: 'system',
+            label: 'repeated_failure_categories',
+            detail: repeatedFailureCategories.join(','),
+          },
+        ],
+      }
+    }
 
     const shouldAutoImprove = !reviewerFailed
       && !repeatedFailure
       && snapshot.stoppedReason === 'complete'
-      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && failedTools.length === 0))
+      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && blockingFailedTools.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
     const hasRemainingIterations = iteration < goalState.maxIterations
     const hasRemainingWallClock = goalState.budgets?.maxWallClockMs === undefined
       || now - goalState.createdAt < goalState.budgets.maxWallClockMs
     const correctivePrompt = shouldAutoImprove && hasRemainingIterations && hasRemainingWallClock
-      ? result.correctivePrompt ?? buildCorrectivePrompt(goalState, result)
+      ? buildCorrectivePrompt(goalState, result)
       : undefined
     if (correctivePrompt) {
       result.correctivePrompt = correctivePrompt
@@ -503,6 +610,19 @@ function getUnresolvedFailedTools(messages: Message[]): Message[] {
   }
 
   return unresolved
+}
+
+const CODE_VERIFICATION_TOOL_PATTERN = /(?:typecheck|tsc|test|tests|vitest|jest|pytest|playwright|lint|eslint|build|compile|check|verify|validate)/i
+
+function getCodeVerificationDiagnosticTools(goalState: SessionGoalState, failedTools: Message[]): Message[] {
+  if (goalState.taskContract?.taskType !== 'code') return []
+  if (failedTools.length === 0) return []
+
+  return failedTools.filter(message => CODE_VERIFICATION_TOOL_PATTERN.test(buildToolEvidenceText(message)))
+}
+
+function getMessageIdentity(message: Message): string {
+  return message.id || message.toolUseId || `${message.role}:${message.toolName ?? ''}:${message.timestamp}:${message.content}`
 }
 
 function isFailedTool(message: Message): boolean {
@@ -710,6 +830,31 @@ function hasRepeatedGoalFailure(history: SessionGoalState['auditHistory'], resul
     && currentMissing.every((criterion, index) => criterion === previousMissing[index])
 }
 
+function getRepeatedFailureCategories(
+  history: SessionGoalState['auditHistory'],
+  result: SessionGoalAuditResult,
+): SessionGoalFailureCategory[] {
+  if (result.status === 'pass' || !result.failureCategories?.length) {
+    return []
+  }
+
+  const previous = [...history].reverse().find(item => item.status !== 'pass' && item.failureCategories?.length)
+  if (!previous?.failureCategories?.length) {
+    return []
+  }
+
+  const previousCategories = new Set(previous.failureCategories)
+  return result.failureCategories.filter(category => previousCategories.has(category))
+}
+
+function latestFailedAuditHasCategory(
+  history: SessionGoalState['auditHistory'],
+  category: SessionGoalFailureCategory,
+): boolean {
+  const previous = [...history].reverse().find(item => item.status !== 'pass')
+  return previous?.failureCategories?.includes(category) ?? false
+}
+
 function normalizeMissingCriteria(criteria: string[]): string[] {
   return [...new Set(criteria
     .map(criterion => criterion.replace(/\s+/g, ' ').trim().toLowerCase())
@@ -849,6 +994,10 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     : '(none)'
   const previousAudits = buildPreviousAuditSummary(goalState.auditHistory)
   const taskContract = formatTaskContractForPrompt(goalState.taskContract)
+  const correctiveFocus = buildFailureCategoryGuidance(result.failureCategories)
+  const repeatedFailurePattern = buildRepeatedFailureCategoryGuidance(result)
+  const hardGateRecovery = buildHardGateRecoveryGuidance(result)
+  const reviewerCorrection = result.correctivePrompt?.trim() || '(none)'
 
   return [
     '<goal-audit>',
@@ -866,6 +1015,24 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Missing or unproven criteria:',
     missing,
     '',
+    'Corrective focus:',
+    correctiveFocus,
+    '',
+    'Reviewer correction:',
+    reviewerCorrection,
+    '',
+    'Execution strategy:',
+    buildExecutionStrategy(result.failureCategories),
+    '',
+    'Required checkpoints:',
+    buildRequiredCheckpoints(result),
+    '',
+    'Hard gate recovery:',
+    hardGateRecovery,
+    '',
+    'Repeated failure pattern:',
+    repeatedFailurePattern,
+    '',
     'Audit evidence:',
     evidence,
     '',
@@ -875,6 +1042,130 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Continue from the existing conversation. Improve the actual deliverable while preserving the full task contract, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
   ].join('\n')
+}
+
+function buildRequiredCheckpoints(result: SessionGoalAuditResult): string {
+  const normalized = new Set(result.failureCategories ?? [])
+  const checkpoints: string[] = []
+  const councilDisagreement = result.evidence.find(item => item.label === 'quality_council_disagreement')?.detail
+  const codeDiagnostics = result.evidence.find(item => item.label === 'code_verification_diagnostics')?.detail
+  const contextPressure = result.evidence.find(item => item.label === 'context_pressure_high' || item.label === 'context_pressure_warning')?.detail
+
+  if (normalized.has('tool_failure')) {
+    checkpoints.push('Resolve the failed tool or command and confirm the later attempt succeeded.')
+  }
+  if (contextPressure) {
+    checkpoints.push(`Reduce context/tool pressure by narrowing enabled sources, using only necessary source tools, or summarizing source evidence before the final answer: ${contextPressure}.`)
+  }
+  if (codeDiagnostics) {
+    checkpoints.push(`Fix the reported code diagnostics, then rerun the failed verification command: ${codeDiagnostics}.`)
+  }
+  if (councilDisagreement) {
+    checkpoints.push(`Resolve the Quality Council reviewer disagreement by addressing each failing or uncertain role before finalizing: ${councilDisagreement}.`)
+  }
+  if (normalized.has('scope_gap')) {
+    checkpoints.push('Map the original requested scope to concrete sections, files, or outputs that now satisfy it.')
+  }
+  if (normalized.has('shallow_output')) {
+    checkpoints.push('Replace outlines, placeholders, or generic summaries with substantive task-specific content.')
+  }
+  if (normalized.has('evidence_gap')) {
+    checkpoints.push('Identify the exact source, file, artifact, or citation that proves the corrected claim.')
+  }
+  if (normalized.has('verification_gap')) {
+    checkpoints.push('Run the requested verification or equivalent check and capture the concrete result.')
+  }
+  if (checkpoints.length === 0) {
+    checkpoints.push('Re-check every missing criterion against the updated deliverable.')
+  }
+  checkpoints.push('Do not produce the final response until every checkpoint above is satisfied or explicitly reported as blocked.')
+
+  return checkpoints.map((checkpoint, index) => `${index + 1}. ${checkpoint}`).join('\n')
+}
+
+function buildExecutionStrategy(categories: SessionGoalFailureCategory[] | undefined): string {
+  const normalized = new Set(categories ?? [])
+  const steps: string[] = []
+
+  if (normalized.has('tool_failure')) {
+    steps.push('Resolve the failed command, tool call, or file operation first; do not continue from a broken intermediate state.')
+  }
+  if (normalized.has('scope_gap') || normalized.has('shallow_output')) {
+    steps.push('Re-open the original objective and task contract, then update the actual deliverable instead of describing future work.')
+  }
+  if (normalized.has('evidence_gap')) {
+    steps.push('Locate the source, artifact, or file evidence before finalizing, and include the concrete citation or path in the deliverable.')
+  }
+  if (normalized.has('verification_gap')) {
+    steps.push('Run the required verification command or check after editing, and include the result in the final summary.')
+  }
+  if (steps.length === 0) {
+    steps.push('Inspect the audit evidence, update the concrete deliverable, then verify the missing criteria before finishing.')
+  }
+
+  return steps.map((step, index) => `${index + 1}. ${step}`).join('\n')
+}
+
+function buildHardGateRecoveryGuidance(result: SessionGoalAuditResult): string {
+  const labels = new Set(result.evidence.map(item => item.label))
+  const guidance: string[] = []
+
+  if (labels.has('previous_verification_checkpoint_missing')) {
+    guidance.push('A previous verification gap is still open. Run and capture a successful verification tool before treating the goal as complete.')
+  }
+  if (labels.has('previous_evidence_checkpoint_missing')) {
+    guidance.push('A previous evidence gap is still open. Capture a concrete file, source, artifact, or citation path before treating the goal as complete.')
+  }
+  if (labels.has('previous_shallow_output_checkpoint_missing')) {
+    guidance.push('A previous shallow-output gap is still open. Replace the shallow response with substantive task-specific work product.')
+  }
+  if (labels.has('previous_scope_checkpoint_missing')) {
+    guidance.push('A previous scope gap is still open. Restore the omitted requirements from the original task contract.')
+  }
+  if (labels.has('previous_tool_failure_checkpoint_missing')) {
+    guidance.push('A previous tool failure is still open. Produce a successful tool run that resolves the failed step before treating the goal as complete.')
+  }
+
+  return guidance.length > 0
+    ? guidance.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : '(none)'
+}
+
+function buildRepeatedFailureCategoryGuidance(result: SessionGoalAuditResult): string {
+  const detail = result.evidence.find(item => item.label === 'repeated_failure_categories')?.detail
+  if (!detail) return '(none)'
+
+  return [
+    `Repeated categories: ${detail}.`,
+    'Do not finish until the repeated failure categories are directly resolved with concrete evidence in the deliverable.',
+  ].join('\n')
+}
+
+function buildFailureCategoryGuidance(categories: SessionGoalFailureCategory[] | undefined): string {
+  if (!categories || categories.length === 0) {
+    return '1. Re-check the missing criteria and produce verifiable improvements.'
+  }
+
+  const guidance: Record<SessionGoalFailureCategory, string> = {
+    scope_gap: 'Restore the full requested scope and explicitly cover each omitted requirement.',
+    evidence_gap: 'Add concrete citations, source references, file paths, or artifact evidence that prove the claims.',
+    verification_gap: 'Run or cite the required tests, builds, checks, validations, or other verification evidence.',
+    shallow_output: 'Expand the deliverable with specific, substantive content instead of an outline or placeholder.',
+    tool_failure: 'Resolve the failed tool or execution error before claiming the task is complete.',
+  }
+
+  return categories
+    .filter(category => guidance[category])
+    .map((category, index) => `${index + 1}. ${guidance[category]}`)
+    .join('\n')
+}
+
+function mergeFailureCategories(
+  existing: SessionGoalFailureCategory[] | undefined,
+  incoming: SessionGoalFailureCategory[] | undefined,
+): SessionGoalFailureCategory[] | undefined {
+  const merged = [...new Set([...(existing ?? []), ...(incoming ?? [])])]
+  return merged.length > 0 ? merged : undefined
 }
 
 const OBVIOUS_SCOPE_REDUCTION_PATTERN = /(?:由于篇幅|篇幅有限|这里只能|先给(?:你)?(?:一个)?(?:框架|大纲|示例|简版)|简化版|精简版|概要版|后续(?:再|可|可以).{0,20}(?:补充|完善)|placeholder|outline only|high[- ]level outline|brief sketch|will be completed later)/i

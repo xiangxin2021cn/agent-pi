@@ -19,6 +19,7 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'us.anthropic.claude-opus-4-7': 'claude-opus-4-7',
   // Compatibility alias for an earlier incorrect 4.7 mapping.
   'us.anthropic.claude-opus-4-7-v1': 'claude-opus-4-7',
+  'us.anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'us.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'us.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
   'us.anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
@@ -28,6 +29,7 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'eu.anthropic.claude-fable-5': 'claude-fable-5',
   'eu.anthropic.claude-opus-4-7': 'claude-opus-4-7',
   'eu.anthropic.claude-opus-4-7-v1': 'claude-opus-4-7',
+  'eu.anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'eu.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'eu.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
   'eu.anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
@@ -37,6 +39,7 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'global.anthropic.claude-fable-5': 'claude-fable-5',
   'global.anthropic.claude-opus-4-7': 'claude-opus-4-7',
   'global.anthropic.claude-opus-4-7-v1': 'claude-opus-4-7',
+  'global.anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'global.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'global.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
   // Base IDs (no region prefix)
@@ -44,6 +47,7 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'anthropic.claude-fable-5': 'claude-fable-5',
   'anthropic.claude-opus-4-7': 'claude-opus-4-7',
   'anthropic.claude-opus-4-7-v1': 'claude-opus-4-7',
+  'anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
   'anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
@@ -142,6 +146,15 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     shortName: 'Opus',
     description: 'Previous Opus generation',
     descriptionKey: 'model.opusDesc',
+    provider: 'anthropic',
+    contextWindow: 1_000_000,
+  },
+  {
+    id: 'claude-sonnet-5',
+    name: 'Sonnet 5',
+    shortName: 'Sonnet',
+    description: 'Newest Sonnet-class model',
+    descriptionKey: 'model.sonnetDesc',
     provider: 'anthropic',
     contextWindow: 1_000_000,
   },
@@ -327,15 +340,13 @@ export function isClaudeModel(modelId: string): boolean {
 }
 
 /**
- * Mythos-class models (Claude Fable 5 / Mythos 5 / Mythos Preview) where adaptive
- * thinking is ALWAYS ON and `thinking: { type: 'disabled' }` is rejected by the
- * Messages API. Callers must use adaptive thinking + the `effort` parameter to
- * control depth on these models — there is no way to turn thinking off.
- * (The Messages API is unchanged for Opus/Sonnet/Haiku, which still accept `disabled`.)
+ * Models where adaptive thinking is ALWAYS ON and `thinking: { type: 'disabled' }`
+ * is rejected by the Messages API. Callers must use adaptive thinking + the
+ * `effort` parameter to control depth on these models.
  * Matches bare, pi/-prefixed, and Bedrock-native id forms.
  */
 export function isAdaptiveThinkingAlwaysOnModel(modelId: string): boolean {
-  return /claude-(fable|mythos)/i.test(modelId);
+  return /claude-(sonnet-5|fable|mythos)/i.test(modelId);
 }
 
 

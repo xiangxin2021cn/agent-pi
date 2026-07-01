@@ -528,6 +528,9 @@ describe('GoalController', () => {
     if (decision.action === 'continue') {
       expect(decision.result.status).toBe('uncertain')
       expect(decision.prompt).toContain('Add a concrete citation to the source spreadsheet.')
+      expect(decision.prompt).toContain('<goal-audit>')
+      expect(decision.prompt).toContain('Reviewer correction:')
+      expect(decision.prompt).toContain('Execution strategy:')
     }
   })
 
@@ -563,6 +566,434 @@ describe('GoalController', () => {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.summary).toBe('The citation is missing.')
       expect(decision.prompt).toContain('Add a concrete citation')
+    }
+  })
+
+  test('uses failure categories to sharpen automatic improvement prompts', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'The report is shallow and lacks citation evidence.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        failureCategories: ['evidence_gap', 'shallow_output'],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.failureCategories).toEqual(['evidence_gap', 'shallow_output'])
+      expect(decision.prompt).toContain('Corrective focus:')
+      expect(decision.prompt).toContain('Add concrete citations')
+      expect(decision.prompt).toContain('Expand the deliverable')
+    }
+  })
+
+  test('adds required checkpoints for evidence and verification gaps', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report and verify it'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'The report lacks source evidence and verification output.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        failureCategories: ['evidence_gap', 'verification_gap'],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.prompt).toContain('Identify the exact source, file, artifact, or citation')
+      expect(decision.prompt).toContain('Run the requested verification')
+      expect(decision.prompt).toContain('Do not produce the final response until every checkpoint above is satisfied')
+    }
+  })
+
+  test('adds a required checkpoint when quality council reviewers disagree', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'Quality council reviewers disagreed about completion.',
+        missingCriteria: ['Resolve reviewer disagreement about citation evidence.'],
+        failureCategories: ['evidence_gap'],
+        evidence: [{
+          type: 'system',
+          label: 'quality_council_disagreement',
+          detail: 'acceptance_reviewer=pass; artifact_reviewer=fail; risk_reviewer=uncertain',
+        }],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.prompt).toContain('Resolve the Quality Council reviewer disagreement')
+      expect(decision.prompt).toContain('acceptance_reviewer=pass; artifact_reviewer=fail; risk_reviewer=uncertain')
+    }
+  })
+
+  test('does not accept reviewer pass after verification gap without new tool evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report includes verification results.',
+        kind: 'test',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass had no verification output.',
+        missingCriteria: ['Run verification and include the result.'],
+        failureCategories: ['verification_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish and verify the report'),
+        message('a1', 'assistant', 'Report complete with verification summary.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('verification_gap')
+      expect(decision.result.missingCriteria).toContain('Previous audit required verification evidence, but no successful tool evidence was produced in this turn.')
+      expect(decision.prompt).toContain('Required checkpoints:')
+    }
+  })
+
+  test('includes hard gate recovery guidance when a previous verification gap remains open', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report includes verification results.',
+        kind: 'test',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass had no verification output.',
+        missingCriteria: ['Run verification and include the result.'],
+        failureCategories: ['verification_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish and verify the report'),
+        message('a1', 'assistant', 'Report complete with verification summary.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Hard gate recovery:')
+      expect(decision.prompt).toContain('A previous verification gap is still open.')
+      expect(decision.prompt).toContain('successful verification tool')
+    }
+  })
+
+  test('does not accept reviewer pass after evidence gap without file or source evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass lacked source evidence.',
+        missingCriteria: ['Add source evidence.'],
+        failureCategories: ['evidence_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish the sourced report'),
+        message('a1', 'assistant', 'Report complete with citations.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('evidence_gap')
+      expect(decision.result.missingCriteria).toContain('Previous audit required file, source, or artifact evidence, but none was captured in this turn.')
+      expect(decision.prompt).toContain('Required checkpoints:')
+    }
+  })
+
+  test('does not accept reviewer pass after shallow output without substantive content', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The report provides a substantive implementation analysis.',
+        kind: 'coverage',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass was only a brief outline.',
+        missingCriteria: ['Expand the analysis with substantive content.'],
+        failureCategories: ['shallow_output'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish the implementation analysis'),
+        message('a1', 'assistant', 'Done.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('shallow_output')
+      expect(decision.result.missingCriteria).toContain('Previous audit required substantive content, but this turn still produced a shallow deliverable.')
+      expect(decision.prompt).toContain('Required checkpoints:')
+    }
+  })
+
+  test('does not accept reviewer pass after scope gap when output still narrows scope', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The deliverable covers the full requested implementation plan.',
+        kind: 'coverage',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass reduced the requested scope.',
+        missingCriteria: ['Restore the full implementation scope.'],
+        failureCategories: ['scope_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish the full implementation plan'),
+        message('a1', 'assistant', '先给你一个简版，后续可以继续完善。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('scope_gap')
+      expect(decision.result.missingCriteria).toContain('Previous audit required restoring full scope, but this turn still narrowed or deferred the requested deliverable.')
+      expect(decision.prompt).toContain('Required checkpoints:')
+    }
+  })
+
+  test('does not accept reviewer pass after tool failure without successful tool execution', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The failed tool execution is resolved.',
+        kind: 'test',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass had a failed command.',
+        missingCriteria: ['Resolve the failed tool execution.'],
+        failureCategories: ['tool_failure'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'finish after fixing the tool failure'),
+        message('a1', 'assistant', 'The tool failure is fixed.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'Looks complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('tool_failure')
+      expect(decision.result.missingCriteria).toContain('Previous audit required resolving a failed tool, but no successful tool execution was captured in this turn.')
+      expect(decision.prompt).toContain('Required checkpoints:')
+    }
+  })
+
+  test('escalates corrective prompts when the same failure category repeats', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 1,
+        status: 'fail',
+        summary: 'Previous pass lacked source references.',
+        missingCriteria: ['Need source references in appendix.'],
+        failureCategories: ['evidence_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report'),
+        message('a1', 'assistant', 'Report complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'fail',
+        summary: 'The report still lacks citation evidence.',
+        missingCriteria: ['The final report cites the source spreadsheet.'],
+        failureCategories: ['evidence_gap'],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'system',
+        label: 'repeated_failure_categories',
+        detail: 'evidence_gap',
+      }))
+      expect(decision.prompt).toContain('Repeated failure pattern:')
+      expect(decision.prompt).toContain('evidence_gap')
+      expect(decision.prompt).toContain('Do not finish until the repeated failure categories are directly resolved')
     }
   })
 
@@ -1414,6 +1845,56 @@ describe('GoalController', () => {
     }
   })
 
+  test('auto-continues after code verification diagnostics fail', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      objective: 'Fix the upload button bug and verify typecheck.',
+      maxIterations: 3,
+      taskContract: {
+        originalRequest: 'Fix the upload button bug and verify typecheck.',
+        taskType: 'code',
+        deliverables: ['Minimal code fix with verification'],
+        mustPreserve: [],
+        evidenceRequirements: ['Inspect implementation and verify the change.'],
+        outputFormats: [],
+        acceptanceCriteria: ['[test] Run the requested verification command.'],
+        forbiddenShortcuts: ['Do not refactor unrelated code.'],
+      },
+      criteria: [{
+        id: 'crit-verify',
+        text: TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+        kind: 'test',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'fix upload button and run typecheck'),
+        message('t1', 'tool', 'typecheck failed', {
+          toolName: 'typecheck',
+          toolStatus: 'error',
+          toolResult: 'src/upload.ts(42,7): error TS2322: Type string is not assignable to type File.',
+        }),
+        message('a1', 'assistant', 'I changed the upload button but typecheck still fails.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('verification_gap')
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'tool',
+        label: 'code_verification_diagnostics',
+      }))
+      expect(decision.prompt).toContain('Fix the reported code diagnostics')
+      expect(decision.prompt).toContain('TS2322')
+    }
+  })
+
   test('does not auto-continue after an interrupted turn even if partial output exists', async () => {
     const controller = new GoalController()
 
@@ -1438,6 +1919,42 @@ describe('GoalController', () => {
     if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.reason).toContain('interrupted')
+    }
+  })
+
+  test('adds context pressure evidence and checkpoint when an auto-improve turn needs another pass', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-source-citation',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a cited report'),
+        message('a1', 'assistant', 'Report draft complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      contextPressure: {
+        enabledSourceCount: 12,
+        contextWindow: 64_000,
+        inputTokens: 8_000,
+      },
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.evidence).toContainEqual({
+        type: 'system',
+        label: 'context_pressure_warning',
+        detail: '12 sources · ~18k source/tool tokens · 13% context used',
+      })
+      expect(decision.prompt).toContain('Reduce context/tool pressure by narrowing enabled sources')
     }
   })
 

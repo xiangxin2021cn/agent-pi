@@ -9,6 +9,7 @@ export type {
   WorkspaceConfig,
   WorkspaceGoalLoopConfig,
   WorkspaceGoalLoopDefaultMode,
+  WorkspaceGoalLoopQualityMode,
   CreateWorkspaceInput,
   LoadedWorkspace,
   WorkspaceSummary,

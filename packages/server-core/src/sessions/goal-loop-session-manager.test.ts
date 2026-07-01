@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
-import { FORMAL_OUTPUTS_DIR_NAME, type SessionGoalState } from '@craft-agent/shared/sessions'
+import { FORMAL_OUTPUTS_DIR_NAME, getProjectBrainPath, type SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
 import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
@@ -550,8 +550,13 @@ describe('SessionManager goal loop routing', () => {
           status: 'fail',
           summary: 'The spreadsheet citation is still missing.',
           missingCriteria: ['The final report cites the source spreadsheet.'],
+          failureCategories: ['evidence_gap'],
           correctivePrompt: 'Add a concrete citation to source.xlsx.',
-          evidence: [],
+          evidence: [{
+            type: 'system',
+            label: 'quality_council_disagreement',
+            detail: 'acceptance_reviewer=pass; artifact_reviewer=fail',
+          }],
           createdAt: 5,
         }],
       }),
@@ -576,6 +581,11 @@ describe('SessionManager goal loop routing', () => {
     expect(continuations[0].sessionId).toBe(sessionId)
     expect(continuations[0].iteration).toBe(2)
     expect(continuations[0].prompt).toContain('Add a concrete citation to source.xlsx.')
+    expect(continuations[0].prompt).toContain('Corrective focus:')
+    expect(continuations[0].prompt).toContain('Add concrete citations')
+    expect(continuations[0].prompt).toContain('Required checkpoints:')
+    expect(continuations[0].prompt).toContain('Resolve the Quality Council reviewer disagreement')
+    expect(continuations[0].prompt).toContain('acceptance_reviewer=pass; artifact_reviewer=fail')
     expect(events.some(event =>
       event.type === 'goal_state_changed'
       && event.goalState.status === 'improving'
@@ -707,6 +717,248 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_completed')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
     expect(events.some(event => event.type === 'complete')).toBe(true)
+  })
+
+  it('uses queryLlm quality council review with provenance evidence when available', async () => {
+    const sessionId = 'goal-quality-council-reviewer'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+    const queryPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async () => {
+        throw new Error('runMiniCompletion should not be used when queryLlm is available')
+      },
+      queryLlm: async (request: { prompt: string }) => {
+        queryPrompts.push(request.prompt)
+        if (request.prompt.includes('artifact_reviewer')) {
+          return {
+            text: JSON.stringify({
+              status: 'fail',
+              summary: 'Artifact reviewer found missing citation evidence.',
+              missingCriteria: ['The final report cites the source spreadsheet.'],
+              correctivePrompt: 'Add source spreadsheet citation evidence.',
+            }),
+            model: 'artifact-reviewer-model',
+          }
+        }
+        return {
+          text: JSON.stringify({
+            status: 'pass',
+            summary: 'No additional issues found.',
+            missingCriteria: [],
+          }),
+          model: 'general-reviewer-model',
+        }
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(queryPrompts).toHaveLength(3)
+    expect(queryPrompts.some(prompt => prompt.includes('acceptance_reviewer'))).toBe(true)
+    expect(queryPrompts.some(prompt => prompt.includes('artifact_reviewer'))).toBe(true)
+    expect(queryPrompts.some(prompt => prompt.includes('risk_reviewer'))).toBe(true)
+    const latestAudit = managed.goalState?.auditHistory.at(-1)
+    expect(latestAudit?.status).toBe('fail')
+    expect(latestAudit?.evidence.some(item =>
+      item.type === 'system'
+      && item.label === 'quality_role_artifact_reviewer'
+      && item.detail?.includes('model=artifact-reviewer-model')
+      && item.detail?.includes('status=fail')
+    )).toBe(true)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+    expect(events.some(event => event.type === 'complete')).toBe(true)
+  })
+
+  it('passes configured council reviewer models from workspace goal loop settings', async () => {
+    saveWorkspaceGoalLoopDefault({
+      qualityMode: 'council',
+      reviewerModels: {
+        code_implementation_reviewer: 'local-code-reviewer',
+      },
+    })
+    const sessionId = 'goal-council-reviewer-model-routing'
+    const managed = buildSession(sessionId)
+    managed.goalState = {
+      ...goal({ mode: 'check_only' }),
+      taskContract: {
+        originalRequest: 'Fix the upload button bug and verify tests.',
+        taskType: 'code',
+        deliverables: ['Minimal code fix with verification'],
+        mustPreserve: [],
+        evidenceRequirements: ['Inspect implementation and verify the change.'],
+        outputFormats: [],
+        acceptanceCriteria: ['[test] Run the requested verification command.'],
+        forbiddenShortcuts: ['Do not refactor unrelated code.'],
+      },
+    }
+    captureEvents()
+    const requests: Array<{ prompt: string; model?: string }> = []
+
+    managed.agent = {
+      runMiniCompletion: async () => {
+        throw new Error('runMiniCompletion should not be used when queryLlm is available')
+      },
+      queryLlm: async (request: { prompt: string; model?: string }) => {
+        requests.push(request)
+        return {
+          text: JSON.stringify({
+            status: 'pass',
+            summary: 'No additional issues found.',
+            missingCriteria: [],
+          }),
+          model: request.model,
+        }
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(requests.find(request => request.prompt.includes('Role: code_implementation_reviewer'))?.model)
+      .toBe('local-code-reviewer')
+    expect(managed.goalState?.auditHistory.at(-1)?.evidence.some(item =>
+      item.type === 'system'
+      && item.label === 'quality_route'
+      && item.detail?.includes('models=code_implementation_reviewer:local-code-reviewer')
+    )).toBe(true)
+  })
+
+  it('honors workspace extra reviewer budget for degraded route history', async () => {
+    saveWorkspaceGoalLoopDefault({
+      qualityMode: 'council',
+      maxExtraReviewers: 0,
+    })
+    const sessionId = 'goal-council-extra-reviewer-budget'
+    const managed = buildSession(sessionId)
+    managed.workingDirectory = tmpRoot
+    managed.goalState = {
+      ...goal({ mode: 'check_only' }),
+      taskContract: {
+        originalRequest: 'Deeply research Hermes Agent and MoA for the 1.1.3 plan.',
+        taskType: 'research',
+        deliverables: ['Sourced research result'],
+        mustPreserve: [],
+        evidenceRequirements: ['Ground research claims in cited sources.'],
+        outputFormats: [],
+        acceptanceCriteria: ['[evidence] Ground key facts in source material.'],
+        forbiddenShortcuts: ['Do not invent facts.'],
+      },
+    }
+    const brainPath = getProjectBrainPath(tmpRoot)!
+    mkdirSync(brainPath, { recursive: true })
+    writeFileSync(join(brainPath, 'facts.jsonl'), [
+      JSON.stringify({ type: 'quality_route_fact', taskType: 'research', status: 'fail', roles: ['acceptance_reviewer'], failureCategories: ['evidence_gap'] }),
+      JSON.stringify({ type: 'quality_route_fact', taskType: 'research', status: 'fail', roles: ['acceptance_reviewer'], failureCategories: ['evidence_gap'] }),
+      JSON.stringify({ type: 'quality_route_fact', taskType: 'research', status: 'fail', roles: ['acceptance_reviewer'], failureCategories: ['evidence_gap'] }),
+    ].join('\n') + '\n')
+    captureEvents()
+    const requests: Array<{ prompt: string }> = []
+
+    managed.agent = {
+      runMiniCompletion: async () => {
+        throw new Error('runMiniCompletion should not be used when queryLlm is available')
+      },
+      queryLlm: async (request: { prompt: string }) => {
+        requests.push(request)
+        return {
+          text: JSON.stringify({
+            status: 'pass',
+            summary: 'No additional issues found.',
+            missingCriteria: [],
+          }),
+        }
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(requests.some(request => request.prompt.includes('Role: route_history_reviewer'))).toBe(false)
+    expect(managed.goalState?.auditHistory.at(-1)?.evidence.some(item =>
+      item.type === 'system'
+      && item.label === 'quality_route'
+      && item.detail?.includes('route_health=degraded')
+      && item.detail?.includes('extra_reviewers=0/0')
+    )).toBe(true)
+  })
+
+  it('uses the standard goal reviewer when workspace quality mode disables council review', async () => {
+    saveWorkspaceGoalLoopDefault({ qualityMode: 'standard' })
+    const sessionId = 'goal-standard-quality-reviewer'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    const events = captureEvents()
+    const miniPrompts: string[] = []
+    const queryPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        miniPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'pass',
+          summary: 'Standard reviewer accepted the required criteria.',
+          missingCriteria: [],
+        })
+      },
+      queryLlm: async (request: { prompt: string }) => {
+        queryPrompts.push(request.prompt)
+        return {
+          text: JSON.stringify({
+            status: 'fail',
+            summary: 'Quality council should not be used.',
+            missingCriteria: ['Unexpected council review.'],
+          }),
+        }
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(miniPrompts).toHaveLength(1)
+    expect(queryPrompts).toHaveLength(0)
+    expect(managed.goalState?.auditHistory.at(-1)?.status).toBe('pass')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(true)
+  })
+
+  it('preserves failure categories from the standard goal reviewer', async () => {
+    saveWorkspaceGoalLoopDefault({ qualityMode: 'standard' })
+    const sessionId = 'goal-standard-reviewer-failure-categories'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({ mode: 'check_only' })
+    captureEvents()
+    const miniPrompts: string[] = []
+
+    managed.agent = {
+      runMiniCompletion: async (prompt: string) => {
+        miniPrompts.push(prompt)
+        return JSON.stringify({
+          status: 'fail',
+          summary: 'Standard reviewer found missing citation evidence.',
+          missingCriteria: ['Add source citations to the report.'],
+          failureCategories: ['evidence_gap', 'verification_gap'],
+          correctivePrompt: 'Add source citations and verification evidence.',
+        })
+      },
+    } as never
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    const latestAudit = managed.goalState?.auditHistory.at(-1)
+    expect(miniPrompts).toHaveLength(1)
+    expect(miniPrompts[0]).toContain('failureCategories')
+    expect(latestAudit?.status).toBe('fail')
+    expect(latestAudit?.failureCategories).toEqual(['evidence_gap', 'verification_gap'])
   })
 
   it('includes verified text output file previews in the reviewer prompt', async () => {

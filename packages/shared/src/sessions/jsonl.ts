@@ -21,6 +21,7 @@ import { pickSessionFields } from './utils.ts';
 // ============================================================
 
 const SESSION_PATH_TOKEN = '{{SESSION_PATH}}';
+const HEADER_READ_CHUNK_BYTES = 8192;
 
 /**
  * Replace absolute session directory paths with a portable token.
@@ -79,14 +80,8 @@ function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
  */
 export function readSessionHeader(sessionFile: string): SessionHeader | null {
   try {
-    const fd = openSync(sessionFile, 'r');
-    const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
-    const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-    closeSync(fd);
-
-    const content = buffer.toString('utf-8', 0, bytesRead);
-    const firstNewline = content.indexOf('\n');
-    const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+    const firstLine = readFirstJsonlLine(sessionFile);
+    if (!firstLine) return null;
 
     const parsed = safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;
     return normalizeHeaderPermissionModes(parsed);
@@ -94,6 +89,34 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
     debug('[jsonl] Failed to read session header:', sessionFile, error);
     return null;
   }
+}
+
+function readFirstJsonlLine(sessionFile: string): string | null {
+  const fd = openSync(sessionFile, 'r');
+  const chunks: Buffer[] = [];
+  let position = 0;
+
+  try {
+    while (true) {
+      const buffer = Buffer.alloc(HEADER_READ_CHUNK_BYTES);
+      const bytesRead = readSync(fd, buffer, 0, HEADER_READ_CHUNK_BYTES, position);
+      if (bytesRead <= 0) break;
+
+      const newlineIndex = buffer.indexOf(0x0a, 0);
+      if (newlineIndex >= 0 && newlineIndex < bytesRead) {
+        chunks.push(buffer.subarray(0, newlineIndex));
+        break;
+      }
+
+      chunks.push(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    closeSync(fd);
+  }
+
+  if (chunks.length === 0) return null;
+  return Buffer.concat(chunks).toString('utf-8').replace(/\r$/, '');
 }
 
 /**
