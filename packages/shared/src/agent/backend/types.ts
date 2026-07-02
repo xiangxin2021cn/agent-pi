@@ -411,7 +411,7 @@ export interface AgentBackend {
   /**
    * Alias for destroy() for consistency.
    */
-  dispose(): void;
+  dispose(): void | Promise<void>;
 
   /**
    * Post-construction initialization.

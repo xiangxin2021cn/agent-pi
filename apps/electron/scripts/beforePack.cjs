@@ -277,10 +277,7 @@ function assertMineruOpenApiBinary(binaryPath) {
 
 function fetchNpmPackage(packageName, version) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${packageName}-`));
-  const result = spawnSync('npm', ['pack', `${packageName}@${version}`], {
-    cwd: tempDir,
-    encoding: 'utf8',
-  });
+  const result = runNpmPack(tempDir, packageName, version);
 
   if (result.error) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -288,7 +285,8 @@ function fetchNpmPackage(packageName, version) {
   }
   if (result.status !== 0) {
     fs.rmSync(tempDir, { recursive: true, force: true });
-    throw new Error(`npm pack ${packageName}@${version} failed with exit code ${result.status}`);
+    const stderr = result.stderr?.trim();
+    throw new Error(`npm pack ${packageName}@${version} failed with exit code ${result.status}${stderr ? `: ${stderr}` : ''}`);
   }
 
   const tarballName = result.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
@@ -311,6 +309,41 @@ function fetchNpmPackage(packageName, version) {
   }
 
   return path.join(tempDir, 'package');
+}
+
+function runNpmPack(cwd, packageName, version) {
+  const args = ['pack', `${packageName}@${version}`];
+  if (process.platform === 'win32') {
+    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'call', resolveNpmCommand(), ...args], {
+      cwd,
+      encoding: 'utf8',
+    });
+  }
+
+  return spawnSync(resolveNpmCommand(), args, {
+    cwd,
+    encoding: 'utf8',
+  });
+}
+
+function resolveNpmCommand() {
+  if (process.platform !== 'win32') {
+    return 'npm';
+  }
+
+  const candidates = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'npm.cmd') : '',
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'nodejs', 'npm.cmd') : '',
+    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'nodejs', 'npm.cmd') : '',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return 'npm.cmd';
 }
 
 function readPackageVersion(packageDir) {

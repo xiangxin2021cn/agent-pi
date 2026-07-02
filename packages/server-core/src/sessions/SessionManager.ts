@@ -798,6 +798,16 @@ type QueryLlmCapableAgent = AgentInstance & {
   queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult>
 }
 
+const DEFAULT_IDLE_AGENT_RUNTIME_DISPOSE_MS = 60_000
+
+function getIdleAgentRuntimeDisposeMs(): number {
+  const raw = process.env.CRAFT_IDLE_AGENT_RUNTIME_DISPOSE_MS
+  if (raw === undefined || raw.trim() === '') return DEFAULT_IDLE_AGENT_RUNTIME_DISPOSE_MS
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_IDLE_AGENT_RUNTIME_DISPOSE_MS
+  return Math.floor(parsed)
+}
+
 export function resolveSpawnedSessionWorkingDirectory(
   requestedWorkingDirectory: string | undefined,
   parentWorkingDirectory: string | undefined,
@@ -826,6 +836,7 @@ interface ManagedSession {
   id: string
   workspace: Workspace
   agent: AgentInstance | null  // Lazy-loaded - null until first message
+  idleRuntimeDisposeTimer?: ReturnType<typeof setTimeout>
   messages: Message[]
   isProcessing: boolean
   /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
@@ -2051,10 +2062,38 @@ export class SessionManager implements ISessionManager {
     const was = managed.isProcessing
     managed.isProcessing = processing
     if (!was && processing) {
+      this.clearIdleRuntimeDisposeTimer(managed)
       sessionRuntimeHooks.onSessionStarted()
     } else if (was && !processing) {
       sessionRuntimeHooks.onSessionStopped()
     }
+  }
+
+  private clearIdleRuntimeDisposeTimer(managed: ManagedSession): void {
+    if (!managed.idleRuntimeDisposeTimer) return
+    clearTimeout(managed.idleRuntimeDisposeTimer)
+    managed.idleRuntimeDisposeTimer = undefined
+  }
+
+  private scheduleIdleRuntimeDispose(managed: ManagedSession): void {
+    this.clearIdleRuntimeDisposeTimer(managed)
+    const agent = managed.agent
+    if (!agent?.disposeForRestart) return
+
+    const delayMs = getIdleAgentRuntimeDisposeMs()
+    if (delayMs <= 0) return
+
+    managed.idleRuntimeDisposeTimer = setTimeout(() => {
+      managed.idleRuntimeDisposeTimer = undefined
+      const current = this.sessions.get(managed.id)
+      if (!current || current !== managed) return
+      if (current.isProcessing || current.messageQueue.length > 0) return
+      if (current.agent !== agent) return
+
+      void this.disposeManagedAgentRuntime(current, 'idle runtime timeout').catch((error) => {
+        sessionLog.warn(`Failed to dispose idle runtime for ${current.id}: ${error instanceof Error ? error.message : error}`)
+      })
+    }, delayMs)
   }
 
   /** Wait until initialize() has completed (sessions loaded from disk).
@@ -3869,13 +3908,14 @@ export class SessionManager implements ISessionManager {
 
   private async disposeManagedAgentRuntime(managed: ManagedSession, reason: string): Promise<void> {
     const sessionId = managed.id
+    this.clearIdleRuntimeDisposeTimer(managed)
 
     if (managed.agent) {
       try {
         if (managed.agent.disposeForRestart) {
           await managed.agent.disposeForRestart()
         } else {
-          managed.agent.dispose()
+          await managed.agent.dispose()
         }
       } catch (error) {
         sessionLog.warn(`Failed to dispose agent for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
@@ -7513,6 +7553,7 @@ export class SessionManager implements ISessionManager {
         tokenUsage: managed.tokenUsage,
         hasUnread: managed.hasUnread,  // Propagate unread state to renderer
       }, managed.workspace.id)
+      this.scheduleIdleRuntimeDispose(managed)
     }
 
     // 6. Always persist

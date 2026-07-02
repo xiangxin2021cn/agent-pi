@@ -2401,6 +2401,10 @@ export class PiAgent extends BaseAgent {
     this.debug('PiAgent destroy requested');
   }
 
+  async dispose(): Promise<void> {
+    await this.disposeForRestart();
+  }
+
   async disposeForRestart(): Promise<void> {
     this.stopConfigWatcher();
 

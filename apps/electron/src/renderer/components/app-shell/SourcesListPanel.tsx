@@ -1,12 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { DatabaseZap, Search } from 'lucide-react'
-import {
-  ANYSEARCH_API_KEYS_URL,
-  ANYSEARCH_DOCS_URL,
-  ANYSEARCH_SOURCE_ID,
-  ANYSEARCH_SOURCE_SLUG,
-} from '@craft-agent/shared/sources'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { deriveConnectionStatus } from '@/components/ui/source-status-indicator'
 import { EntityPanel } from '@/components/ui/entity-panel'
@@ -29,6 +23,11 @@ import { SendResourceToWorkspaceDialog } from './SendResourceToWorkspaceDialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig, type EditContextKey } from '@/components/ui/EditPopover'
 import type { LoadedSource, SourceConnectionStatus, SourceFilter } from '../../../shared/types'
+
+const ANYSEARCH_SOURCE_ID = 'anysearch-mcp'
+const ANYSEARCH_SOURCE_SLUG = 'anysearch-mcp'
+const ANYSEARCH_DOCS_URL = 'https://www.anysearch.com/docs#search-api'
+const ANYSEARCH_API_KEYS_URL = 'https://anysearch.com/console/api-keys'
 
 const SOURCE_TYPE_CONFIG: Record<string, { labelKey: string; colorClass: string }> = {
   mcp: { labelKey: 'sourcesList.typeMcp', colorClass: 'bg-accent/10 text-accent' },

@@ -1,5 +1,11 @@
+param(
+    [switch]$KillLockingProcesses
+)
+
 # Build script for Windows NSIS installer
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1
+# Add -KillLockingProcesses only when you explicitly want to close local dev
+# Electron/Node processes that may lock build artifacts.
 
 $ErrorActionPreference = "Stop"
 
@@ -175,17 +181,22 @@ try {
 }
 Write-Host ""
 
-# 0. Kill any lingering processes that might lock files
-Write-Host "Killing any lingering node/npm processes..."
-$processesToKill = @('node', 'npm', 'electron', 'electron-builder')
-foreach ($procName in $processesToKill) {
-    Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
-        Write-Host "  Killing $($_.ProcessName) (PID: $($_.Id))..." -ForegroundColor Yellow
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+# 0. Optional cleanup of lingering development processes.
+# Do not kill by default: installed Agent π also contains Electron/Bun children,
+# and closing them can interrupt active user tasks while we build a test package.
+if ($KillLockingProcesses) {
+    Write-Host "Killing local locking processes because -KillLockingProcesses was provided..."
+    $processesToKill = @('node', 'npm', 'electron', 'electron-builder')
+    foreach ($procName in $processesToKill) {
+        Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  Killing $($_.ProcessName) (PID: $($_.Id))..." -ForegroundColor Yellow
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
     }
+    Start-Sleep -Seconds 2
+} else {
+    Write-Host "Skipping process cleanup. Use -KillLockingProcesses only when you want to close local dev Electron/Node processes." -ForegroundColor Yellow
 }
-# Give processes time to fully terminate
-Start-Sleep -Seconds 2
 
 # 1. Clean previous build artifacts (with retry for locked files)
 Write-Host "Cleaning previous builds..."

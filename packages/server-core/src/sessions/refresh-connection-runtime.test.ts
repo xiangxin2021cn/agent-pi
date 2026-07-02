@@ -251,12 +251,14 @@ describe('SessionManager cleanup', () => {
       poolServer?: { stop: jest.Mock<() => Promise<void>> }
       mcpPool?: { disconnectAll: jest.Mock<() => Promise<void>> }
       autoRetryTimer?: ReturnType<typeof setTimeout>
+      idleRuntimeDisposeTimer?: ReturnType<typeof setTimeout>
     }
     const stop = jest.fn(async () => {})
     const disconnectAll = jest.fn(async () => {})
     managed.poolServer = { stop }
     managed.mcpPool = { disconnectAll }
     managed.autoRetryTimer = setTimeout(() => {}, 10_000)
+    managed.idleRuntimeDisposeTimer = setTimeout(() => {}, 10_000)
 
     await sm.cleanup()
 
@@ -267,5 +269,6 @@ describe('SessionManager cleanup', () => {
     expect(managed.poolServer).toBeUndefined()
     expect(managed.mcpPool).toBeUndefined()
     expect(managed.autoRetryTimer).toBeUndefined()
+    expect(managed.idleRuntimeDisposeTimer).toBeUndefined()
   })
 })
