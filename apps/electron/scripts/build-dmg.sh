@@ -267,7 +267,7 @@ else
 fi
 
 # Build electron-builder arguments
-BUILDER_ARGS="--mac --${ARCH}"
+BUILDER_ARGS="--mac dmg zip --${ARCH}"
 
 # Add code signing if identity is available
 if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
@@ -291,7 +291,7 @@ if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PA
 fi
 
 # Run electron-builder
-npx electron-builder $BUILDER_ARGS
+npx electron-builder $BUILDER_ARGS --publish never
 
 # 8. Verify the DMG was built
 # electron-builder.yml uses artifactName to output: Agent-Pi-${arch}.dmg

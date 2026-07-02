@@ -46,6 +46,7 @@ jobs:
       - name: Build DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           chmod +x apps/electron/scripts/build-dmg.sh
           apps/electron/scripts/build-dmg.sh "${{ matrix.arch }}"
@@ -99,6 +100,8 @@ jobs:
           sudo apt-get install -y libarchive-tools rpm
 
       - name: Build AppImage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           chmod +x apps/electron/scripts/build-linux.sh
           apps/electron/scripts/build-linux.sh x64

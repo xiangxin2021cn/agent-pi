@@ -17,6 +17,7 @@ const GIT_FOR_WINDOWS_INSTALLER = `Git-${GIT_FOR_WINDOWS_VERSION}-64-bit.exe`;
 const GIT_FOR_WINDOWS_URL =
   `https://github.com/git-for-windows/git/releases/download/v${GIT_FOR_WINDOWS_VERSION}.windows.1/${GIT_FOR_WINDOWS_INSTALLER}`;
 const MIN_GIT_INSTALLER_BYTES = 50 * 1024 * 1024;
+const MIN_CLAUDE_AGENT_SDK_BINARY_BYTES = 50 * 1024 * 1024;
 const MINERU_OPEN_API_VERSION = '0.5.9';
 const MIN_MINERU_OPEN_API_BYTES = 1024 * 1024;
 
@@ -173,15 +174,27 @@ function stageClaudeAgentSdk(context) {
   const coreSource = path.join(sourceScopeRoot, 'claude-agent-sdk');
   const coreDest = path.join(scopeRoot, 'claude-agent-sdk');
   const binaryPackage = getClaudeAgentSdkBinaryPackage(context);
-  const binarySource = path.join(sourceScopeRoot, binaryPackage);
+  const version = readPackageVersion(coreSource);
+  let binarySource = path.join(sourceScopeRoot, binaryPackage);
+  let tempBinarySource;
   const binaryDest = path.join(scopeRoot, 'claude-agent-sdk-binary');
 
-  copyDirectory(coreSource, coreDest);
-  copyDirectory(binarySource, binaryDest);
-  assertClaudeBinary(binaryDest, context.electronPlatformName);
+  if (!fs.existsSync(binarySource)) {
+    tempBinarySource = fetchNpmPackage(binaryPackage, version);
+    binarySource = tempBinarySource;
+  }
 
-  const version = readPackageVersion(coreDest);
-  console.log(`beforePack: staged Claude Agent SDK ${version} (${binaryPackage})`);
+  try {
+    copyDirectory(coreSource, coreDest);
+    copyDirectory(binarySource, binaryDest);
+    assertClaudeBinary(binaryDest, context.electronPlatformName);
+
+    console.log(`beforePack: staged Claude Agent SDK ${version} (${binaryPackage})`);
+  } finally {
+    if (tempBinarySource) {
+      fs.rmSync(path.dirname(tempBinarySource), { recursive: true, force: true });
+    }
+  }
 }
 
 function stageRipgrep(context) {
@@ -260,7 +273,7 @@ function assertClaudeBinary(binaryDest, platform) {
     throw new Error(`Claude Agent SDK binary is missing: ${binaryPath}`);
   }
   const size = fs.statSync(binaryPath).size;
-  if (size < 50 * 1024 * 1024) {
+  if (size < MIN_CLAUDE_AGENT_SDK_BINARY_BYTES) {
     throw new Error(`Claude Agent SDK binary is too small: ${binaryPath} (${size} bytes)`);
   }
 }

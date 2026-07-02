@@ -232,8 +232,7 @@ echo "Packaging app with electron-builder..."
 cd "$ELECTRON_DIR"
 
 # Run electron-builder
-# Note: electron-builder may build both archs due to config, but we only use the requested one
-npx electron-builder --linux --${ARCH}
+npx electron-builder --linux AppImage --${ARCH} --publish never
 
 # 8. Verify the AppImage was built
 # electron-builder uses Linux-style arch names: x86_64 for x64, aarch64 for arm64
