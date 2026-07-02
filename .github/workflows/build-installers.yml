@@ -1,0 +1,129 @@
+name: Build Installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: Upload generated assets to an existing GitHub Release
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing release tag to upload to when upload_to_release is enabled
+        type: string
+        required: false
+        default: v1.2.0
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-installers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Build DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          chmod +x apps/electron/scripts/build-dmg.sh
+          apps/electron/scripts/build-dmg.sh "${{ matrix.arch }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-pi-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/electron/release/Agent-Pi-${{ matrix.arch }}.dmg
+            apps/electron/release/Agent-Pi-${{ matrix.arch }}.dmg.blockmap
+            apps/electron/release/Agent-Pi-${{ matrix.arch }}.zip
+            apps/electron/release/Agent-Pi-${{ matrix.arch }}.zip.blockmap
+            apps/electron/release/latest-mac.yml
+
+      - name: Upload to GitHub Release
+        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            "apps/electron/release/Agent-Pi-${ARCH}.dmg"
+            "apps/electron/release/Agent-Pi-${ARCH}.dmg.blockmap"
+            "apps/electron/release/Agent-Pi-${ARCH}.zip"
+            "apps/electron/release/Agent-Pi-${ARCH}.zip.blockmap"
+          )
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+
+  linux:
+    name: Linux AppImage (x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install Linux package tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm
+
+      - name: Build AppImage
+        run: |
+          chmod +x apps/electron/scripts/build-linux.sh
+          apps/electron/scripts/build-linux.sh x64
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-pi-linux-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/electron/release/Agent-Pi-x64.AppImage
+            apps/electron/release/Agent-Pi-x64.AppImage.blockmap
+            apps/electron/release/latest-linux.yml
+
+      - name: Upload to GitHub Release
+        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            "apps/electron/release/Agent-Pi-x64.AppImage"
+            "apps/electron/release/Agent-Pi-x64.AppImage.blockmap"
+            "apps/electron/release/latest-linux.yml"
+          )
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber

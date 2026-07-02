@@ -256,8 +256,15 @@ stage_koffi_for_pi darwin "$ARCH"
 echo "Packaging app with electron-builder..."
 cd "$ELECTRON_DIR"
 
-# Set up environment for electron-builder
-export CSC_IDENTITY_AUTO_DISCOVERY=true
+# Set up environment for electron-builder. GitHub-hosted macOS runners usually
+# do not have an Apple signing identity, so default to unsigned DMGs unless
+# signing material is explicitly provided.
+if [ -n "$APPLE_SIGNING_IDENTITY" ] || [ -n "$CSC_LINK" ] || [ -n "$CSC_NAME" ]; then
+    export CSC_IDENTITY_AUTO_DISCOVERY="${CSC_IDENTITY_AUTO_DISCOVERY:-true}"
+else
+    export CSC_IDENTITY_AUTO_DISCOVERY="${CSC_IDENTITY_AUTO_DISCOVERY:-false}"
+    echo "No Apple signing identity configured; building unsigned DMG."
+fi
 
 # Build electron-builder arguments
 BUILDER_ARGS="--mac --${ARCH}"
