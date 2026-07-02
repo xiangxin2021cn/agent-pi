@@ -169,6 +169,7 @@ interface AppShellProps {
 type FilterMode = 'include' | 'exclude'
 
 const altClickTooltipLabel = isMac ? '⌥ click to exclude' : 'Alt click to exclude'
+const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
 
 /** Wraps children in a Tooltip that shows instantly on hover — only rendered when `show` is true. */
 function AltExcludeTooltip({ show, children }: { show: boolean; children: React.ReactNode }) {
@@ -1414,11 +1415,14 @@ function AppShellContent({
 
   // Count sources by type for the Sources dropdown subcategories
   const sourceTypeCounts = useMemo(() => {
-    const counts = { api: 0, mcp: 0, local: 0 }
+    const counts = { api: 0, mcp: 0, local: 0, enterpriseKnowledge: 0 }
     for (const source of sources) {
       const t = source.config.type
       if (t === 'api' || t === 'mcp' || t === 'local') {
         counts[t]++
+      }
+      if (source.config.metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY) {
+        counts.enterpriseKnowledge++
       }
     }
     return counts
@@ -1693,6 +1697,10 @@ function AppShellContent({
 
   const handleSourcesLocalClick = useCallback(() => {
     navigate(routes.view.sourcesLocal())
+  }, [])
+
+  const handleSourcesEnterpriseKbClick = useCallback(() => {
+    navigate(routes.view.sourcesEnterpriseKb())
   }, [])
 
   // Handler for skills view
@@ -2409,6 +2417,18 @@ function AppShellContent({
                             type: 'sources' as const,
                             onAddSource: () => openAddSource('local'),
                             sourceType: 'local',
+                          },
+                        },
+                        {
+                          id: "nav:sources:enterprise-kb",
+                          title: t("sidebar.enterpriseKnowledge"),
+                          label: String(sourceTypeCounts.enterpriseKnowledge),
+                          icon: Layers,
+                          variant: (sourceFilter?.kind === 'enterpriseKnowledge') ? "default" : "ghost",
+                          onClick: handleSourcesEnterpriseKbClick,
+                          contextMenu: {
+                            type: 'sources' as const,
+                            onAddSource: () => openAddSource('mcp'),
                           },
                         },
                       ],

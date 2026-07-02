@@ -849,12 +849,11 @@ export interface SessionsNavigationState {
 }
 
 /**
- * Source type filter for sources navigation
+ * Source filters for sources navigation
  */
-export interface SourceFilter {
-  kind: 'type'
-  sourceType: 'api' | 'mcp' | 'local'
-}
+export type SourceFilter =
+  | { kind: 'type'; sourceType: 'api' | 'mcp' | 'local' }
+  | { kind: 'enterpriseKnowledge' }
 
 /**
  * Automation type filter for automations navigation

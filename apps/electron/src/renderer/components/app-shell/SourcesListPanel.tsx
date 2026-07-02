@@ -49,6 +49,12 @@ const SOURCE_TYPE_FILTER_LABEL_KEYS: Record<string, string> = {
   local: 'sourcesList.filterLocalFolder',
 }
 
+const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
+
+function isEnterpriseKnowledgeSource(source: LoadedSource): boolean {
+  return source.config.metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY
+}
+
 export interface SourcesListPanelProps {
   sources: LoadedSource[]
   sourceFilter?: SourceFilter | null
@@ -85,10 +91,16 @@ export function SourcesListPanel({
 
   const filteredSources = React.useMemo(() => {
     if (!sourceFilter) return sources
+    if (sourceFilter.kind === 'enterpriseKnowledge') {
+      return sources.filter(isEnterpriseKnowledgeSource)
+    }
     return sources.filter(s => s.config.type === sourceFilter.sourceType)
   }, [sources, sourceFilter])
 
   const emptyMessage = React.useMemo(() => {
+    if (sourceFilter?.kind === 'enterpriseKnowledge') {
+      return t('sourcesList.noSourcesOfType', { type: t('sourcesList.filterEnterpriseKnowledge') })
+    }
     if (sourceFilter?.kind === 'type') {
       const filterLabelKey = SOURCE_TYPE_FILTER_LABEL_KEYS[sourceFilter.sourceType]
       const filterLabel = filterLabelKey ? t(filterLabelKey) : sourceFilter.sourceType
@@ -99,7 +111,7 @@ export function SourcesListPanel({
 
   const showAnySearchLoader = React.useMemo(() => {
     const hasAnySearch = sources.some(source => source.config.slug === ANYSEARCH_SOURCE_SLUG)
-    const filterAllowsMcp = !sourceFilter || sourceFilter.sourceType === 'mcp'
+    const filterAllowsMcp = !sourceFilter || (sourceFilter.kind === 'type' && sourceFilter.sourceType === 'mcp')
     return !!activeWorkspaceId && !hasAnySearch && filterAllowsMcp
   }, [activeWorkspaceId, sourceFilter, sources])
 
@@ -194,11 +206,15 @@ export function SourcesListPanel({
         const typeConfig = SOURCE_TYPE_CONFIG[source.config.type]
         const statusConfig = SOURCE_STATUS_CONFIG[connectionStatus]
         const subtitle = source.config.tagline || source.config.provider || ''
+        const isEnterpriseKnowledge = isEnterpriseKnowledgeSource(source)
         return {
           icon: <SourceAvatar source={source} size="sm" />,
           title: source.config.name,
           badges: (
             <>
+              {isEnterpriseKnowledge && (
+                <EntityListBadge colorClass="bg-primary/10 text-primary">{t('sourcesList.typeEnterpriseKnowledge')}</EntityListBadge>
+              )}
               {typeConfig && <EntityListBadge colorClass={typeConfig.colorClass}>{t(typeConfig.labelKey)}</EntityListBadge>}
               {statusConfig && (
                 <EntityListBadge colorClass={statusConfig.colorClass} tooltip={source.config.connectionError || undefined} className="cursor-default">

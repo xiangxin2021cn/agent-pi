@@ -32,6 +32,7 @@ import {
 } from '@craft-agent/session-tools-core'
 import {
   loadSourceConfig as loadWorkspaceSourceConfig,
+  loadWorkspaceSources,
   saveSourceConfig as saveWorkspaceSourceConfig,
   type FolderSourceConfig,
 } from '@craft-agent/shared/sources'
@@ -849,6 +850,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       chunkSize: options?.chunkSize,
       overlap: options?.overlap,
       autoEnable: options?.autoEnable ?? true,
+      enterpriseKnowledge: options?.enterpriseKnowledge,
     }
     const result = await handleFileMemorySourceCreate(toolContext, args)
     if (result.isError) {
@@ -856,7 +858,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       throw new Error(message)
     }
 
-    return readFileMemoryCreateResult(result)
+    const created = readFileMemoryCreateResult(result)
+    const sources = loadWorkspaceSources(workspaceRootPath)
+    pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId: session.workspaceId }, session.workspaceId, sources)
+    return created
   })
 
   // Start watching a session directory for file changes (per client)

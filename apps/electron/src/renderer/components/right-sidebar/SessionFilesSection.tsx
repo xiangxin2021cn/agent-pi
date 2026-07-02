@@ -33,6 +33,16 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
 import { restoreSessionFileWatch } from './session-files-watch'
 
+const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
+const ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json'])
+
+function isEnterpriseKnowledgeCandidate(file: SessionFile): boolean {
+  if (file.type === 'directory') return false
+  const dotIndex = file.name.lastIndexOf('.')
+  if (dotIndex < 0) return false
+  return ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS.has(file.name.slice(dotIndex).toLowerCase())
+}
+
 /**
  * Stagger animation variants for child items - matches LeftSidebar pattern
  * Creates a pleasing "cascade" effect when expanding folders
@@ -405,10 +415,10 @@ function FileTreeItem({
               {t("chat.openFile")}
             </StyledContextMenuItem>
           )}
-          {file.type !== 'directory' && (
+          {isEnterpriseKnowledgeCandidate(file) && (
             <StyledContextMenuItem onSelect={() => onCreateFileMemorySource(file)}>
               <Database className="h-3.5 w-3.5" />
-              {t('chat.createFileMemorySource')}
+              {t('chat.createEnterpriseKnowledgeSource')}
             </StyledContextMenuItem>
           )}
           {file.source !== 'official-output' && (
@@ -607,8 +617,19 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   // Use the link interceptor (via context) so file clicks show in-app previews
   // instead of always opening in the file manager / default app.
-  const { onOpenFile } = useAppShellContext()
+  const { onOpenFile, enabledSources = [] } = useAppShellContext()
   const fileManagerName = getFileManagerName()
+  const enterpriseKnowledgeCategories = React.useMemo(() => {
+    const categories = new Set<string>()
+    for (const source of enabledSources) {
+      const metadata = source.config.metadata
+      if (metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY && typeof metadata.knowledgeCategory === 'string') {
+        const category = metadata.knowledgeCategory.trim()
+        if (category) categories.add(category)
+      }
+    }
+    return Array.from(categories).sort((a, b) => a.localeCompare(b))
+  }, [enabledSources])
 
   // Reveal a file/folder in the system file manager
   const handleRevealInFileManager = useCallback((path: string) => {
@@ -676,16 +697,28 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   const handleCreateFileMemorySource = useCallback(async (file: SessionFile) => {
     if (!sessionId || file.type === 'directory') return
+    const existing = enterpriseKnowledgeCategories.length > 0
+      ? `\n\n${t('chat.enterpriseKnowledgeExistingCategories')}: ${enterpriseKnowledgeCategories.join(', ')}`
+      : ''
+    const category = window.prompt(
+      `${t('chat.enterpriseKnowledgeCategoryPrompt')}${existing}`,
+      enterpriseKnowledgeCategories[0] || ''
+    )?.trim()
+    if (!category) return
+
     try {
-      const result = await window.electronAPI.createFileMemorySource(sessionId, file.path, { autoEnable: true })
-      toast.success(t('chat.fileMemorySourceCreated'), {
+      const result = await window.electronAPI.createFileMemorySource(sessionId, file.path, {
+        autoEnable: false,
+        enterpriseKnowledge: { category },
+      })
+      toast.success(t('chat.enterpriseKnowledgeSourceCreated'), {
         description: result.sourceSlug,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      toast.error(t('chat.failedToCreateFileMemorySource'), { description: message })
+      toast.error(t('chat.failedToCreateEnterpriseKnowledgeSource'), { description: message })
     }
-  }, [sessionId, t])
+  }, [enterpriseKnowledgeCategories, sessionId, t])
 
   if (!sessionId) {
     return null

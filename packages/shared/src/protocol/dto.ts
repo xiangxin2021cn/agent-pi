@@ -492,6 +492,9 @@ export interface CreateFileMemorySourceOptions {
   chunkSize?: number
   overlap?: number
   autoEnable?: boolean
+  enterpriseKnowledge?: {
+    category: string
+  }
 }
 
 export interface CreateFileMemorySourceResult {

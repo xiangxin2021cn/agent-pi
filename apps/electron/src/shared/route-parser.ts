@@ -114,6 +114,20 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       return { navigator: 'sources', details: null }
     }
 
+    if (segments[1] === 'enterprise-kb') {
+      const sourceFilter: SourceFilter = { kind: 'enterpriseKnowledge' }
+
+      if (segments[2] === 'source' && segments[3]) {
+        return {
+          navigator: 'sources',
+          sourceFilter,
+          details: { type: 'source', id: segments[3] },
+        }
+      }
+
+      return { navigator: 'sources', sourceFilter, details: null }
+    }
+
     // Check for type filter: sources/api, sources/mcp, sources/local
     const validSourceTypes = ['api', 'mcp', 'local']
     if (validSourceTypes.includes(segments[1])) {
@@ -269,6 +283,8 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     let base = 'sources'
     if (parsed.sourceFilter?.kind === 'type') {
       base = `sources/${parsed.sourceFilter.sourceType}`
+    } else if (parsed.sourceFilter?.kind === 'enterpriseKnowledge') {
+      base = 'sources/enterprise-kb'
     }
     if (!parsed.details) return base
     return `${base}/source/${parsed.details.id}`

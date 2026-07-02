@@ -321,6 +321,7 @@ export interface SourceConfig {
   // Display fields
   tagline?: string;
   icon?: string; // URL, emoji, or omitted for local file
+  metadata?: Record<string, unknown>;
   // Connection tracking
   connectionStatus?: ConnectionStatus;
   connectionError?: string;

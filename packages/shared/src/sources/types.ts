@@ -431,6 +431,21 @@ export interface SourceBrand {
   color?: import('../colors/types').EntityColor;
 }
 
+/**
+ * Optional source classification metadata.
+ * MVP uses this for Enterprise Knowledge Base sources without changing SourceType.
+ */
+export interface SourceMetadata {
+  category?: string;
+  knowledgeCategory?: string;
+  scope?: string;
+  sourceKind?: string;
+  fileExtension?: string;
+  sourceFilePath?: string;
+  createdAt?: number;
+  [key: string]: unknown;
+}
+
 // ============================================================================
 // Main Source Config
 // ============================================================================
@@ -466,6 +481,9 @@ export interface FolderSourceConfig {
 
   // Brand theming for this source's UI elements
   brand?: SourceBrand;
+
+  // Optional classification metadata for product features layered on top of API/MCP/local sources
+  metadata?: SourceMetadata;
 
   // Status tracking
   isAuthenticated?: boolean;

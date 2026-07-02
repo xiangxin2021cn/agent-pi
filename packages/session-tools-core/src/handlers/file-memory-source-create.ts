@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import type { SourceConfig, ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';
@@ -15,6 +15,9 @@ export interface FileMemorySourceCreateArgs {
   chunkSize?: number;
   overlap?: number;
   autoEnable?: boolean;
+  enterpriseKnowledge?: {
+    category: string;
+  };
 }
 
 interface ChunkDraft {
@@ -26,6 +29,9 @@ interface ChunkDraft {
 }
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
+const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb';
+const ENTERPRISE_KNOWLEDGE_SCOPE = 'global';
+const ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json']);
 
 export async function handleFileMemorySourceCreate(
   ctx: SessionToolContext,
@@ -39,6 +45,11 @@ export async function handleFileMemorySourceCreate(
     }
     if (stats.size > MAX_SOURCE_BYTES) {
       return errorResponse(`File is too large for the first file-memory indexer (${stats.size} bytes, max ${MAX_SOURCE_BYTES}). Convert or split it first.`);
+    }
+
+    const enterpriseKnowledge = normalizeEnterpriseKnowledge(args.enterpriseKnowledge, sourceFilePath);
+    if (args.enterpriseKnowledge && !enterpriseKnowledge) {
+      return errorResponse('Enterprise knowledge MCP sources support only .md, .txt, and .json files in the MVP. Convert or extract the source to one of those formats first.');
     }
 
     const displayName = args.name?.trim() || basename(sourceFilePath);
@@ -76,6 +87,14 @@ export async function handleFileMemorySourceCreate(
       description: `Read-only file memory index generated from ${sourceFilePath}`,
       createdAt: now,
       indexedAt: now,
+      enterpriseKnowledge: enterpriseKnowledge
+        ? {
+            category: enterpriseKnowledge.knowledgeCategory,
+            scope: enterpriseKnowledge.scope,
+            sourceKind: enterpriseKnowledge.sourceKind,
+            fileExtension: enterpriseKnowledge.fileExtension,
+          }
+        : undefined,
       chunks: chunks.map(chunk => ({
         ...chunk,
         sourcePath: sourceFilePath,
@@ -100,12 +119,23 @@ export async function handleFileMemorySourceCreate(
       isAuthenticated: true,
       connectionStatus: 'unknown',
       tagline: `Read-only evidence memory for ${displayName}`,
+      metadata: enterpriseKnowledge
+        ? {
+            category: ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY,
+            knowledgeCategory: enterpriseKnowledge.knowledgeCategory,
+            scope: enterpriseKnowledge.scope,
+            sourceKind: enterpriseKnowledge.sourceKind,
+            fileExtension: enterpriseKnowledge.fileExtension,
+            sourceFilePath,
+            createdAt: now,
+          }
+        : undefined,
       createdAt: now,
       updatedAt: now,
     };
 
     writeFileSync(sourceConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-    writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length }), 'utf-8');
+    writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length, enterpriseKnowledge }), 'utf-8');
 
     const autoEnable = args.autoEnable !== false;
     const validation = await handleSourceTest(ctx, { sourceSlug: slug, autoEnable });
@@ -140,6 +170,32 @@ export async function handleFileMemorySourceCreate(
   } catch (err) {
     return errorResponse(err instanceof Error ? err.message : String(err));
   }
+}
+
+interface EnterpriseKnowledgeSourceMetadata {
+  knowledgeCategory: string;
+  scope: typeof ENTERPRISE_KNOWLEDGE_SCOPE;
+  sourceKind: 'file-memory';
+  fileExtension: string;
+}
+
+function normalizeEnterpriseKnowledge(
+  input: FileMemorySourceCreateArgs['enterpriseKnowledge'],
+  sourceFilePath: string
+): EnterpriseKnowledgeSourceMetadata | null {
+  if (!input) return null;
+  const fileExtension = extname(sourceFilePath).toLowerCase();
+  if (!ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS.has(fileExtension)) return null;
+  const knowledgeCategory = input.category.trim();
+  if (!knowledgeCategory) {
+    throw new Error('Enterprise knowledge category is required.');
+  }
+  return {
+    knowledgeCategory,
+    scope: ENTERPRISE_KNOWLEDGE_SCOPE,
+    sourceKind: 'file-memory',
+    fileExtension,
+  };
 }
 
 function resolveAllowedInputFile(ctx: SessionToolContext, inputPath: string): string {
@@ -259,7 +315,13 @@ function lineNumberAt(content: string, offset: number): number {
   return line;
 }
 
-function buildGuide(args: { displayName: string; sourceFilePath: string; manifestPath: string; chunkCount: number }): string {
+function buildGuide(args: {
+  displayName: string;
+  sourceFilePath: string;
+  manifestPath: string;
+  chunkCount: number;
+  enterpriseKnowledge?: EnterpriseKnowledgeSourceMetadata | null;
+}): string {
   return [
     `# ${args.displayName}`,
     ``,
@@ -283,6 +345,19 @@ function buildGuide(args: { displayName: string; sourceFilePath: string; manifes
     ``,
     `Manifest: ${args.manifestPath}`,
     `Chunks: ${args.chunkCount}`,
+    ...(args.enterpriseKnowledge
+      ? [
+          ``,
+          `## Enterprise Knowledge`,
+          ``,
+          `Category: ${args.enterpriseKnowledge.knowledgeCategory}`,
+          `Scope: ${args.enterpriseKnowledge.scope}`,
+          `Source kind: ${args.enterpriseKnowledge.sourceKind}`,
+          `File extension: ${args.enterpriseKnowledge.fileExtension}`,
+          ``,
+          `This source is globally listed as enterprise knowledge for the current user, but it should only be used after explicit user selection in a workspace or session.`,
+        ]
+      : []),
     ``,
   ].join('\n');
 }

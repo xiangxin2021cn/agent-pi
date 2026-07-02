@@ -82,6 +82,9 @@ export const FileMemorySourceCreateSchema = z.object({
   chunkSize: z.number().min(1000).max(12000).optional().describe('Approximate characters per chunk. Defaults to 3000.'),
   overlap: z.number().min(0).max(2000).optional().describe('Characters of overlap between chunks. Defaults to 300.'),
   autoEnable: z.boolean().optional().describe('Validate, enable, and activate the source after creation. Defaults to true.'),
+  enterpriseKnowledge: z.object({
+    category: z.string().min(1).describe('Enterprise knowledge category chosen or created by the user.'),
+  }).optional().describe('When present, create this file-memory source as a global Enterprise Knowledge MCP source. MVP supports only .md, .txt, and .json files.'),
 });
 
 export const SourceOAuthTriggerSchema = z.object({

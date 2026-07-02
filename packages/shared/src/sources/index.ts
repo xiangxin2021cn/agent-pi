@@ -21,6 +21,7 @@ export type {
   LoadedSource,
   CreateSourceInput,
   ApiRenewEndpoint,
+  SourceMetadata,
 } from './types.ts';
 
 // Constants and helpers
@@ -105,6 +106,20 @@ export type {
   RecommendedSourceId,
   RecommendedSourceTemplate,
 } from './recommended-sources.ts';
+
+// Enterprise Knowledge metadata helpers
+export {
+  ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY,
+  ENTERPRISE_KNOWLEDGE_SCOPE,
+  ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS,
+  getEnterpriseKnowledgeCategory,
+  isEnterpriseKnowledgeSource,
+  isSupportedEnterpriseKnowledgeFile,
+} from './enterprise-knowledge.ts';
+export type {
+  EnterpriseKnowledgeFileExtension,
+  EnterpriseKnowledgeSourceMetadata,
+} from './enterprise-knowledge.ts';
 
 // Built-in Sources (always available in every workspace)
 export {

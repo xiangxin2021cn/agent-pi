@@ -178,4 +178,99 @@ describe('file_memory_source_create', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('stores enterprise knowledge metadata for supported text artifacts', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
+    const previousServer = process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+    const previousBun = process.env.CRAFT_BUN;
+    const previousPackaged = process.env.CRAFT_IS_PACKAGED;
+
+    try {
+      const workspacePath = join(root, 'workspace');
+      const workingDirectory = join(root, 'project');
+      mkdirSync(workspacePath, { recursive: true });
+      mkdirSync(workingDirectory, { recursive: true });
+
+      const fakeServer = join(root, 'file-memory-server.js');
+      writeFileSync(fakeServer, 'console.log("ok");', 'utf-8');
+      process.env.CRAFT_FILE_MEMORY_MCP_SERVER = fakeServer;
+      process.env.CRAFT_BUN = 'bun';
+      process.env.CRAFT_IS_PACKAGED = '0';
+
+      const sourceFile = join(workingDirectory, 'company-standard.md');
+      writeFileSync(sourceFile, '# Company Standard\n\nUse approved method statements.', 'utf-8');
+
+      const ctx = createTestContext(workspacePath, workingDirectory);
+      const result = await handleFileMemorySourceCreate(ctx, {
+        filePath: 'company-standard.md',
+        sourceSlug: 'file-memory-company-standard',
+        autoEnable: false,
+        enterpriseKnowledge: {
+          category: 'Tender Standards',
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const manifestPath = join(workspacePath, 'file-memory', 'file-memory-company-standard', 'manifest.json');
+      const sourceConfigPath = join(workspacePath, 'sources', 'file-memory-company-standard', 'config.json');
+      const guidePath = join(workspacePath, 'sources', 'file-memory-company-standard', 'guide.md');
+
+      const config = JSON.parse(readFileSync(sourceConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
+      expect(config.metadata).toMatchObject({
+        category: 'enterprise_kb',
+        knowledgeCategory: 'Tender Standards',
+        scope: 'global',
+        sourceKind: 'file-memory',
+        fileExtension: '.md',
+      });
+      expect(config.enabled).toBe(false);
+
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { enterpriseKnowledge?: Record<string, unknown> };
+      expect(manifest.enterpriseKnowledge).toMatchObject({
+        category: 'Tender Standards',
+        scope: 'global',
+      });
+
+      const guide = readFileSync(guidePath, 'utf-8');
+      expect(guide).toContain('Enterprise Knowledge');
+      expect(guide).toContain('Tender Standards');
+    } finally {
+      if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+      else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;
+      if (previousBun === undefined) delete process.env.CRAFT_BUN;
+      else process.env.CRAFT_BUN = previousBun;
+      if (previousPackaged === undefined) delete process.env.CRAFT_IS_PACKAGED;
+      else process.env.CRAFT_IS_PACKAGED = previousPackaged;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects unsupported enterprise knowledge file formats', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
+
+    try {
+      const workspacePath = join(root, 'workspace');
+      const workingDirectory = join(root, 'project');
+      mkdirSync(workspacePath, { recursive: true });
+      mkdirSync(workingDirectory, { recursive: true });
+
+      const sourceFile = join(workingDirectory, 'drawing.pdf');
+      writeFileSync(sourceFile, '%PDF fake content', 'utf-8');
+
+      const ctx = createTestContext(workspacePath, workingDirectory);
+      const result = await handleFileMemorySourceCreate(ctx, {
+        filePath: 'drawing.pdf',
+        autoEnable: false,
+        enterpriseKnowledge: {
+          category: 'Drawings',
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain('Enterprise knowledge MCP sources support only .md, .txt, and .json files');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
