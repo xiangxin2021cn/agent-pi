@@ -57,6 +57,7 @@ export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIss
 
 // Source types for session source selection
 import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources/types';
+import type { RecommendedSourceId } from '@craft-agent/shared/sources';
 export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 
 // Skill types
@@ -228,6 +229,7 @@ import type {
   ClaudeOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
+  MineruCredentialStatus,
   ProjectMemorySessionStatusResult,
   ProjectMemoryQualityTelemetryResetResult,
   PermissionModeState,
@@ -471,6 +473,8 @@ export interface ElectronAPI {
   // Workspace Settings (per-workspace configuration)
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
   updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
+  getMineruCredentialStatus(workspaceId: string): Promise<MineruCredentialStatus>
+  saveMineruToken(workspaceId: string, token: string): Promise<MineruCredentialStatus>
 
   // Folder dialog
   openFolderDialog(): Promise<string | null>
@@ -501,6 +505,7 @@ export interface ElectronAPI {
   // Sources
   getSources(workspaceId: string): Promise<LoadedSource[]>
   createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
+  installRecommendedSource(workspaceId: string, sourceId: RecommendedSourceId): Promise<FolderSourceConfig>
   deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
   startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string }>
   saveSourceCredentials(workspaceId: string, sourceSlug: string, credential: string): Promise<void>

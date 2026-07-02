@@ -8,6 +8,7 @@ export { ContentFrame, type ContentFrameProps } from './ContentFrame'
 export { CopyButton, type CopyButtonProps } from './CopyButton'
 export { ItemNavigator, type ItemNavigatorProps } from './ItemNavigator'
 export { OverlayErrorBanner, type OverlayErrorBannerProps } from './OverlayErrorBanner'
+export { MarkdownSidecarActions, type MarkdownSidecarActionsProps } from './MarkdownSidecarActions'
 
 // Specialized overlays
 export { CodePreviewOverlay, type CodePreviewOverlayProps } from './CodePreviewOverlay'
@@ -16,7 +17,11 @@ export { TerminalPreviewOverlay, type TerminalPreviewOverlayProps } from './Term
 export { GenericOverlay, detectLanguage, detectLanguageFromPath, type GenericOverlayProps } from './GenericOverlay'
 export { JSONPreviewOverlay, type JSONPreviewOverlayProps } from './JSONPreviewOverlay'
 export { DataTableOverlay, type DataTableOverlayProps } from './DataTableOverlay'
-export { DocumentFormattedMarkdownOverlay, type DocumentFormattedMarkdownOverlayProps } from './DocumentFormattedMarkdownOverlay'
+export {
+  DocumentFormattedMarkdownOverlay,
+  type DocumentFormattedMarkdownOverlayProps,
+  type MarkdownSelectionRewriteRequest,
+} from './DocumentFormattedMarkdownOverlay'
 export { ImagePreviewOverlay, type ImagePreviewOverlayProps } from './ImagePreviewOverlay'
 export { PDFPreviewOverlay, type PDFPreviewOverlayProps } from './PDFPreviewOverlay'
 export { SpreadsheetPreviewOverlay, type SpreadsheetPreviewOverlayProps } from './SpreadsheetPreviewOverlay'

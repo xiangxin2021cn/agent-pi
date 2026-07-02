@@ -39,6 +39,7 @@ import {
   type WorkspaceInfo,
 } from '@craft-agent/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
+import type { CreateSessionOptions } from '@craft-agent/shared/protocol'
 import { loadWorkspaceConfig, type WorkspaceGoalLoopDefaultMode, type WorkspaceGoalLoopQualityMode } from '@craft-agent/shared/workspaces'
 import {
   // Session persistence functions
@@ -797,8 +798,28 @@ type QueryLlmCapableAgent = AgentInstance & {
   queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult>
 }
 
+export function resolveSpawnedSessionWorkingDirectory(
+  requestedWorkingDirectory: string | undefined,
+  parentWorkingDirectory: string | undefined,
+): CreateSessionOptions['workingDirectory'] {
+  if (requestedWorkingDirectory) return requestedWorkingDirectory
+  return parentWorkingDirectory ?? 'none'
+}
+
 function canQueryLlm(agent: AgentInstance | null): agent is QueryLlmCapableAgent {
   return !!agent && typeof (agent as { queryLlm?: unknown }).queryLlm === 'function'
+}
+
+async function disposeTemporaryAgentRuntime(agent: AgentInstance, reason: string): Promise<void> {
+  try {
+    if (agent.disposeForRestart) {
+      await agent.disposeForRestart()
+    } else {
+      agent.destroy()
+    }
+  } catch (error) {
+    sessionLog.warn(`Failed to dispose temporary agent during ${reason}: ${error instanceof Error ? error.message : error}`)
+  }
 }
 
 interface ManagedSession {
@@ -4957,6 +4978,7 @@ export class SessionManager implements ISessionManager {
       managed.agent.onSpawnSession = async (request) => {
         sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
 
+        const spawnedWorkingDirectory = resolveSpawnedSessionWorkingDirectory(request.workingDirectory, managed.workingDirectory)
         const session = await this.createSession(managed.workspace.id, {
           name: request.name,
           llmConnection: request.llmConnection ?? managed.llmConnection,
@@ -4965,7 +4987,7 @@ export class SessionManager implements ISessionManager {
           permissionMode: request.permissionMode ?? managed.permissionMode,
           thinkingLevel: request.thinkingLevel ?? managed.thinkingLevel,
           labels: request.labels ?? managed.labels,
-          workingDirectory: request.workingDirectory,
+          workingDirectory: spawnedWorkingDirectory,
           parentSessionId: managed.id,
           parentSessionKind: 'spawn',
         })
@@ -4977,7 +4999,7 @@ export class SessionManager implements ISessionManager {
           for (const a of request.attachments) {
             try {
               const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
-              if (request.workingDirectory) extraDirs.push(request.workingDirectory)
+              if (spawnedWorkingDirectory && spawnedWorkingDirectory !== 'none') extraDirs.push(spawnedWorkingDirectory)
               const safePath = await validateFilePath(a.path, extraDirs)
               const attachment = readFileAttachment(safePath)
               if (attachment) {
@@ -5982,7 +6004,7 @@ export class SessionManager implements ISessionManager {
     } finally {
       // Clean up temporary agent
       if (isTemporary && agent) {
-        agent.destroy()
+        await disposeTemporaryAgentRuntime(agent, 'refreshTitle')
       }
       // Signal async operation end
       managed.isAsyncOperationOngoing = false
@@ -6084,7 +6106,7 @@ export class SessionManager implements ISessionManager {
       }
     } finally {
       if (isTemporary && agent) {
-        agent.destroy()
+        await disposeTemporaryAgentRuntime(agent, 'optimizePrompt')
       }
     }
   }
@@ -8604,7 +8626,7 @@ export class SessionManager implements ISessionManager {
     } finally {
       // Clean up temporary agent
       if (isTemporary && agent) {
-        agent.destroy()
+        await disposeTemporaryAgentRuntime(agent, 'generateTitle')
       }
     }
   }
@@ -9530,7 +9552,7 @@ export class SessionManager implements ISessionManager {
     try {
       return await generateConversationSummary(messages, agent.runMiniCompletion.bind(agent))
     } finally {
-      agent.destroy()
+      await disposeTemporaryAgentRuntime(agent, 'generateConversationSummary')
     }
   }
 

@@ -2178,8 +2178,14 @@ This is a branched conversation. All prior messages in this conversation are par
         if (attachment.storedPath) {
           let pathInfo = `[Attached file: ${attachment.name}]`;
           pathInfo += `\n[Stored at: ${attachment.storedPath}]`;
+          if (attachment.path && attachment.path !== attachment.storedPath) {
+            pathInfo += `\n[Original path: ${attachment.path}]`;
+          }
           if (attachment.markdownPath) {
             pathInfo += `\n[Markdown version: ${attachment.markdownPath}]`;
+          }
+          if (attachment.extractionManifestPath) {
+            pathInfo += `\n[Extraction manifest: ${attachment.extractionManifestPath}]`;
           }
           parts.push(pathInfo);
         }
@@ -2227,8 +2233,14 @@ This is a branched conversation. All prior messages in this conversation are par
         // This enables the agent to use the Read tool to access text/office files
         if (attachment.storedPath) {
           let pathInfo = `[Attached file: ${attachment.name}]\n[Stored at: ${attachment.storedPath}]`;
+          if (attachment.path && attachment.path !== attachment.storedPath) {
+            pathInfo += `\n[Original path: ${attachment.path}]`;
+          }
           if (attachment.markdownPath) {
             pathInfo += `\n[Markdown version: ${attachment.markdownPath}]`;
+          }
+          if (attachment.extractionManifestPath) {
+            pathInfo += `\n[Extraction manifest: ${attachment.extractionManifestPath}]`;
           }
           contentBlocks.push({
             type: 'text',

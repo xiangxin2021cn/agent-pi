@@ -1,14 +1,15 @@
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
-import { loadWorkspaceSources } from '@craft-agent/shared/sources'
+import { isSourceUsable, loadWorkspaceSources, type LoadedSource } from '@craft-agent/shared/sources'
 import { safeJsonParse } from '@craft-agent/shared/utils/files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
-import type { RpcServer } from '@craft-agent/server-core/transport'
+import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET,
   RPC_CHANNELS.sources.CREATE,
+  RPC_CHANNELS.sources.INSTALL_RECOMMENDED,
   RPC_CHANNELS.sources.DELETE,
   RPC_CHANNELS.sources.START_OAUTH,
   RPC_CHANNELS.sources.SAVE_CREDENTIALS,
@@ -17,6 +18,15 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.permissions.GET_DEFAULTS,
   RPC_CHANNELS.sources.GET_MCP_TOOLS,
 ] as const
+
+export function getMcpToolsSourceReadinessError(source: LoadedSource): string | null {
+  if (!source.config.enabled) return 'Source is disabled'
+  if (!isSourceUsable(source)) return 'Source requires authentication'
+  if (source.config.connectionStatus === 'needs_auth') return 'Source requires authentication'
+  if (source.config.connectionStatus === 'failed') return source.config.connectionError || 'Connection failed'
+  if (source.config.connectionStatus === 'untested') return 'Source has not been tested yet'
+  return null
+}
 
 export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
@@ -45,6 +55,17 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       api: config.api,
       local: config.local,
     })
+  })
+
+  // Install a recommended source template without enabling it.
+  server.handle(RPC_CHANNELS.sources.INSTALL_RECOMMENDED, async (_ctx, workspaceId: string, sourceId: import('@craft-agent/shared/sources').RecommendedSourceId) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
+    const { installRecommendedSource } = await import('@craft-agent/shared/sources')
+    const config = await installRecommendedSource(workspace.rootPath, sourceId)
+    const sources = loadWorkspaceSources(workspace.rootPath)
+    pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
+    return config
   })
 
   // Delete a source
@@ -76,7 +97,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
   server.handle(RPC_CHANNELS.sources.SAVE_CREDENTIALS, async (_ctx, workspaceId: string, sourceSlug: string, credential: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
-    const { loadSource, getSourceCredentialManager } = await import('@craft-agent/shared/sources')
+    const { loadSource, getSourceCredentialManager, markSourceAuthenticated } = await import('@craft-agent/shared/sources')
 
     const source = loadSource(workspace.rootPath, sourceSlug)
     if (!source) {
@@ -86,6 +107,10 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     // SourceCredentialManager handles credential type resolution
     const credManager = getSourceCredentialManager()
     await credManager.save(source, { value: credential })
+    markSourceAuthenticated(workspace.rootPath, sourceSlug)
+
+    const sources = loadWorkspaceSources(workspace.rootPath)
+    pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
 
     log.info(`Saved credentials for source: ${sourceSlug}`)
   })
@@ -160,15 +185,8 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       if (source.config.type !== 'mcp') return { success: false, error: 'Source is not an MCP server' }
       if (!source.config.mcp) return { success: false, error: 'MCP config not found' }
 
-      if (source.config.connectionStatus === 'needs_auth') {
-        return { success: false, error: 'Source requires authentication' }
-      }
-      if (source.config.connectionStatus === 'failed') {
-        return { success: false, error: source.config.connectionError || 'Connection failed' }
-      }
-      if (source.config.connectionStatus === 'untested') {
-        return { success: false, error: 'Source has not been tested yet' }
-      }
+      const readinessError = getMcpToolsSourceReadinessError(source)
+      if (readinessError) return { success: false, error: readinessError }
 
       const { CraftMcpClient } = await import('@craft-agent/shared/mcp')
       let client: InstanceType<typeof CraftMcpClient>

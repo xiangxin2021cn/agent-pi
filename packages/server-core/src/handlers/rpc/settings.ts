@@ -1,19 +1,76 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
-import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type MineruCredentialStatus } from '@craft-agent/shared/protocol'
 import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, getDefaultThinkingLevel, setDefaultThinkingLevel } from '@craft-agent/shared/config'
 import { isValidThinkingLevel, normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-
-const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
+import { getCredentialManager } from '@craft-agent/shared/credentials'
+import { getMineruCredentialId } from '@craft-agent/shared/document-extraction/mineru'
 import { getWorkspaceOrThrow } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 import { isValidWorkingDirectory } from '../../utils/path-validation'
 
+const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
+const VALID_MINERU_EXTRACTION_MODES = new Set(['pipeline', 'vlm', 'html'])
+
+function normalizeDocumentExtractionSetting(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('documentExtraction must be an object')
+  }
+
+  const rawMineru = (value as { mineru?: unknown }).mineru
+  if (rawMineru === undefined) {
+    return {}
+  }
+  if (typeof rawMineru !== 'object' || rawMineru === null || Array.isArray(rawMineru)) {
+    throw new Error('documentExtraction.mineru must be an object')
+  }
+
+  const mineru = rawMineru as {
+    enabled?: unknown
+    commandPath?: unknown
+    mode?: unknown
+    cleanRepeatedScanNoise?: unknown
+  }
+  const normalizedMineru: Record<string, unknown> = {}
+
+  if (mineru.enabled !== undefined) {
+    if (typeof mineru.enabled !== 'boolean') {
+      throw new Error('documentExtraction.mineru.enabled must be a boolean')
+    }
+    normalizedMineru.enabled = mineru.enabled
+  }
+  if (mineru.commandPath !== undefined) {
+    if (typeof mineru.commandPath !== 'string') {
+      throw new Error('documentExtraction.mineru.commandPath must be a string')
+    }
+    const commandPath = mineru.commandPath.trim()
+    if (commandPath) {
+      normalizedMineru.commandPath = commandPath
+    }
+  }
+  if (mineru.mode !== undefined) {
+    if (typeof mineru.mode !== 'string' || !VALID_MINERU_EXTRACTION_MODES.has(mineru.mode)) {
+      throw new Error('documentExtraction.mineru.mode must be pipeline, vlm, or html')
+    }
+    normalizedMineru.mode = mineru.mode
+  }
+  if (mineru.cleanRepeatedScanNoise !== undefined) {
+    if (typeof mineru.cleanRepeatedScanNoise !== 'boolean') {
+      throw new Error('documentExtraction.mineru.cleanRepeatedScanNoise must be a boolean')
+    }
+    normalizedMineru.cleanRepeatedScanNoise = mineru.cleanRepeatedScanNoise
+  }
+
+  return { mineru: normalizedMineru }
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
+  RPC_CHANNELS.workspace.MINERU_CREDENTIAL_STATUS,
+  RPC_CHANNELS.workspace.SAVE_MINERU_TOKEN,
   RPC_CHANNELS.preferences.READ,
   RPC_CHANNELS.preferences.WRITE,
   RPC_CHANNELS.drafts.GET,
@@ -92,6 +149,37 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return result.canceled ? null : result.filePaths[0]
   })
 
+  // MinerU token is workspace-scoped and stored in the encrypted credential store.
+  server.handle(RPC_CHANNELS.workspace.MINERU_CREDENTIAL_STATUS, async (_ctx, workspaceId: string): Promise<MineruCredentialStatus> => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`)
+    }
+    const manager = getCredentialManager()
+    const credential = await manager.get(getMineruCredentialId(workspace.id))
+    return {
+      configured: !!credential?.value,
+    }
+  })
+
+  server.handle(RPC_CHANNELS.workspace.SAVE_MINERU_TOKEN, async (_ctx, workspaceId: string, token: string): Promise<MineruCredentialStatus> => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${workspaceId}`)
+    }
+    const trimmed = typeof token === 'string' ? token.trim() : ''
+    if (!trimmed) {
+      throw new Error('MinerU token is required')
+    }
+    const manager = getCredentialManager()
+    await manager.set(getMineruCredentialId(workspace.id), {
+      value: trimmed,
+      tokenType: 'Bearer',
+      source: 'native',
+    })
+    return { configured: true }
+  })
+
   // ============================================================
   // Workspace Settings (per-workspace configuration)
   // ============================================================
@@ -118,6 +206,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
       defaultLlmConnection: config?.defaults?.defaultLlmConnection,
       enabledSourceSlugs: config?.defaults?.enabledSourceSlugs ?? [],
+      documentExtraction: config?.defaults?.documentExtraction,
       goalLoop: config?.defaults?.goalLoop,
     }
   })
@@ -130,7 +219,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       : value
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection', 'goalLoop']
+    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection', 'goalLoop', 'documentExtraction']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
@@ -180,6 +269,10 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       }
     }
 
+    if (key === 'documentExtraction' && normalizedValue !== undefined && normalizedValue !== null) {
+      normalizedValue = normalizeDocumentExtractionSetting(normalizedValue)
+    }
+
     // Validate defaultLlmConnection exists before saving
     if (key === 'defaultLlmConnection' && normalizedValue !== undefined && normalizedValue !== null) {
       const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
@@ -215,6 +308,15 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
         ;(config.defaults as Record<string, unknown>)[key] = {
           ...config.defaults.goalLoop,
           ...(normalizedValue as Record<string, unknown>),
+        }
+      } else if (key === 'documentExtraction' && normalizedValue !== undefined && normalizedValue !== null) {
+        const incoming = normalizedValue as { mineru?: Record<string, unknown> }
+        ;(config.defaults as Record<string, unknown>)[key] = {
+          ...config.defaults.documentExtraction,
+          ...incoming,
+          ...(incoming.mineru
+            ? { mineru: { ...config.defaults.documentExtraction?.mineru, ...incoming.mineru } }
+            : {}),
         }
       } else {
         ;(config.defaults as Record<string, unknown>)[key] = normalizedValue

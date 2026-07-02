@@ -12,6 +12,7 @@ import { FileText } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
 import { CopyButton } from './CopyButton'
 import { ItemNavigator } from './ItemNavigator'
+import { MarkdownSidecarActions, type MarkdownSidecarActionsProps } from './MarkdownSidecarActions'
 
 interface PreviewItem {
   src: string
@@ -29,6 +30,7 @@ export interface PDFPreviewOverlayProps {
   initialIndex?: number
   /** Async loader that returns PDF data as Uint8Array */
   loadPdfData: (path: string) => Promise<Uint8Array>
+  markdownActions?: Omit<MarkdownSidecarActionsProps, 'onStatus' | 'onError'>
   theme?: 'light' | 'dark'
 }
 
@@ -39,6 +41,7 @@ export function PDFPreviewOverlay({
   items,
   initialIndex = 0,
   loadPdfData,
+  markdownActions,
   theme = 'light',
 }: PDFPreviewOverlayProps) {
   const { t } = useTranslation()
@@ -52,6 +55,8 @@ export function PDFPreviewOverlay({
   const [activeIdx, setActiveIdx] = useState(initialIndex)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | undefined>()
+  const [actionStatus, setActionStatus] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(false)
 
   const activeItem = resolvedItems[activeIdx]
@@ -60,6 +65,8 @@ export function PDFPreviewOverlay({
   useEffect(() => {
     if (isOpen) {
       setActiveIdx(initialIndex)
+      setActionError(undefined)
+      setActionStatus(undefined)
     }
   }, [isOpen, initialIndex])
 
@@ -104,6 +111,13 @@ export function PDFPreviewOverlay({
   const headerActions = (
     <div className="flex items-center gap-2">
       <ItemNavigator items={resolvedItems} activeIndex={activeIdx} onSelect={setActiveIdx} size="md" />
+      {markdownActions?.markdownPath && (
+        <MarkdownSidecarActions
+          {...markdownActions}
+          onError={setActionError}
+          onStatus={setActionStatus}
+        />
+      )}
       <CopyButton content={activeItem?.src || filePath} title={t('common.copyPath')} className="bg-background shadow-minimal" />
     </div>
   )
@@ -119,10 +133,15 @@ export function PDFPreviewOverlay({
         variant: 'orange',
       }}
       filePath={activeItem?.src || filePath}
-      error={error ? { label: 'Load Failed', message: error } : undefined}
+      error={actionError ? { label: 'File Action Failed', message: actionError } : error ? { label: 'Load Failed', message: error } : undefined}
       headerActions={headerActions}
     >
       <div className="h-full min-h-[70vh] flex flex-col items-center overflow-hidden">
+        {actionStatus && (
+          <div className="absolute z-10 mt-6 max-w-[70vw] truncate rounded-[6px] bg-background px-3 py-2 text-sm text-muted-foreground shadow-minimal">
+            {actionStatus}
+          </div>
+        )}
         {isLoading && (
           <div className="absolute z-10 mt-6 rounded-[6px] bg-background px-3 py-2 text-sm text-muted-foreground shadow-minimal">
             {t('preview.loadingPdf')}

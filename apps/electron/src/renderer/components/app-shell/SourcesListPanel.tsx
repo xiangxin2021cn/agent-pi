@@ -1,11 +1,28 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { DatabaseZap } from 'lucide-react'
+import { DatabaseZap, Search } from 'lucide-react'
+import {
+  ANYSEARCH_API_KEYS_URL,
+  ANYSEARCH_DOCS_URL,
+  ANYSEARCH_SOURCE_ID,
+  ANYSEARCH_SOURCE_SLUG,
+} from '@craft-agent/shared/sources'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { deriveConnectionStatus } from '@/components/ui/source-status-indicator'
 import { EntityPanel } from '@/components/ui/entity-panel'
 import { EntityListBadge } from '@/components/ui/entity-list-badge'
 import { EntityListEmptyScreen } from '@/components/ui/entity-list-empty'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { sourceSelection } from '@/hooks/useEntitySelection'
 import { SourceMenu } from './SourceMenu'
 import { SendResourceToWorkspaceDialog } from './SendResourceToWorkspaceDialog'
@@ -57,6 +74,10 @@ export function SourcesListPanel({
   const { t } = useTranslation()
   const { workspaces, activeWorkspaceId } = useAppShellContext()
   const hasOtherWorkspaces = workspaces.length > 1
+  const [anySearchDialogOpen, setAnySearchDialogOpen] = React.useState(false)
+  const [anySearchApiKey, setAnySearchApiKey] = React.useState('')
+  const [anySearchError, setAnySearchError] = React.useState<string | null>(null)
+  const [anySearchLoading, setAnySearchLoading] = React.useState(false)
 
   // Send to Workspace dialog state
   const [sendDialogOpen, setSendDialogOpen] = React.useState(false)
@@ -77,8 +98,67 @@ export function SourcesListPanel({
     return t('sourcesList.noSourcesConfigured')
   }, [sourceFilter, t])
 
+  const showAnySearchLoader = React.useMemo(() => {
+    const hasAnySearch = sources.some(source => source.config.slug === ANYSEARCH_SOURCE_SLUG)
+    const filterAllowsMcp = !sourceFilter || sourceFilter.sourceType === 'mcp'
+    return !!activeWorkspaceId && !hasAnySearch && filterAllowsMcp
+  }, [activeWorkspaceId, sourceFilter, sources])
+
+  const handleLoadAnySearch = React.useCallback(async () => {
+    if (!activeWorkspaceId) return
+    setAnySearchLoading(true)
+    setAnySearchError(null)
+    try {
+      await window.electronAPI.installRecommendedSource(activeWorkspaceId, ANYSEARCH_SOURCE_ID)
+      setAnySearchDialogOpen(true)
+    } catch (error) {
+      setAnySearchError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAnySearchLoading(false)
+    }
+  }, [activeWorkspaceId])
+
+  const handleSaveAnySearchKey = React.useCallback(async () => {
+    if (!activeWorkspaceId) return
+    const credential = anySearchApiKey.trim()
+    if (!credential) return
+
+    setAnySearchLoading(true)
+    setAnySearchError(null)
+    try {
+      await window.electronAPI.saveSourceCredentials(activeWorkspaceId, ANYSEARCH_SOURCE_SLUG, credential)
+      setAnySearchApiKey('')
+      setAnySearchDialogOpen(false)
+    } catch (error) {
+      setAnySearchError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAnySearchLoading(false)
+    }
+  }, [activeWorkspaceId, anySearchApiKey])
+
   return (
     <>
+    {showAnySearchLoader && (
+      <div className="px-2 pb-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full justify-start"
+          onClick={handleLoadAnySearch}
+          disabled={anySearchLoading}
+        >
+          <Search className="h-3.5 w-3.5" />
+          Load AnySearch MCP
+        </Button>
+        {anySearchError && !anySearchDialogOpen && (
+          <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {anySearchError}
+          </div>
+        )}
+      </div>
+    )}
+
     <EntityPanel<LoadedSource>
       items={filteredSources}
       getId={(s) => s.config.slug}
@@ -159,6 +239,68 @@ export function SourcesListPanel({
         activeWorkspaceId={activeWorkspaceId}
       />
     )}
+
+    <Dialog open={anySearchDialogOpen} onOpenChange={setAnySearchDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Load AnySearch MCP</DialogTitle>
+          <DialogDescription>
+            Enter an AnySearch API key to prepare this search connector. It stays disabled until you enable it for a workspace or task.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="anysearch-api-key">API key</Label>
+            <Input
+              id="anysearch-api-key"
+              type="password"
+              value={anySearchApiKey}
+              onChange={(event) => setAnySearchApiKey(event.target.value)}
+              placeholder="Enter AnySearch API key"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-xs">
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => window.electronAPI.openUrl(ANYSEARCH_DOCS_URL)}
+            >
+              Search API docs
+            </button>
+            <span className="text-muted-foreground">/</span>
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => window.electronAPI.openUrl(ANYSEARCH_API_KEYS_URL)}
+            >
+              Get API key
+            </button>
+          </div>
+
+          {anySearchError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {anySearchError}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => setAnySearchDialogOpen(false)}>
+            Skip
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSaveAnySearchKey}
+            disabled={anySearchLoading || !anySearchApiKey.trim()}
+          >
+            Save key
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   )
 }

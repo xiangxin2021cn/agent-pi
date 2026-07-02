@@ -243,6 +243,7 @@ export const RPC_CHANNELS = {
   sources: {
     GET: 'sources:get',
     CREATE: 'sources:create',
+    INSTALL_RECOMMENDED: 'sources:installRecommended',
     DELETE: 'sources:delete',
     START_OAUTH: 'sources:startOAuth',
     SAVE_CREDENTIALS: 'sources:saveCredentials',
@@ -262,6 +263,8 @@ export const RPC_CHANNELS = {
     WRITE_IMAGE: 'workspace:writeImage',
     SETTINGS_GET: 'workspaceSettings:get',
     SETTINGS_UPDATE: 'workspaceSettings:update',
+    MINERU_CREDENTIAL_STATUS: 'workspaceSettings:mineruCredentialStatus',
+    SAVE_MINERU_TOKEN: 'workspaceSettings:saveMineruToken',
   },
   permissions: {
     GET_DEFAULTS: 'permissions:getDefaults',

@@ -86,4 +86,52 @@ describe('workspace storage: config normalization', () => {
     expect(loaded).not.toBeNull();
     expect(loaded?.defaults?.thinkingLevel).toBe('medium');
   });
+
+  it('does not enable MinerU document extraction by default', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-mineru-default-'));
+    tempDirs.push(workspaceRoot);
+
+    const rawConfig = {
+      id: 'ws_mineru_default',
+      name: 'MinerU Default',
+      slug: 'mineru-default',
+      defaults: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const loaded = loadWorkspaceConfig(workspaceRoot);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.defaults?.documentExtraction?.mineru?.enabled).toBeUndefined();
+  });
+
+  it('preserves explicit MinerU disabled configuration', () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'ws-mineru-disabled-'));
+    tempDirs.push(workspaceRoot);
+
+    const rawConfig = {
+      id: 'ws_mineru_disabled',
+      name: 'MinerU Disabled',
+      slug: 'mineru-disabled',
+      defaults: {
+        documentExtraction: {
+          mineru: {
+            enabled: false,
+            cleanRepeatedScanNoise: true,
+          },
+        },
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    writeFileSync(join(workspaceRoot, 'config.json'), JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const loaded = loadWorkspaceConfig(workspaceRoot);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.defaults?.documentExtraction?.mineru?.enabled).toBe(false);
+    expect(loaded?.defaults?.documentExtraction?.mineru?.cleanRepeatedScanNoise).toBe(true);
+  });
 });

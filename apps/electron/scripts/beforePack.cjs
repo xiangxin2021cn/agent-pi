@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const https = require('https');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -16,11 +17,14 @@ const GIT_FOR_WINDOWS_INSTALLER = `Git-${GIT_FOR_WINDOWS_VERSION}-64-bit.exe`;
 const GIT_FOR_WINDOWS_URL =
   `https://github.com/git-for-windows/git/releases/download/v${GIT_FOR_WINDOWS_VERSION}.windows.1/${GIT_FOR_WINDOWS_INSTALLER}`;
 const MIN_GIT_INSTALLER_BYTES = 50 * 1024 * 1024;
+const MINERU_OPEN_API_VERSION = '0.5.9';
+const MIN_MINERU_OPEN_API_BYTES = 1024 * 1024;
 
 module.exports = async function beforePack(context) {
   stageHelperServers(context);
   stageClaudeAgentSdk(context);
   stageRipgrep(context);
+  stageMineruOpenApi(context);
 
   if (context.electronPlatformName === 'win32') {
     const installerPath = path.join(
@@ -190,6 +194,38 @@ function stageRipgrep(context) {
   console.log('beforePack: staged @vscode/ripgrep');
 }
 
+function stageMineruOpenApi(context) {
+  const projectDir = context.packager.projectDir;
+  const workspaceRoot = path.resolve(projectDir, '..', '..');
+  const platform = context.electronPlatformName;
+  const arch = normalizeBuilderArch(context.arch);
+  const platformKey = `${platform}-${arch}`;
+  const packageName = `mineru-open-api-${platformKey}`;
+  const binaryName = platform === 'win32' ? 'mineru-open-api.exe' : 'mineru-open-api';
+  let packageDir = path.join(workspaceRoot, 'node_modules', packageName);
+  let tempPackageDir;
+
+  if (!fs.existsSync(path.join(packageDir, 'bin', binaryName))) {
+    tempPackageDir = fetchNpmPackage(packageName, MINERU_OPEN_API_VERSION);
+    packageDir = tempPackageDir;
+  }
+
+  try {
+    const sourceBinary = path.join(packageDir, 'bin', binaryName);
+    const destBinary = path.join(projectDir, 'resources', 'bin', platformKey, binaryName);
+    copyFile(sourceBinary, destBinary);
+    if (platform !== 'win32') {
+      fs.chmodSync(destBinary, 0o755);
+    }
+    assertMineruOpenApiBinary(destBinary);
+    console.log(`beforePack: staged MinerU Open API ${MINERU_OPEN_API_VERSION} (${platformKey})`);
+  } finally {
+    if (tempPackageDir) {
+      fs.rmSync(path.dirname(tempPackageDir), { recursive: true, force: true });
+    }
+  }
+}
+
 function getClaudeAgentSdkBinaryPackage(context) {
   const arch = normalizeBuilderArch(context.arch);
   const platform = context.electronPlatformName;
@@ -227,6 +263,54 @@ function assertClaudeBinary(binaryDest, platform) {
   if (size < 50 * 1024 * 1024) {
     throw new Error(`Claude Agent SDK binary is too small: ${binaryPath} (${size} bytes)`);
   }
+}
+
+function assertMineruOpenApiBinary(binaryPath) {
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(`MinerU Open API binary is missing: ${binaryPath}`);
+  }
+  const size = fs.statSync(binaryPath).size;
+  if (size < MIN_MINERU_OPEN_API_BYTES) {
+    throw new Error(`MinerU Open API binary is too small: ${binaryPath} (${size} bytes)`);
+  }
+}
+
+function fetchNpmPackage(packageName, version) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${packageName}-`));
+  const result = spawnSync('npm', ['pack', `${packageName}@${version}`], {
+    cwd: tempDir,
+    encoding: 'utf8',
+  });
+
+  if (result.error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`npm pack ${packageName}@${version} failed with exit code ${result.status}`);
+  }
+
+  const tarballName = result.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+  if (!tarballName) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`npm pack ${packageName}@${version} did not produce a tarball`);
+  }
+
+  const tarResult = spawnSync('tar', ['-xzf', tarballName], {
+    cwd: tempDir,
+    stdio: 'inherit',
+  });
+  if (tarResult.error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw tarResult.error;
+  }
+  if (tarResult.status !== 0) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(`extracting ${tarballName} failed with exit code ${tarResult.status}`);
+  }
+
+  return path.join(tempDir, 'package');
 }
 
 function readPackageVersion(packageDir) {

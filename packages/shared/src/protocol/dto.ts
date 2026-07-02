@@ -28,6 +28,7 @@ import type {
   CredentialInputMode as SharedCredentialInputMode,
   CredentialAuthRequest as SharedCredentialAuthRequest,
 } from '../agent/index'
+import type { WorkspaceDocumentExtractionConfig } from '../workspaces/types'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@craft-agent/core/types'
@@ -361,6 +362,9 @@ export interface FileAttachment {
   text?: string
   size: number
   thumbnailBase64?: string
+  storedPath?: string
+  markdownPath?: string
+  extractionManifestPath?: string
 }
 
 export type AttachmentDialogMode = 'files' | 'folders'
@@ -692,12 +696,18 @@ export interface WorkspaceSettings {
   localMcpEnabled?: boolean
   defaultLlmConnection?: string
   enabledSourceSlugs?: string[]
+  documentExtraction?: WorkspaceDocumentExtractionConfig
   goalLoop?: {
     defaultMode?: Extract<SessionGoalMode, 'off' | 'check_only' | 'auto_improve'>
     qualityMode?: 'standard' | 'council'
     reviewerModels?: Record<string, string>
     maxExtraReviewers?: number
   }
+}
+
+export interface MineruCredentialStatus {
+  configured: boolean
+  updatedAt?: number
 }
 
 export type ProjectMemorySessionStatusValue =

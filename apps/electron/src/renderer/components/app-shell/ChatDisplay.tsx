@@ -64,6 +64,7 @@ import {
   type UserTurn,
   type SystemTurn,
   type AuthRequestTurn,
+  type UserMessageFileOpenOptions,
 } from "@craft-agent/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
@@ -124,6 +125,12 @@ function isStackedActivityTool(activity: ActivityItem): boolean {
   return toolName === 'bash' || toolName.startsWith('mcp__') || toolName.startsWith('browser_')
 }
 
+function getOverlayFilePath(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined
+  const filePath = (data as { filePath?: unknown }).filePath
+  return typeof filePath === 'string' && filePath.trim() ? filePath : undefined
+}
+
 function getTurnKey(turn: Turn): string {
   if (turn.type === 'user') return `user-${turn.message.id}`
   if (turn.type === 'system') return `system-${turn.message.id}`
@@ -134,7 +141,7 @@ function getTurnKey(turn: Turn): string {
 interface ChatDisplayProps {
   session: Session | null
   onSendMessage: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, options?: UserMessageFileOpenOptions) => void
   onOpenUrl: (url: string) => void
   // Model selection
   currentModel: string
@@ -520,6 +527,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Panel focus state (for multi-panel auto-scroll behavior)
   const appShellContext = useAppShellContext()
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
+  const getMarkdownDownloadHandler = useCallback((filePath?: string) => {
+    if (!filePath || !appShellContext.onDownloadMarkdownPreview) return undefined
+    return (content: string) => appShellContext.onDownloadMarkdownPreview!(filePath, content)
+  }, [appShellContext])
+  const getMarkdownExportHandler = useCallback((filePath?: string) => {
+    if (!filePath || !appShellContext.onExportMarkdownPreview) return undefined
+    return (format: 'pdf' | 'docx', content: string) => appShellContext.onExportMarkdownPreview!(filePath, format, content)
+  }, [appShellContext])
 
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
@@ -1045,6 +1060,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (!overlayState || overlayState.type !== 'activity') return null
     return extractOverlayData(overlayState.activity)
   }, [overlayState])
+  const activityOutputFilePath = useMemo(() => getOverlayFilePath(activityOutputOverlayData), [activityOutputOverlayData])
 
   // Stacked input/output cards are only enabled for Bash and MCP tools
   const useStackedActivityOverlay = useMemo(() => {
@@ -2072,6 +2088,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               variant: 'blue',
             }}
             error={activityOutputOverlayData.error}
+            onDownload={getMarkdownDownloadHandler(activityOutputFilePath)}
+            onExport={getMarkdownExportHandler(activityOutputFilePath)}
           />
         ) : detectLanguage(activityOutputOverlayData.content) === 'markdown' ? (
           <DocumentFormattedMarkdownOverlay
@@ -2080,12 +2098,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             content={activityOutputOverlayData.content}
             onOpenUrl={onOpenUrl}
             onOpenFile={onOpenFile}
+            filePath={activityOutputFilePath}
             typeBadge={{
               icon: Info,
               label: overlayState.activity.displayName || overlayState.activity.toolName || 'Activity',
               variant: 'blue',
             }}
             error={activityOutputOverlayData.error}
+            onDownload={getMarkdownDownloadHandler(activityOutputFilePath)}
+            onExport={getMarkdownExportHandler(activityOutputFilePath)}
           />
         ) : (
           <GenericOverlay
@@ -2154,7 +2175,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
  */
 interface MessageBubbleProps {
   message: Message
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, options?: UserMessageFileOpenOptions) => void
   onOpenUrl: (url: string) => void
   sessionId?: string
   /**

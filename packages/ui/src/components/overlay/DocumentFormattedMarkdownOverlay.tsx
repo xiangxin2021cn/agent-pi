@@ -11,15 +11,23 @@
  * Uses FullscreenOverlayBase for portal, traffic lights, ESC handling, and header.
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
-import { Download, Eye, Pencil, Save, ListTodo } from 'lucide-react'
+import { useEffect, useState, type ChangeEvent, type ReactNode } from 'react'
+import { Download, Eye, Pencil, Save, ListTodo, Sparkles, X } from 'lucide-react'
 import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
 import { Markdown, TiptapMarkdownEditor } from '../markdown'
+import type { TiptapMarkdownSelectionContextMenuRequest } from '../markdown'
 import type { AnnotationV1 } from '@craft-agent/core'
 import type { ExternalOpenAnnotationRequest } from '../annotations/use-annotation-interaction-controller'
 import { FullscreenOverlayBase } from './FullscreenOverlayBase'
 import type { OverlayTypeBadge } from './FullscreenOverlayBaseHeader'
 import { AnnotatableMarkdownDocument } from './AnnotatableMarkdownDocument'
+
+export interface MarkdownSelectionRewriteRequest {
+  selectedText: string
+  instruction: string
+  fullContent: string
+  filePath?: string
+}
 
 export interface DocumentFormattedMarkdownOverlayProps {
   /** The content to display (markdown) */
@@ -68,6 +76,8 @@ export interface DocumentFormattedMarkdownOverlayProps {
   onDownload?: (content: string) => Promise<{ path: string } | null>
   /** Export Markdown content to a document format. */
   onExport?: (format: Extract<MarkdownExportFormat, 'pdf' | 'docx'>, content: string) => Promise<{ path: string } | null>
+  /** Rewrite selected Markdown through the host app's agent flow. */
+  onRewriteSelection?: (request: MarkdownSelectionRewriteRequest) => Promise<string>
 }
 
 function isEditableMarkdownPath(filePath?: string): boolean {
@@ -123,6 +133,7 @@ export function DocumentFormattedMarkdownOverlay({
   onSave,
   onDownload,
   onExport,
+  onRewriteSelection,
 }: DocumentFormattedMarkdownOverlayProps) {
   const canEdit = editable && isEditableMarkdownPath(filePath) && !!onSave
   const [mode, setMode] = useState<'preview' | 'edit'>('preview')
@@ -134,9 +145,14 @@ export function DocumentFormattedMarkdownOverlay({
   const [exportingFormat, setExportingFormat] = useState<MarkdownExportFormat | null>(null)
   const [localError, setLocalError] = useState<string | undefined>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>()
+  const [rewriteSelection, setRewriteSelection] = useState<TiptapMarkdownSelectionContextMenuRequest | null>(null)
+  const [rewriteInstruction, setRewriteInstruction] = useState('')
+  const [rewritePreview, setRewritePreview] = useState<string | null>(null)
+  const [isRewritingSelection, setIsRewritingSelection] = useState(false)
   const visibleContent = canEdit ? draftContent : content
   const hasContent = visibleContent.trim().length > 0
   const isDirty = canEdit && draftContent !== savedContent
+  const canRewriteSelection = canEdit && mode === 'edit' && !!onRewriteSelection
 
   useEffect(() => {
     setDraftContent(content)
@@ -145,7 +161,18 @@ export function DocumentFormattedMarkdownOverlay({
     setMode('preview')
     setLocalError(undefined)
     setStatusMessage(undefined)
+    setRewriteSelection(null)
+    setRewriteInstruction('')
+    setRewritePreview(null)
   }, [content, filePath, sourceMtimeMs])
+
+  useEffect(() => {
+    if (mode !== 'edit') {
+      setRewriteSelection(null)
+      setRewriteInstruction('')
+      setRewritePreview(null)
+    }
+  }, [mode])
 
   const handleSave = async () => {
     if (!canEdit || !onSave || isSaving || !isDirty) return
@@ -172,7 +199,7 @@ export function DocumentFormattedMarkdownOverlay({
     setLocalError(undefined)
     setStatusMessage(undefined)
     try {
-      const result = await onExport(format, draftContent)
+      const result = await onExport(format, visibleContent)
       if (result?.path) {
         setStatusMessage(`Exported: ${result.path}`)
       }
@@ -189,7 +216,7 @@ export function DocumentFormattedMarkdownOverlay({
     setLocalError(undefined)
     setStatusMessage(undefined)
     try {
-      const result = await onDownload(draftContent)
+      const result = await onDownload(visibleContent)
       if (result?.path) {
         setStatusMessage(`Saved: ${result.path}`)
       }
@@ -200,17 +227,81 @@ export function DocumentFormattedMarkdownOverlay({
     }
   }
 
-  const headerActions = canEdit ? (
+  const handleSelectionContextMenu = (request: TiptapMarkdownSelectionContextMenuRequest) => {
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    setRewriteSelection(request)
+    setRewriteInstruction('')
+    setRewritePreview(null)
+  }
+
+  const closeRewriteSelection = () => {
+    if (isRewritingSelection) return
+    setRewriteSelection(null)
+    setRewriteInstruction('')
+    setRewritePreview(null)
+  }
+
+  const handleRewriteInstructionChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    setRewriteInstruction(event.target.value)
+    setRewritePreview(null)
+  }
+
+  const handleRewriteSelection = async () => {
+    if (!rewriteSelection || !onRewriteSelection || isRewritingSelection) return
+
+    const instruction = rewriteInstruction.trim()
+    if (!instruction) {
+      setLocalError('Enter an instruction for the selected text')
+      return
+    }
+
+    setIsRewritingSelection(true)
+    setLocalError(undefined)
+    setStatusMessage(undefined)
+    try {
+      const replacement = await onRewriteSelection({
+        selectedText: rewriteSelection.selectedText,
+        instruction,
+        fullContent: rewriteSelection.markdown || draftContent,
+        filePath,
+      })
+      if (!replacement.trim()) {
+        throw new Error('AI rewrite returned empty content')
+      }
+      setRewritePreview(replacement)
+      setStatusMessage('Review AI rewrite before applying')
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Failed to rewrite selection')
+    } finally {
+      setIsRewritingSelection(false)
+    }
+  }
+
+  const handleApplyRewritePreview = () => {
+    if (!rewriteSelection || rewritePreview == null || isRewritingSelection) return
+    rewriteSelection.replaceSelection(rewritePreview)
+    setRewriteSelection(null)
+    setRewriteInstruction('')
+    setRewritePreview(null)
+    setStatusMessage('Selection updated')
+  }
+
+  const headerActions = canEdit || onDownload || onExport ? (
     <div className="flex items-center gap-1">
-      <HeaderIconButton
-        title={mode === 'edit' ? 'Preview Markdown' : 'Edit Markdown'}
-        onClick={() => setMode(mode === 'edit' ? 'preview' : 'edit')}
-      >
-        {mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-      </HeaderIconButton>
-      <HeaderIconButton title="Save Markdown" disabled={!isDirty || isSaving} onClick={handleSave}>
-        <Save className="h-4 w-4" />
-      </HeaderIconButton>
+      {canEdit && (
+        <>
+          <HeaderIconButton
+            title={mode === 'edit' ? 'Preview Markdown' : 'Edit Markdown'}
+            onClick={() => setMode(mode === 'edit' ? 'preview' : 'edit')}
+          >
+            {mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+          </HeaderIconButton>
+          <HeaderIconButton title="Save Markdown" disabled={!isDirty || isSaving} onClick={handleSave}>
+            <Save className="h-4 w-4" />
+          </HeaderIconButton>
+        </>
+      )}
       {onDownload && (
         <HeaderIconButton title="Download Markdown" disabled={isDownloading} onClick={handleDownload}>
           <Download className="h-4 w-4" />
@@ -272,6 +363,7 @@ export function DocumentFormattedMarkdownOverlay({
                   content={draftContent}
                   onUpdate={setDraftContent}
                   editable
+                  onSelectionContextMenu={canRewriteSelection ? handleSelectionContextMenu : undefined}
                   markdownEngine="official"
                   className="min-h-[56vh] rounded-[8px] border border-border/50 bg-background px-4 py-3 text-foreground focus-within:border-ring focus-within:ring-1 focus-within:ring-ring"
                 />
@@ -304,6 +396,75 @@ export function DocumentFormattedMarkdownOverlay({
             </div>
           </div>
         </div>
+        {rewriteSelection && canRewriteSelection && (
+          <div
+            className="fixed z-[430] max-h-[calc(100vh-32px)] w-[360px] max-w-[calc(100vw-32px)] overflow-auto rounded-[8px] border border-border/70 bg-background p-3 shadow-modal-small"
+            style={{
+              left: Math.max(16, Math.min(rewriteSelection.clientX, window.innerWidth - 376)),
+              top: Math.max(16, Math.min(rewriteSelection.clientY, window.innerHeight - 230)),
+            }}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="truncate">AI edit selection</span>
+              </div>
+              <button
+                type="button"
+                title="Close"
+                aria-label="Close"
+                disabled={isRewritingSelection}
+                onClick={closeRewriteSelection}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-40"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <textarea
+              value={rewriteInstruction}
+              onChange={handleRewriteInstructionChange}
+              placeholder="Rewrite requirement"
+              disabled={isRewritingSelection}
+              className="min-h-[88px] w-full resize-none rounded-[8px] border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:opacity-60"
+              autoFocus
+            />
+            {rewritePreview != null && (
+              <div className="mt-3 grid gap-2 text-xs">
+                <div>
+                  <div className="mb-1 font-medium text-muted-foreground">Original</div>
+                  <div className="max-h-28 overflow-auto rounded-[8px] border border-destructive/20 bg-destructive/5 px-3 py-2 text-destructive-foreground/90 whitespace-pre-wrap">
+                    {rewriteSelection.selectedText}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 font-medium text-muted-foreground">Proposed</div>
+                  <div className="max-h-32 overflow-auto rounded-[8px] border border-success/25 bg-success/5 px-3 py-2 text-foreground whitespace-pre-wrap">
+                    {rewritePreview}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeRewriteSelection}
+                disabled={isRewritingSelection}
+                className="inline-flex h-8 items-center justify-center rounded-[6px] px-3 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={rewritePreview == null ? handleRewriteSelection : handleApplyRewritePreview}
+                disabled={isRewritingSelection || !rewriteInstruction.trim()}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-[6px] bg-primary px-3 text-xs font-medium text-primary-foreground shadow-minimal disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {isRewritingSelection ? 'Editing...' : rewritePreview == null ? 'Preview' : 'Apply'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </FullscreenOverlayBase>
   )

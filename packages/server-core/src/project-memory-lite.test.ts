@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath } from '@craft-agent/shared/sessions'
 import {
   ensureProjectMemoryLite,
+  recordProjectMemoryDocumentExtraction,
   loadProjectMemoryReviewerPerformanceSummary,
   recordProjectMemoryFormalOutput,
   recordProjectMemoryGoalAudit,
@@ -286,6 +287,107 @@ describe('ensureProjectMemoryLite', () => {
           type: 'FormalOutputCreated',
           outputPath,
           sourcePath,
+        }),
+      ]))
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true })
+    }
+  })
+
+  test('records MinerU extracted documents as reusable source memory', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-brain-'))
+    try {
+      const sourcePath = join(workingDirectory, '.agent-pi', 'sessions', 'session-3', 'attachments', 'tender.pdf')
+      const markdownPath = join(workingDirectory, '.agent-pi', 'sessions', 'session-3', 'attachments', 'tender.mineru.md')
+      const rawJsonPath = join(workingDirectory, '.agent-pi', 'sessions', 'session-3', 'attachments', 'tender.mineru.raw.json')
+      const cleanupAuditPath = join(workingDirectory, '.agent-pi', 'sessions', 'session-3', 'attachments', 'tender.mineru.cleanup.json')
+      const manifestPath = join(workingDirectory, '.agent-pi', 'sessions', 'session-3', 'attachments', 'tender.mineru.manifest.json')
+      await mkdir(dirname(rawJsonPath), { recursive: true })
+      await writeFile(rawJsonPath, JSON.stringify({
+        pages: [
+          {
+            page_idx: 0,
+            blocks: [
+              { type: 'title', bbox: [1, 2, 3, 4], text: 'Scope of works' },
+              { block_type: 'text', text: 'Contractor must provide signed schedules.' },
+            ],
+          },
+        ],
+      }), 'utf8')
+
+      await recordProjectMemoryDocumentExtraction({
+        workingDirectory,
+        sessionId: 'session-3',
+        manifestPath,
+        manifest: {
+          schemaVersion: 1,
+          provider: 'mineru',
+          sourcePath,
+          sourceName: 'tender.pdf',
+          markdownPath,
+          rawJsonPath,
+          cleanupAuditPath,
+          model: 'vlm',
+          cleanupScanNoise: true,
+          createdAt: '2026-07-02T00:00:00.000Z',
+        },
+      })
+
+      const brainPath = getProjectBrainPath(workingDirectory)!
+      await expect(readJsonLines(join(brainPath, 'sources', 'sources.jsonl'))).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'document_extraction_source',
+          provider: 'mineru',
+          sourcePath,
+          markdownPath,
+          rawJsonPath,
+          cleanupAuditPath,
+          manifestPath,
+          citationBlockCount: 2,
+          cleanupScanNoise: true,
+        }),
+      ]))
+      await expect(readJsonLines(join(brainPath, 'citations.jsonl'))).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'document_extraction',
+          provider: 'mineru',
+          sourcePath,
+          targetPath: markdownPath,
+          manifestPath,
+        }),
+        expect.objectContaining({
+          type: 'document_extraction_block',
+          sourcePath,
+          rawJsonPath,
+          manifestPath,
+          blockId: 'mineru-block-1',
+          blockType: 'title',
+          page: 1,
+          pageIndex: 0,
+          bbox: [1, 2, 3, 4],
+          jsonPath: '$.pages[0].blocks[0]',
+          textPreview: 'Scope of works',
+        }),
+      ]))
+      await expect(readJsonLines(join(brainPath, 'facts.jsonl'))).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'document_extraction_fact',
+          provider: 'mineru',
+          sourcePath,
+          markdownPath,
+          rawJsonPath,
+          cleanupAuditPath,
+          manifestPath,
+          citationBlockCount: 2,
+          model: 'vlm',
+        }),
+      ]))
+      await expect(readJsonLines(join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME))).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'document_extraction_source',
+          trust: 'verified',
+          path: markdownPath,
+          sourcePaths: [sourcePath, markdownPath, rawJsonPath, cleanupAuditPath, manifestPath],
         }),
       ]))
     } finally {

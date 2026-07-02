@@ -90,6 +90,22 @@ export type {
   BuiltServers,
 } from './server-builder.ts';
 
+// Recommended Sources (available to install, never enabled by default)
+export {
+  ANYSEARCH_SOURCE_ID,
+  ANYSEARCH_SOURCE_SLUG,
+  ANYSEARCH_MCP_URL,
+  ANYSEARCH_DOCS_URL,
+  ANYSEARCH_API_KEYS_URL,
+  getRecommendedSourceTemplates,
+  getRecommendedSourceTemplate,
+  installRecommendedSource,
+} from './recommended-sources.ts';
+export type {
+  RecommendedSourceId,
+  RecommendedSourceTemplate,
+} from './recommended-sources.ts';
+
 // Built-in Sources (always available in every workspace)
 export {
   getDocsSource,

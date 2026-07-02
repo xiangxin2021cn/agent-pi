@@ -20,6 +20,9 @@ describe('Windows Git installer packaging', () => {
     expect(beforePack).toContain('stageClaudeAgentSdk(context)')
     expect(beforePack).toContain('claude-agent-sdk-binary')
     expect(beforePack).toContain('stageRipgrep(context)')
+    expect(beforePack).toContain("const MINERU_OPEN_API_VERSION = '0.5.9'")
+    expect(beforePack).toContain('stageMineruOpenApi(context)')
+    expect(beforePack).toContain('mineru-open-api-${platformKey}')
     expect(nsisInclude).toContain('Git-2.55.0-64-bit.exe')
     expect(nsisInclude).toContain('-BundledVersion "2.55.0"')
     expect(buildWin).toContain('$GitForWindowsVersion = "2.55.0"')
@@ -42,6 +45,10 @@ describe('Windows Git installer packaging', () => {
     expect(config.win?.extraResources).toContainEqual({
       from: 'resources/installers/windows',
       to: 'installers/windows',
+    })
+    expect(config.win?.extraResources).toContainEqual({
+      from: 'resources/bin/win32-x64',
+      to: 'app/resources/bin/win32-x64',
     })
   })
 })

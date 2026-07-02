@@ -800,7 +800,15 @@ export async function testBackendConnection(args: {
       const enriched = base.includes('subprocess stderr') ? base : withStderrContext(base);
       return { success: false, error: enriched };
     } finally {
-      agent.destroy();
+      try {
+        if (agent.disposeForRestart) {
+          await agent.disposeForRestart();
+        } else {
+          agent.destroy();
+        }
+      } catch {
+        agent.destroy();
+      }
     }
   } catch (error) {
     return {

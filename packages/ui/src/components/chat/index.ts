@@ -11,7 +11,7 @@ export { TurnCard, ResponseCard, SIZE_CONFIG, ActivityStatusIcon, type TurnCardP
 export { InlineExecution, mapToolEventToActivity, type InlineExecutionProps, type InlineExecutionStatus, type InlineActivityItem } from './InlineExecution'
 export { TurnCardActionsMenu, type TurnCardActionsMenuProps } from './TurnCardActionsMenu'
 export { SessionViewer, type SessionViewerProps, type SessionViewerMode } from './SessionViewer'
-export { UserMessageBubble, type UserMessageBubbleProps } from './UserMessageBubble'
+export { UserMessageBubble, type UserMessageBubbleProps, type UserMessageFileOpenOptions } from './UserMessageBubble'
 export { SystemMessage, type SystemMessageProps, type SystemMessageType } from './SystemMessage'
 
 // Attachment helpers

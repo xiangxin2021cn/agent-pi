@@ -1,5 +1,10 @@
 import { open, mkdir, appendFile, writeFile, readFile } from 'fs/promises'
 import { basename, dirname, extname, join } from 'path'
+import {
+  extractMineruCitationBlocks,
+  type MineruCitationBlock,
+  type MineruExtractionManifest,
+} from '@craft-agent/shared/document-extraction/mineru'
 import type { ProjectMemoryContextEntry, SessionGoalAuditEvidence, SessionGoalAuditResult, SessionGoalState } from '@craft-agent/shared/sessions'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath } from '@craft-agent/shared/sessions'
 import { pathStartsWith } from '@craft-agent/shared/utils'
@@ -23,6 +28,14 @@ export interface ProjectMemoryFormalOutputInput {
   sourcePath?: string
   outputPath: string
   reason?: 'user_promoted' | 'formal_output'
+  createdAt?: number
+}
+
+export interface ProjectMemoryDocumentExtractionInput {
+  workingDirectory: string
+  sessionId: string
+  manifestPath: string
+  manifest: MineruExtractionManifest
   createdAt?: number
 }
 
@@ -319,6 +332,91 @@ export async function recordProjectMemoryFormalOutput(input: ProjectMemoryFormal
   }])
 }
 
+export async function recordProjectMemoryDocumentExtraction(input: ProjectMemoryDocumentExtractionInput): Promise<void> {
+  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory)
+  const createdAt = input.createdAt ?? parseManifestCreatedAt(input.manifest.createdAt)
+  const id = `${input.sessionId}:document-extraction:${input.manifest.sourcePath}`
+  const sourcePaths = [
+    input.manifest.sourcePath,
+    input.manifest.markdownPath,
+    input.manifest.rawJsonPath,
+    input.manifest.cleanupAuditPath,
+    input.manifestPath,
+  ].filter((path): path is string => typeof path === 'string' && path.length > 0)
+  const citationBlocks = await loadMineruCitationBlocks(input.manifest.rawJsonPath)
+
+  await appendJsonl(join(brainPath, 'sources', 'sources.jsonl'), {
+    type: 'document_extraction_source',
+    id,
+    provider: input.manifest.provider,
+    sessionId: input.sessionId,
+    sourcePath: input.manifest.sourcePath,
+    sourceName: input.manifest.sourceName,
+    markdownPath: input.manifest.markdownPath,
+    manifestPath: input.manifestPath,
+    rawJsonPath: input.manifest.rawJsonPath,
+    cleanupAuditPath: input.manifest.cleanupAuditPath,
+    citationBlockCount: citationBlocks.length,
+    model: input.manifest.model,
+    cleanupScanNoise: input.manifest.cleanupScanNoise,
+    createdAt,
+  })
+  await appendJsonl(join(brainPath, 'citations.jsonl'), {
+    type: 'document_extraction',
+    provider: input.manifest.provider,
+    sourcePath: input.manifest.sourcePath,
+    targetType: 'extracted_markdown',
+    targetPath: input.manifest.markdownPath,
+    manifestPath: input.manifestPath,
+    sessionId: input.sessionId,
+    createdAt,
+  })
+  await appendJsonl(join(brainPath, 'facts.jsonl'), {
+    type: 'document_extraction_fact',
+    provider: input.manifest.provider,
+    sourcePath: input.manifest.sourcePath,
+    markdownPath: input.manifest.markdownPath,
+    rawJsonPath: input.manifest.rawJsonPath,
+    cleanupAuditPath: input.manifest.cleanupAuditPath,
+    manifestPath: input.manifestPath,
+    citationBlockCount: citationBlocks.length,
+    model: input.manifest.model,
+    cleanupScanNoise: input.manifest.cleanupScanNoise,
+    sessionId: input.sessionId,
+    createdAt,
+  })
+  for (const block of citationBlocks) {
+    await appendJsonl(join(brainPath, 'citations.jsonl'), {
+      type: 'document_extraction_block',
+      provider: input.manifest.provider,
+      sourcePath: input.manifest.sourcePath,
+      rawJsonPath: input.manifest.rawJsonPath,
+      manifestPath: input.manifestPath,
+      sessionId: input.sessionId,
+      blockId: block.blockId,
+      blockType: block.blockType,
+      page: block.page,
+      pageIndex: block.pageIndex,
+      bbox: block.bbox,
+      jsonPath: block.jsonPath,
+      textPreview: block.text,
+      createdAt,
+    })
+  }
+
+  await writeProjectMemoryLite(input.workingDirectory, [{
+    type: 'document_extraction_source',
+    id,
+    title: input.manifest.sourceName,
+    summary: `${input.manifest.provider} extracted reusable Markdown from this PDF; verify claims against the source, extraction manifest, and raw JSON sidecar when present.`,
+    trust: 'verified',
+    sessionId: input.sessionId,
+    path: input.manifest.markdownPath,
+    sourcePaths,
+    createdAt,
+  }])
+}
+
 export function extractProjectMemoryEntries(
   input: ProjectMemoryGoalAuditInput,
   options: {
@@ -551,6 +649,22 @@ function isAlreadyExistsError(error: unknown): boolean {
     && error !== null
     && 'code' in error
     && (error as { code?: string }).code === 'EEXIST'
+}
+
+function parseManifestCreatedAt(value: string | undefined): number {
+  if (!value) return Date.now()
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+async function loadMineruCitationBlocks(rawJsonPath: string | undefined): Promise<MineruCitationBlock[]> {
+  if (!rawJsonPath) return []
+  try {
+    const content = await readFile(rawJsonPath, 'utf8')
+    return extractMineruCitationBlocks(JSON.parse(content), { limit: 200, maxTextChars: 500 })
+  } catch {
+    return []
+  }
 }
 
 interface ProjectMemoryFileRecord {

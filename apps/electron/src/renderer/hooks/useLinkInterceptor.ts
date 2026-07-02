@@ -17,7 +17,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { classifyFile, type FilePreviewType } from '@craft-agent/ui'
 import { getLanguageFromPath } from '@/lib/file-utils'
-import type { SpreadsheetPreviewResult } from '@craft-agent/shared/protocol'
+import type { FilePreviewReadResult, SpreadsheetPreviewResult } from '@craft-agent/shared/protocol'
+
+export interface FilePreviewOpenOptions {
+  markdownPath?: string
+  extractionManifestPath?: string
+}
 
 // ── Preview state types ────────────────────────────────────────────────────────
 // Each variant carries the data needed to render its specific overlay.
@@ -32,6 +37,8 @@ interface ImagePreview {
 interface PDFPreview {
   type: 'pdf'
   filePath: string
+  markdownPath?: string
+  extractionManifestPath?: string
 }
 
 interface CodePreview {
@@ -69,6 +76,8 @@ interface OfficePreview {
   type: 'office'
   filePath: string
   content: string | null
+  markdownPath?: string
+  extractionManifestPath?: string
   error?: string
 }
 
@@ -76,6 +85,8 @@ interface SpreadsheetPreview {
   type: 'spreadsheet'
   filePath: string
   preview: SpreadsheetPreviewResult | null
+  markdownPath?: string
+  extractionManifestPath?: string
   error?: string
 }
 
@@ -102,13 +113,7 @@ interface LinkInterceptorOptions {
   /** Read file as UTF-8 text (for code, markdown, json, text previews) */
   readFile: (path: string) => Promise<string>
   /** Read a size-bounded text or Office preview for in-app previews */
-  readFilePreview: (path: string) => Promise<{
-    content: string
-    truncated?: boolean
-    originalSize?: number
-    mtimeMs?: number
-    previewKind?: 'text' | 'spreadsheet' | 'office' | 'binary'
-  }>
+  readFilePreview: (path: string) => Promise<FilePreviewReadResult>
   readSpreadsheetPreview: (path: string) => Promise<SpreadsheetPreviewResult>
   /** Read file as data URL (for image previews) */
   readFileDataUrl: (path: string) => Promise<string>
@@ -120,7 +125,7 @@ interface LinkInterceptorOptions {
 
 interface LinkInterceptorResult {
   /** Replacement for App.tsx handleOpenFile — classifies and routes */
-  handleOpenFile: (path: string) => void
+  handleOpenFile: (path: string, options?: FilePreviewOpenOptions) => void
   /** Replacement for App.tsx handleOpenUrl — always opens externally */
   handleOpenUrl: (url: string) => void
   /** Open file directly in external app, bypassing classification/preview */
@@ -165,8 +170,9 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
    * state is needed. This avoids null-content issues in overlay components
    * (e.g., @uiw/react-json-view crashes on null value).
    */
-  const handleOpenFile = useCallback(async (path: string) => {
+  const handleOpenFile = useCallback(async (path: string, options?: FilePreviewOpenOptions) => {
     const classification = classifyFile(path)
+    const previewOptions = normalizeFilePreviewOpenOptions(options)
 
     if (!classification.canPreview || !classification.type) {
       // No preview available — open in default external app
@@ -177,18 +183,23 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     const type = classification.type
 
     // For image/pdf: set state immediately — the overlay handles its own async loading
-    if (type === 'image' || type === 'pdf') {
+    if (type === 'image') {
       setPreviewState({ type, filePath: path })
+      return
+    }
+
+    if (type === 'pdf') {
+      setPreviewState({ type, filePath: path, ...previewOptions })
       return
     }
 
     if (type === 'spreadsheet') {
       try {
         const preview = await optionsRef.current.readSpreadsheetPreview(path)
-        setPreviewState({ type, filePath: path, preview })
+        setPreviewState({ type, filePath: path, preview, ...previewOptions })
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Failed to read spreadsheet'
-        setPreviewState({ type, filePath: path, preview: null, error: errorMsg })
+        setPreviewState({ type, filePath: path, preview: null, error: errorMsg, ...previewOptions })
       }
       return
     }
@@ -196,8 +207,9 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     // For text-based files: read content first, then show overlay with content ready.
     // Local filesystem reads are near-instant — no loading state needed.
     try {
-      const preview = await optionsRef.current.readFilePreview(path)
-      const emptyPreviewError = getEmptyPreviewError(path, preview.content, preview.originalSize)
+      const previewPath = type === 'office' && previewOptions.markdownPath ? previewOptions.markdownPath : path
+      const { preview, usedPath } = await readFilePreviewWithFallback(previewPath, path, optionsRef.current.readFilePreview)
+      const emptyPreviewError = getEmptyPreviewError(usedPath, preview.content, preview.originalSize)
       if (type === 'markdown') {
         setPreviewState({
           type,
@@ -210,11 +222,11 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
         return
       }
       const state = buildInitialTextState(type, path)
-      setPreviewState({ ...state, content: preview.content, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
+      setPreviewState({ ...state, content: preview.content, ...previewOptions, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to read file'
       const state = buildInitialTextState(type, path)
-      setPreviewState({ ...state, content: '', error: errorMsg } as FilePreviewState)
+      setPreviewState({ ...state, content: '', ...previewOptions, error: errorMsg } as FilePreviewState)
     }
   }, []) // Stable: uses optionsRef
 
@@ -269,6 +281,28 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     revealCurrentInFinder,
     readFileDataUrl,
     readFileBinary,
+  }
+}
+
+function normalizeFilePreviewOpenOptions(options?: FilePreviewOpenOptions): FilePreviewOpenOptions {
+  return {
+    ...(options?.markdownPath?.trim() ? { markdownPath: options.markdownPath } : {}),
+    ...(options?.extractionManifestPath?.trim() ? { extractionManifestPath: options.extractionManifestPath } : {}),
+  }
+}
+
+async function readFilePreviewWithFallback(
+  preferredPath: string,
+  fallbackPath: string,
+  readFilePreview: (path: string) => Promise<FilePreviewReadResult>
+): Promise<{ preview: FilePreviewReadResult; usedPath: string }> {
+  try {
+    return { preview: await readFilePreview(preferredPath), usedPath: preferredPath }
+  } catch (error) {
+    if (preferredPath === fallbackPath) {
+      throw error
+    }
+    return { preview: await readFilePreview(fallbackPath), usedPath: fallbackPath }
   }
 }
 

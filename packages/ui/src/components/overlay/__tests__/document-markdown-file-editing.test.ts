@@ -11,4 +11,15 @@ describe('DocumentFormattedMarkdownOverlay file editing', () => {
     expect(source).toContain('markdownEngine="official"')
     expect(source).not.toContain('<MarkdownSourceEditor')
   })
+
+  it('previews AI selection rewrites before applying them', () => {
+    const source = readFileSync(join(__dirname, '../DocumentFormattedMarkdownOverlay.tsx'), 'utf8')
+
+    expect(source).toContain('rewritePreview')
+    expect(source).toContain('Review AI rewrite before applying')
+    expect(source).toContain('handleApplyRewritePreview')
+    expect(source).toContain('Original')
+    expect(source).toContain('Proposed')
+    expect(source).toContain("rewritePreview == null ? 'Preview' : 'Apply'")
+  })
 })

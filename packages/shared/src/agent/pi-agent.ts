@@ -2053,11 +2053,27 @@ export class PiAgent extends BaseAgent {
         } else if (att.mimeType?.startsWith('image/') && (att.storedPath || att.path)) {
           attachmentParts.push(`[Attached image: ${att.name}]\n[Stored at: ${att.storedPath || att.path}]`);
         } else if (att.mimeType === 'application/pdf' && att.storedPath) {
-          attachmentParts.push(`[Attached PDF: ${att.name}]\n[Stored at: ${att.storedPath}]`);
-        } else if (att.storedPath) {
-          let pathInfo = `[Attached file: ${att.name}]\n[Stored at: ${att.storedPath}]`;
+          let pathInfo = `[Attached PDF: ${att.name}]\n[Stored at: ${att.storedPath}]`;
+          if (att.path && att.path !== att.storedPath) {
+            pathInfo += `\n[Original path: ${att.path}]`;
+          }
           if (att.markdownPath) {
             pathInfo += `\n[Markdown version: ${att.markdownPath}]`;
+          }
+          if (att.extractionManifestPath) {
+            pathInfo += `\n[Extraction manifest: ${att.extractionManifestPath}]`;
+          }
+          attachmentParts.push(pathInfo);
+        } else if (att.storedPath) {
+          let pathInfo = `[Attached file: ${att.name}]\n[Stored at: ${att.storedPath}]`;
+          if (att.path && att.path !== att.storedPath) {
+            pathInfo += `\n[Original path: ${att.path}]`;
+          }
+          if (att.markdownPath) {
+            pathInfo += `\n[Markdown version: ${att.markdownPath}]`;
+          }
+          if (att.extractionManifestPath) {
+            pathInfo += `\n[Extraction manifest: ${att.extractionManifestPath}]`;
           }
           attachmentParts.push(pathInfo);
         }
@@ -2378,8 +2394,11 @@ export class PiAgent extends BaseAgent {
 
     this._sessionToolContext = null;
     // Pool clients are owned by the main process — don't close them here.
-    this.killSubprocess();
-    this.debug('PiAgent destroyed');
+    void this.killSubprocessGracefully().catch((error) => {
+      this.debug(`Failed to gracefully destroy Pi subprocess: ${error instanceof Error ? error.message : String(error)}`);
+      this.killSubprocess();
+    });
+    this.debug('PiAgent destroy requested');
   }
 
   async disposeForRestart(): Promise<void> {

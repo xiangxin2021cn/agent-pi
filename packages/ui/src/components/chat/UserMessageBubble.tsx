@@ -158,6 +158,13 @@ function FileBadgeIcon({ badge }: { badge: ContentBadge }) {
   )
 }
 
+export interface UserMessageFileOpenOptions {
+  markdownPath?: string
+  extractionManifestPath?: string
+}
+
+type UserMessageFileOpenHandler = (path: string, options?: UserMessageFileOpenOptions) => void
+
 /**
  * InlineFileBadge - File/folder badge for inline display within text.
  * Shows proper icon (folder, code file, or generic file) with Tooltip for full path.
@@ -168,7 +175,7 @@ function InlineFileBadge({
   onFileClick
 }: {
   badge: ContentBadge
-  onFileClick?: (path: string) => void
+  onFileClick?: UserMessageFileOpenHandler
 }) {
   // Strip app workspace/session path prefix for cleaner tooltip display
   // e.g. "/Users/.../workspaces/{id}/sessions/{id}/plans/foo.md" → "plans/foo.md"
@@ -222,7 +229,7 @@ function renderContentWithBadges(
   content: string,
   badges: ContentBadge[],
   onUrlClick?: (url: string) => void,
-  onFileClick?: (path: string) => void
+  onFileClick?: UserMessageFileOpenHandler
 ): ReactNode {
   if (badges.length === 0) {
     return (
@@ -310,7 +317,7 @@ export interface UserMessageBubbleProps {
   /** Callback when a URL is clicked */
   onUrlClick?: (url: string) => void
   /** Callback when a file path is clicked */
-  onFileClick?: (path: string) => void
+  onFileClick?: UserMessageFileOpenHandler
   /** Stored attachments (images, documents) */
   attachments?: StoredAttachment[]
   /** Content badges for inline display (sources, skills) */
@@ -422,7 +429,10 @@ export function UserMessageBubble({
               <div
                 key={att.id || i}
                 className="shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                onClick={() => att.storedPath && onFileClick?.(att.storedPath)}
+                onClick={() => att.storedPath && onFileClick?.(att.storedPath, {
+                  markdownPath: att.markdownPath,
+                  extractionManifestPath: att.extractionManifestPath,
+                })}
                 title={t('chat.clickToOpen', { name: att.name })}
               >
                 {isImage ? (

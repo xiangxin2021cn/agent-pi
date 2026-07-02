@@ -41,6 +41,26 @@ export interface WorkspaceGoalLoopConfig {
   maxExtraReviewers?: number;
 }
 
+export type WorkspaceMineruExtractionMode = 'pipeline' | 'vlm' | 'html';
+
+export interface WorkspaceMineruExtractionConfig {
+  /**
+   * Precision PDF/document extraction is opt-in per workspace.
+   * Undefined/false must never trigger MinerU automatically.
+   */
+  enabled?: boolean;
+  /** Optional bundled or system mineru-open-api command path. */
+  commandPath?: string;
+  /** MinerU extraction backend mode. Undefined keeps the provider default. */
+  mode?: WorkspaceMineruExtractionMode;
+  /** Optional scan cleanup pass for repeated watermarks/signature noise. */
+  cleanRepeatedScanNoise?: boolean;
+}
+
+export interface WorkspaceDocumentExtractionConfig {
+  mineru?: WorkspaceMineruExtractionConfig;
+}
+
 /**
  * Local MCP server configuration
  * Controls whether stdio-based (local subprocess) MCP servers can be spawned.
@@ -76,6 +96,7 @@ export interface WorkspaceConfig {
     thinkingLevel?: ThinkingLevel; // Default thinking level for new sessions (default: 'medium')
     colorTheme?: string; // Color theme override for this workspace (preset ID). Undefined = inherit from app default.
     goalLoop?: WorkspaceGoalLoopConfig;
+    documentExtraction?: WorkspaceDocumentExtractionConfig;
   };
 
   /**

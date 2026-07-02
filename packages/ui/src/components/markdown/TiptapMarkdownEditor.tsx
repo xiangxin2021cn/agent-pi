@@ -27,6 +27,14 @@ import './extensions/animated-task-item.css'
 
 export type MarkdownEngine = 'legacy' | 'official'
 
+export interface TiptapMarkdownSelectionContextMenuRequest {
+  selectedText: string
+  markdown: string
+  clientX: number
+  clientY: number
+  replaceSelection: (replacementMarkdown: string) => void
+}
+
 
 function getLegacyMarkdown(editor: { storage: { markdown?: { getMarkdown?: () => string } } }): string {
   return editor.storage.markdown?.getMarkdown?.() ?? ''
@@ -176,6 +184,12 @@ function insertImageNode(
   }).run()
 }
 
+function getCurrentMarkdown(editor: NonNullable<ReturnType<typeof useEditor>>, useOfficialMarkdown: boolean): string {
+  return useOfficialMarkdown
+    ? postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
+    : getLegacyMarkdown(editor as { storage: { markdown?: { getMarkdown?: () => string } } })
+}
+
 async function handleDroppedOrPastedFiles(
   editor: NonNullable<ReturnType<typeof useEditor>>,
   files: File[],
@@ -207,6 +221,8 @@ export interface TiptapMarkdownEditorProps {
   className?: string
   /** Whether the editor is editable */
   editable?: boolean
+  /** Called when editable selected text is right-clicked. */
+  onSelectionContextMenu?: (request: TiptapMarkdownSelectionContextMenuRequest) => void
   /**
    * Migration flag for markdown engine foundations.
    * - `legacy`: tiptap-markdown (default for safe rollout)
@@ -221,10 +237,15 @@ export function TiptapMarkdownEditor({
   placeholder = 'Write something...',
   className,
   editable = true,
+  onSelectionContextMenu,
   markdownEngine = 'legacy',
 }: TiptapMarkdownEditorProps) {
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
+  const onSelectionContextMenuRef = React.useRef(onSelectionContextMenu)
+  onSelectionContextMenuRef.current = onSelectionContextMenu
+  const editableRef = React.useRef(editable)
+  editableRef.current = editable
 
   // Ref for the editor instance — used by the Mathematics onClick callback
   // which is created at extension-configure time (before useEditor returns).
@@ -348,6 +369,47 @@ export function TiptapMarkdownEditor({
         insertMermaidBlock(activeEditor, source, pos)
         return true
       },
+      handleDOMEvents: {
+        contextmenu: (view, event) => {
+          const callback = onSelectionContextMenuRef.current
+          if (!editableRef.current || !callback) return false
+
+          const activeEditor = editorRef.current
+          if (!activeEditor) return false
+
+          const { from, to, empty } = view.state.selection
+          if (empty || from === to) return false
+
+          const mouseEvent = event as MouseEvent
+          const clickedPos = view.posAtCoords({ left: mouseEvent.clientX, top: mouseEvent.clientY })?.pos
+          if (typeof clickedPos === 'number' && (clickedPos < from || clickedPos > to)) return false
+
+          const selectedText = view.state.doc.textBetween(from, to, '\n\n').trim()
+          if (!selectedText) return false
+
+          mouseEvent.preventDefault()
+          callback({
+            selectedText,
+            markdown: getCurrentMarkdown(activeEditor, useOfficialMarkdown),
+            clientX: mouseEvent.clientX,
+            clientY: mouseEvent.clientY,
+            replaceSelection: (replacementMarkdown: string) => {
+              if (activeEditor.isDestroyed) return
+
+              const chain = activeEditor.chain().focus().setTextSelection({ from, to })
+              if (useOfficialMarkdown) {
+                chain
+                  .insertContent(preprocessMarkdownForOfficial(replacementMarkdown), { contentType: 'markdown' } as never)
+                  .run()
+              } else {
+                chain.insertContent(replacementMarkdown).run()
+              }
+              scheduleShikiRefresh(activeEditor)
+            },
+          })
+          return true
+        },
+      },
     },
     onCreate: ({ editor }) => {
       queueMicrotask(() => {
@@ -355,9 +417,7 @@ export function TiptapMarkdownEditor({
       })
     },
     onUpdate: ({ editor }) => {
-      const md = useOfficialMarkdown
-        ? postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
-        : getLegacyMarkdown(editor as { storage: { markdown?: { getMarkdown?: () => string } } })
+      const md = getCurrentMarkdown(editor, useOfficialMarkdown)
       onUpdateRef.current?.(md)
     },
   }, [useOfficialMarkdown, extensions])
@@ -385,9 +445,7 @@ export function TiptapMarkdownEditor({
       // block states (e.g. slash-inserted code blocks) and jump selection.
       if (editor.isFocused) return
 
-      const currentMd = useOfficialMarkdown
-        ? postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
-        : getLegacyMarkdown(editor as { storage: { markdown?: { getMarkdown?: () => string } } })
+      const currentMd = getCurrentMarkdown(editor, useOfficialMarkdown)
 
       if (currentMd !== content) {
         if (useOfficialMarkdown) {

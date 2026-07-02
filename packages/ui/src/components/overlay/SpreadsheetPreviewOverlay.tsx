@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Table2 } from 'lucide-react'
 import type { SpreadsheetPreviewResult } from '@craft-agent/shared/protocol'
 import { PreviewOverlay } from './PreviewOverlay'
+import { MarkdownSidecarActions, type MarkdownSidecarActionsProps } from './MarkdownSidecarActions'
 import { cn } from '../../lib/utils'
 
 export interface SpreadsheetPreviewOverlayProps {
@@ -10,6 +11,7 @@ export interface SpreadsheetPreviewOverlayProps {
   filePath: string
   preview: SpreadsheetPreviewResult | null
   error?: string
+  markdownActions?: Omit<MarkdownSidecarActionsProps, 'onStatus' | 'onError'>
   theme?: 'light' | 'dark'
 }
 
@@ -19,9 +21,12 @@ export function SpreadsheetPreviewOverlay({
   filePath,
   preview,
   error,
+  markdownActions,
   theme = 'light',
 }: SpreadsheetPreviewOverlayProps) {
   const [activeSheetName, setActiveSheetName] = useState<string | null>(preview?.activeSheet ?? null)
+  const [actionError, setActionError] = useState<string | undefined>()
+  const [actionStatus, setActionStatus] = useState<string | undefined>()
 
   useEffect(() => {
     setActiveSheetName(preview?.activeSheet ?? null)
@@ -32,11 +37,21 @@ export function SpreadsheetPreviewOverlay({
     return preview.sheets.find(sheet => sheet.name === activeSheetName) ?? preview.sheets[0]
   }, [preview, activeSheetName])
 
-  const issue = error
+  const issue = actionError
+    ? { label: 'File Action Failed', message: actionError }
+    : error
     ? { label: 'Load Failed', message: error }
     : preview?.truncated
       ? { label: 'Preview truncated', message: 'Only a bounded sample is shown. Open the workbook externally for the full file.' }
       : undefined
+
+  const headerActions = markdownActions?.markdownPath ? (
+    <MarkdownSidecarActions
+      {...markdownActions}
+      onError={setActionError}
+      onStatus={setActionStatus}
+    />
+  ) : undefined
 
   return (
     <PreviewOverlay
@@ -47,9 +62,15 @@ export function SpreadsheetPreviewOverlay({
       filePath={filePath}
       subtitle={activeSheet ? `${activeSheet.totalRows} rows x ${activeSheet.totalCols} cols` : undefined}
       error={issue}
+      headerActions={headerActions}
     >
       <div className="min-h-full flex flex-col justify-center px-6 py-12">
         <div className="w-full max-w-[1180px] mx-auto bg-background rounded-[10px] border border-border/50 shadow-strong overflow-hidden">
+          {actionStatus && (
+            <div className="border-b border-border/50 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+              {actionStatus}
+            </div>
+          )}
           {preview && preview.sheets.length > 1 && (
             <div className="flex items-center gap-1 overflow-x-auto border-b border-border/50 px-3 py-2 bg-muted/20">
               {preview.sheets.map(sheet => (

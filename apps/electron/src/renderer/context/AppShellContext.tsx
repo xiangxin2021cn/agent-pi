@@ -29,6 +29,17 @@ import type { SessionStatus as SessionStatusConfig } from '@/config/session-stat
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
+import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
+import type { UserMessageFileOpenOptions } from '@craft-agent/ui'
+
+type MarkdownDocumentExportFormat = Extract<MarkdownExportFormat, 'pdf' | 'docx'>
+
+export interface MarkdownSelectionRewriteRequest {
+  selectedText: string
+  instruction: string
+  fullContent: string
+  filePath?: string
+}
 
 export interface AppShellContextType {
   // Data
@@ -104,8 +115,14 @@ export interface AppShellContextType {
   ) => void
 
   // File/URL handlers - these can open in tabs or external apps
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, options?: UserMessageFileOpenOptions) => void
   onOpenUrl: (url: string) => void
+  /** Download rendered Markdown content through the app save dialog. */
+  onDownloadMarkdownPreview?: (sourcePath: string, content: string) => Promise<{ path: string } | null>
+  /** Export rendered Markdown content through the app Markdown export pipeline. */
+  onExportMarkdownPreview?: (sourcePath: string, format: MarkdownDocumentExportFormat, content: string) => Promise<{ path: string } | null>
+  /** Rewrite selected Markdown via the normal agent/session path and return replacement content. */
+  onRewriteMarkdownSelection?: (request: MarkdownSelectionRewriteRequest) => Promise<string>
 
   // Workspace
   onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void | Promise<void>

@@ -5,7 +5,7 @@ import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, SessionStatus, NewChatActionParams, ContentBadge, LlmConnectionWithStatus, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@craft-agent/shared/config'
-import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
+import type { FilePreviewReadResult, MarkdownExportFormat } from '@craft-agent/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -33,6 +33,11 @@ import { stripMarkdown } from './utils/text'
 import { coerceInputText } from './lib/input-text'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
+import {
+  buildMarkdownSelectionRewritePrompt,
+  extractMarkdownSelectionReplacement,
+  type MarkdownSelectionRewriteInput,
+} from './lib/selection-rewrite'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { initRendererPerf } from './lib/perf'
@@ -66,6 +71,7 @@ import {
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
+  type MarkdownSidecarActionsProps,
 } from '@craft-agent/ui'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
@@ -88,6 +94,13 @@ type SessionListRefreshOptions = {
 }
 
 const SESSION_REFRESH_LOG_ID_LIMIT = 25
+const MARKDOWN_SELECTION_REWRITE_TIMEOUT_MS = 180_000
+
+type PendingMarkdownSelectionRewrite = {
+  resolve: (value: string) => void
+  reject: (error: Error) => void
+  timeoutId: ReturnType<typeof setTimeout>
+}
 
 function summarizeIds(ids: Iterable<string>, limit = SESSION_REFRESH_LOG_ID_LIMIT) {
   const all = Array.from(ids)
@@ -249,6 +262,7 @@ export default function App() {
   const updateSessionDirect = useSetAtom(updateSessionAtom)
   const replaceLoadedSession = useSetAtom(replaceLoadedSessionAtom)
   const store = useStore()
+  const pendingMarkdownSelectionRewriteRef = useRef<Map<string, PendingMarkdownSelectionRewrite>>(new Map())
 
   // Helper to update a session by ID with partial fields
   // Uses per-session atom directly instead of updating an array
@@ -262,6 +276,42 @@ export default function App() {
       return { ...prev, ...partialUpdates }
     })
   }, [updateSessionDirect])
+
+  const finishPendingMarkdownSelectionRewrite = useCallback((
+    sessionId: string,
+    eventType: string,
+    updatedSession: Session | null,
+  ) => {
+    const pending = pendingMarkdownSelectionRewriteRef.current.get(sessionId)
+    if (!pending) return
+
+    const finish = (callback: () => void) => {
+      clearTimeout(pending.timeoutId)
+      pendingMarkdownSelectionRewriteRef.current.delete(sessionId)
+      callback()
+    }
+
+    if (eventType === 'complete') {
+      const finalMessage = updatedSession?.messages.findLast(
+        (message: Message) => (message.role === 'assistant' || message.role === 'plan') && !message.isIntermediate
+      )
+      const replacement = extractMarkdownSelectionReplacement(finalMessage?.content ?? '')
+      finish(() => {
+        if (replacement.trim()) {
+          pending.resolve(replacement)
+        } else {
+          pending.reject(new Error('AI rewrite returned empty content'))
+        }
+      })
+      return
+    }
+
+    if (eventType === 'error' || eventType === 'typed_error' || eventType === 'interrupted') {
+      const lastMessage = updatedSession?.messages.at(-1)
+      const message = lastMessage?.content?.trim() || `AI rewrite ${eventType.replace('_', ' ')}`
+      finish(() => pending.reject(new Error(message)))
+    }
+  }, [])
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   // Window's workspace ID — shared atom so Root/ThemeProvider stays in sync on switch
@@ -959,6 +1009,7 @@ export default function App() {
 
         // Update atom directly (UI sees update immediately)
         updateSessionDirect(sessionId, () => updatedSession)
+        finishPendingMarkdownSelectionRewrite(sessionId, event.type, updatedSession)
 
         // Handle side effects
         handleEffects(effects, sessionId, event.type)
@@ -1009,6 +1060,7 @@ export default function App() {
 
       // Update per-session atom
       updateSessionDirect(sessionId, () => updatedSession)
+      finishPendingMarkdownSelectionRewrite(sessionId, event.type, updatedSession)
 
       // Update metadata map
       const metaMap = store.get(sessionMetaMapAtom)
@@ -1029,6 +1081,7 @@ export default function App() {
     initializeSessions,
     addSession,
     removeSession,
+    finishPendingMarkdownSelectionRewrite,
     refreshSessionListMetadataFromServer,
     syncSessionOptionsFromSession,
     applyPermissionModeState,
@@ -1280,6 +1333,7 @@ export default function App() {
               ...att,
               storedPath: stored.storedPath,
               markdownPath: stored.markdownPath,
+              extractionManifestPath: stored.extractionManifestPath,
               // Use resized base64 if available (for images that exceeded size limits)
               base64: stored.resizedBase64 ?? att.base64,
             }
@@ -1379,6 +1433,40 @@ export default function App() {
     }
   }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId])
 
+  const handleRewriteMarkdownSelection = useCallback(async (request: MarkdownSelectionRewriteInput): Promise<string> => {
+    if (!windowWorkspaceId) {
+      throw new Error('No active workspace')
+    }
+
+    const activeWorkingDirectory = sessionSelection.selected
+      ? store.get(sessionMetaMapAtom).get(sessionSelection.selected)?.workingDirectory
+      : undefined
+
+    const session = await handleCreateSession(windowWorkspaceId, {
+      name: 'AI selection edit',
+      hidden: true,
+      permissionMode: 'ask',
+      workingDirectory: activeWorkingDirectory ?? 'user_default',
+      systemPromptPreset: 'default',
+    })
+
+    const resultPromise = new Promise<string>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        pendingMarkdownSelectionRewriteRef.current.delete(session.id)
+        reject(new Error('AI rewrite timed out'))
+      }, MARKDOWN_SELECTION_REWRITE_TIMEOUT_MS)
+
+      pendingMarkdownSelectionRewriteRef.current.set(session.id, {
+        resolve,
+        reject,
+        timeoutId,
+      })
+    })
+
+    await handleSendMessage(session.id, buildMarkdownSelectionRewritePrompt(request))
+    return await resultPromise
+  }, [windowWorkspaceId, sessionSelection.selected, store, handleCreateSession, handleSendMessage])
+
   /**
    * Unified handler for all session option changes.
    * Handles persistence and backend sync for each option type.
@@ -1410,6 +1498,11 @@ export default function App() {
     return () => {
       draftSaveTimeoutRef.current.forEach(clearTimeout)
       draftSaveTimeoutRef.current.clear()
+      for (const pending of pendingMarkdownSelectionRewriteRef.current.values()) {
+        clearTimeout(pending.timeoutId)
+        pending.reject(new Error('AI rewrite cancelled'))
+      }
+      pendingMarkdownSelectionRewriteRef.current.clear()
     }
   }, [])
 
@@ -1827,6 +1920,14 @@ export default function App() {
     // File/URL handlers
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
+    onDownloadMarkdownPreview: (sourcePath, content) => downloadMarkdownWithSaveDialog(sourcePath, content),
+    onExportMarkdownPreview: (sourcePath, format, content) => exportMarkdownWithSaveDialog(
+      sourcePath,
+      format,
+      content,
+      (path, options) => window.electronAPI.exportMarkdown(path, options)
+    ),
+    onRewriteMarkdownSelection: handleRewriteMarkdownSelection,
     // Workspace
     onSelectWorkspace: handleSelectWorkspace,
     onRefreshWorkspaces: handleRefreshWorkspaces,
@@ -1871,6 +1972,7 @@ export default function App() {
     handleRespondToCredential,
     handleOpenFile,
     handleOpenUrl,
+    handleRewriteMarkdownSelection,
     handleSelectWorkspace,
     handleRefreshWorkspaces,
     handleOpenSettings,
@@ -2062,8 +2164,10 @@ export default function App() {
               onClose={linkInterceptor.closePreview}
               loadDataUrl={linkInterceptor.readFileDataUrl}
               loadPdfData={linkInterceptor.readFileBinary}
+              readFilePreview={(path) => window.electronAPI.readFilePreview(path)}
               saveTextFile={(path, content, expectedMtimeMs) => window.electronAPI.writeTextFile(path, content, { expectedMtimeMs })}
               exportMarkdown={(path, options) => window.electronAPI.exportMarkdown(path, options)}
+              rewriteMarkdownSelection={handleRewriteMarkdownSelection}
               isDark={isDark}
             />
           )}
@@ -2186,19 +2290,35 @@ function FilePreviewRenderer({
   onClose,
   loadDataUrl,
   loadPdfData,
+  readFilePreview,
   saveTextFile,
   exportMarkdown,
+  rewriteMarkdownSelection,
   isDark,
 }: {
   state: FilePreviewState
   onClose: () => void
   loadDataUrl: (path: string) => Promise<string>
   loadPdfData: (path: string) => Promise<Uint8Array>
+  readFilePreview: (path: string) => Promise<FilePreviewReadResult>
   saveTextFile: (path: string, content: string, expectedMtimeMs?: number) => Promise<{ mtimeMs: number }>
   exportMarkdown: (path: string, options: Parameters<typeof window.electronAPI.exportMarkdown>[1]) => ReturnType<typeof window.electronAPI.exportMarkdown>
+  rewriteMarkdownSelection: (request: MarkdownSelectionRewriteInput) => Promise<string>
   isDark: boolean
 }) {
   const theme = isDark ? 'dark' : 'light' as const
+  const getMarkdownSidecarActions = (markdownPath?: string): Omit<MarkdownSidecarActionsProps, 'onStatus' | 'onError'> | undefined => {
+    if (!markdownPath) return undefined
+    return {
+      markdownPath,
+      readMarkdown: async (path) => {
+        const preview = await readFilePreview(path)
+        return preview.content
+      },
+      onDownload: (path, content) => downloadMarkdownWithSaveDialog(path, content),
+      onExport: (path, format, content) => exportMarkdownWithSaveDialog(path, format, content, exportMarkdown),
+    }
+  }
 
   switch (state.type) {
     case 'image':
@@ -2219,6 +2339,7 @@ function FilePreviewRenderer({
           onClose={onClose}
           filePath={state.filePath}
           loadPdfData={loadPdfData}
+          markdownActions={getMarkdownSidecarActions(state.markdownPath)}
           theme={theme}
         />
       )
@@ -2231,6 +2352,7 @@ function FilePreviewRenderer({
           filePath={state.filePath}
           preview={state.preview}
           error={state.error}
+          markdownActions={getMarkdownSidecarActions(state.markdownPath)}
           theme={theme}
         />
       )
@@ -2268,11 +2390,13 @@ function FilePreviewRenderer({
           onSave={(content, expectedMtimeMs) => saveTextFile(state.filePath, content, expectedMtimeMs)}
           onDownload={(content) => downloadMarkdownWithSaveDialog(state.filePath, content)}
           onExport={(format, content) => exportMarkdownWithSaveDialog(state.filePath, format, content, exportMarkdown)}
+          onRewriteSelection={rewriteMarkdownSelection}
         />
       )
     }
 
-    case 'office':
+    case 'office': {
+      const markdownActionPath = state.markdownPath ?? state.filePath
       return (
         <DocumentFormattedMarkdownOverlay
           isOpen
@@ -2281,8 +2405,11 @@ function FilePreviewRenderer({
           filePath={state.filePath}
           variant="response"
           error={state.error}
+          onDownload={(content) => downloadMarkdownWithSaveDialog(markdownActionPath, content)}
+          onExport={(format, content) => exportMarkdownWithSaveDialog(markdownActionPath, format, content, exportMarkdown)}
         />
       )
+    }
 
     case 'json': {
       // JSONPreviewOverlay expects parsed data, not a raw string.

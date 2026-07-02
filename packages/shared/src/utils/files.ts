@@ -57,6 +57,8 @@ export interface FileAttachment {
   storedPath?: string;
   /** Path to converted markdown version (for office files) */
   markdownPath?: string;
+  /** Path to document extraction manifest/citation metadata */
+  extractionManifestPath?: string;
 }
 
 // Supported image types for Claude API

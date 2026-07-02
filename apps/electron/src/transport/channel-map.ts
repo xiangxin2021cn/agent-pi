@@ -181,6 +181,8 @@ export const CHANNEL_MAP = {
   // Workspace Settings
   getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
   updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
+  getMineruCredentialStatus: invoke(RPC_CHANNELS.workspace.MINERU_CREDENTIAL_STATUS),
+  saveMineruToken: invoke(RPC_CHANNELS.workspace.SAVE_MINERU_TOKEN),
 
   // Folder dialog
   openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER, undefined, WAIT_FOR_USER_DIALOG),
@@ -220,6 +222,7 @@ export const CHANNEL_MAP = {
   // Sources
   getSources: invoke(RPC_CHANNELS.sources.GET),
   createSource: invoke(RPC_CHANNELS.sources.CREATE),
+  installRecommendedSource: invoke(RPC_CHANNELS.sources.INSTALL_RECOMMENDED),
   deleteSource: invoke(RPC_CHANNELS.sources.DELETE),
   startSourceOAuth: invoke(RPC_CHANNELS.sources.START_OAUTH),
   saveSourceCredentials: invoke(RPC_CHANNELS.sources.SAVE_CREDENTIALS),

@@ -22,8 +22,21 @@ import type { StoredAttachment } from '@craft-agent/core/types'
 import { getFileType, getMimeType, readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, getSessionOutputPathFromSessionPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { getCredentialManager } from '@craft-agent/shared/credentials'
+import {
+  buildMineruExtractionManifest,
+  cleanMineruMarkdownScanNoise,
+  getMineruCredentialId,
+  isMineruExtractionEnabled,
+  resolveMineruCommandPath,
+  resolveMineruMode,
+  shouldRunMineruExtraction,
+} from '@craft-agent/shared/document-extraction/mineru'
+import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { resizeImageForAPI, inspectImageBuffer } from '@craft-agent/server-core/services'
 import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
+import { extractJsonWithMineru, extractMarkdownWithMineru } from '../../services/mineru-extraction'
+import { recordProjectMemoryDocumentExtraction } from '../../project-memory-lite'
 import { MarkItDown } from 'markitdown-js'
 import xlsx, { type WorkBook, type WorkSheet } from 'xlsx'
 import { marked } from 'marked'
@@ -51,23 +64,6 @@ const SPREADSHEET_TABLE_MAX_ROWS = 200
 const SPREADSHEET_TABLE_MAX_COLS = 50
 const SPREADSHEET_CELL_TEXT_LIMIT = 160
 const ATTACHMENT_DIALOG_MAX_FILES = 250
-const ATTACHMENT_DIALOG_MAX_DIRECTORIES = 1_000
-const ATTACHMENT_DIALOG_SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  '.svn',
-  '.hg',
-  'dist',
-  'build',
-  '.next',
-  '.nuxt',
-  '.cache',
-  '__pycache__',
-  'vendor',
-  'coverage',
-  '.turbo',
-  'out',
-])
 
 const ATTACHMENT_DIALOG_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
@@ -220,9 +216,20 @@ function buildPathBackedAttachment(filePath: string, size: number, name = basena
   }
 }
 
-function shouldSkipFolderAttachmentEntry(name: string, isDirectory: boolean): boolean {
-  if (name.startsWith('.')) return true
-  return isDirectory && ATTACHMENT_DIALOG_SKIP_DIRS.has(name)
+function buildFolderPathAttachment(folderPath: string): FileAttachment {
+  const text = [
+    `Folder path: ${folderPath}`,
+    '',
+    'The folder contents were not uploaded. Use filesystem tools to scan and analyze this local directory when needed.',
+  ].join('\n')
+  return {
+    type: 'text',
+    path: folderPath,
+    name: basename(folderPath),
+    mimeType: 'text/plain',
+    size: Buffer.byteLength(text, 'utf-8'),
+    text,
+  }
 }
 
 interface AttachmentDialogCollection {
@@ -233,15 +240,13 @@ interface AttachmentDialogCollection {
 
 export async function collectAttachmentDialogFiles(
   selectedPaths: string[],
-  options: { maxFiles?: number; maxDirectories?: number } = {},
+  options: { maxFiles?: number } = {},
 ): Promise<AttachmentDialogCollection> {
   const maxFiles = options.maxFiles ?? ATTACHMENT_DIALOG_MAX_FILES
-  const maxDirectories = options.maxDirectories ?? ATTACHMENT_DIALOG_MAX_DIRECTORIES
   const attachments: FileAttachment[] = []
   const seen = new Set<string>()
   let skippedCount = 0
   let truncated = false
-  let visitedDirectories = 0
 
   const addFile = async (filePath: string, displayName?: string): Promise<void> => {
     if (attachments.length >= maxFiles) {
@@ -284,58 +289,15 @@ export async function collectAttachmentDialogFiles(
       continue
     }
 
-    const rootPath = resolve(selectedPath)
-    const rootName = basename(rootPath)
-    const queue: Array<{ dir: string; relDir: string }> = [{ dir: rootPath, relDir: '' }]
-
-    while (queue.length > 0) {
-      if (attachments.length >= maxFiles) {
-        truncated = true
-        break
-      }
-
-      if (visitedDirectories >= maxDirectories) {
-        truncated = true
-        break
-      }
-
-      const current = queue.shift()!
-      visitedDirectories += 1
-
-      const entries = await readdir(current.dir, { withFileTypes: true }).catch(() => {
-        skippedCount += 1
-        return []
-      })
-
-      for (const entry of entries) {
-        if (attachments.length >= maxFiles) {
-          truncated = true
-          break
-        }
-
-        if (entry.isSymbolicLink()) {
-          skippedCount += 1
-          continue
-        }
-
-        const isDirectory = entry.isDirectory()
-        if (shouldSkipFolderAttachmentEntry(entry.name, isDirectory)) {
-          skippedCount += 1
-          continue
-        }
-
-        const relativePath = current.relDir ? `${current.relDir}/${entry.name}` : entry.name
-        const fullPath = join(current.dir, entry.name)
-
-        if (isDirectory) {
-          queue.push({ dir: fullPath, relDir: relativePath })
-        } else if (entry.isFile()) {
-          await addFile(fullPath, `${rootName}/${relativePath}`)
-        } else {
-          skippedCount += 1
-        }
-      }
+    if (attachments.length >= maxFiles) {
+      truncated = true
+      continue
     }
+
+    const resolved = resolve(selectedPath)
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    attachments.push(buildFolderPathAttachment(resolved))
   }
 
   return { attachments, skippedCount, truncated }
@@ -1121,6 +1083,10 @@ export async function buildMarkdownExport(args: {
   return { path: targetPath, format: args.format, bytes: info.size }
 }
 
+export function canExportMarkdownPreviewSource(path: string, hasProvidedContent: boolean): boolean {
+  return hasProvidedContent || MARKDOWN_EDIT_EXTENSIONS.has(extname(path).toLowerCase())
+}
+
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
   RPC_CHANNELS.file.READ_PREVIEW,
@@ -1330,8 +1296,8 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const allowedDirs = getAllowedDirsForFileRequest(deps, workspaceId)
       const safePath = await validateFilePath(path, allowedDirs)
-      const ext = extname(safePath).toLowerCase()
-      if (!MARKDOWN_EDIT_EXTENSIONS.has(ext)) {
+      const hasProvidedContent = typeof options.content === 'string'
+      if (!canExportMarkdownPreviewSource(safePath, hasProvidedContent)) {
         throw new Error('Only Markdown files can be exported from preview')
       }
       if (!['html', 'docx', 'pdf'].includes(options.format)) {
@@ -1345,7 +1311,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       const targetPath = options.targetPath
         ? validateExportTargetPath(options.targetPath)
         : undefined
-      const content = options.content ?? await readFile(safePath, 'utf-8')
+      const content = hasProvidedContent ? options.content! : await readFile(safePath, 'utf-8')
       return await buildMarkdownExport({
         sourcePath: safePath,
         content,
@@ -1679,6 +1645,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       // must remain reliable even if conversion fails: the original file path is
       // enough for the agent to inspect with dedicated tools later.
       let markdownPath: string | undefined
+      let extractionManifestPath: string | undefined
       if (attachment.type === 'office') {
         const mdFileName = `${id}_${safeName}.md`
         const mdPath = join(attachmentsDir, mdFileName)
@@ -1721,6 +1688,102 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         }
       }
 
+      // 4. Optionally convert PDFs to Markdown through MinerU. This is strictly
+      // opt-in: both the workspace MinerU switch and workspace-scoped token must
+      // be present. Failures never block attachment storage.
+      if (attachment.type === 'pdf') {
+        const workspaceConfig = loadWorkspaceConfig(workspaceRootPath)
+        if (isMineruExtractionEnabled(workspaceConfig)) {
+          try {
+            const credential = await getCredentialManager().get(getMineruCredentialId(workspace.id))
+            const mineruToken = credential?.value
+            if (!shouldRunMineruExtraction(workspaceConfig, mineruToken)) {
+              deps.platform.logger.warn(`MinerU PDF extraction skipped for "${attachment.name}": token is not configured`)
+            } else {
+              const mdFileName = `${id}_${safeName}.mineru.md`
+              const mdPath = join(attachmentsDir, mdFileName)
+              const rawJsonFileName = `${id}_${safeName}.mineru.raw.json`
+              const rawJsonPath = join(attachmentsDir, rawJsonFileName)
+              const cleanupAuditFileName = `${id}_${safeName}.mineru.cleanup.json`
+              const cleanupAuditPath = join(attachmentsDir, cleanupAuditFileName)
+              const manifestFileName = `${id}_${safeName}.mineru.manifest.json`
+              const manifestPath = join(attachmentsDir, manifestFileName)
+              const mode = resolveMineruMode(workspaceConfig)
+              const mineruCommandPath = resolveMineruCommandPath(workspaceConfig, {
+                appRootPath: deps.platform.appRootPath,
+                resourcesPath: deps.platform.resourcesPath,
+                resourcesBasePath: process.env.CRAFT_RESOURCES_BASE,
+                platform: process.platform,
+                arch: process.arch,
+              })
+              let textContent = await extractMarkdownWithMineru({
+                commandPath: mineruCommandPath,
+                inputPath: storedPath,
+                token: mineruToken,
+                mode,
+              })
+              let extractedCleanupAuditPath: string | undefined
+              const cleanupScanNoise = workspaceConfig?.defaults?.documentExtraction?.mineru?.cleanRepeatedScanNoise === true
+              if (cleanupScanNoise) {
+                const cleaned = cleanMineruMarkdownScanNoise(textContent)
+                textContent = cleaned.markdown
+                await writeFile(cleanupAuditPath, JSON.stringify(cleaned.audit, null, 2), 'utf-8')
+                extractedCleanupAuditPath = cleanupAuditPath
+                filesToCleanup.push(cleanupAuditPath)
+              }
+              let extractedRawJsonPath: string | undefined
+              try {
+                const rawJsonContent = await extractJsonWithMineru({
+                  commandPath: mineruCommandPath,
+                  inputPath: storedPath,
+                  token: mineruToken,
+                  mode,
+                })
+                await writeFile(rawJsonPath, rawJsonContent, 'utf-8')
+                extractedRawJsonPath = rawJsonPath
+                filesToCleanup.push(rawJsonPath)
+              } catch (jsonError) {
+                const jsonErrorMsg = jsonError instanceof Error ? jsonError.message : String(jsonError)
+                deps.platform.logger.warn(`MinerU raw JSON sidecar failed for "${attachment.name}", keeping Markdown extraction only: ${jsonErrorMsg}`)
+              }
+              const manifest = buildMineruExtractionManifest({
+                sourcePath: storedPath,
+                sourceName: attachment.name,
+                markdownPath: mdPath,
+                rawJsonPath: extractedRawJsonPath,
+                cleanupAuditPath: extractedCleanupAuditPath,
+                model: mode,
+                cleanupScanNoise,
+              })
+              await writeFile(mdPath, textContent, 'utf-8')
+              await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
+              markdownPath = mdPath
+              extractionManifestPath = manifestPath
+              filesToCleanup.push(mdPath)
+              filesToCleanup.push(manifestPath)
+              const session = await deps.sessionManager.getSession(sessionId)
+              if (session?.workingDirectory) {
+                try {
+                  await recordProjectMemoryDocumentExtraction({
+                    workingDirectory: session.workingDirectory,
+                    sessionId,
+                    manifestPath,
+                    manifest,
+                  })
+                } catch (memoryError) {
+                  const memoryErrorMsg = memoryError instanceof Error ? memoryError.message : String(memoryError)
+                  deps.platform.logger.warn(`MinerU Project Memory record failed for "${attachment.name}": ${memoryErrorMsg}`)
+                }
+              }
+              deps.platform.logger.info(`Created MinerU PDF markdown preview: ${mdPath}`)
+            }
+          } catch (extractError) {
+            const errorMsg = extractError instanceof Error ? extractError.message : String(extractError)
+            deps.platform.logger.warn(`MinerU PDF markdown preview failed for "${attachment.name}", keeping stored original only: ${errorMsg}`)
+          }
+        }
+      }
+
       // Return StoredAttachment metadata
       // Include wasResized flag so UI can show notification
       // Include resizedBase64 so renderer uses resized image for Claude API
@@ -1735,6 +1798,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         thumbnailPath,
         thumbnailBase64,
         markdownPath,
+        extractionManifestPath,
         wasResized,
         resizedBase64, // Only set when wasResized=true, used for Claude API
       }

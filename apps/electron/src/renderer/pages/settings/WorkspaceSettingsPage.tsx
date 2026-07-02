@@ -18,6 +18,17 @@ import { motion, AnimatePresence } from 'motion/react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { routes } from '@/lib/navigate'
@@ -51,6 +62,7 @@ export const meta: DetailsPageMeta = {
 type GoalLoopDefaultMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['defaultMode']>
 type GoalLoopQualityMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['qualityMode']>
 type GoalLoopReviewerBudget = '0' | '1' | '2'
+const MINERU_TOKEN_URL = 'https://mineru.net/apiManage/token'
 
 // ============================================
 // Main Component
@@ -73,6 +85,14 @@ export default function WorkspaceSettingsPage() {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
+  const [mineruEnabled, setMineruEnabled] = useState(false)
+  const [mineruCleanRepeatedScanNoise, setMineruCleanRepeatedScanNoise] = useState(false)
+  const [mineruTokenConfigured, setMineruTokenConfigured] = useState(false)
+  const [mineruTokenDialogOpen, setMineruTokenDialogOpen] = useState(false)
+  const [mineruToken, setMineruToken] = useState('')
+  const [mineruTokenError, setMineruTokenError] = useState<string | null>(null)
+  const [mineruTokenSaving, setMineruTokenSaving] = useState(false)
+  const [mineruEnableAfterToken, setMineruEnableAfterToken] = useState(false)
   const [goalLoopDefaultMode, setGoalLoopDefaultMode] = useState<GoalLoopDefaultMode>('auto_improve')
   const [goalLoopQualityMode, setGoalLoopQualityMode] = useState<GoalLoopQualityMode>('council')
   const [goalLoopMaxExtraReviewers, setGoalLoopMaxExtraReviewers] = useState(1)
@@ -104,6 +124,14 @@ export default function WorkspaceSettingsPage() {
           setPermissionMode(settings.permissionMode || 'ask')
           setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
+          setMineruEnabled(settings.documentExtraction?.mineru?.enabled ?? false)
+          setMineruCleanRepeatedScanNoise(settings.documentExtraction?.mineru?.cleanRepeatedScanNoise ?? false)
+          try {
+            const status = await window.electronAPI.getMineruCredentialStatus(activeWorkspaceId)
+            setMineruTokenConfigured(status.configured)
+          } catch {
+            setMineruTokenConfigured(false)
+          }
           setGoalLoopDefaultMode(settings.goalLoop?.defaultMode ?? 'auto_improve')
           setGoalLoopQualityMode(settings.goalLoop?.qualityMode ?? 'council')
           setGoalLoopMaxExtraReviewers(resolveGoalLoopMaxExtraReviewers(settings.goalLoop?.maxExtraReviewers))
@@ -298,6 +326,78 @@ export default function WorkspaceSettingsPage() {
     },
     [updateWorkspaceSetting]
   )
+
+  const handleMineruEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      if (enabled && !mineruTokenConfigured) {
+        setMineruEnableAfterToken(true)
+        setMineruTokenError(null)
+        setMineruTokenDialogOpen(true)
+        return
+      }
+      setMineruEnabled(enabled)
+      await updateWorkspaceSetting('documentExtraction', {
+        mineru: {
+          enabled,
+          cleanRepeatedScanNoise: mineruCleanRepeatedScanNoise,
+        },
+      })
+    },
+    [mineruCleanRepeatedScanNoise, mineruTokenConfigured, updateWorkspaceSetting]
+  )
+
+  const handleMineruScanCleanupChange = useCallback(
+    async (enabled: boolean) => {
+      setMineruCleanRepeatedScanNoise(enabled)
+      await updateWorkspaceSetting('documentExtraction', {
+        mineru: {
+          enabled: mineruEnabled,
+          cleanRepeatedScanNoise: enabled,
+        },
+      })
+    },
+    [mineruEnabled, updateWorkspaceSetting]
+  )
+
+  const handleOpenMineruTokenDialog = useCallback((enableAfterSave = false) => {
+    setMineruEnableAfterToken(enableAfterSave)
+    setMineruToken('')
+    setMineruTokenError(null)
+    setMineruTokenDialogOpen(true)
+  }, [])
+
+  const handleSaveMineruToken = useCallback(async () => {
+    if (!activeWorkspaceId || !window.electronAPI) return
+    const trimmed = mineruToken.trim()
+    if (!trimmed) {
+      setMineruTokenError('MinerU token is required')
+      return
+    }
+    setMineruTokenSaving(true)
+    setMineruTokenError(null)
+    try {
+      const status = await window.electronAPI.saveMineruToken(activeWorkspaceId, trimmed)
+      setMineruTokenConfigured(status.configured)
+      setMineruToken('')
+      setMineruTokenDialogOpen(false)
+      if (mineruEnableAfterToken) {
+        const saved = await updateWorkspaceSetting('documentExtraction', {
+          mineru: {
+            enabled: mineruEnableAfterToken,
+            cleanRepeatedScanNoise: mineruCleanRepeatedScanNoise,
+          },
+        })
+        if (saved) {
+          setMineruEnabled(true)
+        }
+      }
+      setMineruEnableAfterToken(false)
+    } catch (error) {
+      setMineruTokenError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setMineruTokenSaving(false)
+    }
+  }, [activeWorkspaceId, mineruCleanRepeatedScanNoise, mineruEnableAfterToken, mineruToken, updateWorkspaceSetting])
 
   const handleGoalLoopDefaultModeChange = useCallback(
     async (mode: GoalLoopDefaultMode) => {
@@ -616,6 +716,38 @@ export default function WorkspaceSettingsPage() {
               )}
             </SettingsSection>
 
+            {/* Document Extraction */}
+            <SettingsSection title="Document extraction">
+              <SettingsCard>
+                <SettingsToggle
+                  label="MinerU precision extraction"
+                  description="Off by default. Enable only for this workspace when you want MinerU to process uploaded PDF and scanned files."
+                  checked={mineruEnabled}
+                  onCheckedChange={handleMineruEnabledChange}
+                />
+                <SettingsRow
+                  label="MinerU API token"
+                  description={mineruTokenConfigured ? 'Configured in secure credential storage.' : 'Required before MinerU extraction can be enabled for this workspace.'}
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => handleOpenMineruTokenDialog(false)}
+                      className="inline-flex items-center h-8 px-3 text-sm rounded-lg bg-background shadow-minimal hover:bg-foreground/[0.02] transition-colors"
+                    >
+                      {mineruTokenConfigured ? 'Replace' : 'Configure'}
+                    </button>
+                  }
+                />
+                <SettingsToggle
+                  label="Scan cleanup"
+                  description="Ask MinerU processing to clean repeated scan noise such as watermarks and signature artifacts when extraction is enabled."
+                  checked={mineruCleanRepeatedScanNoise}
+                  onCheckedChange={handleMineruScanCleanupChange}
+                  disabled={!mineruEnabled}
+                />
+              </SettingsCard>
+            </SettingsSection>
+
             {/* Advanced */}
             <SettingsSection title={t("settings.workspace.advanced")}>
               <SettingsCard>
@@ -663,6 +795,64 @@ export default function WorkspaceSettingsPage() {
         onCancel={cancelWdBrowser}
         initialPath={workingDirectory || undefined}
       />
+      <Dialog open={mineruTokenDialogOpen} onOpenChange={(open) => {
+        setMineruTokenDialogOpen(open)
+        if (!open) {
+          setMineruEnableAfterToken(false)
+          setMineruToken('')
+          setMineruTokenError(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Configure MinerU token</DialogTitle>
+            <DialogDescription>
+              Enter a MinerU API token to prepare precision document extraction. MinerU remains disabled until you explicitly enable it for this workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="mineru-token">API token</Label>
+              <Input
+                id="mineru-token"
+                type="password"
+                value={mineruToken}
+                onChange={(event) => setMineruToken(event.target.value)}
+                placeholder="Enter MinerU API token"
+                autoComplete="off"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => window.electronAPI.openUrl(MINERU_TOKEN_URL)}
+              className="text-xs text-accent hover:underline"
+            >
+              Get a MinerU token from the official token page
+            </button>
+            {mineruTokenError && (
+              <div className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {mineruTokenError}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setMineruTokenDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveMineruToken}
+              disabled={mineruTokenSaving || !mineruToken.trim()}
+            >
+              {mineruTokenSaving ? 'Saving...' : mineruEnableAfterToken ? 'Save and enable' : 'Save token'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

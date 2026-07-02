@@ -27,6 +27,7 @@ export type CredentialType =
   | 'llm_service_account' // GCP service account JSON
   // Workspace credentials
   | 'workspace_oauth'    // Workspace MCP OAuth token
+  | 'document_api_token' // Workspace document-processing provider token
   // Source credentials (stored at ~/.agent-pi/workspaces/{ws}/sources/{slug}/)
   | 'source_oauth'       // OAuth tokens for MCP/API sources
   | 'source_bearer'      // Bearer tokens
@@ -44,6 +45,7 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'llm_iam',
   'llm_service_account',
   'workspace_oauth',
+  'document_api_token',
   'source_oauth',
   'source_bearer',
   'source_apikey',
@@ -144,9 +146,19 @@ const MESSAGING_CREDENTIAL_TYPES = [
   'messaging_bearer',
 ] as const;
 
+/** Document-processing credential types */
+const DOCUMENT_CREDENTIAL_TYPES = [
+  'document_api_token',
+] as const;
+
 /** Check if type is a messaging credential */
 function isMessagingCredential(type: CredentialType): boolean {
   return (MESSAGING_CREDENTIAL_TYPES as readonly string[]).includes(type);
+}
+
+/** Check if type is a document-processing credential */
+function isDocumentCredential(type: CredentialType): boolean {
+  return (DOCUMENT_CREDENTIAL_TYPES as readonly string[]).includes(type);
 }
 
 /** LLM connection credential types */
@@ -183,6 +195,14 @@ export function credentialIdToAccount(id: CredentialId): string {
   // workspace_oauth::{workspaceId}
   if (id.type === 'workspace_oauth' && id.workspaceId) {
     parts.push(id.workspaceId);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
+  // Document provider-scoped format:
+  // document_api_token::{workspaceId}::{provider}
+  if (isDocumentCredential(id.type) && id.workspaceId && id.name) {
+    parts.push(id.workspaceId);
+    parts.push(id.name);
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
@@ -256,6 +276,12 @@ export function accountToCredentialId(account: string): CredentialId | null {
   // workspace_oauth::{workspaceId}
   if (type === 'workspace_oauth' && parts.length === 2) {
     return { type, workspaceId: parts[1] };
+  }
+
+  // Document provider-scoped format:
+  // document_api_token::{workspaceId}::{provider}
+  if (isDocumentCredential(type) && parts.length === 3) {
+    return { type, workspaceId: parts[1], name: parts[2] };
   }
 
   // Source-scoped format:

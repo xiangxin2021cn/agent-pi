@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
-import { buildAttachmentDialogSpec, collectAttachmentDialogFiles } from './files'
+import { buildAttachmentDialogSpec, canExportMarkdownPreviewSource, collectAttachmentDialogFiles } from './files'
 
 const tempRoots: string[] = []
 
@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 describe('collectAttachmentDialogFiles', () => {
-  test('expands selected folders into path-backed file attachments', async () => {
+  test('keeps selected folders as path-only references instead of uploading their files', async () => {
     const root = await makeTempRoot()
     const selected = join(root, 'Project Docs')
     await mkdir(join(selected, 'nested'), { recursive: true })
@@ -31,17 +31,25 @@ describe('collectAttachmentDialogFiles', () => {
     await writeFile(join(selected, '.git', 'config'), 'skip')
 
     const result = await collectAttachmentDialogFiles([selected])
-    const names = result.attachments.map(a => a.name).sort()
 
-    expect(names).toEqual([
-      `${basename(selected)}/brief.md`,
-      `${basename(selected)}/nested/scope.txt`,
-    ])
-    expect(result.skippedCount).toBeGreaterThanOrEqual(2)
+    const expectedText = [
+      `Folder path: ${selected}`,
+      '',
+      'The folder contents were not uploaded. Use filesystem tools to scan and analyze this local directory when needed.',
+    ].join('\n')
+    expect(result.attachments).toEqual([{
+      type: 'text',
+      path: selected,
+      name: basename(selected),
+      mimeType: 'text/plain',
+      size: Buffer.byteLength(expectedText, 'utf-8'),
+      text: expectedText,
+    }])
+    expect(result.skippedCount).toBe(0)
     expect(result.truncated).toBe(false)
   })
 
-  test('keeps explicitly selected hidden files but skips hidden files during folder expansion', async () => {
+  test('keeps explicitly selected hidden files while selected folders remain path-only references', async () => {
     const root = await makeTempRoot()
     const selected = join(root, 'docs')
     const explicitHidden = join(selected, '.env')
@@ -50,12 +58,13 @@ describe('collectAttachmentDialogFiles', () => {
     await writeFile(join(selected, 'visible.txt'), 'visible')
 
     const result = await collectAttachmentDialogFiles([selected, explicitHidden])
-    const names = result.attachments.map(a => a.name).sort()
 
-    expect(names).toEqual(['.env', 'docs/visible.txt'])
+    expect(result.attachments.map(a => a.name)).toEqual(['docs', '.env'])
+    expect(result.attachments[0]?.path).toBe(selected)
+    expect(result.attachments[0]?.text).toContain(`Folder path: ${selected}`)
   })
 
-  test('truncates when a folder contains more files than the configured cap', async () => {
+  test('does not traverse selected folders when applying the file cap', async () => {
     const root = await makeTempRoot()
     const selected = join(root, 'many')
     await mkdir(selected, { recursive: true })
@@ -65,8 +74,9 @@ describe('collectAttachmentDialogFiles', () => {
 
     const result = await collectAttachmentDialogFiles([selected], { maxFiles: 2 })
 
-    expect(result.attachments).toHaveLength(2)
-    expect(result.truncated).toBe(true)
+    expect(result.attachments).toHaveLength(1)
+    expect(result.attachments[0]?.path).toBe(selected)
+    expect(result.truncated).toBe(false)
   })
 })
 
@@ -86,5 +96,17 @@ describe('buildAttachmentDialogSpec', () => {
     expect(spec.title).toBe('Attach folder')
     expect(spec.properties).toContain('openDirectory')
     expect(spec.properties).not.toContain('openFile')
+  })
+})
+
+describe('canExportMarkdownPreviewSource', () => {
+  test('allows real Markdown sources without provided content', () => {
+    expect(canExportMarkdownPreviewSource(join('docs', 'report.md'), false)).toBe(true)
+    expect(canExportMarkdownPreviewSource(join('docs', 'report.markdown'), false)).toBe(true)
+  })
+
+  test('allows non-Markdown preview sources only when rendered content is provided', () => {
+    expect(canExportMarkdownPreviewSource(join('docs', 'report.docx'), true)).toBe(true)
+    expect(canExportMarkdownPreviewSource(join('docs', 'report.docx'), false)).toBe(false)
   })
 })

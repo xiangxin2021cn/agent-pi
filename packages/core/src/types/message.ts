@@ -240,7 +240,8 @@ export interface StoredAttachment {
   storedPath: string;            // Full path to copied file on disk
   thumbnailPath?: string;        // Path to OS-generated thumbnail (images/PDFs/Office)
   thumbnailBase64?: string;      // Base64-encoded thumbnail PNG (for renderer display)
-  markdownPath?: string;         // For Office files: converted markdown for Claude
+  markdownPath?: string;         // Converted/extracted markdown sidecar for agent use
+  extractionManifestPath?: string; // Optional document extraction manifest/citation metadata
   wasResized?: boolean;          // True if image was auto-resized for Claude API limits
   resizedBase64?: string;        // Base64 of resized image (only when wasResized=true, for Claude API)
 }
