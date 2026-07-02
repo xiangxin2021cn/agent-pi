@@ -14,9 +14,9 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**V1.2.0 is in test packaging. Do not upload the release assets until local validation passes.**
+**Current release: V1.2.0. Next active development line: V1.2.1.**
 
-**V1.2.0 正在本地测试打包阶段。安装包先给用户本机测试，确认没问题后再上传 GitHub Release。**
+**当前发布版：V1.2.0。下一阶段开发线：V1.2.1。**
 
 GitHub Releases / 发布页:
 
@@ -41,6 +41,25 @@ MinerU and AnySearch are **not enabled by default**. Token/API-key presence alon
 
 MinerU 和 AnySearch **默认不启用**。即使已经保存 token 或 API key，也不会自动开启；必须由用户在工作区或来源设置中显式启用。
 
+## V1.2.1 Direction / V1.2.1 方向
+
+V1.2.1 focuses on making Agent Pi a stronger document-production and knowledge-reuse workbench for professional project teams.
+
+V1.2.1 将重点强化 Agent π 的专业文档创作、知识复用和行业化交付能力。
+
+| Direction | English | 中文 |
+| --- | --- | --- |
+| Document Quality Composer | Detect report sections that deserve richer visual expression, then generate source-backed Markdown visuals, tables, diagrams, captions, and export-ready assets. | 自动识别适合用图表、流程图、表格、组织架构等表达的内容区块，生成有来源支撑、可复用、可导出的 Markdown 图文资产。 |
+| Professional visuals | Add construction Gantt charts with WBS, baseline/current plan, progress line, critical path, milestones, legends, and A4/A3 landscape export options. Also expand investment, GIS, and simulation/CAE visual profiles. | 强化专业视觉表达：建筑施工甘特图支持 WBS、基线/当前计划、进度线、关键路径、里程碑、图例、A4/A3 横向导出；同时扩展投资、GIS、仿真/CAE 等垂直场景图表。 |
+| Template fidelity | When a user uploads a reference template, audit the new output against its layout intent, heading structure, depth, figure/table conventions, and delivery format. | 用户上传参照模板后，严格审查新文件是否匹配页面布局意图、目录结构、内容深度、图表规范和交付格式。 |
+| Evidence-rich Markdown | Improve how agents cite external search evidence, images, charts, screenshots, and source metadata inside `.md` deliverables. | 强化 `.md` 成果中外部资料、图片、图表、截图、来源链接、发布时间、作者/机构等证据引用。 |
+| Enterprise Knowledge Base | Promote generated `.md`, `.txt`, and `.json` artifacts into an Enterprise Knowledge MCP source from the right-side file panel, choose or create a category, and show it under Data Sources -> Enterprise Knowledge Base. User selection is required before use. | 右侧产物文件可右键提升为“企业知识库记忆 MCP”，MVP 支持 `.md`、`.txt`、`.json`，创建时选择或自定义分类，并自动出现在左侧“数据源 -> 企业知识库”；必须由用户选择后才启用。 |
+
+Detailed planning:
+
+- [V1.2.1 Document Quality Composer Plan](docs/superpowers/plans/2026-07-02-v1.2.1-document-quality-composer.md)
+- [Future Engineering, BIM, And Construction Agent Framework](docs/research/future-engineering-bim-construction-agent-framework.md)
+
 ## V1.1.3 Update / V1.1.3 更新
 
 V1.1.3 introduced a MoA-inspired quality review council for Goal Loop, task quality routing, Project Memory Lite reviewer telemetry, stronger self-correction prompts, recent-session recovery after restart, stable workspace-folder ordering, bundled Git for Windows 2.55.0, Pi SDK 0.80.3, Claude Agent SDK 0.3.197, Sonnet 5, and Bedrock route support.
@@ -51,7 +70,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
-| V1.2.0 | Unified file preview/edit/export, AI selection rewrite, optional MinerU extraction, optional AnySearch MCP setup, folder path-only attachments, spawned-agent working-directory inheritance, construction schedule skill, and idle Pi runtime cleanup. | 统一文件预览/编辑/导出、选中文本 AI 改写、可选 MinerU、可选 AnySearch MCP、文件夹路径引用、分智能体继承工作目录、施工进度计划 skill、Pi 空闲 runtime 清理。 | Pending local test |
+| V1.2.0 | Unified file preview/edit/export, AI selection rewrite, optional MinerU extraction, optional AnySearch MCP setup, folder path-only attachments, spawned-agent working-directory inheritance, construction schedule skill, and idle Pi runtime cleanup. | 统一文件预览/编辑/导出、选中文本 AI 改写、可选 MinerU、可选 AnySearch MCP、文件夹路径引用、分智能体继承工作目录、施工进度计划 skill、Pi 空闲 runtime 清理。 | [v1.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.0) |
 | V1.1.3 | MoA-inspired quality review council, quality routing, Project Memory reviewer telemetry, session UI recovery, stable workspace ordering, bundled Git, SDK upgrades. | MoA 启发质量评审、多角色质量路由、项目记忆沉淀、会话资产修复、工作目录排序修复、打包 Git、SDK 升级。 | [v1.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.3) |
 | V1.1.2 | Task Contract and Document Plan for document-heavy workflows. | 新增 Task Contract 与 Document Plan，强化文档任务硬约束。 | [v1.1.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.2) |
 | V1.1.1 | Fixed native file/folder picker timeout behavior. | 修复文件、文件夹和工作目录选择 30 秒超时。 | [v1.1.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.1) |
@@ -97,11 +116,39 @@ Release assets / 发布资产:
 - `Agent-Pi-x64.exe.blockmap`
 - `latest.yml`
 
-## Roadmap / 路线
+## Roadmap / 未来路线
 
-Agent Pi will continue improving artifact quality and self-correction: better review routing, stronger document generation, Word/PPT/Excel-native outputs, chart specs, citation verification, and private/edge-model capability enhancement.
+Agent Pi will continue moving from a general AI desktop toward a vertical professional agent workbench. The long-term direction is not just chatting with files, but producing auditable, editable, source-grounded project artifacts.
 
-Agent π 后续会继续围绕“提升智能体产出物达到预期和自我改进能力”推进：更强的评审路由、正式文档生成、Word/PPT/Excel 原生交付、图表规格化、引用核证，以及端侧/私有化弱模型能力增强。
+Agent π 将从通用 AI 桌面应用继续向垂直专业智能体工作台演进。长期目标不是“和文件聊天”，而是持续生成可审查、可编辑、有来源、有过程记忆的项目成果。
+
+Future directions include:
+
+- Construction and tender intelligence: PDF drawing recognition, OCR/vector extraction, BOQ reconciliation, quantity takeoff, construction planning, cost-loaded schedules, and highway/civil tender workflows.
+- Engineering and BIM workflows: road/corridor data models, IFC/GeoJSON/LandXML-style intermediate data, Blender/Bonsai/IfcOpenShell visualization, 4D progress views, and model-backed report figures.
+- Professional document automation: Word/PDF/DOCX output quality, strict template matching, evidence-rich Markdown, visual asset generation, and export verification.
+- Enterprise knowledge: local-global knowledge MCPs first, then team/network knowledge bases, permission governance, category management, and reusable company standards.
+- Domain-specific intelligence: investment analysis, GIS reporting, simulation/ANSYS/CAE post-processing, legal/compliance review, and other vertical expert workflows.
+- Agent self-improvement: stronger Goal Loop audits, self-correction, reviewer telemetry, MoA-style quality review, and weaker/private model enhancement through tools and structured workflows.
+
+未来重点包括：
+
+- 施工与投标智能：PDF 图纸识别、OCR/矢量提取、BOQ 对照、工程量拆分、施工策划、成本加载进度计划、公路/市政投标工作流。
+- 工程与 BIM：道路/廊道数据模型、IFC/GeoJSON/LandXML 类中间数据、Blender/Bonsai/IfcOpenShell 可视化、4D 进度展示、模型驱动报告图。
+- 专业文档自动化：Word/PDF/DOCX 成果质量、严格模板匹配、有证据的 Markdown、专业图表资产生成和导出校验。
+- 企业知识库：先做本机全局知识 MCP，再扩展团队/联网知识库、权限治理、分类管理和企业标准复用。
+- 垂直领域智能：投资分析、GIS 报告、仿真/ANSYS/CAE 后处理、法律合规审查以及更多行业专家工作流。
+- 智能体自我改进：更强 Goal Loop 审计、自我纠偏、评审经验沉淀、MoA 式质量评审，以及通过工具和结构化流程增强弱模型/私有化模型。
+
+## Collaboration / 合作共建
+
+Agent Pi is open to collaboration with vertical-domain experts, engineers, researchers, builders, and teams who want to turn agent workflows into real production systems. We especially welcome contributors in construction management, quantity surveying, tendering, BIM/GIS, structural simulation, investment analysis, enterprise knowledge management, document automation, MCP tooling, and agent runtime engineering.
+
+Agent π 欢迎垂直领域专家、工程师、研究者、开发者和团队共同参与，把智能体工作流真正做成可落地的生产系统。特别欢迎施工管理、工程造价、招投标、BIM/GIS、结构仿真、投资分析、企业知识库、文档自动化、MCP 工具和智能体运行时方向的伙伴加入。
+
+If you have domain datasets, repeatable workflows, industry standards, validation cases, or specialized tools, you can help shape Agent Pi into a practical vertical agent platform.
+
+如果你有行业数据、可复用流程、专业规范、验证案例或专用工具，欢迎一起把 Agent π 拓展成真正面向专业场景的垂直智能体平台。
 
 ## Development / 开发
 
