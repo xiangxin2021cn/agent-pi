@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAction } from '@/actions'
-import { EntityList } from './entity-list'
+import { EntityList, type EntityListGroup } from './entity-list'
 import { EntityRow } from './entity-row'
 import { useEntityListInteractions } from '@/hooks/useEntityListInteractions'
 import type { createEntitySelection } from '@/hooks/useEntitySelection'
@@ -23,6 +23,7 @@ export interface EntityPanelItem {
 
 export interface EntityPanelProps<T> {
   items: T[]
+  groups?: EntityListGroup<T>[]
   getId: (item: T) => string
   mapItem: (item: T) => EntityPanelItem
   selection: ReturnType<typeof createEntitySelection>
@@ -37,6 +38,7 @@ export interface EntityPanelProps<T> {
 
 export function EntityPanel<T>({
   items,
+  groups,
   getId,
   mapItem,
   selection,
@@ -47,8 +49,9 @@ export function EntityPanel<T>({
   containerProps,
 }: EntityPanelProps<T>) {
   const selectionStore = selection.useSelectionStore()
+  const interactionItems = React.useMemo(() => groups?.flatMap(group => group.items) ?? items, [groups, items])
   const interactions = useEntityListInteractions<T>({
-    items,
+    items: interactionItems,
     getId,
     keyboard: {
       onNavigate: (item) => onItemClick(item),
@@ -71,6 +74,7 @@ export function EntityPanel<T>({
   return (
     <EntityList
       items={items}
+      groups={groups}
       getKey={getId}
       containerRef={interactions.listProps.containerRef}
       containerProps={mergedContainerProps}

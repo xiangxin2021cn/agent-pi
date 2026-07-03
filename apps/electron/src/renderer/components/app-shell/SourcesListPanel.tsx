@@ -24,6 +24,7 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig, type EditContextKey } from '@/components/ui/EditPopover'
 import type { LoadedSource, SourceConnectionStatus, SourceFilter } from '../../../shared/types'
 import { getKnowledgeBaseFolder, isKnowledgeBaseSource } from '@craft-agent/shared/sources/knowledge-base'
+import { buildKnowledgeBaseSourceSections } from './knowledge-base-source-list-view-model'
 
 const ANYSEARCH_SOURCE_ID = 'anysearch-mcp'
 const ANYSEARCH_SOURCE_SLUG = 'anysearch-mcp'
@@ -91,6 +92,16 @@ export function SourcesListPanel({
     }
     return sources.filter(s => s.config.type === sourceFilter.sourceType)
   }, [sources, sourceFilter])
+
+  const knowledgeBaseGroups = React.useMemo(() => {
+    if (sourceFilter?.kind !== 'knowledgeBase') return undefined
+    return buildKnowledgeBaseSourceSections(filteredSources).map(section => ({
+      key: section.folder,
+      label: section.folder,
+      items: section.sources,
+      variant: 'project' as const,
+    }))
+  }, [filteredSources, sourceFilter])
 
   const emptyMessage = React.useMemo(() => {
     if (sourceFilter?.kind === 'knowledgeBase') {
@@ -167,6 +178,7 @@ export function SourcesListPanel({
 
     <EntityPanel<LoadedSource>
       items={filteredSources}
+      groups={knowledgeBaseGroups}
       getId={(s) => s.config.slug}
       selection={sourceSelection}
       selectedId={selectedSourceSlug}
