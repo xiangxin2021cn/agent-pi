@@ -1,4 +1,4 @@
-import agentPiLogo from "@/assets/agent-pi-logo.jpeg"
+import agentPiSymbol from "@/assets/agent-pi-symbol.png"
 
 interface CraftAppIconProps {
   className?: string
@@ -11,7 +11,7 @@ interface CraftAppIconProps {
 export function CraftAppIcon({ className, size = 64 }: CraftAppIconProps) {
   return (
     <img
-      src={agentPiLogo}
+      src={agentPiSymbol}
       alt="Agent π"
       width={size}
       height={size}

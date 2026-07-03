@@ -1,0 +1,25 @@
+{
+  "name": "Agent Pi Warm",
+  "description": "Warm ivory and ember tone for long-form document work",
+  "author": "Agent Pi",
+  "license": "MIT",
+  "supportedModes": ["light", "dark"],
+  "shikiTheme": {
+    "light": "github-light",
+    "dark": "github-dark"
+  },
+  "background": "#fff7ec",
+  "foreground": "#332316",
+  "accent": "#c76f32",
+  "info": "#b48932",
+  "success": "#5f7f5c",
+  "destructive": "#c24136",
+  "dark": {
+    "background": "#24170f",
+    "foreground": "#f7ead9",
+    "accent": "#f09a53",
+    "info": "#d3aa52",
+    "success": "#7ea06e",
+    "destructive": "#ef6a5b"
+  }
+}

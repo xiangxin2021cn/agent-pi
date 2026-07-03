@@ -201,9 +201,27 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
       vars.push(`--accent-rgb: ${rgbValues};`);
     }
   }
-  if (colors.info) vars.push(`--info: ${colors.info};`);
-  if (colors.success) vars.push(`--success: ${colors.success};`);
-  if (colors.destructive) vars.push(`--destructive: ${colors.destructive};`);
+  if (colors.info) {
+    vars.push(`--info: ${colors.info};`);
+    const rgbValues = hexToRgbValues(colors.info);
+    if (rgbValues) {
+      vars.push(`--info-rgb: ${rgbValues};`);
+    }
+  }
+  if (colors.success) {
+    vars.push(`--success: ${colors.success};`);
+    const rgbValues = hexToRgbValues(colors.success);
+    if (rgbValues) {
+      vars.push(`--success-rgb: ${rgbValues};`);
+    }
+  }
+  if (colors.destructive) {
+    vars.push(`--destructive: ${colors.destructive};`);
+    const rgbValues = hexToRgbValues(colors.destructive);
+    if (rgbValues) {
+      vars.push(`--destructive-rgb: ${rgbValues};`);
+    }
+  }
 
   // Surface color variables (fall back to background if not set)
   // These enable fine-grained control over specific UI regions
@@ -230,8 +248,8 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
  * that visually match the DEFAULT_THEME oklch colors.
  */
 export const BACKGROUND_HEX = {
-  light: '#faf9fb', // matches oklch(0.98 0.003 265)
-  dark: '#302f33', // matches oklch(0.2 0.005 270)
+  light: '#f6fcfb', // matches oklch(0.985 0.012 190)
+  dark: '#071b2e', // matches oklch(0.16 0.035 238)
 } as const;
 
 /**
@@ -246,18 +264,18 @@ export function getBackgroundColor(isDark: boolean): string {
  * Default theme values (matches current index.css)
  */
 export const DEFAULT_THEME: ThemeOverrides = {
-  background: 'oklch(0.98 0.003 265)',
-  foreground: 'oklch(0.185 0.01 270)',
-  accent: 'oklch(0.58 0.22 293)',
-  info: 'oklch(0.75 0.16 70)',
-  success: 'oklch(0.55 0.17 145)',
+  background: 'oklch(0.985 0.012 190)',
+  foreground: 'oklch(0.19 0.035 235)',
+  accent: 'oklch(0.64 0.13 205)',
+  info: 'oklch(0.74 0.15 118)',
+  success: 'oklch(0.60 0.16 165)',
   destructive: 'oklch(0.58 0.24 28)',
   dark: {
-    background: 'oklch(0.145 0.015 270)',
-    foreground: 'oklch(0.95 0.01 270)',
-    accent: 'oklch(0.65 0.22 293)',
-    info: 'oklch(0.78 0.14 70)',
-    success: 'oklch(0.60 0.17 145)',
+    background: 'oklch(0.16 0.035 238)',
+    foreground: 'oklch(0.94 0.018 190)',
+    accent: 'oklch(0.73 0.14 205)',
+    info: 'oklch(0.78 0.16 125)',
+    success: 'oklch(0.68 0.15 165)',
     destructive: 'oklch(0.65 0.22 28)',
   },
 };

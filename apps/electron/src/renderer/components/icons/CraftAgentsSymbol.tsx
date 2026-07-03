@@ -1,4 +1,4 @@
-import agentPiLogo from "@/assets/agent-pi-logo.jpeg"
+import agentPiSymbol from "@/assets/agent-pi-symbol.png"
 
 interface CraftAgentsSymbolProps {
   className?: string
@@ -12,7 +12,7 @@ interface CraftAgentsSymbolProps {
 export function CraftAgentsSymbol({ className }: CraftAgentsSymbolProps) {
   return (
     <img
-      src={agentPiLogo}
+      src={agentPiSymbol}
       alt="Agent π"
       className={className}
       draggable={false}

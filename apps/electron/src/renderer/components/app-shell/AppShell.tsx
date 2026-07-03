@@ -141,7 +141,7 @@ import {
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
-import agentPiBrandLogo from "@/assets/agent-pi-brand-logo.png"
+import agentPiLogo from "@/assets/agent-pi-logo.png"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -2519,7 +2519,7 @@ function AppShellContent({
                 </div>
                 <div className="agent-pi-sidebar-brand mx-3 mb-4 mt-2 shrink-0" aria-label="Agent Pi">
                   <img
-                    src={agentPiBrandLogo}
+                    src={agentPiLogo}
                     alt="Agent Pi"
                     draggable={false}
                     className="agent-pi-sidebar-brand-image"

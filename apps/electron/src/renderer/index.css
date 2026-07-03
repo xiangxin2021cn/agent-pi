@@ -29,31 +29,31 @@
 @property --background {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.98 0.003 265);
+  initial-value: oklch(0.985 0.012 190);
 }
 
 @property --foreground {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.185 0.01 270);
+  initial-value: oklch(0.19 0.035 235);
 }
 
 @property --accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.62 0.13 293);
+  initial-value: oklch(0.64 0.13 205);
 }
 
 @property --info {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.65 0.16 70);
+  initial-value: oklch(0.74 0.15 118);
 }
 
 @property --success {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.55 0.17 145);
+  initial-value: oklch(0.60 0.16 165);
 }
 
 @property --destructive {
@@ -63,14 +63,14 @@
 }
 
 /* =============================================================================
-   CRAFT AGENT THEME - 6 Color System
+   AGENT PI THEME - 6 Color System
 
    Base colors:
    - background: Light/dark surface
    - foreground: Text and icons
-   - accent: Brand purple (highlights, Auto mode)
-   - info: Amber (warnings, Ask mode)
-   - success: Green (connected, checkmarks)
+   - accent: Agent Pi cyan-blue (highlights, Auto mode)
+   - info: Logo lime (warnings, Ask mode)
+   - success: Teal green (connected, checkmarks)
    - destructive: Red (errors, failed)
 
    Variants:
@@ -83,21 +83,27 @@
 /* Light Mode */
 :root {
   /* === 6 BASE COLORS === */
-  --background: oklch(0.98 0.003 265);
-  --background-elevated: color-mix(in srgb, var(--foreground) 1.5%, var(--background));
-  --foreground: oklch(0.185 0.01 270);
+  --background: oklch(0.985 0.012 190);
+  --background-elevated: color-mix(in srgb, var(--foreground) 2%, var(--background));
+  --foreground: oklch(0.19 0.035 235);
   --foreground-dimmed: color-mix(in srgb, var(--foreground) 80%, var(--background)); /* unfocused panel text */
-  --foreground-rgb: 38, 36, 42;             /* RGB for shadow borders */
+  --foreground-rgb: 19, 44, 57;             /* RGB for shadow borders */
   --user-message-bubble: oklch(from var(--foreground) l c h / 0.05);
   --user-message-bubble-dimmed: oklch(from var(--foreground) l c h / 0.03);
-  --accent: oklch(0.62 0.13 293);           /* purple - brand, Auto mode */
-  --accent-rgb: 104, 78, 133;               /* darkened RGB for shadow-tinted (70% of accent) */
-  --info: oklch(0.75 0.16 70);              /* amber - warnings, Ask mode */
-  --info-rgb: 180, 120, 40;                 /* RGB for shadow-tinted */
-  --success: oklch(0.55 0.17 145);          /* green - connected, checkmarks */
-  --success-rgb: 34, 120, 60;               /* RGB for shadow-tinted */
+  --accent: oklch(0.64 0.13 205);           /* cyan-blue - brand, Auto mode */
+  --accent-rgb: 25, 154, 190;               /* RGB for shadow-tinted */
+  --info: oklch(0.74 0.15 118);             /* logo lime - warnings, Ask mode */
+  --info-rgb: 130, 166, 42;                 /* RGB for shadow-tinted */
+  --success: oklch(0.60 0.16 165);          /* teal green - connected, checkmarks */
+  --success-rgb: 28, 142, 112;              /* RGB for shadow-tinted */
   --destructive: oklch(0.58 0.24 28);       /* red - errors, failed */
   --destructive-rgb: 180, 60, 50;           /* RGB for shadow-tinted */
+
+  --pi-lime: oklch(0.78 0.17 122);
+  --pi-mint: oklch(0.78 0.12 168);
+  --pi-cyan: oklch(0.72 0.14 205);
+  --pi-blue: oklch(0.38 0.10 235);
+  --pi-ink: oklch(0.20 0.06 240);
 
   /* === SHADOW OPACITY (light mode = subtle, dark mode = stronger) === */
   --shadow-border-opacity: 0.08;            /* Border ring opacity */
@@ -237,21 +243,27 @@
 /* Dark Mode */
 .dark {
   /* === 6 BASE COLORS (must match DEFAULT_THEME.dark in theme.ts) === */
-  --background: oklch(0.145 0.015 270);
-  --background-elevated: color-mix(in srgb, var(--foreground) 1.5%, var(--background));
-  --foreground: oklch(0.95 0.01 270);
+  --background: oklch(0.16 0.035 238);
+  --background-elevated: color-mix(in srgb, var(--foreground) 2%, var(--background));
+  --foreground: oklch(0.94 0.018 190);
   --foreground-dimmed: color-mix(in srgb, var(--foreground) 80%, var(--background)); /* unfocused panel text */
-  --foreground-rgb: 237, 236, 240;           /* RGB for shadow borders */
+  --foreground-rgb: 230, 244, 243;           /* RGB for shadow borders */
   --user-message-bubble: oklch(from var(--foreground) l c h / 0.05);
   --user-message-bubble-dimmed: oklch(from var(--foreground) l c h / 0.03);
-  --accent: oklch(0.65 0.22 293);            /* brighter purple in dark */
-  --accent-rgb: 130, 75, 185;               /* darkened RGB for shadow-tinted (70% of accent) */
-  --info: oklch(0.78 0.14 70);               /* amber */
-  --info-rgb: 210, 155, 55;                  /* RGB for shadow-tinted */
-  --success: oklch(0.60 0.17 145);           /* green */
-  --success-rgb: 50, 140, 80;               /* RGB for shadow-tinted */
+  --accent: oklch(0.73 0.14 205);            /* luminous cyan-blue in dark */
+  --accent-rgb: 55, 196, 230;                /* RGB for shadow-tinted */
+  --info: oklch(0.78 0.16 125);              /* lime */
+  --info-rgb: 150, 205, 70;                  /* RGB for shadow-tinted */
+  --success: oklch(0.68 0.15 165);           /* teal green */
+  --success-rgb: 55, 205, 162;               /* RGB for shadow-tinted */
   --destructive: oklch(0.65 0.22 28);        /* brighter red in dark */
   --destructive-rgb: 200, 70, 60;            /* RGB for shadow-tinted */
+
+  --pi-lime: oklch(0.80 0.17 122);
+  --pi-mint: oklch(0.76 0.13 168);
+  --pi-cyan: oklch(0.75 0.14 205);
+  --pi-blue: oklch(0.54 0.13 235);
+  --pi-ink: oklch(0.16 0.05 240);
 
   /* === SHADOW OPACITY (stronger in dark mode for visibility) === */
   --shadow-border-opacity: 0.15;
@@ -297,46 +309,186 @@
   --md-counters: var(--foreground-50);
 }
 
+html[data-theme="agent-pi-warm"] {
+  --pi-lime: oklch(0.74 0.13 91);
+  --pi-mint: oklch(0.73 0.10 75);
+  --pi-cyan: oklch(0.68 0.14 48);
+  --pi-blue: oklch(0.42 0.08 38);
+  --pi-ink: oklch(0.24 0.05 38);
+}
+
+html.dark[data-theme="agent-pi-warm"] {
+  --pi-lime: oklch(0.77 0.14 91);
+  --pi-mint: oklch(0.70 0.11 73);
+  --pi-cyan: oklch(0.72 0.15 50);
+  --pi-blue: oklch(0.50 0.10 40);
+  --pi-ink: oklch(0.18 0.05 38);
+}
+
+html[data-theme="agent-pi-bronze"] {
+  --pi-lime: oklch(0.70 0.09 103);
+  --pi-mint: oklch(0.68 0.07 135);
+  --pi-cyan: oklch(0.62 0.09 72);
+  --pi-blue: oklch(0.39 0.06 63);
+  --pi-ink: oklch(0.24 0.04 70);
+}
+
+html.dark[data-theme="agent-pi-bronze"] {
+  --pi-lime: oklch(0.74 0.10 102);
+  --pi-mint: oklch(0.68 0.08 132);
+  --pi-cyan: oklch(0.66 0.11 74);
+  --pi-blue: oklch(0.46 0.08 64);
+  --pi-ink: oklch(0.17 0.04 72);
+}
+
 /* Agent Pi desktop shell polish: restrained glass layers with multi-accent
    edge light. Kept app-local so shared UI primitives remain neutral. */
 .agent-pi-topbar {
+  isolation: isolate;
   background:
     linear-gradient(
+      180deg,
+      color-mix(in oklab, white 26%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(
       90deg,
-      color-mix(in oklab, var(--accent) 7%, var(--background)) 0%,
-      color-mix(in oklab, var(--success) 4%, var(--background)) 42%,
-      color-mix(in oklab, var(--info) 4%, var(--background)) 100%
+      color-mix(in oklab, var(--pi-blue) 8%, var(--background)) 0%,
+      color-mix(in oklab, var(--pi-cyan) 6%, var(--background)) 48%,
+      color-mix(in oklab, var(--pi-lime) 5%, var(--background)) 100%
     );
-  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   box-shadow:
-    inset 0 -1px 0 color-mix(in oklab, var(--background) 70%, transparent),
-    0 8px 24px -24px rgba(var(--foreground-rgb), 0.38);
-  backdrop-filter: blur(18px) saturate(1.08);
+    inset 0 -1px 0 color-mix(in oklab, white 42%, transparent),
+    0 10px 30px -28px rgba(var(--foreground-rgb), 0.45);
+  backdrop-filter: blur(22px) saturate(1.16);
+}
+
+.dark .agent-pi-topbar {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 8%, transparent), transparent 58%),
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--pi-blue) 30%, var(--background)) 0%,
+      color-mix(in oklab, var(--pi-cyan) 13%, var(--background)) 50%,
+      color-mix(in oklab, var(--pi-lime) 8%, var(--background)) 100%
+    );
+  border-bottom-color: color-mix(in oklab, var(--pi-cyan) 20%, transparent);
+  box-shadow:
+    inset 0 -1px 0 color-mix(in oklab, white 8%, transparent),
+    0 12px 36px -24px color-mix(in srgb, rgb(var(--accent-rgb)) 45%, transparent);
+}
+
+.agent-pi-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--pi-lime) 54%, transparent) 22%,
+    color-mix(in oklab, var(--pi-cyan) 58%, transparent) 54%,
+    color-mix(in oklab, var(--pi-blue) 34%, transparent) 78%,
+    transparent
+  );
+  opacity: 0.72;
 }
 
 .agent-pi-workbench {
+  isolation: isolate;
   background:
     linear-gradient(
       135deg,
-      color-mix(in oklab, var(--accent) 4%, var(--background)) 0%,
-      var(--background) 38%,
-      color-mix(in oklab, var(--success) 3%, var(--background)) 100%
+      color-mix(in oklab, var(--pi-lime) 8%, var(--background)) 0%,
+      color-mix(in oklab, var(--background) 96%, var(--pi-cyan) 4%) 34%,
+      color-mix(in oklab, var(--pi-blue) 6%, var(--background)) 100%
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--pi-cyan) 5%, transparent),
+      transparent 28%,
+      color-mix(in oklab, var(--pi-lime) 4%, transparent) 100%
     );
+}
+
+.dark .agent-pi-workbench {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--pi-blue) 30%, var(--background)) 0%,
+      color-mix(in oklab, var(--background) 92%, var(--pi-cyan) 8%) 42%,
+      color-mix(in oklab, var(--pi-ink) 72%, var(--background)) 100%
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--pi-cyan) 12%, transparent),
+      transparent 34%,
+      color-mix(in oklab, var(--pi-lime) 7%, transparent) 100%
+    );
+}
+
+.agent-pi-workbench::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 0 36%, color-mix(in oklab, white 20%, transparent) 48%, transparent 62%),
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--foreground) 3.5%, transparent) 0,
+      color-mix(in oklab, var(--foreground) 3.5%, transparent) 1px,
+      transparent 1px,
+      transparent 22px
+    );
+  opacity: 0.24;
+}
+
+.dark .agent-pi-workbench::before {
+  background:
+    linear-gradient(115deg, transparent 0 38%, color-mix(in oklab, var(--pi-cyan) 8%, transparent) 51%, transparent 64%),
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, white 5%, transparent) 0,
+      color-mix(in oklab, white 5%, transparent) 1px,
+      transparent 1px,
+      transparent 24px
+    );
+  opacity: 0.30;
 }
 
 .agent-pi-sidebar-glass {
   background:
+    linear-gradient(180deg, color-mix(in oklab, white 24%, transparent), transparent 38%),
     linear-gradient(
       160deg,
-      color-mix(in oklab, var(--accent) 11%, var(--background)) 0%,
-      color-mix(in oklab, var(--background) 88%, var(--foreground) 12%) 48%,
-      color-mix(in oklab, var(--success) 7%, var(--background)) 100%
+      color-mix(in oklab, var(--pi-cyan) 13%, var(--background)) 0%,
+      color-mix(in oklab, var(--background) 90%, var(--pi-blue) 10%) 48%,
+      color-mix(in oklab, var(--pi-lime) 8%, var(--background)) 100%
     );
-  border-right: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border-right: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   box-shadow:
-    inset -1px 0 0 color-mix(in oklab, var(--background) 68%, transparent),
-    10px 0 32px -34px rgba(var(--foreground-rgb), 0.52);
-  backdrop-filter: blur(20px) saturate(1.1);
+    inset -1px 0 0 color-mix(in oklab, white 34%, transparent),
+    12px 0 34px -34px rgba(var(--foreground-rgb), 0.62);
+  backdrop-filter: blur(24px) saturate(1.18);
+}
+
+.dark .agent-pi-sidebar-glass {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 7%, transparent), transparent 40%),
+    linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--pi-blue) 34%, var(--background)) 0%,
+      color-mix(in oklab, var(--background) 86%, var(--pi-cyan) 14%) 52%,
+      color-mix(in oklab, var(--pi-lime) 9%, var(--background)) 100%
+    );
+  border-right-color: color-mix(in oklab, var(--pi-cyan) 18%, transparent);
+  box-shadow:
+    inset -1px 0 0 color-mix(in oklab, white 7%, transparent),
+    14px 0 38px -28px color-mix(in srgb, rgb(var(--accent-rgb)) 36%, transparent);
 }
 
 .agent-pi-sidebar-glass::before {
@@ -345,15 +497,28 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(120deg, color-mix(in oklab, var(--background) 65%, transparent), transparent 34%),
+    linear-gradient(120deg, color-mix(in oklab, white 34%, transparent), transparent 34%),
     repeating-linear-gradient(
       135deg,
-      color-mix(in oklab, var(--foreground) 5%, transparent) 0,
-      color-mix(in oklab, var(--foreground) 5%, transparent) 1px,
+      color-mix(in oklab, var(--foreground) 4.5%, transparent) 0,
+      color-mix(in oklab, var(--foreground) 4.5%, transparent) 1px,
       transparent 1px,
-      transparent 18px
+      transparent 20px
     );
-  opacity: 0.26;
+  opacity: 0.30;
+}
+
+.dark .agent-pi-sidebar-glass::before {
+  background:
+    linear-gradient(120deg, color-mix(in oklab, white 7%, transparent), transparent 36%),
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, white 5%, transparent) 0,
+      color-mix(in oklab, white 5%, transparent) 1px,
+      transparent 1px,
+      transparent 21px
+    );
+  opacity: 0.34;
 }
 
 .agent-pi-new-chat-button,
@@ -361,65 +526,180 @@
   background:
     linear-gradient(
       135deg,
-      color-mix(in oklab, var(--background) 84%, var(--accent) 16%),
-      color-mix(in oklab, var(--background) 91%, var(--success) 9%)
+      color-mix(in oklab, var(--background) 82%, var(--pi-cyan) 18%),
+      color-mix(in oklab, var(--background) 90%, var(--pi-lime) 10%)
     );
   box-shadow:
     var(--shadow-minimal),
-    inset 0 1px 0 color-mix(in oklab, var(--background) 78%, transparent);
+    inset 0 1px 0 color-mix(in oklab, white 52%, transparent);
+  border: 1px solid color-mix(in oklab, var(--pi-cyan) 10%, transparent);
 }
 
 .agent-pi-new-chat-button:hover {
   background:
     linear-gradient(
       135deg,
-      color-mix(in oklab, var(--background) 78%, var(--accent) 22%),
-      color-mix(in oklab, var(--background) 88%, var(--success) 12%)
+      color-mix(in oklab, var(--background) 76%, var(--pi-cyan) 24%),
+      color-mix(in oklab, var(--background) 86%, var(--pi-lime) 14%)
     );
 }
 
 .agent-pi-sidebar-active-rail {
-  background: color-mix(in oklab, var(--accent) 78%, var(--success) 22%);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: linear-gradient(180deg, var(--pi-lime), var(--pi-cyan) 58%, var(--pi-blue));
+  box-shadow: 0 0 14px color-mix(in srgb, rgb(var(--accent-rgb)) 58%, transparent);
+}
+
+.agent-pi-workbench [data-panel-role="navigator"],
+.agent-pi-workbench [data-panel-role="content"] {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 23%, transparent), transparent 42%),
+    color-mix(in oklab, var(--background) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 42%, transparent),
+    0 18px 46px -42px rgba(var(--foreground-rgb), 0.54);
+  backdrop-filter: blur(20px) saturate(1.12);
+}
+
+.dark .agent-pi-workbench [data-panel-role="navigator"],
+.dark .agent-pi-workbench [data-panel-role="content"] {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 6%, transparent), transparent 42%),
+    color-mix(in oklab, var(--background) 86%, transparent);
+  border-color: color-mix(in oklab, var(--pi-cyan) 13%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 8%, transparent),
+    0 20px 52px -38px rgba(0, 0, 0, 0.54);
+}
+
+.agent-pi-menu-symbol {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--pi-lime) 20%, white), color-mix(in oklab, var(--pi-cyan) 18%, white));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 70%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--pi-cyan) 18%, transparent);
+}
+
+.dark .agent-pi-menu-symbol {
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--pi-blue) 36%, var(--background)), color-mix(in oklab, var(--pi-cyan) 22%, var(--background)));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 10%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--pi-cyan) 24%, transparent),
+    0 0 18px -10px color-mix(in srgb, rgb(var(--accent-rgb)) 70%, transparent);
+}
+
+.agent-pi-menu-symbol-img {
+  width: 23px;
+  height: 15px;
+  object-fit: contain;
+  object-position: center;
+  filter: drop-shadow(0 4px 5px color-mix(in srgb, rgb(var(--foreground-rgb)) 20%, transparent));
 }
 
 .agent-pi-sidebar-brand {
   position: relative;
-  height: 124px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 116px;
   overflow: hidden;
   border-radius: 8px;
   background:
+    linear-gradient(180deg, color-mix(in oklab, white 42%, transparent), transparent 50%),
     linear-gradient(
       145deg,
-      color-mix(in oklab, white 92%, var(--success) 8%),
-      color-mix(in oklab, white 90%, var(--info) 10%)
+      color-mix(in oklab, var(--background) 86%, var(--pi-lime) 14%),
+      color-mix(in oklab, var(--background) 78%, var(--pi-cyan) 22%)
     );
-  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--pi-cyan) 16%, transparent);
   box-shadow:
     var(--shadow-minimal),
-    inset 0 1px 0 color-mix(in oklab, var(--background) 76%, transparent);
-  padding: 8px;
+    inset 0 1px 0 color-mix(in oklab, white 54%, transparent);
+  padding: 10px;
+}
+
+.dark .agent-pi-sidebar-brand {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, white 8%, transparent), transparent 52%),
+    linear-gradient(
+      145deg,
+      color-mix(in oklab, var(--pi-blue) 28%, var(--background)),
+      color-mix(in oklab, var(--pi-cyan) 16%, var(--background))
+    );
+  border-color: color-mix(in oklab, var(--pi-cyan) 22%, transparent);
+  box-shadow:
+    var(--shadow-minimal),
+    inset 0 1px 0 color-mix(in oklab, white 9%, transparent),
+    0 12px 28px -26px color-mix(in srgb, rgb(var(--accent-rgb)) 64%, transparent);
+}
+
+.agent-pi-sidebar-brand::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 12px 18px;
+  border-radius: 8px;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, white 72%, var(--pi-lime) 28%),
+      color-mix(in oklab, white 68%, var(--pi-cyan) 32%)
+    );
+  opacity: 0.42;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 62%, transparent),
+    0 14px 26px -24px color-mix(in srgb, rgb(var(--foreground-rgb)) 45%, transparent);
+}
+
+.dark .agent-pi-sidebar-brand::before {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, white 70%, var(--pi-cyan) 30%),
+      color-mix(in oklab, white 58%, var(--pi-blue) 42%)
+    );
+  opacity: 0.74;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 44%, transparent),
+    0 14px 28px -20px color-mix(in srgb, rgb(var(--accent-rgb)) 38%, transparent);
 }
 
 .agent-pi-sidebar-brand::after {
   content: "";
   position: absolute;
+  z-index: 3;
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, color-mix(in oklab, white 34%, transparent), transparent 50%),
-    linear-gradient(120deg, transparent 28%, color-mix(in oklab, var(--success) 10%, transparent) 58%, transparent 86%);
-  opacity: 0.38;
+    linear-gradient(120deg, transparent 24%, color-mix(in oklab, var(--pi-lime) 16%, transparent) 54%, transparent 82%);
+  opacity: 0.48;
 }
 
 .agent-pi-sidebar-brand-image {
   position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
+  z-index: 2;
+  width: min(196px, 100%);
+  height: 94px;
   object-fit: contain;
   object-position: center;
   user-select: none;
+  filter:
+    drop-shadow(0 14px 20px color-mix(in srgb, rgb(var(--foreground-rgb)) 14%, transparent))
+    drop-shadow(0 0 10px color-mix(in srgb, rgb(var(--accent-rgb)) 12%, transparent));
+}
+
+.dark .agent-pi-sidebar-brand-image {
+  filter:
+    drop-shadow(0 16px 22px rgba(0, 0, 0, 0.36))
+    drop-shadow(0 0 12px color-mix(in srgb, rgb(var(--accent-rgb)) 18%, transparent));
 }
 
 /* Theme Override - Semi-transparent background to allow vibrancy through */

@@ -1,0 +1,25 @@
+{
+  "name": "Agent Pi Bronze",
+  "description": "Eye-comfort bronze palette for extended reading and review",
+  "author": "Agent Pi",
+  "license": "MIT",
+  "supportedModes": ["light", "dark"],
+  "shikiTheme": {
+    "light": "github-light",
+    "dark": "github-dark"
+  },
+  "background": "#f3ead8",
+  "foreground": "#30281b",
+  "accent": "#8d6e38",
+  "info": "#a47d3b",
+  "success": "#607751",
+  "destructive": "#b24a3d",
+  "dark": {
+    "background": "#1f1a13",
+    "foreground": "#eee2cb",
+    "accent": "#b68d4c",
+    "info": "#cda660",
+    "success": "#81986b",
+    "destructive": "#d36355"
+  }
+}

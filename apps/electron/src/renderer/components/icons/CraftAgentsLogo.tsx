@@ -1,4 +1,4 @@
-import agentPiLogo from "@/assets/agent-pi-logo.jpeg"
+import agentPiLogo from "@/assets/agent-pi-logo.png"
 
 interface CraftAgentsLogoProps {
   className?: string
