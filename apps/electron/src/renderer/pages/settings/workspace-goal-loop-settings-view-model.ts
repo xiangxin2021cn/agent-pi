@@ -7,6 +7,15 @@ export function resolveGoalLoopMaxExtraReviewers(value: GoalLoopSettings['maxExt
   return Math.max(0, Math.floor(value))
 }
 
+export function resolveDocumentVisualMode(value: unknown): NonNullable<GoalLoopSettings['documentVisualMode']> {
+  return value === 'fast' || value === 'professional' || value === 'standard' ? value : 'standard'
+}
+
+export function resolveDocumentMaxAutoVisuals(value: GoalLoopSettings['maxAutoVisuals']): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 5
+  return Math.max(0, Math.min(12, Math.floor(value)))
+}
+
 export function buildGoalLoopSettingsPayload({
   current,
   patch,
@@ -20,5 +29,7 @@ export function buildGoalLoopSettingsPayload({
     ...patch,
     ...(reviewerModels && Object.keys(reviewerModels).length > 0 ? { reviewerModels } : {}),
     maxExtraReviewers: resolveGoalLoopMaxExtraReviewers(patch.maxExtraReviewers ?? current.maxExtraReviewers),
+    documentVisualMode: resolveDocumentVisualMode(patch.documentVisualMode ?? current.documentVisualMode),
+    maxAutoVisuals: resolveDocumentMaxAutoVisuals(patch.maxAutoVisuals ?? current.maxAutoVisuals),
   }
 }

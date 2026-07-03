@@ -4,7 +4,9 @@ import {
   COMPREHENSIVE_QUALITY_CRITERION_TEXT,
   DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
   FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+  TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
   TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT,
+  VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
   buildGoalCriteriaFromMessage,
   buildGoalExecutionPolicyFromMessage,
   buildTaskContractFromMessage,
@@ -385,5 +387,43 @@ describe('buildTaskContractFromMessage', () => {
     expect(contract.documentPlan?.enhancements).toContain('HTML or embedded visual blocks may improve readability, but they must be based on verified data and remain inspectable.')
     expect(contract.evidenceRequirements).toContain('Create visual enhancements only from verified source data; if data is unavailable, state that the visualization cannot be supported.')
     expect(contract.forbiddenShortcuts).toContain('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')
+  })
+
+  it('creates visual criteria and a visual plan for professional document tasks', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请生成专业施工进度报告，必须包含WBS、基线/当前计划、关键路径、里程碑和A3横向甘特图。',
+    })
+    const contract = buildTaskContractFromMessage({
+      message: '请生成专业施工进度报告，必须包含WBS、基线/当前计划、关键路径、里程碑和A3横向甘特图。',
+    })
+
+    expect(criteria).toContainEqual({
+      text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+    expect(contract.documentPlan?.domain).toBe('construction')
+    expect(contract.documentPlan?.visualPlan?.selectedKinds).toContain('construction-gantt')
+    expect(contract.documentPlan?.enhancements).toContain('Render required professional visuals from verified data and include captions, source notes, and audit reasons.')
+  })
+
+  it('creates template fidelity criteria for strict uploaded-template requests', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请严格按照上传的Word模板版式、目录层级、字体和页面布局生成新的报告。',
+      storedAttachments: [attachment('reference-template.docx')],
+    })
+    const contract = buildTaskContractFromMessage({
+      message: '请严格按照上传的Word模板版式、目录层级、字体和页面布局生成新的报告。',
+      storedAttachments: [attachment('reference-template.docx')],
+    })
+
+    expect(criteria).toContainEqual({
+      text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+    expect(contract.documentPlan?.strictTemplate).toBe(true)
+    expect(contract.documentPlan?.templateProfileId).toBe('pending-template-profile')
+    expect(contract.forbiddenShortcuts).toContain('Do not claim template fidelity from prompt wording alone; strict template mode requires a parsed template profile and export evidence.')
   })
 })

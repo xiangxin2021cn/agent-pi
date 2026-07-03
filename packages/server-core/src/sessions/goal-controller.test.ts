@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -418,6 +418,115 @@ describe('GoalController', () => {
         item.type === 'system'
         && item.label === 'document_quality_report'
         && (item.detail ?? '').includes('status: pass')
+      )).toBe(true)
+    }
+  })
+
+  test('does not accept pure prose for a visual-heavy professional document task', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成专业施工进度报告，必须包含WBS、基线/当前计划、关键路径、里程碑和A3横向甘特图。',
+        taskType: 'document',
+        documentPlan: {
+          domain: 'construction',
+          visualPlan: {
+            mode: 'professional',
+            selectedKinds: ['construction-gantt'],
+            opportunities: [],
+            auditRequirements: ['Every professional visual must have verified data, a caption, a source note, and an audit reason.'],
+          },
+          sections: ['Schedule basis', 'Construction Gantt'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+        },
+        deliverables: ['Produce a professional construction schedule report.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+      criteria: [{
+        id: 'crit-visual',
+        text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请生成专业施工进度报告，必须包含WBS、基线/当前计划、关键路径、里程碑和A3横向甘特图。'),
+        message('a1', 'assistant', '施工进度报告已经完成。项目按WBS分为道路、桥涵、排水三个部分，后续会补充甘特图。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria.some(item => item.includes('Visual block audit did not pass'))).toBe(true)
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'visual_block_audit'
+        && (item.detail ?? '').includes('construction-gantt')
+      )).toBe(true)
+    }
+  })
+
+  test('does not accept prompt-only compliance for strict template fidelity', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请严格按照上传的Word模板版式、目录层级、字体和页面布局生成新的报告。',
+        taskType: 'document',
+        documentPlan: {
+          templateProfileId: 'pending-template-profile',
+          strictTemplate: true,
+          sections: ['Executive Summary', 'Project Scope'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['DOCX'],
+        },
+        deliverables: ['Produce a strict-template DOCX report.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['DOCX'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: ['Do not claim template fidelity from prompt wording alone.'],
+      },
+      criteria: [{
+        id: 'crit-template',
+        text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请严格按照上传的Word模板版式、目录层级、字体和页面布局生成新的报告。'),
+        message('a1', 'assistant', '# Executive Summary\n\nThe report follows the template.\n\n# Project Scope\n\nThe scope is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria.some(item => item.includes('Template fidelity audit did not pass'))).toBe(true)
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'template_fidelity_audit'
+        && (item.detail ?? '').includes('Strict DOCX template audit requires exported DOCX structure evidence')
       )).toBe(true)
     }
   })

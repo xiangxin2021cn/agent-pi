@@ -67,6 +67,53 @@ describe('document enhancement view model', () => {
     expect(status).toBe('章节 / 表格 / 图表 / 引用 / 交付格式 / 禁止编造 已启用')
   })
 
+  it('shows professional visual, template, and export audit chips from the document plan', () => {
+    const viewModel = getDocumentEnhancementViewModel(t, {
+      goalState: goalState({
+        taskContract: {
+          originalRequest: '生成专业报告',
+          taskType: 'document',
+          documentPlan: {
+            domain: 'construction',
+            visualPlan: {
+              mode: 'professional',
+              selectedKinds: [
+                'construction-gantt',
+                'investment-cash-flow-table',
+                'site-location-map',
+                'simulation-result-table',
+              ],
+              opportunities: [],
+              auditRequirements: [],
+            },
+            strictTemplate: true,
+            sections: ['摘要'],
+            tables: [],
+            charts: [],
+            enhancements: [],
+            citations: [],
+            deliveryFormats: ['PDF', 'DOCX'],
+          },
+          deliverables: [],
+          mustPreserve: [],
+          evidenceRequirements: [],
+          outputFormats: ['PDF', 'DOCX'],
+          acceptanceCriteria: [],
+          forbiddenShortcuts: [],
+        },
+      }),
+    })
+
+    expect(viewModel?.chips).toContain('图表增强')
+    expect(viewModel?.chips).toContain('专业甘特')
+    expect(viewModel?.chips).toContain('A3横向')
+    expect(viewModel?.chips).toContain('投资图表')
+    expect(viewModel?.chips).toContain('GIS图')
+    expect(viewModel?.chips).toContain('仿真图')
+    expect(viewModel?.chips).toContain('模板审计')
+    expect(viewModel?.chips).toContain('导出校验')
+  })
+
   it('stays hidden for ordinary chat input', () => {
     expect(getDocumentEnhancementViewModel(t, { input: '你好' })).toBeUndefined()
   })

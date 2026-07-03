@@ -171,6 +171,9 @@ export interface SessionToolContext {
   /** Working directory (project root) for the session, if set */
   workingDirectory?: string;
 
+  /** Optional app-level root for user-global knowledge base registry metadata. */
+  knowledgeBaseRegistryRootPath?: string;
+
   // ============================================================
   // Callbacks (transport-agnostic)
   // ============================================================

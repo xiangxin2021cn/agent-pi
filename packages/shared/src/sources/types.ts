@@ -437,12 +437,17 @@ export interface SourceBrand {
  */
 export interface SourceMetadata {
   category?: string;
+  collectionId?: string;
   knowledgeCategory?: string;
+  knowledgeFolder?: string;
   scope?: string;
   sourceKind?: string;
   fileExtension?: string;
   sourceFilePath?: string;
+  tags?: string[];
+  owner?: string;
   createdAt?: number;
+  updatedAt?: number;
   [key: string]: unknown;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import xlsx from 'xlsx'
@@ -96,6 +96,93 @@ describe('buildMarkdownExport', () => {
       { type: 'heading', depth: 1, text: 'Title' },
       { type: 'listItem', ordered: false, index: 1, text: 'Bold item' },
     ])
+  })
+
+  it('exports local professional visual assets with A3 landscape page intent', async () => {
+    await withTempDir(async (dir) => {
+      const sourcePath = join(dir, 'schedule-report.md')
+      const svgPath = join(dir, 'schedule-professional-a3-landscape.svg')
+      writeFileSync(svgPath, [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1587" height="1123" data-page-size="A3" data-orientation="landscape">',
+        '<text x="24" y="48">Professional construction schedule</text>',
+        '</svg>',
+      ].join(''))
+      const content = [
+        '# Schedule Report',
+        '',
+        '![Figure 1. Professional construction Gantt](schedule-professional-a3-landscape.svg)',
+        '',
+        'Figure 1. Professional construction Gantt. Source: schedule-data.json. Audit: WBS and milestones verified.',
+      ].join('\n')
+      let renderedHtml = ''
+
+      const html = await buildMarkdownExport({ sourcePath, content, format: 'html' })
+      const docx = await buildMarkdownExport({ sourcePath, content, format: 'docx' })
+      await buildMarkdownExport({
+        sourcePath,
+        content,
+        format: 'pdf',
+        renderHtmlToPdf: async (htmlContent) => {
+          renderedHtml = htmlContent
+          return Buffer.from('%PDF-1.4\n% rendered by host\n%%EOF')
+        },
+      })
+
+      const htmlText = readFileSync(html.path, 'utf-8')
+      expect(htmlText).toContain('@page{size:A3 landscape')
+      expect(htmlText).toContain('data:image/svg+xml;base64,')
+      expect(renderedHtml).toContain('@page{size:A3 landscape')
+      expect(renderedHtml).toContain('data:image/svg+xml;base64,')
+
+      const docxBytes = readFileSync(docx.path)
+      const docxFiles = unzipSync(new Uint8Array(docxBytes))
+      expect(docxFiles['word/media/image1.svg']).toBeDefined()
+      expect(strFromU8(docxFiles['word/document.xml']!)).toContain('Professional construction Gantt')
+      expect(strFromU8(docxFiles['word/_rels/document.xml.rels']!)).toContain('media/image1.svg')
+    })
+  })
+
+  it('renders mermaid blocks to stable SVG assets during export without modifying markdown source', async () => {
+    await withTempDir(async (dir) => {
+      const sourcePath = join(dir, 'workflow.md')
+      const content = [
+        '# Workflow',
+        '',
+        '```mermaid',
+        'flowchart TD',
+        '  A[Start] --> B[Finish]',
+        '```',
+      ].join('\n')
+      let renderedHtml = ''
+
+      const html = await buildMarkdownExport({ sourcePath, content, format: 'html' })
+      const docx = await buildMarkdownExport({ sourcePath, content, format: 'docx' })
+      await buildMarkdownExport({
+        sourcePath,
+        content,
+        format: 'pdf',
+        renderHtmlToPdf: async (htmlContent) => {
+          renderedHtml = htmlContent
+          return Buffer.from('%PDF-1.4\n% rendered by host\n%%EOF')
+        },
+      })
+
+      expect(content).toContain('```mermaid')
+      expect(readFileSync(html.path, 'utf-8')).toContain('data:image/svg+xml;base64,')
+      expect(renderedHtml).toContain('data:image/svg+xml;base64,')
+      const docxFiles = unzipSync(new Uint8Array(readFileSync(docx.path)))
+      expect(docxFiles['word/media/image1.svg']).toBeDefined()
+    })
+  })
+
+  it('fails loudly when a local markdown image asset is missing', async () => {
+    await withTempDir(async (dir) => {
+      const sourcePath = join(dir, 'missing-asset-report.md')
+      const content = '# Report\n\n![Missing](missing-schedule.svg)'
+
+      await expect(buildMarkdownExport({ sourcePath, content, format: 'html' }))
+        .rejects.toThrow('Missing local Markdown image asset')
+    })
   })
 
   it('uses the host HTML renderer for PDF export when available', async () => {

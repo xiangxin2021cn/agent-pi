@@ -8,12 +8,15 @@ export type KnowledgeBaseFileExtension = typeof KNOWLEDGE_BASE_FILE_EXTENSIONS[n
 
 export interface KnowledgeBaseSourceMetadata {
   category: typeof KNOWLEDGE_BASE_METADATA_CATEGORY;
+  collectionId?: string;
   knowledgeCategory: string;
   knowledgeFolder?: string;
   scope: typeof KNOWLEDGE_BASE_SCOPE;
   sourceKind: 'file-memory';
   fileExtension?: KnowledgeBaseFileExtension;
   sourceFilePath?: string;
+  tags?: string[];
+  owner?: string;
   createdAt?: number;
 }
 

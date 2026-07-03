@@ -121,6 +121,7 @@ function getPlanChips(
   if ((plan.sections ?? []).length > 0) chips.push(t('sessionInfo.documentPlanSections', { defaultValue: '章节' }))
   if ((plan.tables ?? []).length > 0) chips.push(t('sessionInfo.documentPlanTables', { defaultValue: '表格' }))
   if ((plan.charts ?? []).length > 0) chips.push(t('sessionInfo.documentPlanCharts', { defaultValue: '图表' }))
+  addProfessionalVisualChips(t, plan, chips)
   if ((plan.citations ?? []).length > 0) chips.push(t('sessionInfo.documentPlanCitations', { defaultValue: '引用' }))
   if ((plan.deliveryFormats ?? []).length > 0) chips.push(t('sessionInfo.documentPlanFormats', { defaultValue: '交付格式' }))
   if (hasNoFabricationRule(plan, forbiddenShortcuts)) {
@@ -129,7 +130,33 @@ function getPlanChips(
   if ((plan.enhancements ?? []).some(item => /html|embedded|内嵌|嵌入/i.test(item))) {
     chips.push(t('sessionInfo.documentPlanHtml', { defaultValue: 'HTML增强' }))
   }
-  return unique(chips).slice(0, 7)
+  if (plan.strictTemplate) {
+    chips.push(t('sessionInfo.documentPlanTemplateAudit', { defaultValue: '模板审计' }))
+  }
+  if ((plan.deliveryFormats ?? []).some(format => /pdf|docx?|word/i.test(format)) && (plan.visualPlan || plan.strictTemplate)) {
+    chips.push(t('sessionInfo.documentPlanExportAudit', { defaultValue: '导出校验' }))
+  }
+  return unique(chips).slice(0, 12)
+}
+
+function addProfessionalVisualChips(t: Translate, plan: SessionDocumentPlan, chips: string[]): void {
+  const selectedKinds = plan.visualPlan?.selectedKinds ?? []
+  if (selectedKinds.length === 0) return
+
+  chips.push(t('sessionInfo.documentPlanVisualEnhancement', { defaultValue: '图表增强' }))
+  if (selectedKinds.includes('construction-gantt')) {
+    chips.push(t('sessionInfo.documentPlanProfessionalGantt', { defaultValue: '专业甘特' }))
+    chips.push(t('sessionInfo.documentPlanA3Landscape', { defaultValue: 'A3横向' }))
+  }
+  if (selectedKinds.some(kind => kind.startsWith('investment') || kind.includes('cash-flow') || kind.includes('npv') || kind.includes('sensitivity'))) {
+    chips.push(t('sessionInfo.documentPlanInvestmentVisuals', { defaultValue: '投资图表' }))
+  }
+  if (selectedKinds.some(kind => kind.startsWith('site-') || kind.startsWith('route-') || kind.startsWith('geospatial'))) {
+    chips.push(t('sessionInfo.documentPlanGisVisuals', { defaultValue: 'GIS图' }))
+  }
+  if (selectedKinds.some(kind => kind.startsWith('simulation') || kind === 'time-history-plot')) {
+    chips.push(t('sessionInfo.documentPlanSimulationVisuals', { defaultValue: '仿真图' }))
+  }
 }
 
 function hasNoFabricationRule(

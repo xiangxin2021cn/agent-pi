@@ -29,6 +29,7 @@ import {
 } from '@/components/info'
 import type { LoadedSource, McpToolWithPermission } from '../../shared/types'
 import type { PermissionsConfigFile } from '@craft-agent/shared/agent/modes'
+import { buildKnowledgeBaseInfoRows } from './source-info-view-model'
 
 interface SourceInfoPageProps {
   sourceSlug: string
@@ -314,6 +315,10 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     return buildToolsData(mcpTools)
   }, [mcpTools])
 
+  const knowledgeBaseRows = useMemo(() => {
+    return source ? buildKnowledgeBaseInfoRows(source) : []
+  }, [source])
+
   // Handle opening URL (website or folder)
   const handleOpenUrl = useCallback(async () => {
     if (!source || !sourceUrl) return
@@ -384,6 +389,25 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             title={source.config.name}
             tagline={source.config.tagline}
           />
+
+          {knowledgeBaseRows.length > 0 && (
+            <Info_Section
+              title={t('sourceInfo.knowledgeBase', { defaultValue: 'Knowledge Base' })}
+              description={t('sourceInfo.knowledgeBaseDesc', {
+                defaultValue: 'Reusable file-memory source metadata. Enable this source explicitly before using it in a workspace or session.',
+              })}
+            >
+              <Info_Table>
+                {knowledgeBaseRows.map((row) => (
+                  <Info_Table.Row
+                    key={row.labelKey}
+                    label={t(row.labelKey, { defaultValue: row.defaultLabel })}
+                    value={row.value}
+                  />
+                ))}
+              </Info_Table>
+            </Info_Section>
+          )}
 
           {/* Disabled Warning */}
           {source.config.mcp?.transport === 'stdio' && !localMcpEnabled && (

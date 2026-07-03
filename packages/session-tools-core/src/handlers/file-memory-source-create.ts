@@ -31,6 +31,7 @@ interface ChunkDraft {
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base';
 const KNOWLEDGE_BASE_SCOPE = 'global';
+const KNOWLEDGE_BASE_COLLECTION_ID = 'local-file-memory';
 const KNOWLEDGE_BASE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json']);
 
 export async function handleFileMemorySourceCreate(
@@ -91,6 +92,7 @@ export async function handleFileMemorySourceCreate(
         ? {
             category: knowledgeBase.knowledgeCategory,
             folder: knowledgeBase.knowledgeFolder,
+            collectionId: knowledgeBase.collectionId,
             scope: knowledgeBase.scope,
             sourceKind: knowledgeBase.sourceKind,
             fileExtension: knowledgeBase.fileExtension,
@@ -123,6 +125,7 @@ export async function handleFileMemorySourceCreate(
       metadata: knowledgeBase
         ? {
             category: KNOWLEDGE_BASE_METADATA_CATEGORY,
+            collectionId: knowledgeBase.collectionId,
             knowledgeCategory: knowledgeBase.knowledgeCategory,
             knowledgeFolder: knowledgeBase.knowledgeFolder,
             scope: knowledgeBase.scope,
@@ -138,6 +141,22 @@ export async function handleFileMemorySourceCreate(
 
     writeFileSync(sourceConfigPath, JSON.stringify(config, null, 2), 'utf-8');
     writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length, knowledgeBase }), 'utf-8');
+    if (knowledgeBase) {
+      upsertKnowledgeBaseRegistry(resolveKnowledgeBaseRegistryRoot(ctx), {
+        sourceSlug: slug,
+        name: displayName,
+        sourceFilePath,
+        workspacePath: ctx.workspacePath,
+        knowledgeCategory: knowledgeBase.knowledgeCategory,
+        knowledgeFolder: knowledgeBase.knowledgeFolder,
+        collectionId: knowledgeBase.collectionId,
+        scope: knowledgeBase.scope,
+        sourceKind: knowledgeBase.sourceKind,
+        fileExtension: knowledgeBase.fileExtension,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
 
     const autoEnable = args.autoEnable !== false;
     const validation = await handleSourceTest(ctx, { sourceSlug: slug, autoEnable });
@@ -177,9 +196,19 @@ export async function handleFileMemorySourceCreate(
 interface KnowledgeBaseSourceMetadata {
   knowledgeCategory: string;
   knowledgeFolder: string;
+  collectionId: string;
   scope: typeof KNOWLEDGE_BASE_SCOPE;
   sourceKind: 'file-memory';
   fileExtension: string;
+}
+
+interface KnowledgeBaseRegistryEntry extends KnowledgeBaseSourceMetadata {
+  sourceSlug: string;
+  name: string;
+  sourceFilePath: string;
+  workspacePath?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 function normalizeKnowledgeBase(
@@ -189,17 +218,60 @@ function normalizeKnowledgeBase(
   if (!input) return null;
   const fileExtension = extname(sourceFilePath).toLowerCase();
   if (!KNOWLEDGE_BASE_FILE_EXTENSIONS.has(fileExtension)) return null;
-  const knowledgeCategory = input.category.trim();
+  const knowledgeCategory = normalizeKnowledgeBaseFolder(input.category);
   if (!knowledgeCategory) {
     throw new Error('Knowledge base category is required.');
   }
   return {
     knowledgeCategory,
     knowledgeFolder: knowledgeCategory,
+    collectionId: KNOWLEDGE_BASE_COLLECTION_ID,
     scope: KNOWLEDGE_BASE_SCOPE,
     sourceKind: 'file-memory',
     fileExtension,
   };
+}
+
+function normalizeKnowledgeBaseFolder(value: string | null | undefined): string | null {
+  const segments = String(value ?? '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map(segment => segment.trim())
+    .filter(segment => segment && segment !== '.');
+  return segments.length > 0 ? segments.join('/') : null;
+}
+
+function resolveKnowledgeBaseRegistryRoot(ctx: SessionToolContext): string {
+  return ctx.knowledgeBaseRegistryRootPath
+    || process.env.CRAFT_KNOWLEDGE_BASE_HOME?.trim()
+    || ctx.workspacePath;
+}
+
+function upsertKnowledgeBaseRegistry(rootPath: string, entry: KnowledgeBaseRegistryEntry): void {
+  const registryDir = join(rootPath, 'knowledge-base');
+  const registryPath = join(registryDir, 'registry.json');
+  const current = readKnowledgeBaseRegistry(registryPath);
+  const entries = current.entries.filter(item => item.sourceSlug !== entry.sourceSlug);
+  entries.push(entry);
+  entries.sort((left, right) =>
+    left.knowledgeFolder.localeCompare(right.knowledgeFolder)
+    || left.name.localeCompare(right.name)
+  );
+  mkdirSync(registryDir, { recursive: true });
+  writeFileSync(registryPath, JSON.stringify({ version: 1, entries }, null, 2), 'utf-8');
+}
+
+function readKnowledgeBaseRegistry(registryPath: string): { version: 1; entries: KnowledgeBaseRegistryEntry[] } {
+  if (!existsSync(registryPath)) return { version: 1, entries: [] };
+  try {
+    const parsed = JSON.parse(readFileSync(registryPath, 'utf-8')) as { entries?: KnowledgeBaseRegistryEntry[] };
+    return {
+      version: 1,
+      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+    };
+  } catch {
+    return { version: 1, entries: [] };
+  }
 }
 
 function resolveAllowedInputFile(ctx: SessionToolContext, inputPath: string): string {
@@ -356,6 +428,7 @@ function buildGuide(args: {
           ``,
           `Category: ${args.knowledgeBase.knowledgeCategory}`,
           `Folder: ${args.knowledgeBase.knowledgeFolder}`,
+          `Collection: ${args.knowledgeBase.collectionId}`,
           `Scope: ${args.knowledgeBase.scope}`,
           `Source kind: ${args.knowledgeBase.sourceKind}`,
           `File extension: ${args.knowledgeBase.fileExtension}`,

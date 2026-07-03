@@ -40,6 +40,7 @@ import { recordProjectMemoryDocumentExtraction } from '../../project-memory-lite
 import { MarkItDown } from 'markitdown-js'
 import xlsx, { type WorkBook, type WorkSheet } from 'xlsx'
 import { marked } from 'marked'
+import { renderMermaidSVG } from 'beautiful-mermaid'
 import { strToU8, zipSync } from 'fflate'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -650,11 +651,22 @@ function escapeXml(value: string): string {
 type MarkdownExportBlock =
   | { type: 'heading'; depth: number; text: string }
   | { type: 'paragraph'; text: string }
+  | { type: 'image'; alt: string; src: string }
   | { type: 'listItem'; ordered: boolean; index: number; text: string }
   | { type: 'code'; text: string }
   | { type: 'quote'; text: string }
   | { type: 'table'; header: string[]; rows: string[][] }
   | { type: 'space' }
+
+interface MarkdownExportPageLayout {
+  pageSize: 'A4' | 'A3'
+  orientation: 'portrait' | 'landscape'
+}
+
+interface PreparedMarkdownExportContent {
+  content: string
+  pageLayout?: MarkdownExportPageLayout
+}
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -692,6 +704,18 @@ function tokenText(token: any): string {
   return ''
 }
 
+function onlyImageToken(token: any): { alt: string; src: string } | undefined {
+  if (token?.type === 'image' && typeof token.href === 'string') {
+    return { alt: markdownInlineToText(String(token.text ?? '')), src: token.href }
+  }
+  const children = Array.isArray(token?.tokens) ? token.tokens.filter((item: any) => item.type !== 'text' || String(item.raw ?? item.text ?? '').trim()) : []
+  if (children.length !== 1) return undefined
+  const child = children[0]
+  return child?.type === 'image' && typeof child.href === 'string'
+    ? { alt: markdownInlineToText(String(child.text ?? '')), src: child.href }
+    : undefined
+}
+
 export function renderMarkdownBlocksForExport(markdown: string): MarkdownExportBlock[] {
   const blocks: MarkdownExportBlock[] = []
   const tokens = marked.lexer(markdown.replace(/\r\n/g, '\n'), { gfm: true })
@@ -712,8 +736,18 @@ export function renderMarkdownBlocksForExport(markdown: string): MarkdownExportB
           })
           break
         case 'paragraph': {
+          const image = onlyImageToken(token)
+          if (image) {
+            blocks.push({ type: 'image', ...image })
+            break
+          }
           const text = tokenText(token)
           if (text) blocks.push({ type: 'paragraph', text })
+          break
+        }
+        case 'image': {
+          const image = onlyImageToken(token)
+          if (image) blocks.push({ type: 'image', ...image })
           break
         }
         case 'blockquote': {
@@ -764,8 +798,119 @@ export function renderMarkdownBlocksForExport(markdown: string): MarkdownExportB
   return blocks
 }
 
-async function createMarkdownHtml(content: string, title: string): Promise<string> {
+async function prepareMarkdownContentForExport(sourcePath: string, content: string): Promise<PreparedMarkdownExportContent> {
+  const mermaidPrepared = renderMermaidBlocksForExportContent(content)
+  content = mermaidPrepared.content
+  const sourceDir = dirname(sourcePath)
+  const imagePattern = /!\[([^\]]*)]\(([^)\r\n]+)\)/g
+  const parts: string[] = []
+  let lastIndex = 0
+  let pageLayout = mermaidPrepared.pageLayout ?? detectPageLayoutFromVisualMarkup(content)
+
+  for (const match of content.matchAll(imagePattern)) {
+    const index = match.index ?? 0
+    const rawTarget = match[2] ?? ''
+    const href = parseMarkdownImageHref(rawTarget)
+    parts.push(content.slice(lastIndex, index))
+
+    if (isLocalMarkdownAssetRef(href)) {
+      const assetPath = isAbsolute(href) ? href : resolve(sourceDir, href)
+      const info = await stat(assetPath).catch(() => undefined)
+      if (!info?.isFile()) {
+        throw new Error(`Missing local Markdown image asset: ${assetPath}`)
+      }
+      const bytes = await readFile(assetPath)
+      const mime = getMarkdownAssetMimeType(assetPath)
+      if (!mime) {
+        throw new Error(`Unsupported Markdown image asset type: ${assetPath}`)
+      }
+      if (mime === 'image/svg+xml') {
+        pageLayout = pageLayout ?? detectPageLayoutFromVisualMarkup(bytes.toString('utf-8'))
+      }
+      parts.push(`![${match[1] ?? ''}](data:${mime};base64,${Buffer.from(bytes).toString('base64')})`)
+    } else {
+      parts.push(match[0])
+    }
+
+    lastIndex = index + match[0].length
+  }
+
+  parts.push(content.slice(lastIndex))
+  return {
+    content: parts.join(''),
+    pageLayout,
+  }
+}
+
+function renderMermaidBlocksForExportContent(content: string): PreparedMarkdownExportContent {
+  const mermaidPattern = /```mermaid\s*\n([\s\S]*?)```/gi
+  const parts: string[] = []
+  let lastIndex = 0
+  let pageLayout = detectPageLayoutFromVisualMarkup(content)
+
+  for (const match of content.matchAll(mermaidPattern)) {
+    const index = match.index ?? 0
+    const source = (match[1] ?? '').trim()
+    parts.push(content.slice(lastIndex, index))
+
+    try {
+      const svg = renderMermaidSVG(source)
+      pageLayout = pageLayout ?? detectPageLayoutFromVisualMarkup(svg)
+      const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`
+      parts.push(`![Mermaid diagram](${dataUrl})`)
+    } catch {
+      parts.push(match[0])
+    }
+
+    lastIndex = index + match[0].length
+  }
+
+  parts.push(content.slice(lastIndex))
+  return {
+    content: parts.join(''),
+    pageLayout,
+  }
+}
+
+function parseMarkdownImageHref(rawTarget: string): string {
+  const trimmed = rawTarget.trim()
+  if (trimmed.startsWith('<') && trimmed.includes('>')) {
+    return trimmed.slice(1, trimmed.indexOf('>')).trim()
+  }
+  const quotedTitleIndex = trimmed.search(/\s+["']/)
+  return (quotedTitleIndex === -1 ? trimmed : trimmed.slice(0, quotedTitleIndex)).trim()
+}
+
+function isLocalMarkdownAssetRef(href: string): boolean {
+  return !!href
+    && !/^(?:https?:|data:|blob:|#|mailto:)/i.test(href)
+}
+
+function getMarkdownAssetMimeType(filePath: string): string | undefined {
+  const ext = extname(filePath).toLowerCase()
+  if (ext === '.svg') return 'image/svg+xml'
+  if (ext === '.png') return 'image/png'
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.gif') return 'image/gif'
+  if (ext === '.webp') return 'image/webp'
+  return undefined
+}
+
+function detectPageLayoutFromVisualMarkup(value: string): MarkdownExportPageLayout | undefined {
+  const pageSize = value.match(/data-page-size=["'](A3|A4)["']/i)?.[1]?.toUpperCase()
+  const orientation = value.match(/data-orientation=["'](landscape|portrait)["']/i)?.[1]?.toLowerCase()
+  if (pageSize === 'A3' || pageSize === 'A4') {
+    return {
+      pageSize,
+      orientation: orientation === 'landscape' ? 'landscape' : 'portrait',
+    }
+  }
+  return undefined
+}
+
+async function createMarkdownHtml(content: string, title: string, pageLayout?: MarkdownExportPageLayout): Promise<string> {
   const body = await Promise.resolve(marked.parse(content, { gfm: true, breaks: false }))
+  const pageSize = pageLayout ? `${pageLayout.pageSize} ${pageLayout.orientation}` : 'A4'
   return [
     '<!doctype html>',
     '<html lang="zh-CN">',
@@ -773,7 +918,7 @@ async function createMarkdownHtml(content: string, title: string): Promise<strin
     '<meta charset="utf-8">',
     `<title>${escapeHtml(title)}</title>`,
     '<style>',
-    '@page{size:A4;margin:18mm 16mm;}',
+    `@page{size:${pageSize};margin:18mm 16mm;}`,
     'html,body{margin:0;padding:0;background:#fff;}',
     'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;line-height:1.65;color:#202124;font-size:14px;}',
     '.markdown-body{box-sizing:border-box;max-width:900px;margin:40px auto;padding:0 32px;}',
@@ -849,8 +994,19 @@ function docxTable(block: Extract<MarkdownExportBlock, { type: 'table' }>): stri
   ].join('')
 }
 
+interface DocxImageMedia {
+  id: number
+  relationshipId: string
+  fileName: string
+  extension: string
+  contentType: string
+  bytes: Uint8Array
+  alt: string
+}
+
 function createDocxBuffer(markdown: string): Buffer {
   const blocks = renderMarkdownBlocksForExport(markdown)
+  const media: DocxImageMedia[] = []
   const documentContent = blocks.map(block => {
     switch (block.type) {
       case 'heading':
@@ -861,6 +1017,8 @@ function createDocxBuffer(markdown: string): Buffer {
         })
       case 'paragraph':
         return docxParagraph(block.text)
+      case 'image':
+        return docxImageParagraph(block, media)
       case 'listItem':
         return docxParagraph(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, { indent: 360 })
       case 'quote':
@@ -880,6 +1038,7 @@ function createDocxBuffer(markdown: string): Buffer {
       '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
       '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
       '<Default Extension="xml" ContentType="application/xml"/>',
+      ...getDocxImageContentTypes(media),
       '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
       '</Types>',
     ].join('')),
@@ -889,9 +1048,18 @@ function createDocxBuffer(markdown: string): Buffer {
       '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>',
       '</Relationships>',
     ].join('')),
+    ...(media.length > 0 ? {
+      'word/_rels/document.xml.rels': strToU8([
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        ...media.map(image => `<Relationship Id="${image.relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${image.fileName}"/>`),
+        '</Relationships>',
+      ].join('')),
+    } : {}),
+    ...Object.fromEntries(media.map(image => [`word/media/${image.fileName}`, image.bytes])),
     'word/document.xml': strToU8([
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
       '<w:body>',
       documentContent || '<w:p/>',
       '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
@@ -901,6 +1069,83 @@ function createDocxBuffer(markdown: string): Buffer {
   }
 
   return Buffer.from(zipSync(files))
+}
+
+function docxImageParagraph(block: Extract<MarkdownExportBlock, { type: 'image' }>, media: DocxImageMedia[]): string {
+  const image = registerDocxImage(block, media)
+  if (!image) return docxParagraph(block.alt || '[image]')
+  const cx = 8_600_000
+  const cy = 4_800_000
+
+  return [
+    '<w:p><w:r><w:drawing>',
+    '<wp:inline distT="0" distB="0" distL="0" distR="0">',
+    `<wp:extent cx="${cx}" cy="${cy}"/>`,
+    `<wp:docPr id="${image.id}" name="${escapeXml(image.alt || image.fileName)}"/>`,
+    '<a:graphic>',
+    '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+    '<pic:pic>',
+    '<pic:nvPicPr>',
+    `<pic:cNvPr id="${image.id}" name="${escapeXml(image.fileName)}"/>`,
+    '<pic:cNvPicPr/>',
+    '</pic:nvPicPr>',
+    '<pic:blipFill>',
+    `<a:blip r:embed="${image.relationshipId}"/>`,
+    '<a:stretch><a:fillRect/></a:stretch>',
+    '</pic:blipFill>',
+    '<pic:spPr>',
+    '<a:xfrm><a:off x="0" y="0"/><a:ext cx="8600000" cy="4800000"/></a:xfrm>',
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>',
+    '</pic:spPr>',
+    '</pic:pic>',
+    '</a:graphicData>',
+    '</a:graphic>',
+    '</wp:inline>',
+    '</w:drawing></w:r></w:p>',
+    image.alt ? docxParagraph(image.alt, { after: 80 }) : '',
+  ].join('')
+}
+
+function registerDocxImage(block: Extract<MarkdownExportBlock, { type: 'image' }>, media: DocxImageMedia[]): DocxImageMedia | undefined {
+  const parsed = parseDataImage(block.src)
+  if (!parsed) return undefined
+
+  const id = media.length + 1
+  const image: DocxImageMedia = {
+    id,
+    relationshipId: `rIdImage${id}`,
+    fileName: `image${id}.${parsed.extension}`,
+    extension: parsed.extension,
+    contentType: parsed.contentType,
+    bytes: parsed.bytes,
+    alt: block.alt,
+  }
+  media.push(image)
+  return image
+}
+
+function parseDataImage(src: string): Pick<DocxImageMedia, 'extension' | 'contentType' | 'bytes'> | undefined {
+  const match = src.match(/^data:(image\/(?:png|jpeg|gif|webp|svg\+xml));base64,([A-Za-z0-9+/=]+)$/i)
+  if (!match) return undefined
+  const contentType = match[1]!.toLowerCase()
+  const extension = contentType === 'image/svg+xml'
+    ? 'svg'
+    : contentType === 'image/jpeg'
+      ? 'jpg'
+      : contentType.slice('image/'.length)
+  return {
+    extension,
+    contentType,
+    bytes: Buffer.from(match[2]!, 'base64'),
+  }
+}
+
+function getDocxImageContentTypes(media: DocxImageMedia[]): string[] {
+  const seen = new Map<string, string>()
+  for (const image of media) {
+    seen.set(image.extension, image.contentType)
+  }
+  return [...seen].map(([extension, contentType]) => `<Default Extension="${extension}" ContentType="${contentType}"/>`)
 }
 
 function utf16BeHex(value: string): string {
@@ -947,6 +1192,8 @@ function createPdfBuffer(markdown: string): Buffer {
           .map(text => ({ text, size: block.depth === 1 ? 18 : 15, indent: 0, after: 8 }))
       case 'paragraph':
         return wrapPdfLine(block.text).map(text => ({ text, size: 11, indent: 0, after: 2 }))
+      case 'image':
+        return wrapPdfLine(block.alt ? `[Figure] ${block.alt}` : '[Figure]').map(text => ({ text, size: 10, indent: 0, after: 4 }))
       case 'listItem':
         return wrapPdfLine(`${block.ordered ? `${block.index}.` : '•'} ${block.text}`, 72)
           .map(text => ({ text, size: 11, indent: 18, after: 2 }))
@@ -1064,17 +1311,18 @@ export async function buildMarkdownExport(args: {
 }): Promise<MarkdownExportResult> {
   const targetPath = await getAvailableExportPath(args.sourcePath, args.format, args.targetPath)
   const title = basename(args.sourcePath)
+  const prepared = await prepareMarkdownContentForExport(args.sourcePath, args.content)
   let output: string | Buffer
 
   if (args.format === 'html') {
-    output = await createMarkdownHtml(args.content, title)
+    output = await createMarkdownHtml(prepared.content, title, prepared.pageLayout)
   } else if (args.format === 'docx') {
-    output = createDocxBuffer(args.content)
+    output = createDocxBuffer(prepared.content)
   } else {
-    const html = await createMarkdownHtml(args.content, title)
+    const html = await createMarkdownHtml(prepared.content, title, prepared.pageLayout)
     output = args.renderHtmlToPdf
       ? Buffer.from(await args.renderHtmlToPdf(html))
-      : createPdfBuffer(args.content)
+      : createPdfBuffer(prepared.content)
   }
 
   await mkdir(dirname(targetPath), { recursive: true })

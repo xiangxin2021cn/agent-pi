@@ -188,8 +188,10 @@ describe('file_memory_source_create', () => {
     try {
       const workspacePath = join(root, 'workspace');
       const workingDirectory = join(root, 'project');
+      const knowledgeBaseRegistryRootPath = join(root, 'app-config');
       mkdirSync(workspacePath, { recursive: true });
       mkdirSync(workingDirectory, { recursive: true });
+      mkdirSync(knowledgeBaseRegistryRootPath, { recursive: true });
 
       const fakeServer = join(root, 'file-memory-server.js');
       writeFileSync(fakeServer, 'console.log("ok");', 'utf-8');
@@ -200,7 +202,7 @@ describe('file_memory_source_create', () => {
       const sourceFile = join(workingDirectory, 'company-standard.md');
       writeFileSync(sourceFile, '# Company Standard\n\nUse approved method statements.', 'utf-8');
 
-      const ctx = createTestContext(workspacePath, workingDirectory);
+      const ctx = createTestContext(workspacePath, workingDirectory, { knowledgeBaseRegistryRootPath });
       const result = await handleFileMemorySourceCreate(ctx, {
         filePath: 'company-standard.md',
         sourceSlug: 'file-memory-company-standard',
@@ -219,6 +221,7 @@ describe('file_memory_source_create', () => {
       const config = JSON.parse(readFileSync(sourceConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
       expect(config.metadata).toMatchObject({
         category: 'knowledge_base',
+        collectionId: 'local-file-memory',
         knowledgeCategory: 'Tender Standards/Method Statements',
         knowledgeFolder: 'Tender Standards/Method Statements',
         scope: 'global',
@@ -236,6 +239,25 @@ describe('file_memory_source_create', () => {
       const guide = readFileSync(guidePath, 'utf-8');
       expect(guide).toContain('Knowledge Base');
       expect(guide).toContain('Tender Standards/Method Statements');
+
+      const registryPath = join(knowledgeBaseRegistryRootPath, 'knowledge-base', 'registry.json');
+      const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as {
+        version: number;
+        entries: Array<Record<string, unknown>>;
+      };
+      expect(registry.version).toBe(1);
+      expect(registry.entries).toContainEqual(expect.objectContaining({
+        sourceSlug: 'file-memory-company-standard',
+        name: 'company-standard.md',
+        sourceFilePath: sourceFile,
+        workspacePath,
+        collectionId: 'local-file-memory',
+        knowledgeCategory: 'Tender Standards/Method Statements',
+        knowledgeFolder: 'Tender Standards/Method Statements',
+        scope: 'global',
+        sourceKind: 'file-memory',
+        fileExtension: '.md',
+      }));
     } finally {
       if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
       else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;

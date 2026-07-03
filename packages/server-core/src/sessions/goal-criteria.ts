@@ -1,4 +1,6 @@
 import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
+import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
+import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
 import type { SessionDocumentPlan, SessionGoalCriterion, SessionGoalMode, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
@@ -32,6 +34,8 @@ export const FILE_OUTPUT_REQUIRED_CRITERION_TEXT = 'Create or update the request
 export const TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT = 'Run the requested verification command(s), and leave successful tool evidence in the turn.'
 export const COMPREHENSIVE_QUALITY_CRITERION_TEXT = 'Cover the requested scope comprehensively and in enough detail for the requested high-quality work product.'
 export const DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT = 'Pass a document quality audit for structure, evidence grounding, specificity, and visible gaps before completion.'
+export const VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT = 'Pass a visual block audit for required professional visuals, captions, source notes, and evidence-backed data before completion.'
+export const TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT = 'Pass a template fidelity audit when a reference template or strict layout requirement is present; prompt-only compliance is insufficient.'
 export const OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX = 'Create output file(s) in the requested format(s):'
 
 const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
@@ -52,6 +56,8 @@ const DOCUMENT_TONE_PATTERN = /(?:语气|风格|口吻|tone|style)\s*[:：为是
 const DOCUMENT_LENGTH_PATTERN = /(?:篇幅|长度|字数|页数|length)\s*[:：为是]?\s*([^，。,.；;\n]{2,40})/i
 const TITLE_HINT_PATTERN = /(?:标题|题目|命名为|文件名|title)\s*[:：为是]?\s*([^，。,.；;\n]{2,80})/i
 const VISUAL_ENHANCEMENT_PATTERN = /图表|图形|可视化|柱状|折线|饼图|占比|趋势|分布|流程图|架构图|关系图|chart|graph|plot|visual|visualization|bar|line|pie|trend|distribution|flowchart|diagram/i
+const PROFESSIONAL_VISUAL_PATTERN = /专业.*(?:图|表|报告)|甘特|wbs|基线|当前计划|关键路径|进度线|里程碑|a3|a4|现金流|净现值|内部收益率|敏感性|地理|地图|路线|桩号|坐标|仿真|有限元|应力|位移|收敛|gantt|baseline|critical path|milestone|cash\s*flow|npv|irr|sensitivity|geospatial|gis|coordinate|chainage|ansys|cae|fea|stress|displacement|convergence/i
+const STRICT_TEMPLATE_PATTERN = /严格.{0,12}(?:模板|版式|格式|布局|字体|目录|样式)|(?:按照|按|依照|复刻|保持|匹配).{0,24}(?:上传|参考|word|docx|pdf)?.{0,24}(?:模板|版式|格式|页面布局|字体|目录层级|大纲|样式)|template.{0,24}(?:layout|style|format|fidelity|strict)|reference.{0,16}template|word模板|pdf模板/i
 const EMBEDDED_HTML_PATTERN = /html|HTML|内嵌|嵌入|embed|embedded|interactive/i
 const PROCESS_VISUAL_PATTERN = /流程|关系|架构|步骤|路径|process|workflow|architecture|relationship|diagram/i
 const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -107,6 +113,22 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
   if ((isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
     criteria.push({
       text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+  }
+
+  if (requiresVisualBlockAudit(message)) {
+    criteria.push({
+      text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    })
+  }
+
+  if (requiresTemplateFidelityAudit(message, input.storedAttachments)) {
+    criteria.push({
+      text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
       required: true,
     })
@@ -333,7 +355,9 @@ function buildDocumentPlan(input: {
   const sections = buildDocumentPlanSections(input.message, input.explicitRequirements, input.taskType)
   const tables = buildDocumentPlanTables(input.message, input.explicitRequirements, input.taskType)
   const charts = buildDocumentPlanCharts(input.message, input.explicitRequirements)
-  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts)
+  const visualPlan = buildVisualPlan(input.message)
+  const strictTemplate = requiresTemplateFidelityAudit(input.message)
+  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate)
   const citations = input.referencedNames.length > 0
     ? input.referencedNames.map(name => `Cite or reference ${name} where it supports key facts.`)
     : SOURCE_SENSITIVE_PATTERN.test(input.message)
@@ -345,6 +369,10 @@ function buildDocumentPlan(input: {
     audience: extractFirstMatch(input.message, DOCUMENT_AUDIENCE_PATTERN),
     tone: extractFirstMatch(input.message, DOCUMENT_TONE_PATTERN),
     length: extractFirstMatch(input.message, DOCUMENT_LENGTH_PATTERN),
+    domain: detectDocumentDomain(input.message),
+    visualPlan,
+    templateProfileId: strictTemplate ? 'pending-template-profile' : undefined,
+    strictTemplate: strictTemplate || undefined,
     sections,
     tables,
     charts,
@@ -412,9 +440,15 @@ function buildDocumentPlanCharts(message: string, explicitRequirements: string[]
   return uniqueBounded(charts, 8)
 }
 
-function buildDocumentPlanEnhancements(message: string, tables: string[], charts: string[]): string[] {
+function buildDocumentPlanEnhancements(message: string, tables: string[], charts: string[], visualPlan: VisualPlan | undefined, strictTemplate: boolean): string[] {
   const enhancements: string[] = []
 
+  if (visualPlan && visualPlan.selectedKinds.length > 0) {
+    enhancements.push('Render required professional visuals from verified data and include captions, source notes, and audit reasons.')
+  }
+  if (strictTemplate) {
+    enhancements.push('Use a parsed template profile for strict layout checks; Markdown remains the semantic draft and DOCX/PDF require export evidence.')
+  }
   if (charts.length > 0) {
     enhancements.push('Use structured chart specifications such as chart.json before rendering visual assets; every data point must come from verified source data.')
   }
@@ -440,6 +474,10 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     audience: current.audience ?? next.audience,
     tone: current.tone ?? next.tone,
     length: current.length ?? next.length,
+    domain: current.domain ?? next.domain,
+    visualPlan: mergeVisualPlans(current.visualPlan, next.visualPlan),
+    templateProfileId: current.templateProfileId ?? next.templateProfileId,
+    strictTemplate: current.strictTemplate || next.strictTemplate || undefined,
     sections: uniqueBounded([...current.sections, ...next.sections], 24),
     tables: uniqueBounded([...current.tables, ...next.tables], 12),
     charts: uniqueBounded([...current.charts, ...next.charts], 12),
@@ -456,6 +494,10 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Audience: ${plan.audience ?? '(unspecified)'}`,
     `Tone: ${plan.tone ?? '(unspecified)'}`,
     `Length: ${plan.length ?? '(unspecified)'}`,
+    `Domain: ${plan.domain ?? '(unspecified)'}`,
+    `Strict template: ${plan.strictTemplate ? 'yes' : 'no'}`,
+    `Template profile: ${plan.templateProfileId ?? '(none)'}`,
+    `Visual plan:\n${formatVisualPlan(plan.visualPlan)}`,
     `Sections:\n${formatContractList(plan.sections)}`,
     `Tables:\n${formatContractList(plan.tables)}`,
     `Charts:\n${formatContractList(plan.charts)}`,
@@ -485,11 +527,83 @@ function buildForbiddenShortcuts(message: string, taskType: SessionTaskContractT
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {
     shortcuts.push('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')
   }
+  if (requiresTemplateFidelityAudit(message)) {
+    shortcuts.push('Do not claim template fidelity from prompt wording alone; strict template mode requires a parsed template profile and export evidence.')
+  }
   if (taskType === 'code') {
     shortcuts.push('Do not refactor unrelated code or skip verification when the user asked for an implementation fix.')
   }
 
   return uniqueBounded(shortcuts, 8)
+}
+
+function requiresVisualBlockAudit(message: string): boolean {
+  return PROFESSIONAL_VISUAL_PATTERN.test(message) || suggestVisuals({ text: message, mode: 'professional' }).some(suggestion => suggestion.score >= 0.7)
+}
+
+function requiresTemplateFidelityAudit(message: string, storedAttachments: StoredAttachment[] | undefined = undefined): boolean {
+  const hasTemplateAttachment = (storedAttachments ?? []).some(attachment =>
+    /\.(?:docx?|pdf|md|markdown)$/i.test(attachment.name)
+    && /template|模板|reference|参照|参考/i.test(attachment.name)
+  )
+  return STRICT_TEMPLATE_PATTERN.test(message) || hasTemplateAttachment
+}
+
+function buildVisualPlan(message: string): VisualPlan | undefined {
+  if (!requiresVisualBlockAudit(message)) return undefined
+
+  const suggestions = suggestVisuals({ text: message, mode: 'professional' })
+  const opportunities = suggestions.map<VisualOpportunity>((suggestion, index) => ({
+    id: `request-visual-${index + 1}`,
+    domain: suggestion.domain,
+    recommendedKind: suggestion.kind,
+    score: suggestion.score,
+    reason: suggestion.reason,
+    requiredData: suggestion.requiredData,
+    missingData: suggestion.missingData,
+  }))
+  const selectedKinds = opportunities.length > 0
+    ? opportunities.map(opportunity => opportunity.recommendedKind)
+    : fallbackVisualKinds(message)
+
+  return {
+    mode: 'professional',
+    opportunities,
+    selectedKinds: uniqueBounded(selectedKinds, 8) as VisualPlan['selectedKinds'],
+    auditRequirements: [
+      'Every professional visual must have verified data, a caption, a source note, and an audit reason.',
+      'If required data is unavailable, the output must state the missing data instead of drawing an unsupported visual.',
+    ],
+  }
+}
+
+function fallbackVisualKinds(message: string): VisualPlan['selectedKinds'] {
+  if (/施工|进度|甘特|wbs|baseline|gantt|critical path|里程碑/i.test(message)) return ['construction-gantt']
+  if (/投资|现金流|npv|irr|敏感性|cash\s*flow|sensitivity/i.test(message)) return ['investment-cash-flow-table']
+  if (/gis|地理|地图|坐标|路线|桩号|geospatial|coordinate|chainage/i.test(message)) return ['site-location-map']
+  if (/ansys|cae|fea|仿真|应力|位移|收敛|simulation|stress|displacement|convergence/i.test(message)) return ['simulation-result-table']
+  return ['professional-table']
+}
+
+function mergeVisualPlans(current: VisualPlan | undefined, next: VisualPlan | undefined): VisualPlan | undefined {
+  if (!current) return next
+  if (!next) return current
+
+  return {
+    mode: current.mode === 'professional' || next.mode === 'professional' ? 'professional' : 'standard',
+    opportunities: [...current.opportunities, ...next.opportunities].slice(0, 16),
+    selectedKinds: uniqueBounded([...current.selectedKinds, ...next.selectedKinds], 12) as VisualPlan['selectedKinds'],
+    auditRequirements: uniqueBounded([...current.auditRequirements, ...next.auditRequirements], 12),
+  }
+}
+
+function formatVisualPlan(plan: VisualPlan | undefined): string {
+  if (!plan) return '(none)'
+  return [
+    `Mode: ${plan.mode}`,
+    `Selected kinds: ${plan.selectedKinds.join(', ') || '(none)'}`,
+    `Audit requirements:\n${formatContractList(plan.auditRequirements)}`,
+  ].join('\n')
 }
 
 function extractLocalPathMentions(message: string): string[] {

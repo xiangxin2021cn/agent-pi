@@ -719,6 +719,8 @@ export interface WorkspaceSettings {
     qualityMode?: 'standard' | 'council'
     reviewerModels?: Record<string, string>
     maxExtraReviewers?: number
+    documentVisualMode?: 'fast' | 'standard' | 'professional'
+    maxAutoVisuals?: number
   }
 }
 

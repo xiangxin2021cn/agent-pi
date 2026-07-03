@@ -51,6 +51,8 @@ import {
 } from '@/components/settings'
 import {
   buildGoalLoopSettingsPayload,
+  resolveDocumentMaxAutoVisuals,
+  resolveDocumentVisualMode,
   resolveGoalLoopMaxExtraReviewers,
 } from './workspace-goal-loop-settings-view-model'
 
@@ -61,7 +63,9 @@ export const meta: DetailsPageMeta = {
 
 type GoalLoopDefaultMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['defaultMode']>
 type GoalLoopQualityMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['qualityMode']>
+type DocumentVisualMode = NonNullable<NonNullable<WorkspaceSettings['goalLoop']>['documentVisualMode']>
 type GoalLoopReviewerBudget = '0' | '1' | '2'
+type DocumentMaxAutoVisualsOption = '0' | '3' | '5' | '8' | '12'
 const MINERU_TOKEN_URL = 'https://mineru.net/apiManage/token'
 
 // ============================================
@@ -97,6 +101,8 @@ export default function WorkspaceSettingsPage() {
   const [goalLoopQualityMode, setGoalLoopQualityMode] = useState<GoalLoopQualityMode>('council')
   const [goalLoopMaxExtraReviewers, setGoalLoopMaxExtraReviewers] = useState(1)
   const [goalLoopReviewerModels, setGoalLoopReviewerModels] = useState<Record<string, string> | undefined>(undefined)
+  const [documentVisualMode, setDocumentVisualMode] = useState<DocumentVisualMode>('standard')
+  const [documentMaxAutoVisuals, setDocumentMaxAutoVisuals] = useState(5)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Default sources state
@@ -136,6 +142,8 @@ export default function WorkspaceSettingsPage() {
           setGoalLoopQualityMode(settings.goalLoop?.qualityMode ?? 'council')
           setGoalLoopMaxExtraReviewers(resolveGoalLoopMaxExtraReviewers(settings.goalLoop?.maxExtraReviewers))
           setGoalLoopReviewerModels(settings.goalLoop?.reviewerModels)
+          setDocumentVisualMode(resolveDocumentVisualMode(settings.goalLoop?.documentVisualMode))
+          setDocumentMaxAutoVisuals(resolveDocumentMaxAutoVisuals(settings.goalLoop?.maxAutoVisuals))
           // Load cyclable permission modes from workspace settings
           if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
             setEnabledModes(settings.cyclablePermissionModes)
@@ -408,11 +416,13 @@ export default function WorkspaceSettingsPage() {
           qualityMode: goalLoopQualityMode,
           maxExtraReviewers: goalLoopMaxExtraReviewers,
           reviewerModels: goalLoopReviewerModels,
+          documentVisualMode,
+          maxAutoVisuals: documentMaxAutoVisuals,
         },
         patch: { defaultMode: mode },
       }))
     },
-    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+    [documentMaxAutoVisuals, documentVisualMode, goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
   )
 
   const handleGoalLoopQualityModeChange = useCallback(
@@ -424,11 +434,13 @@ export default function WorkspaceSettingsPage() {
           qualityMode: goalLoopQualityMode,
           maxExtraReviewers: goalLoopMaxExtraReviewers,
           reviewerModels: goalLoopReviewerModels,
+          documentVisualMode,
+          maxAutoVisuals: documentMaxAutoVisuals,
         },
         patch: { qualityMode: mode },
       }))
     },
-    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+    [documentMaxAutoVisuals, documentVisualMode, goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
   )
 
   const handleGoalLoopReviewerBudgetChange = useCallback(
@@ -441,11 +453,50 @@ export default function WorkspaceSettingsPage() {
           qualityMode: goalLoopQualityMode,
           maxExtraReviewers: goalLoopMaxExtraReviewers,
           reviewerModels: goalLoopReviewerModels,
+          documentVisualMode,
+          maxAutoVisuals: documentMaxAutoVisuals,
         },
         patch: { maxExtraReviewers },
       }))
     },
-    [goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+    [documentMaxAutoVisuals, documentVisualMode, goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+  )
+
+  const handleDocumentVisualModeChange = useCallback(
+    async (mode: DocumentVisualMode) => {
+      setDocumentVisualMode(mode)
+      await updateWorkspaceSetting('goalLoop', buildGoalLoopSettingsPayload({
+        current: {
+          defaultMode: goalLoopDefaultMode,
+          qualityMode: goalLoopQualityMode,
+          maxExtraReviewers: goalLoopMaxExtraReviewers,
+          reviewerModels: goalLoopReviewerModels,
+          documentVisualMode,
+          maxAutoVisuals: documentMaxAutoVisuals,
+        },
+        patch: { documentVisualMode: mode },
+      }))
+    },
+    [documentMaxAutoVisuals, documentVisualMode, goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
+  )
+
+  const handleDocumentMaxAutoVisualsChange = useCallback(
+    async (value: DocumentMaxAutoVisualsOption) => {
+      const maxAutoVisuals = Number(value)
+      setDocumentMaxAutoVisuals(maxAutoVisuals)
+      await updateWorkspaceSetting('goalLoop', buildGoalLoopSettingsPayload({
+        current: {
+          defaultMode: goalLoopDefaultMode,
+          qualityMode: goalLoopQualityMode,
+          maxExtraReviewers: goalLoopMaxExtraReviewers,
+          reviewerModels: goalLoopReviewerModels,
+          documentVisualMode,
+          maxAutoVisuals: documentMaxAutoVisuals,
+        },
+        patch: { maxAutoVisuals },
+      }))
+    },
+    [documentMaxAutoVisuals, documentVisualMode, goalLoopDefaultMode, goalLoopMaxExtraReviewers, goalLoopQualityMode, goalLoopReviewerModels, updateWorkspaceSetting]
   )
 
   const handleSourceToggle = useCallback(
@@ -645,6 +696,30 @@ export default function WorkspaceSettingsPage() {
                     { value: '1', label: t("settings.workspace.goalLoopReviewerBudgetBalanced"), description: t("settings.workspace.goalLoopReviewerBudgetBalancedDesc") },
                     { value: '0', label: t("settings.workspace.goalLoopReviewerBudgetCost"), description: t("settings.workspace.goalLoopReviewerBudgetCostDesc") },
                     { value: '2', label: t("settings.workspace.goalLoopReviewerBudgetStrict"), description: t("settings.workspace.goalLoopReviewerBudgetStrictDesc") },
+                  ]}
+                />
+                <SettingsMenuSelectRow
+                  label={t("settings.workspace.documentVisualMode")}
+                  description={t("settings.workspace.documentVisualModeDesc")}
+                  value={documentVisualMode}
+                  onValueChange={(v) => handleDocumentVisualModeChange(v as DocumentVisualMode)}
+                  options={[
+                    { value: 'standard', label: t("settings.workspace.documentVisualModeStandard"), description: t("settings.workspace.documentVisualModeStandardDesc") },
+                    { value: 'fast', label: t("settings.workspace.documentVisualModeFast"), description: t("settings.workspace.documentVisualModeFastDesc") },
+                    { value: 'professional', label: t("settings.workspace.documentVisualModeProfessional"), description: t("settings.workspace.documentVisualModeProfessionalDesc") },
+                  ]}
+                />
+                <SettingsMenuSelectRow
+                  label={t("settings.workspace.documentMaxAutoVisuals")}
+                  description={t("settings.workspace.documentMaxAutoVisualsDesc")}
+                  value={String(documentMaxAutoVisuals)}
+                  onValueChange={(v) => handleDocumentMaxAutoVisualsChange(v as DocumentMaxAutoVisualsOption)}
+                  options={[
+                    { value: '5', label: t("settings.workspace.documentMaxAutoVisualsBalanced"), description: t("settings.workspace.documentMaxAutoVisualsBalancedDesc") },
+                    { value: '3', label: t("settings.workspace.documentMaxAutoVisualsLight"), description: t("settings.workspace.documentMaxAutoVisualsLightDesc") },
+                    { value: '8', label: t("settings.workspace.documentMaxAutoVisualsRich"), description: t("settings.workspace.documentMaxAutoVisualsRichDesc") },
+                    { value: '12', label: t("settings.workspace.documentMaxAutoVisualsMax"), description: t("settings.workspace.documentMaxAutoVisualsMaxDesc") },
+                    { value: '0', label: t("settings.workspace.documentMaxAutoVisualsOff"), description: t("settings.workspace.documentMaxAutoVisualsOffDesc") },
                   ]}
                 />
               </SettingsCard>

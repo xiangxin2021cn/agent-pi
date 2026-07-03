@@ -9,8 +9,11 @@ import type {
 import { getContextPressureSignal } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
 import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-quality'
+import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
+import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
+import type { ExtractedTemplateProfile } from '../documents/template-profile'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
@@ -256,6 +259,7 @@ export class GoalController {
         detail: finalAssistant.id,
       })
     }
+    const outputTexts = finalAssistant ? [finalAssistant.content, ...outputPreviewTexts] : outputPreviewTexts
     if (finalAssistant && requiresDocumentQualityAudit(goalState)) {
       const report = analyzeDocumentQuality({
         contents: outputPreviewTexts.length > 0 ? outputPreviewTexts : [finalAssistant.content],
@@ -272,7 +276,28 @@ export class GoalController {
         contentVerificationIssues.push(`Document quality audit did not pass (${report.score}/${report.threshold}): ${issueSummary}`)
       }
     }
-    const outputTexts = finalAssistant ? [finalAssistant.content, ...outputPreviewTexts] : outputPreviewTexts
+    if (finalAssistant && requiresVisualBlockAudit(goalState)) {
+      const report = auditVisualBlocks(outputTexts, goalState)
+      evidence.push({
+        type: 'system',
+        label: 'visual_block_audit',
+        detail: formatVisualBlockAudit(report).slice(0, 3000),
+      })
+      if (!report.passed) {
+        contentVerificationIssues.push(`Visual block audit did not pass: ${report.issues.join(' ')}`)
+      }
+    }
+    if (finalAssistant && requiresTemplateFidelityAudit(goalState)) {
+      const report = auditTemplateOutput(outputTexts, goalState)
+      evidence.push({
+        type: 'system',
+        label: 'template_fidelity_audit',
+        detail: formatTemplateFidelityAudit(report).slice(0, 3000),
+      })
+      if (!report.passed) {
+        contentVerificationIssues.push(`Template fidelity audit did not pass (${report.score}/100): ${report.issues.join(' ')}`)
+      }
+    }
     const previousScopeCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'scope_gap')
     if (finalAssistant && goalState.taskContract && hasObviousScopeReduction(outputTexts)) {
       contentVerificationIssues.push('Task contract appears to have been reduced to a summary, outline, placeholder, or deferred follow-up instead of the requested deliverable.')
@@ -682,6 +707,22 @@ function requiresDocumentQualityAudit(goalState: SessionGoalState): boolean {
     ))
 }
 
+function requiresVisualBlockAudit(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'coverage'
+    && criterion.text === VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT
+  )
+}
+
+function requiresTemplateFidelityAudit(goalState: SessionGoalState): boolean {
+  return goalState.criteria.some(criterion =>
+    criterion.required
+    && criterion.kind === 'coverage'
+    && criterion.text === TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT
+  )
+}
+
 function hasSubstantiveWorkProduct(contents: string[]): boolean {
   const raw = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
   const normalized = raw.replace(/\s+/g, ' ').trim()
@@ -697,6 +738,119 @@ function hasSubstantiveWorkProduct(contents: string[]): boolean {
 
   return normalized.length >= 160
     && (structuralMarkers >= 3 || paragraphCount >= 3 || sentenceCount >= 4)
+}
+
+interface VisualBlockAudit {
+  passed: boolean
+  issues: string[]
+  expectedKinds: string[]
+  existingVisualCount: number
+  opportunityCount: number
+}
+
+function auditVisualBlocks(contents: string[], goalState: SessionGoalState): VisualBlockAudit {
+  const markdown = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
+  const expectedKinds = goalState.taskContract?.documentPlan?.visualPlan?.selectedKinds ?? []
+  const analysis = analyzeVisualOpportunities(markdown, {
+    mode: goalState.taskContract?.documentPlan?.visualPlan?.mode ?? 'professional',
+    maxVisuals: 12,
+  })
+  const issues: string[] = []
+
+  if (!hasRenderedVisualBlock(markdown)) {
+    issues.push(`Missing rendered professional visual block for required kinds: ${expectedKinds.join(', ') || 'professional visual'}.`)
+  }
+  if (!hasVisualCaptionAndSource(markdown)) {
+    issues.push('Missing caption and source note for professional visual evidence.')
+  }
+  if (expectedKinds.some(kind => kind.startsWith('investment') || kind.includes('cash-flow') || kind.includes('npv')) && !hasInvestmentContext(markdown)) {
+    issues.push('Investment visual blocks must preserve currency, period/scenario, and source context.')
+  }
+  if (expectedKinds.some(kind => kind.startsWith('site-') || kind.startsWith('route-') || kind.startsWith('geospatial')) && !hasGeospatialContext(markdown)) {
+    issues.push('Geospatial visual blocks must include CRS/coordinate, legend or scale, and source context.')
+  }
+  if (expectedKinds.some(kind => kind.startsWith('simulation') || kind === 'time-history-plot') && !hasSimulationContext(markdown)) {
+    issues.push('Simulation visual blocks must include solver/source, load case or timestep, units, and result component context.')
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues,
+    expectedKinds,
+    existingVisualCount: analysis.existingVisualCount,
+    opportunityCount: analysis.opportunities.length,
+  }
+}
+
+function hasRenderedVisualBlock(markdown: string): boolean {
+  return /```mermaid[\s\S]*?```/i.test(markdown)
+    || /!\[[^\]]*]\([^)]+\)/.test(markdown)
+    || /<svg\b/i.test(markdown)
+    || /<figure\b/i.test(markdown)
+    || /\|.+\|[\r\n]+\|?\s*:?-{3,}/.test(markdown)
+}
+
+function hasVisualCaptionAndSource(markdown: string): boolean {
+  return /(?:Figure|Table|图|表)\s*\d*|caption|图注|表注/i.test(markdown)
+    && /source|来源|依据|evidence|citation|引用/i.test(markdown)
+}
+
+function hasInvestmentContext(markdown: string): boolean {
+  return /(?:currency|usd|zar|cny|rmb|元|美元|币种|period|scenario|期间|情景|source|来源)/i.test(markdown)
+}
+
+function hasGeospatialContext(markdown: string): boolean {
+  return /(?:crs|coordinate|legend|scale|source|坐标系|坐标|图例|比例尺|来源)/i.test(markdown)
+}
+
+function hasSimulationContext(markdown: string): boolean {
+  return /(?:solver|load case|time(?:step)?|component|unit|source|ansys|mpa|mm|求解器|工况|时步|分量|单位|来源)/i.test(markdown)
+}
+
+function formatVisualBlockAudit(report: VisualBlockAudit): string {
+  return [
+    `status: ${report.passed ? 'pass' : 'fail'}`,
+    `expectedKinds: ${report.expectedKinds.join(', ') || '(unspecified)'}`,
+    `existingVisualCount: ${report.existingVisualCount}`,
+    `opportunityCount: ${report.opportunityCount}`,
+    `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
+  ].join('\n')
+}
+
+function auditTemplateOutput(contents: string[], goalState: SessionGoalState): TemplateFidelityAudit {
+  return auditTemplateFidelity(
+    contents.map(content => content.trim()).filter(Boolean).join('\n\n'),
+    buildTemplateProfileFromGoal(goalState),
+  )
+}
+
+function buildTemplateProfileFromGoal(goalState: SessionGoalState): ExtractedTemplateProfile {
+  const plan = goalState.taskContract?.documentPlan
+  const strictDocx = plan?.strictTemplate === true || plan?.deliveryFormats.some(format => /^docx?$/i.test(format))
+
+  return {
+    id: plan?.templateProfileId ?? 'template-request',
+    sourcePath: 'user-template-request',
+    sourceType: strictDocx ? 'docx' : 'markdown',
+    layoutFidelity: strictDocx ? 'strict-docx-ooxml' : 'semantic-only',
+    sectionOrder: plan?.sections ?? [],
+    titleDepth: 1,
+    styles: [],
+    fonts: [],
+    unknowns: strictDocx
+      ? ['Strict template request is pending parsed DOCX profile and exported DOCX evidence.']
+      : ['Exact source template profile is unavailable.'],
+  }
+}
+
+function formatTemplateFidelityAudit(report: TemplateFidelityAudit): string {
+  return [
+    `status: ${report.passed ? 'pass' : 'fail'}`,
+    `score: ${report.score}`,
+    `approximation: ${report.approximation ? 'yes' : 'no'}`,
+    `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
+    `strengths: ${report.strengths.length > 0 ? report.strengths.join(' ') : '(none)'}`,
+  ].join('\n')
 }
 
 function getExplicitUserRequirements(goalState: SessionGoalState): string[] {

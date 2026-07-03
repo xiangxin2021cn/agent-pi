@@ -58,7 +58,19 @@ V1.2.1 将重点强化 Agent π 的专业文档创作、知识复用和行业化
 Detailed planning:
 
 - [V1.2.1 Document Quality Composer Plan](docs/superpowers/plans/2026-07-02-v1.2.1-document-quality-composer.md)
+- [V1.2.1 Document Quality Composer Research Note](docs/research/1.2.1-document-quality-composer.md)
 - [Future Engineering, BIM, And Construction Agent Framework](docs/research/future-engineering-bim-construction-agent-framework.md)
+
+### V1.2.1 Development Update / V1.2.1 开发更新
+
+| Area | English | 中文 |
+| --- | --- | --- |
+| Visual composer | Adds industry-aware visual detection and audit criteria for construction, investment, GIS, simulation/CAE, and other professional reports. Visuals require source data and must include captions and source notes. | 新增行业化图表识别与审计标准，覆盖施工、投资、GIS、仿真/CAE 等专业报告；图表必须有数据支撑，并带图注和来源说明。 |
+| Construction schedules | Establishes professional Gantt foundations with WBS grouping, baseline/current plan, progress line, critical path, milestones, legends, and A4/A3 landscape export intent. | 建立专业施工甘特图基础，支持 WBS 分组、基线/当前计划、进度线、关键路径、里程碑、图例以及 A4/A3 横向导出意图。 |
+| Export stability | Markdown image assets are resolved for export; Mermaid remains editable in Markdown while export can render it as stable SVG. Missing image assets fail loudly instead of producing blank documents. | Markdown 图片资源会在导出时解析；Mermaid 在 Markdown 中保持可编辑，导出时可渲染为稳定 SVG；缺失图片会明确失败而不是导出空白图。 |
+| Template fidelity | Strict template mode is treated as code-level template profiling and audit. Markdown is the semantic draft; exact Word fidelity requires DOCX/OOXML template rendering rather than prompt-only styling. | 严格模板模式升级为代码级模板画像与审计：Markdown 是语义稿，精确 Word 版式需要 DOCX/OOXML 模板渲染，不能只靠提示词。 |
+| Knowledge Base | Generated `.md`, `.txt`, and `.json` artifacts can be promoted to Knowledge Base file-memory MCP sources with category/folder metadata and explicit user activation. | 生成的 `.md`、`.txt`、`.json` 产物可提升为知识库 file-memory MCP 源，带分类/文件夹元数据，并要求用户显式启用。 |
+| Safety boundary | No fabricated charts, maps, simulation figures, investment metrics, or template-fidelity claims. Missing inputs become audit issues or missing-input tables. | 不伪造图表、地图、仿真图、投资指标或模板保真声明；缺失输入会转成审计问题或缺失输入表。 |
 
 ## V1.1.3 Update / V1.1.3 更新
 

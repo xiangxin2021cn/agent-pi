@@ -18,7 +18,7 @@ import {
   type SuggestKnowledgeBaseCategoryResult,
 } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { CONFIG_DIR, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath } from '@craft-agent/shared/sessions'
@@ -272,13 +272,15 @@ function createRpcSessionToolContext(args: {
   workspaceRootPath: string
   sessionPath: string
   workingDirectory?: string
+  knowledgeBaseRegistryRootPath?: string
   activateSourceInSession: (sourceSlug: string) => Promise<{ ok: boolean; reason?: string; availability?: 'next-turn' }>
 }): SessionToolContext {
-  const { sessionId, workspaceRootPath, sessionPath, workingDirectory, activateSourceInSession } = args
+  const { sessionId, workspaceRootPath, sessionPath, workingDirectory, knowledgeBaseRegistryRootPath, activateSourceInSession } = args
 
   return {
     sessionId,
     workspacePath: workspaceRootPath,
+    knowledgeBaseRegistryRootPath,
     get sourcesPath() { return join(workspaceRootPath, 'sources') },
     get skillsPath() { return join(workspaceRootPath, 'skills') },
     plansFolderPath: join(sessionPath, 'plans'),
@@ -845,6 +847,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       workspaceRootPath,
       sessionPath,
       workingDirectory: session.workingDirectory,
+      knowledgeBaseRegistryRootPath: CONFIG_DIR,
       activateSourceInSession: async (sourceSlug: string) => {
         const activeSession = sessionManager.getSessions().find(s => s.id === sessionId)
         const currentSlugs = new Set(activeSession?.enabledSourceSlugs ?? [])

@@ -9,7 +9,7 @@ import { join } from 'path'
 import xlsx from 'xlsx'
 import { buildMarkdownExport } from '../handlers/rpc/files'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
-import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT } from './goal-criteria'
+import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
   return {
@@ -1597,6 +1597,80 @@ describe('SessionManager goal loop routing', () => {
       kind: 'test',
       required: true,
     }))
+  })
+
+  it('initializes visual criteria for professional document domains', async () => {
+    const cases = [
+      {
+        id: 'goal-visual-construction',
+        message: '请生成专业施工进度报告，必须包含WBS、基线/当前计划、关键路径、里程碑和A3横向甘特图。',
+        domain: 'construction',
+        kind: 'construction-gantt',
+      },
+      {
+        id: 'goal-visual-investment',
+        message: '请生成专业投资分析报告，包含现金流、NPV、IRR和敏感性分析图表。',
+        domain: 'investment',
+        kind: 'investment-cash-flow-table',
+      },
+      {
+        id: 'goal-visual-gis',
+        message: '请生成专业GIS路线工程报告，包含坐标、路线、桩号和地图图例。',
+        domain: 'geospatial',
+        kind: 'site-location-map',
+      },
+      {
+        id: 'goal-visual-simulation',
+        message: '请生成ANSYS仿真结果报告，包含应力、位移、收敛曲线和单位来源。',
+        domain: 'simulation',
+        kind: 'simulation-result-table',
+      },
+    ] as const
+
+    for (const item of cases) {
+      const managed = buildSession(item.id, { goalState: undefined })
+      captureEvents()
+
+      await sm.sendMessage(item.id, item.message).catch(() => { /* expected after pre-agent setup */ })
+
+      expect(managed.goalState?.criteria).toContainEqual(expect.objectContaining({
+        text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }))
+      expect(managed.goalState?.taskContract?.documentPlan?.domain).toBe(item.domain)
+      expect(managed.goalState?.taskContract?.documentPlan?.visualPlan?.selectedKinds).toContain(item.kind)
+    }
+  })
+
+  it('initializes template fidelity criteria for uploaded reference templates', async () => {
+    const sessionId = 'goal-template-fidelity-init'
+    const templatePath = join(tmpRoot, 'reference-template.docx')
+    writeFileSync(templatePath, 'template')
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(
+      sessionId,
+      '请严格按照上传的Word模板版式、目录层级、字体和页面布局生成新的报告。',
+      undefined,
+      [{
+        id: 'att-template',
+        type: 'file',
+        name: 'reference-template.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size: 8,
+        storedPath: templatePath,
+      } as never],
+    ).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.criteria).toContainEqual(expect.objectContaining({
+      text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
+      kind: 'coverage',
+      required: true,
+    }))
+    expect(managed.goalState?.taskContract?.documentPlan?.strictTemplate).toBe(true)
+    expect(managed.goalState?.taskContract?.documentPlan?.templateProfileId).toBe('pending-template-profile')
   })
 
   it('uses a larger goal loop budget when the first work request asks to continue until done', async () => {

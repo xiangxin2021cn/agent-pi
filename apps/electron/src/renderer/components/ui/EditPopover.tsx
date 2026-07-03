@@ -79,6 +79,7 @@ export type EditContextKey =
   | 'add-source-api'   // Filter-specific: user is viewing APIs
   | 'add-source-mcp'   // Filter-specific: user is viewing MCPs
   | 'add-source-local' // Filter-specific: user is viewing Local Folders
+  | 'add-source-knowledge-base' // Filter-specific: user is viewing Knowledge Base sources
   | 'add-skill'
   | 'edit-statuses'
   | 'edit-labels'
@@ -379,6 +380,24 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     displayLabelKey: 'editPopover.label.addLocalFolder',
     exampleKey: 'editPopover.example.addSourceLocal',
     overridePlaceholderKey: 'editPopover.placeholder.addSourceLocal',
+  }),
+
+  'add-source-knowledge-base': (location) => ({
+    context: {
+      label: 'Add Knowledge Base Source',
+      filePath: `${location}/sources/`,
+      context:
+        'The user is viewing Knowledge Base sources and wants to add a reusable knowledge source. ' +
+        'For the MVP, prefer right-clicking a generated .md, .txt, or .json artifact and choosing Add to Knowledge Base. ' +
+        'Use this path only for future or advanced enterprise knowledge base connectors, such as a remote MCP/API source. ' +
+        'Keep Knowledge Base as source metadata (metadata.category: "knowledge_base") over an MCP/API/local source; do not create a new SourceType. ' +
+        'Require an explicit category/folder, keep it disabled until the user enables it, and call source_test after creating the source.',
+    },
+    example: 'Connect our enterprise handbook MCP',
+    overridePlaceholder: 'What knowledge base would you like to connect?',
+    displayLabelKey: 'editPopover.label.addKnowledgeBase',
+    exampleKey: 'editPopover.example.addSourceKnowledgeBase',
+    overridePlaceholderKey: 'editPopover.placeholder.addSourceKnowledgeBase',
   }),
 
   'add-skill': (location) => ({
