@@ -78,6 +78,7 @@ export class GoalController {
     )
     const errorMessages = turnMessages.filter(message => message.role === 'error')
     const failedTools = getUnresolvedFailedTools(turnMessages)
+      .filter(message => !isTransientSessionDataToolFailure(message))
     const codeVerificationDiagnosticTools = getCodeVerificationDiagnosticTools(goalState, failedTools)
     const codeVerificationDiagnosticIds = new Set(codeVerificationDiagnosticTools.map(getMessageIdentity))
     const blockingFailedTools = failedTools.filter(message => !codeVerificationDiagnosticIds.has(getMessageIdentity(message)))
@@ -146,6 +147,13 @@ export class GoalController {
         detail: contextPressure.detail,
       })
     }
+    const requiredOutputFormats = getRequiredOutputFormats(goalState)
+    promoteFormalOutputFileEvidencePaths({
+      fileEvidencePaths,
+      outputFileEvidencePaths,
+      expectedOutputDirectory: snapshot.expectedOutputDirectory,
+      requiredOutputFormats,
+    })
     if (requiresOutputFileEvidence(goalState) && outputFileEvidencePaths.size === 0) {
       fileVerificationIssues.push('No verifiable output file path was produced for the requested file deliverable.')
       evidence.push({
@@ -174,7 +182,6 @@ export class GoalController {
         })
       }
     }
-    const requiredOutputFormats = getRequiredOutputFormats(goalState)
     if (requiredOutputFormats.length > 0 && outputFileEvidencePaths.size > 0) {
       const producedFormats = new Set([...outputFileEvidencePaths].flatMap(getOutputFormatsForPath))
       for (const format of requiredOutputFormats) {
@@ -1067,8 +1074,27 @@ const OUTPUT_FILE_PATH_INPUT_KEYS = new Set([
 
 const OUTPUT_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:write|writemany|writefile|edit|multiedit|notebookedit|save|export|convert|generate|create|update|replace)(?:$|[_\-\s])/i
 const OUTPUT_RESULT_TEXT_PATTERN = /(?:created|wrote|written|saved|exported|converted|generated|updated|创建|生成|写入|保存|导出|转换|更新).{0,200}(?:[A-Za-z]:\\|\/)/i
-const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
+const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^"'<>|\r\n]+?|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
 const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
+
+function promoteFormalOutputFileEvidencePaths(input: {
+  fileEvidencePaths: Set<string>
+  outputFileEvidencePaths: Set<string>
+  expectedOutputDirectory?: string
+  requiredOutputFormats: string[]
+}): void {
+  if (!input.expectedOutputDirectory || input.requiredOutputFormats.length === 0) {
+    return
+  }
+
+  const requiredFormats = new Set(input.requiredOutputFormats)
+  for (const filePath of input.fileEvidencePaths) {
+    if (input.outputFileEvidencePaths.has(filePath)) continue
+    if (!pathStartsWith(filePath, input.expectedOutputDirectory)) continue
+    if (!getOutputFormatsForPath(filePath).some(format => requiredFormats.has(format))) continue
+    input.outputFileEvidencePaths.add(filePath)
+  }
+}
 
 function extractOutputFilePaths(message: Message, inputPaths: string[], resultPaths: string[]): string[] {
   if (!isSuccessfulTool(message)) {
@@ -1121,8 +1147,48 @@ function extractFilePathsFromText(value: unknown): string[] {
 
 function filterLocalFilePathCandidates(paths: string[]): string[] {
   return paths
-    .map(path => path.trim())
+    .map(normalizeLocalFilePathCandidate)
     .filter(path => path.length > 0 && !isWebUrlLikePath(path))
+    .filter(path => !isTransientSessionDataPath(path))
+}
+
+function normalizeLocalFilePathCandidate(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) return ''
+
+  const decodedUnicode = trimmed.replace(/\\u([0-9a-fA-F]{4})/g, (_match, code) =>
+    String.fromCharCode(Number.parseInt(code, 16))
+  )
+  return /^[A-Za-z]:\\\\/.test(decodedUnicode)
+    ? decodedUnicode.replace(/\\\\/g, '\\')
+    : decodedUnicode
+}
+
+function isTransientSessionDataPath(path: string): boolean {
+  const normalized = path.replace(/\//g, '\\').toLowerCase()
+  return normalized.startsWith('{{session_path}}\\data\\')
+    || /\\sessions\\[^\\]+\\data\\/.test(normalized)
+}
+
+function isTransientSessionDataToolFailure(message: Message): boolean {
+  if (!isFailedTool(message)) return false
+  const details = [
+    message.content,
+    typeof message.toolResult === 'string' ? message.toolResult : '',
+    safeStringify(message.toolInput),
+  ].join('\n').replace(/\//g, '\\').toLowerCase()
+
+  return details.includes('{{session_path}}\\data\\')
+    || /\\sessions\\[^\\]+\\data\\/.test(details)
+}
+
+function safeStringify(value: unknown): string {
+  if (value === undefined) return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
 }
 
 function isWebUrlLikePath(path: string): boolean {

@@ -14,13 +14,23 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.4. Next planning line: V1.2.5.**
+**Current release: V1.2.5. Next planning line: V1.2.6.**
 
-**当前发布版：V1.2.4。下一阶段规划线：V1.2.5。**
+**当前发布版：V1.2.5。下一阶段规划线：V1.2.6。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+
+## V1.2.5 Hotfix / V1.2.5 修复
+
+V1.2.5 fixes a concrete Goal Loop false failure seen in document/spreadsheet production tasks. Temporary helper scripts under the session `data` directory are no longer treated as formal deliverables, Windows output paths with spaces are captured correctly, and verified files in the formal output directory are accepted as output evidence when their extension matches the requested format.
+
+V1.2.5 修复文档/表格生产任务中的一次真实误判：会话 `data` 目录下的临时脚本不再被当成正式交付物；包含空格的 Windows 输出路径可以被正确识别；位于正式输出目录且扩展名符合请求格式的文件，会被作为有效输出证据。
+
+This keeps the hard gates intact: real missing deliverables, wrong output directories, wrong requested formats, unresolved non-transient tool failures, and explicit runtime/system errors still fail the audit.
+
+硬性审查仍然保留：真实缺失交付物、输出目录错误、格式不匹配、未解决的非临时工具失败，以及明确运行时/系统错误仍会判定失败。
 
 ## V1.2.4 Hotfix / V1.2.4 修复
 
@@ -123,6 +133,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
+| V1.2.5 | Hotfix for false Goal Loop failures caused by transient helper scripts and Windows output paths with spaces. | 修复临时脚本和带空格 Windows 输出路径导致的 Goal Loop 误判失败。 | [v1.2.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.5) |
 | V1.2.4 | Hotfix for Goal Loop automatic self-correction after recoverable tool failures. | 修复可恢复工具失败后 Goal Loop 未继续自动纠偏的问题。 | [v1.2.4](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.4) |
 | V1.2.3 | Hotfix for in-app What's New release notes, versioned release-note loading, and completed-session read-state persistence. | 修复应用内“最新动态”更新说明缺失、限定只加载版本化更新说明，并修复完成会话已读状态重启回潮。 | [v1.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.3) |
 | V1.2.2 | Hotfix for About/update version source and stale updater-cache detection. | 修复关于页/检查更新版本来源，以及旧更新缓存误判。 | [v1.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.2) |

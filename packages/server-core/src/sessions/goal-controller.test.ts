@@ -1379,6 +1379,77 @@ describe('GoalController', () => {
     }
   })
 
+  test('ignores transient session data helper files when checking requested outputs', async () => {
+    const controller = new GoalController()
+    const verifiedPaths: string[] = []
+    const outputPath = 'E:\\南非项目\\投标项目\\South Africa\\ROUTE 3 SECTION 1\\Agent Pi Outputs\\260703-gentle-glacier\\C5.2_Resource_Detail.xlsx'
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }, {
+        id: 'crit-output-format',
+        text: 'Create output file(s) in the requested format(s): XLSX.',
+        kind: 'format',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成 5.2 人材机明细表 xlsx'),
+        message('t1', 'tool', 'created helper', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '{{SESSION_PATH}}\\data\\gen_detail_excel.py' },
+        }),
+        message('t1b', 'tool', 'Found 2 occurrences of edits[2] in {{SESSION_PATH}}\\data\\gen_detail_excel.py. Each oldText must be unique.', {
+          toolName: 'Edit',
+          toolStatus: 'error',
+          isError: true,
+          toolInput: { file_path: '{{SESSION_PATH}}\\data\\gen_detail_excel.py' },
+          toolResult: 'Found 2 occurrences of edits[2] in {{SESSION_PATH}}\\data\\gen_detail_excel.py. Each oldText must be unique.',
+        }),
+        message('t2', 'tool', `OK: ${outputPath}\nRows: 111\nSheets: Resource Detail, Resource Summary, Productivity`, {
+          toolName: 'Bash',
+          toolStatus: 'completed',
+          toolResult: `OK: ${outputPath}\nRows: 111\nSheets: Resource Detail, Resource Summary, Productivity`,
+        }),
+        message('t3', 'tool', 'cleaned', {
+          toolName: 'Bash',
+          toolStatus: 'completed',
+          toolInput: { command: 'rm -f "{{SESSION_PATH}}\\data\\gen_detail_excel.py"' },
+          toolResult: 'cleaned',
+        }),
+        message('a1', 'assistant', `已生成：${outputPath}`),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      expectedOutputDirectory: 'E:\\南非项目\\投标项目\\South Africa\\ROUTE 3 SECTION 1\\Agent Pi Outputs\\260703-gentle-glacier',
+      fileVerifier: async (filePath) => {
+        verifiedPaths.push(filePath)
+        return filePath === outputPath
+          ? { exists: true, readable: true, isFile: true, sizeBytes: 18573 }
+          : { exists: false, readable: false }
+      },
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The requested XLSX output is complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(verifiedPaths).toEqual([outputPath])
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.missingCriteria).not.toContain('Requested output format was not produced: XLSX.')
+      expect(decision.result.missingCriteria.some(criterion => criterion.includes('{{SESSION_PATH}}\\data\\gen_detail_excel.py'))).toBe(false)
+      expect(decision.result.evidence.some(item => item.detail?.includes('{{SESSION_PATH}}\\data\\gen_detail_excel.py'))).toBe(false)
+    }
+  })
+
   test('does not accept output files that do not match the requested format', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
