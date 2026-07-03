@@ -15,7 +15,7 @@ export interface FileMemorySourceCreateArgs {
   chunkSize?: number;
   overlap?: number;
   autoEnable?: boolean;
-  enterpriseKnowledge?: {
+  knowledgeBase?: {
     category: string;
   };
 }
@@ -29,9 +29,9 @@ interface ChunkDraft {
 }
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
-const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb';
-const ENTERPRISE_KNOWLEDGE_SCOPE = 'global';
-const ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json']);
+const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base';
+const KNOWLEDGE_BASE_SCOPE = 'global';
+const KNOWLEDGE_BASE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json']);
 
 export async function handleFileMemorySourceCreate(
   ctx: SessionToolContext,
@@ -47,9 +47,9 @@ export async function handleFileMemorySourceCreate(
       return errorResponse(`File is too large for the first file-memory indexer (${stats.size} bytes, max ${MAX_SOURCE_BYTES}). Convert or split it first.`);
     }
 
-    const enterpriseKnowledge = normalizeEnterpriseKnowledge(args.enterpriseKnowledge, sourceFilePath);
-    if (args.enterpriseKnowledge && !enterpriseKnowledge) {
-      return errorResponse('Enterprise knowledge MCP sources support only .md, .txt, and .json files in the MVP. Convert or extract the source to one of those formats first.');
+    const knowledgeBase = normalizeKnowledgeBase(args.knowledgeBase, sourceFilePath);
+    if (args.knowledgeBase && !knowledgeBase) {
+      return errorResponse('Knowledge base MCP sources support only .md, .txt, and .json files in the MVP. Convert or extract the source to one of those formats first.');
     }
 
     const displayName = args.name?.trim() || basename(sourceFilePath);
@@ -87,12 +87,13 @@ export async function handleFileMemorySourceCreate(
       description: `Read-only file memory index generated from ${sourceFilePath}`,
       createdAt: now,
       indexedAt: now,
-      enterpriseKnowledge: enterpriseKnowledge
+      knowledgeBase: knowledgeBase
         ? {
-            category: enterpriseKnowledge.knowledgeCategory,
-            scope: enterpriseKnowledge.scope,
-            sourceKind: enterpriseKnowledge.sourceKind,
-            fileExtension: enterpriseKnowledge.fileExtension,
+            category: knowledgeBase.knowledgeCategory,
+            folder: knowledgeBase.knowledgeFolder,
+            scope: knowledgeBase.scope,
+            sourceKind: knowledgeBase.sourceKind,
+            fileExtension: knowledgeBase.fileExtension,
           }
         : undefined,
       chunks: chunks.map(chunk => ({
@@ -119,13 +120,14 @@ export async function handleFileMemorySourceCreate(
       isAuthenticated: true,
       connectionStatus: 'unknown',
       tagline: `Read-only evidence memory for ${displayName}`,
-      metadata: enterpriseKnowledge
+      metadata: knowledgeBase
         ? {
-            category: ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY,
-            knowledgeCategory: enterpriseKnowledge.knowledgeCategory,
-            scope: enterpriseKnowledge.scope,
-            sourceKind: enterpriseKnowledge.sourceKind,
-            fileExtension: enterpriseKnowledge.fileExtension,
+            category: KNOWLEDGE_BASE_METADATA_CATEGORY,
+            knowledgeCategory: knowledgeBase.knowledgeCategory,
+            knowledgeFolder: knowledgeBase.knowledgeFolder,
+            scope: knowledgeBase.scope,
+            sourceKind: knowledgeBase.sourceKind,
+            fileExtension: knowledgeBase.fileExtension,
             sourceFilePath,
             createdAt: now,
           }
@@ -135,7 +137,7 @@ export async function handleFileMemorySourceCreate(
     };
 
     writeFileSync(sourceConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-    writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length, enterpriseKnowledge }), 'utf-8');
+    writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length, knowledgeBase }), 'utf-8');
 
     const autoEnable = args.autoEnable !== false;
     const validation = await handleSourceTest(ctx, { sourceSlug: slug, autoEnable });
@@ -172,27 +174,29 @@ export async function handleFileMemorySourceCreate(
   }
 }
 
-interface EnterpriseKnowledgeSourceMetadata {
+interface KnowledgeBaseSourceMetadata {
   knowledgeCategory: string;
-  scope: typeof ENTERPRISE_KNOWLEDGE_SCOPE;
+  knowledgeFolder: string;
+  scope: typeof KNOWLEDGE_BASE_SCOPE;
   sourceKind: 'file-memory';
   fileExtension: string;
 }
 
-function normalizeEnterpriseKnowledge(
-  input: FileMemorySourceCreateArgs['enterpriseKnowledge'],
+function normalizeKnowledgeBase(
+  input: FileMemorySourceCreateArgs['knowledgeBase'],
   sourceFilePath: string
-): EnterpriseKnowledgeSourceMetadata | null {
+): KnowledgeBaseSourceMetadata | null {
   if (!input) return null;
   const fileExtension = extname(sourceFilePath).toLowerCase();
-  if (!ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS.has(fileExtension)) return null;
+  if (!KNOWLEDGE_BASE_FILE_EXTENSIONS.has(fileExtension)) return null;
   const knowledgeCategory = input.category.trim();
   if (!knowledgeCategory) {
-    throw new Error('Enterprise knowledge category is required.');
+    throw new Error('Knowledge base category is required.');
   }
   return {
     knowledgeCategory,
-    scope: ENTERPRISE_KNOWLEDGE_SCOPE,
+    knowledgeFolder: knowledgeCategory,
+    scope: KNOWLEDGE_BASE_SCOPE,
     sourceKind: 'file-memory',
     fileExtension,
   };
@@ -320,7 +324,7 @@ function buildGuide(args: {
   sourceFilePath: string;
   manifestPath: string;
   chunkCount: number;
-  enterpriseKnowledge?: EnterpriseKnowledgeSourceMetadata | null;
+  knowledgeBase?: KnowledgeBaseSourceMetadata | null;
 }): string {
   return [
     `# ${args.displayName}`,
@@ -345,17 +349,18 @@ function buildGuide(args: {
     ``,
     `Manifest: ${args.manifestPath}`,
     `Chunks: ${args.chunkCount}`,
-    ...(args.enterpriseKnowledge
+    ...(args.knowledgeBase
       ? [
           ``,
-          `## Enterprise Knowledge`,
+          `## Knowledge Base`,
           ``,
-          `Category: ${args.enterpriseKnowledge.knowledgeCategory}`,
-          `Scope: ${args.enterpriseKnowledge.scope}`,
-          `Source kind: ${args.enterpriseKnowledge.sourceKind}`,
-          `File extension: ${args.enterpriseKnowledge.fileExtension}`,
+          `Category: ${args.knowledgeBase.knowledgeCategory}`,
+          `Folder: ${args.knowledgeBase.knowledgeFolder}`,
+          `Scope: ${args.knowledgeBase.scope}`,
+          `Source kind: ${args.knowledgeBase.sourceKind}`,
+          `File extension: ${args.knowledgeBase.fileExtension}`,
           ``,
-          `This source is globally listed as enterprise knowledge for the current user, but it should only be used after explicit user selection in a workspace or session.`,
+          `This source is listed in the user's knowledge base, but it should only be used after explicit user selection in a workspace or session.`,
         ]
       : []),
     ``,

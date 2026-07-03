@@ -151,11 +151,11 @@ export const routes = {
         ? `sources/local/source/${sourceSlug}` as const
         : 'sources/local' as const,
 
-    /** Enterprise Knowledge Base sources view */
-    sourcesEnterpriseKb: (sourceSlug?: string) =>
+    /** Knowledge Base sources view */
+    sourcesKnowledgeBase: (sourceSlug?: string) =>
       sourceSlug
-        ? `sources/enterprise-kb/source/${sourceSlug}` as const
-        : 'sources/enterprise-kb' as const,
+        ? `sources/knowledge-base/source/${sourceSlug}` as const
+        : 'sources/knowledge-base' as const,
 
     /** Skills view (skills navigator). Pass a slug string for a local skill detail view. */
     skills: (skillSlug?: string) => {

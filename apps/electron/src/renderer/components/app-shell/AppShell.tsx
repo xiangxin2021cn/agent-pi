@@ -169,7 +169,7 @@ interface AppShellProps {
 type FilterMode = 'include' | 'exclude'
 
 const altClickTooltipLabel = isMac ? '⌥ click to exclude' : 'Alt click to exclude'
-const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
+const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base'
 
 /** Wraps children in a Tooltip that shows instantly on hover — only rendered when `show` is true. */
 function AltExcludeTooltip({ show, children }: { show: boolean; children: React.ReactNode }) {
@@ -1415,14 +1415,14 @@ function AppShellContent({
 
   // Count sources by type for the Sources dropdown subcategories
   const sourceTypeCounts = useMemo(() => {
-    const counts = { api: 0, mcp: 0, local: 0, enterpriseKnowledge: 0 }
+    const counts = { api: 0, mcp: 0, local: 0, knowledgeBase: 0 }
     for (const source of sources) {
       const t = source.config.type
       if (t === 'api' || t === 'mcp' || t === 'local') {
         counts[t]++
       }
-      if (source.config.metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY) {
-        counts.enterpriseKnowledge++
+      if (source.config.metadata?.category === KNOWLEDGE_BASE_METADATA_CATEGORY) {
+        counts.knowledgeBase++
       }
     }
     return counts
@@ -1699,8 +1699,8 @@ function AppShellContent({
     navigate(routes.view.sourcesLocal())
   }, [])
 
-  const handleSourcesEnterpriseKbClick = useCallback(() => {
-    navigate(routes.view.sourcesEnterpriseKb())
+  const handleSourcesKnowledgeBaseClick = useCallback(() => {
+    navigate(routes.view.sourcesKnowledgeBase())
   }, [])
 
   // Handler for skills view
@@ -2420,12 +2420,12 @@ function AppShellContent({
                           },
                         },
                         {
-                          id: "nav:sources:enterprise-kb",
-                          title: t("sidebar.enterpriseKnowledge"),
-                          label: String(sourceTypeCounts.enterpriseKnowledge),
+                          id: "nav:sources:knowledge-base",
+                          title: t("sidebar.knowledgeBase"),
+                          label: String(sourceTypeCounts.knowledgeBase),
                           icon: Layers,
-                          variant: (sourceFilter?.kind === 'enterpriseKnowledge') ? "default" : "ghost",
-                          onClick: handleSourcesEnterpriseKbClick,
+                          variant: (sourceFilter?.kind === 'knowledgeBase') ? "default" : "ghost",
+                          onClick: handleSourcesKnowledgeBaseClick,
                           contextMenu: {
                             type: 'sources' as const,
                             onAddSource: () => openAddSource('mcp'),

@@ -107,19 +107,19 @@ export type {
   RecommendedSourceTemplate,
 } from './recommended-sources.ts';
 
-// Enterprise Knowledge metadata helpers
+// Knowledge Base metadata helpers
 export {
-  ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY,
-  ENTERPRISE_KNOWLEDGE_SCOPE,
-  ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS,
-  getEnterpriseKnowledgeCategory,
-  isEnterpriseKnowledgeSource,
-  isSupportedEnterpriseKnowledgeFile,
-} from './enterprise-knowledge.ts';
+  KNOWLEDGE_BASE_METADATA_CATEGORY,
+  KNOWLEDGE_BASE_SCOPE,
+  KNOWLEDGE_BASE_FILE_EXTENSIONS,
+  getKnowledgeBaseCategory,
+  isKnowledgeBaseSource,
+  isSupportedKnowledgeBaseFile,
+} from './knowledge-base.ts';
 export type {
-  EnterpriseKnowledgeFileExtension,
-  EnterpriseKnowledgeSourceMetadata,
-} from './enterprise-knowledge.ts';
+  KnowledgeBaseFileExtension,
+  KnowledgeBaseSourceMetadata,
+} from './knowledge-base.ts';
 
 // Built-in Sources (always available in every workspace)
 export {

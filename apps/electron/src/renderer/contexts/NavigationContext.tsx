@@ -591,8 +591,8 @@ export function NavigationProvider({
       if (!filter) {
         return sources[0]?.config.slug ?? null
       }
-      const filtered = filter.kind === 'enterpriseKnowledge'
-        ? sources.filter(s => s.config.metadata?.category === 'enterprise_kb')
+      const filtered = filter.kind === 'knowledgeBase'
+        ? sources.filter(s => s.config.metadata?.category === 'knowledge_base')
         : sources.filter(s => s.config.type === filter.sourceType)
       return filtered[0]?.config.slug ?? null
     },

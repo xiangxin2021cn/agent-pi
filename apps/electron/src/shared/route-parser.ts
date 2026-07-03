@@ -114,8 +114,8 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       return { navigator: 'sources', details: null }
     }
 
-    if (segments[1] === 'enterprise-kb') {
-      const sourceFilter: SourceFilter = { kind: 'enterpriseKnowledge' }
+    if (segments[1] === 'knowledge-base') {
+      const sourceFilter: SourceFilter = { kind: 'knowledgeBase' }
 
       if (segments[2] === 'source' && segments[3]) {
         return {
@@ -283,8 +283,8 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     let base = 'sources'
     if (parsed.sourceFilter?.kind === 'type') {
       base = `sources/${parsed.sourceFilter.sourceType}`
-    } else if (parsed.sourceFilter?.kind === 'enterpriseKnowledge') {
-      base = 'sources/enterprise-kb'
+    } else if (parsed.sourceFilter?.kind === 'knowledgeBase') {
+      base = 'sources/knowledge-base'
     }
     if (!parsed.details) return base
     return `${base}/source/${parsed.details.id}`

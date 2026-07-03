@@ -179,7 +179,7 @@ describe('file_memory_source_create', () => {
     }
   });
 
-  test('stores enterprise knowledge metadata for supported text artifacts', async () => {
+  test('stores knowledge base metadata for supported text artifacts', async () => {
     const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
     const previousServer = process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
     const previousBun = process.env.CRAFT_BUN;
@@ -205,8 +205,8 @@ describe('file_memory_source_create', () => {
         filePath: 'company-standard.md',
         sourceSlug: 'file-memory-company-standard',
         autoEnable: false,
-        enterpriseKnowledge: {
-          category: 'Tender Standards',
+        knowledgeBase: {
+          category: 'Tender Standards/Method Statements',
         },
       });
 
@@ -218,23 +218,24 @@ describe('file_memory_source_create', () => {
 
       const config = JSON.parse(readFileSync(sourceConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
       expect(config.metadata).toMatchObject({
-        category: 'enterprise_kb',
-        knowledgeCategory: 'Tender Standards',
+        category: 'knowledge_base',
+        knowledgeCategory: 'Tender Standards/Method Statements',
+        knowledgeFolder: 'Tender Standards/Method Statements',
         scope: 'global',
         sourceKind: 'file-memory',
         fileExtension: '.md',
       });
       expect(config.enabled).toBe(false);
 
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { enterpriseKnowledge?: Record<string, unknown> };
-      expect(manifest.enterpriseKnowledge).toMatchObject({
-        category: 'Tender Standards',
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { knowledgeBase?: Record<string, unknown> };
+      expect(manifest.knowledgeBase).toMatchObject({
+        category: 'Tender Standards/Method Statements',
         scope: 'global',
       });
 
       const guide = readFileSync(guidePath, 'utf-8');
-      expect(guide).toContain('Enterprise Knowledge');
-      expect(guide).toContain('Tender Standards');
+      expect(guide).toContain('Knowledge Base');
+      expect(guide).toContain('Tender Standards/Method Statements');
     } finally {
       if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
       else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;
@@ -246,7 +247,7 @@ describe('file_memory_source_create', () => {
     }
   });
 
-  test('rejects unsupported enterprise knowledge file formats', async () => {
+  test('rejects unsupported knowledge base file formats', async () => {
     const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
 
     try {
@@ -262,13 +263,13 @@ describe('file_memory_source_create', () => {
       const result = await handleFileMemorySourceCreate(ctx, {
         filePath: 'drawing.pdf',
         autoEnable: false,
-        enterpriseKnowledge: {
+        knowledgeBase: {
           category: 'Drawings',
         },
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toContain('Enterprise knowledge MCP sources support only .md, .txt, and .json files');
+      expect(result.content[0]?.text).toContain('Knowledge base MCP sources support only .md, .txt, and .json files');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -850,7 +850,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       chunkSize: options?.chunkSize,
       overlap: options?.overlap,
       autoEnable: options?.autoEnable ?? true,
-      enterpriseKnowledge: options?.enterpriseKnowledge,
+      knowledgeBase: options?.knowledgeBase,
     }
     const result = await handleFileMemorySourceCreate(toolContext, args)
     if (result.isError) {

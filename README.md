@@ -53,7 +53,7 @@ V1.2.1 将重点强化 Agent π 的专业文档创作、知识复用和行业化
 | Professional visuals | Add construction Gantt charts with WBS, baseline/current plan, progress line, critical path, milestones, legends, and A4/A3 landscape export options. Also expand investment, GIS, and simulation/CAE visual profiles. | 强化专业视觉表达：建筑施工甘特图支持 WBS、基线/当前计划、进度线、关键路径、里程碑、图例、A4/A3 横向导出；同时扩展投资、GIS、仿真/CAE 等垂直场景图表。 |
 | Template fidelity | When a user uploads a reference template, audit the new output against its layout intent, heading structure, depth, figure/table conventions, and delivery format. | 用户上传参照模板后，严格审查新文件是否匹配页面布局意图、目录结构、内容深度、图表规范和交付格式。 |
 | Evidence-rich Markdown | Improve how agents cite external search evidence, images, charts, screenshots, and source metadata inside `.md` deliverables. | 强化 `.md` 成果中外部资料、图片、图表、截图、来源链接、发布时间、作者/机构等证据引用。 |
-| Enterprise Knowledge Base | Promote generated `.md`, `.txt`, and `.json` artifacts into an Enterprise Knowledge MCP source from the right-side file panel, choose or create a category, and show it under Data Sources -> Enterprise Knowledge Base. User selection is required before use. | 右侧产物文件可右键提升为“企业知识库记忆 MCP”，MVP 支持 `.md`、`.txt`、`.json`，创建时选择或自定义分类，并自动出现在左侧“数据源 -> 企业知识库”；必须由用户选择后才启用。 |
+| Knowledge Base | Add generated `.md`, `.txt`, and `.json` artifacts to a Knowledge Base MCP source from the right-side file panel, accept a suggested category/folder or type a custom one, and show it under Data Sources -> Knowledge Base. User selection is required before use. | 右侧产物文件可右键“加入知识库”，MVP 支持 `.md`、`.txt`、`.json`，创建时可接受推荐分类/文件夹或自定义输入，并自动出现在左侧“数据源 -> 知识库”；必须由用户选择后才启用。 |
 
 Detailed planning:
 
@@ -136,15 +136,15 @@ Future directions include:
 - 施工与投标智能：PDF 图纸识别、OCR/矢量提取、BOQ 对照、工程量拆分、施工策划、成本加载进度计划、公路/市政投标工作流。
 - 工程与 BIM：道路/廊道数据模型、IFC/GeoJSON/LandXML 类中间数据、Blender/Bonsai/IfcOpenShell 可视化、4D 进度展示、模型驱动报告图。
 - 专业文档自动化：Word/PDF/DOCX 成果质量、严格模板匹配、有证据的 Markdown、专业图表资产生成和导出校验。
-- 企业知识库：先做本机全局知识 MCP，再扩展团队/联网知识库、权限治理、分类管理和企业标准复用。
+- 知识库：先做本机全局知识 MCP 和 Obsidian 式分类/文件夹管理，再扩展团队/联网知识库、权限治理、分类管理和企业标准复用。
 - 垂直领域智能：投资分析、GIS 报告、仿真/ANSYS/CAE 后处理、法律合规审查以及更多行业专家工作流。
 - 智能体自我改进：更强 Goal Loop 审计、自我纠偏、评审经验沉淀、MoA 式质量评审，以及通过工具和结构化流程增强弱模型/私有化模型。
 
 ## Collaboration / 合作共建
 
-Agent Pi is open to collaboration with vertical-domain experts, engineers, researchers, builders, and teams who want to turn agent workflows into real production systems. We especially welcome contributors in construction management, quantity surveying, tendering, BIM/GIS, structural simulation, investment analysis, enterprise knowledge management, document automation, MCP tooling, and agent runtime engineering.
+Agent Pi is open to collaboration with vertical-domain experts, engineers, researchers, builders, and teams who want to turn agent workflows into real production systems. We especially welcome contributors in construction management, quantity surveying, tendering, BIM/GIS, structural simulation, investment analysis, knowledge-base management, document automation, MCP tooling, and agent runtime engineering.
 
-Agent π 欢迎垂直领域专家、工程师、研究者、开发者和团队共同参与，把智能体工作流真正做成可落地的生产系统。特别欢迎施工管理、工程造价、招投标、BIM/GIS、结构仿真、投资分析、企业知识库、文档自动化、MCP 工具和智能体运行时方向的伙伴加入。
+Agent π 欢迎垂直领域专家、工程师、研究者、开发者和团队共同参与，把智能体工作流真正做成可落地的生产系统。特别欢迎施工管理、工程造价、招投标、BIM/GIS、结构仿真、投资分析、知识库管理、文档自动化、MCP 工具和智能体运行时方向的伙伴加入。
 
 If you have domain datasets, repeatable workflows, industry standards, validation cases, or specialized tools, you can help shape Agent Pi into a practical vertical agent platform.
 

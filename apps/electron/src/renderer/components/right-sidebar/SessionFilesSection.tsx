@@ -33,14 +33,27 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
 import { restoreSessionFileWatch } from './session-files-watch'
 
-const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
-const ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json'])
+const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base'
+const KNOWLEDGE_BASE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json'])
 
-function isEnterpriseKnowledgeCandidate(file: SessionFile): boolean {
+function isKnowledgeBaseCandidate(file: SessionFile): boolean {
   if (file.type === 'directory') return false
   const dotIndex = file.name.lastIndexOf('.')
   if (dotIndex < 0) return false
-  return ENTERPRISE_KNOWLEDGE_FILE_EXTENSIONS.has(file.name.slice(dotIndex).toLowerCase())
+  return KNOWLEDGE_BASE_FILE_EXTENSIONS.has(file.name.slice(dotIndex).toLowerCase())
+}
+
+function getSuggestedKnowledgeBaseCategory(file: SessionFile, existingCategories: string[]): string {
+  const normalizedName = file.name.toLowerCase()
+  const matchedExisting = existingCategories.find(category => normalizedName.includes(category.toLowerCase()))
+  if (matchedExisting) return matchedExisting
+
+  const parent = file.path.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0]?.trim()
+  if (parent && !/^(agent pi outputs|outputs|attachments|reviews)$/i.test(parent)) return parent
+  if (normalizedName.endsWith('.json')) return 'Data'
+  if (normalizedName.includes('review')) return 'Reviews'
+  if (normalizedName.includes('standard') || normalizedName.includes('spec')) return 'Standards'
+  return existingCategories[0] || 'General'
 }
 
 /**
@@ -415,10 +428,10 @@ function FileTreeItem({
               {t("chat.openFile")}
             </StyledContextMenuItem>
           )}
-          {isEnterpriseKnowledgeCandidate(file) && (
+          {isKnowledgeBaseCandidate(file) && (
             <StyledContextMenuItem onSelect={() => onCreateFileMemorySource(file)}>
               <Database className="h-3.5 w-3.5" />
-              {t('chat.createEnterpriseKnowledgeSource')}
+              {t('chat.addToKnowledgeBase')}
             </StyledContextMenuItem>
           )}
           {file.source !== 'official-output' && (
@@ -619,11 +632,11 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   // instead of always opening in the file manager / default app.
   const { onOpenFile, enabledSources = [] } = useAppShellContext()
   const fileManagerName = getFileManagerName()
-  const enterpriseKnowledgeCategories = React.useMemo(() => {
+  const knowledgeBaseCategories = React.useMemo(() => {
     const categories = new Set<string>()
     for (const source of enabledSources) {
       const metadata = source.config.metadata
-      if (metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY && typeof metadata.knowledgeCategory === 'string') {
+      if (metadata?.category === KNOWLEDGE_BASE_METADATA_CATEGORY && typeof metadata.knowledgeCategory === 'string') {
         const category = metadata.knowledgeCategory.trim()
         if (category) categories.add(category)
       }
@@ -697,28 +710,29 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   const handleCreateFileMemorySource = useCallback(async (file: SessionFile) => {
     if (!sessionId || file.type === 'directory') return
-    const existing = enterpriseKnowledgeCategories.length > 0
-      ? `\n\n${t('chat.enterpriseKnowledgeExistingCategories')}: ${enterpriseKnowledgeCategories.join(', ')}`
+    const suggestedCategory = getSuggestedKnowledgeBaseCategory(file, knowledgeBaseCategories)
+    const existing = knowledgeBaseCategories.length > 0
+      ? `\n\n${t('chat.knowledgeBaseExistingCategories')}: ${knowledgeBaseCategories.join(', ')}`
       : ''
     const category = window.prompt(
-      `${t('chat.enterpriseKnowledgeCategoryPrompt')}${existing}`,
-      enterpriseKnowledgeCategories[0] || ''
+      `${t('chat.knowledgeBaseCategoryPrompt')}${existing}`,
+      suggestedCategory
     )?.trim()
     if (!category) return
 
     try {
       const result = await window.electronAPI.createFileMemorySource(sessionId, file.path, {
         autoEnable: false,
-        enterpriseKnowledge: { category },
+        knowledgeBase: { category },
       })
-      toast.success(t('chat.enterpriseKnowledgeSourceCreated'), {
+      toast.success(t('chat.knowledgeBaseSourceCreated'), {
         description: result.sourceSlug,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      toast.error(t('chat.failedToCreateEnterpriseKnowledgeSource'), { description: message })
+      toast.error(t('chat.failedToCreateKnowledgeBaseSource'), { description: message })
     }
-  }, [enterpriseKnowledgeCategories, sessionId, t])
+  }, [knowledgeBaseCategories, sessionId, t])
 
   if (!sessionId) {
     return null

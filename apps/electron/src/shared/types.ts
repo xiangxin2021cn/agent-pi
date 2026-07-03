@@ -853,7 +853,7 @@ export interface SessionsNavigationState {
  */
 export type SourceFilter =
   | { kind: 'type'; sourceType: 'api' | 'mcp' | 'local' }
-  | { kind: 'enterpriseKnowledge' }
+  | { kind: 'knowledgeBase' }
 
 /**
  * Automation type filter for automations navigation

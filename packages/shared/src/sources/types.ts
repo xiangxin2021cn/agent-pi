@@ -433,7 +433,7 @@ export interface SourceBrand {
 
 /**
  * Optional source classification metadata.
- * MVP uses this for Enterprise Knowledge Base sources without changing SourceType.
+ * MVP uses this for Knowledge Base sources without changing SourceType.
  */
 export interface SourceMetadata {
   category?: string;

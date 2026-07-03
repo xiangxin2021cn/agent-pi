@@ -49,10 +49,10 @@ const SOURCE_TYPE_FILTER_LABEL_KEYS: Record<string, string> = {
   local: 'sourcesList.filterLocalFolder',
 }
 
-const ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY = 'enterprise_kb'
+const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base'
 
-function isEnterpriseKnowledgeSource(source: LoadedSource): boolean {
-  return source.config.metadata?.category === ENTERPRISE_KNOWLEDGE_METADATA_CATEGORY
+function isKnowledgeBaseSource(source: LoadedSource): boolean {
+  return source.config.metadata?.category === KNOWLEDGE_BASE_METADATA_CATEGORY
 }
 
 export interface SourcesListPanelProps {
@@ -91,15 +91,15 @@ export function SourcesListPanel({
 
   const filteredSources = React.useMemo(() => {
     if (!sourceFilter) return sources
-    if (sourceFilter.kind === 'enterpriseKnowledge') {
-      return sources.filter(isEnterpriseKnowledgeSource)
+    if (sourceFilter.kind === 'knowledgeBase') {
+      return sources.filter(isKnowledgeBaseSource)
     }
     return sources.filter(s => s.config.type === sourceFilter.sourceType)
   }, [sources, sourceFilter])
 
   const emptyMessage = React.useMemo(() => {
-    if (sourceFilter?.kind === 'enterpriseKnowledge') {
-      return t('sourcesList.noSourcesOfType', { type: t('sourcesList.filterEnterpriseKnowledge') })
+    if (sourceFilter?.kind === 'knowledgeBase') {
+      return t('sourcesList.noSourcesOfType', { type: t('sourcesList.filterKnowledgeBase') })
     }
     if (sourceFilter?.kind === 'type') {
       const filterLabelKey = SOURCE_TYPE_FILTER_LABEL_KEYS[sourceFilter.sourceType]
@@ -206,14 +206,14 @@ export function SourcesListPanel({
         const typeConfig = SOURCE_TYPE_CONFIG[source.config.type]
         const statusConfig = SOURCE_STATUS_CONFIG[connectionStatus]
         const subtitle = source.config.tagline || source.config.provider || ''
-        const isEnterpriseKnowledge = isEnterpriseKnowledgeSource(source)
+        const isKnowledgeBase = isKnowledgeBaseSource(source)
         return {
           icon: <SourceAvatar source={source} size="sm" />,
           title: source.config.name,
           badges: (
             <>
-              {isEnterpriseKnowledge && (
-                <EntityListBadge colorClass="bg-primary/10 text-primary">{t('sourcesList.typeEnterpriseKnowledge')}</EntityListBadge>
+              {isKnowledgeBase && (
+                <EntityListBadge colorClass="bg-primary/10 text-primary">{t('sourcesList.typeKnowledgeBase')}</EntityListBadge>
               )}
               {typeConfig && <EntityListBadge colorClass={typeConfig.colorClass}>{t(typeConfig.labelKey)}</EntityListBadge>}
               {statusConfig && (
