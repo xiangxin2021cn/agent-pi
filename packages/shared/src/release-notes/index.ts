@@ -40,7 +40,7 @@ function loadBundledReleaseNotes(): Record<string, string> {
 
   let files: string[];
   try {
-    files = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.md')) : [];
+    files = existsSync(dir) ? readdirSync(dir).filter(isVersionedReleaseNoteFile) : [];
   } catch {
     console.warn(`[release-notes] Could not read release notes dir: ${dir}`);
     return notes;
@@ -93,6 +93,10 @@ export function initializeReleaseNotes(): void {
  */
 function parseVersion(filename: string): string {
   return filename.replace(/\.md$/, '');
+}
+
+function isVersionedReleaseNoteFile(filename: string): boolean {
+  return /^\d+\.\d+\.\d+\.md$/.test(filename);
 }
 
 /**

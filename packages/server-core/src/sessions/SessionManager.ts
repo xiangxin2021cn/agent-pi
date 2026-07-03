@@ -5819,10 +5819,13 @@ export class SessionManager implements ISessionManager {
   setActiveViewingSession(sessionId: string | null, workspaceId: string): void {
     if (sessionId) {
       this.activeViewingSession.set(workspaceId, sessionId)
-      // When user starts viewing a session that's not processing, clear unread
+      // When the user views a settled session, persist the latest read marker
+      // even if hasUnread is already false. Older sessions can have hasUnread
+      // cleared while lastReadMessageId is still missing, which makes legacy
+      // unread checks come back after restart.
       const managed = this.sessions.get(sessionId)
-      if (managed && !managed.isProcessing && managed.hasUnread) {
-        this.markSessionRead(sessionId)
+      if (managed && !managed.isProcessing) {
+        void this.markSessionRead(sessionId)
       }
     } else {
       this.activeViewingSession.delete(workspaceId)
@@ -5860,13 +5863,11 @@ export class SessionManager implements ISessionManager {
     const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
 
     // Update lastReadMessageId for legacy/manual unread functionality
-    if (managed.messages.length > 0) {
-      const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages)
-      if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
-        managed.lastReadMessageId = lastFinalId
-        updates.lastReadMessageId = lastFinalId
-        needsPersist = true
-      }
+    const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages) ?? managed.lastFinalMessageId
+    if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
+      managed.lastReadMessageId = lastFinalId
+      updates.lastReadMessageId = lastFinalId
+      needsPersist = true
     }
 
     // Clear hasUnread flag (primary source of truth for NEW badge)
@@ -5910,10 +5911,23 @@ export class SessionManager implements ISessionManager {
       if (managed.workspace.id !== workspaceId) continue
       if (managed.hidden || managed.isArchived) continue
       if (managed.isProcessing) continue
-      if (!managed.hasUnread) continue
-      managed.hasUnread = false
+      const metadataUpdates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
+
+      const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages) ?? managed.lastFinalMessageId
+      if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
+        managed.lastReadMessageId = lastFinalId
+        metadataUpdates.lastReadMessageId = lastFinalId
+      }
+
+      if (managed.hasUnread) {
+        managed.hasUnread = false
+        metadataUpdates.hasUnread = false
+      }
+
+      if (Object.keys(metadataUpdates).length === 0) continue
+
       updates.push(
-        updateSessionMetadata(managed.workspace.rootPath, managed.id, { hasUnread: false })
+        updateSessionMetadata(managed.workspace.rootPath, managed.id, metadataUpdates)
       )
     }
     if (updates.length > 0) {
