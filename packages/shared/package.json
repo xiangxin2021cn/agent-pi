@@ -25,6 +25,7 @@
     "./config/paths": "./src/config/paths.ts",
     "./docs": "./src/docs/index.ts",
     "./docs/doc-links": "./src/docs/doc-links.ts",
+    "./document-visuals": "./src/document-visuals/index.ts",
     "./config/types": "./src/config/types.ts",
     "./credentials": "./src/credentials/index.ts",
     "./document-extraction/mineru": "./src/document-extraction/mineru.ts",

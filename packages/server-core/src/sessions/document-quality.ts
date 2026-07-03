@@ -12,6 +12,8 @@ export interface DocumentQualityReport {
     numbers: number
     specification: number
     risk: number
+    visuals?: number
+    template?: number
   }
   metrics: {
     textLength: number
@@ -139,10 +141,23 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
 }
 
 export function formatDocumentQualityReport(report: DocumentQualityReport): string {
+  const optionalDimensions = [
+    typeof report.dimensions.visuals === 'number' ? `visuals=${report.dimensions.visuals}` : undefined,
+    typeof report.dimensions.template === 'number' ? `template=${report.dimensions.template}` : undefined,
+  ].filter(Boolean)
+  const dimensionsText = [
+    `structure=${report.dimensions.structure}`,
+    `evidence=${report.dimensions.evidence}`,
+    `numbers=${report.dimensions.numbers}`,
+    `specification=${report.dimensions.specification}`,
+    `risk=${report.dimensions.risk}`,
+    ...optionalDimensions,
+  ].join(', ')
+
   return [
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `score: ${report.score}/${report.threshold}`,
-    `dimensions: structure=${report.dimensions.structure}, evidence=${report.dimensions.evidence}, numbers=${report.dimensions.numbers}, specification=${report.dimensions.specification}, risk=${report.dimensions.risk}`,
+    `dimensions: ${dimensionsText}`,
     `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, numericClaims=${report.metrics.numericClaimCount}, tables=${report.metrics.tableMarkerCount}, placeholders=${report.metrics.placeholderCount}`,
     report.issues.length > 0 ? `issues:\n${report.issues.map(issue => `- ${issue}`).join('\n')}` : 'issues: none',
     report.strengths.length > 0 ? `strengths:\n${report.strengths.map(strength => `- ${strength}`).join('\n')}` : 'strengths: none',

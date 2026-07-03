@@ -11,6 +11,7 @@
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
+import type { DocumentDomain, VisualPlan } from '../document-visuals/types.ts';
 import type { StoredAttachment, MessageRole, ToolStatus, AuthRequestType, AuthStatus, CredentialInputMode, StoredMessage } from '@craft-agent/core/types';
 
 /**
@@ -132,6 +133,10 @@ export interface SessionDocumentPlan {
   audience?: string;
   tone?: string;
   length?: string;
+  domain?: DocumentDomain;
+  visualPlan?: VisualPlan;
+  templateProfileId?: string;
+  strictTemplate?: boolean;
   sections: string[];
   tables: string[];
   charts: string[];
