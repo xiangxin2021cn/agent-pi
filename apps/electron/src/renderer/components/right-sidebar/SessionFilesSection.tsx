@@ -32,28 +32,14 @@ import * as storage from '@/lib/local-storage'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
 import { restoreSessionFileWatch } from './session-files-watch'
-
-const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base'
-const KNOWLEDGE_BASE_FILE_EXTENSIONS = new Set(['.md', '.txt', '.json'])
+import {
+  KNOWLEDGE_BASE_METADATA_CATEGORY,
+  isSupportedKnowledgeBaseFile,
+  suggestKnowledgeBaseCategory,
+} from '@craft-agent/shared/sources/knowledge-base'
 
 function isKnowledgeBaseCandidate(file: SessionFile): boolean {
-  if (file.type === 'directory') return false
-  const dotIndex = file.name.lastIndexOf('.')
-  if (dotIndex < 0) return false
-  return KNOWLEDGE_BASE_FILE_EXTENSIONS.has(file.name.slice(dotIndex).toLowerCase())
-}
-
-function getSuggestedKnowledgeBaseCategory(file: SessionFile, existingCategories: string[]): string {
-  const normalizedName = file.name.toLowerCase()
-  const matchedExisting = existingCategories.find(category => normalizedName.includes(category.toLowerCase()))
-  if (matchedExisting) return matchedExisting
-
-  const parent = file.path.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0]?.trim()
-  if (parent && !/^(agent pi outputs|outputs|attachments|reviews)$/i.test(parent)) return parent
-  if (normalizedName.endsWith('.json')) return 'Data'
-  if (normalizedName.includes('review')) return 'Reviews'
-  if (normalizedName.includes('standard') || normalizedName.includes('spec')) return 'Standards'
-  return existingCategories[0] || 'General'
+  return file.type !== 'directory' && isSupportedKnowledgeBaseFile(file.name)
 }
 
 /**
@@ -710,7 +696,11 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   const handleCreateFileMemorySource = useCallback(async (file: SessionFile) => {
     if (!sessionId || file.type === 'directory') return
-    const suggestedCategory = getSuggestedKnowledgeBaseCategory(file, knowledgeBaseCategories)
+    const suggestedCategory = suggestKnowledgeBaseCategory({
+      fileName: file.name,
+      filePath: file.path,
+      existingCategories: knowledgeBaseCategories,
+    })
     const existing = knowledgeBaseCategories.length > 0
       ? `\n\n${t('chat.knowledgeBaseExistingCategories')}: ${knowledgeBaseCategories.join(', ')}`
       : ''

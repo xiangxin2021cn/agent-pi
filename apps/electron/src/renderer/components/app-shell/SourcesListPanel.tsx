@@ -23,6 +23,7 @@ import { SendResourceToWorkspaceDialog } from './SendResourceToWorkspaceDialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig, type EditContextKey } from '@/components/ui/EditPopover'
 import type { LoadedSource, SourceConnectionStatus, SourceFilter } from '../../../shared/types'
+import { getKnowledgeBaseFolder, isKnowledgeBaseSource } from '@craft-agent/shared/sources/knowledge-base'
 
 const ANYSEARCH_SOURCE_ID = 'anysearch-mcp'
 const ANYSEARCH_SOURCE_SLUG = 'anysearch-mcp'
@@ -47,12 +48,6 @@ const SOURCE_TYPE_FILTER_LABEL_KEYS: Record<string, string> = {
   api: 'sourcesList.filterApi',
   mcp: 'sourcesList.filterMcp',
   local: 'sourcesList.filterLocalFolder',
-}
-
-const KNOWLEDGE_BASE_METADATA_CATEGORY = 'knowledge_base'
-
-function isKnowledgeBaseSource(source: LoadedSource): boolean {
-  return source.config.metadata?.category === KNOWLEDGE_BASE_METADATA_CATEGORY
 }
 
 export interface SourcesListPanelProps {
@@ -207,6 +202,7 @@ export function SourcesListPanel({
         const statusConfig = SOURCE_STATUS_CONFIG[connectionStatus]
         const subtitle = source.config.tagline || source.config.provider || ''
         const isKnowledgeBase = isKnowledgeBaseSource(source)
+        const knowledgeBaseFolder = isKnowledgeBase ? getKnowledgeBaseFolder(source) : null
         return {
           icon: <SourceAvatar source={source} size="sm" />,
           title: source.config.name,
@@ -214,6 +210,9 @@ export function SourcesListPanel({
             <>
               {isKnowledgeBase && (
                 <EntityListBadge colorClass="bg-primary/10 text-primary">{t('sourcesList.typeKnowledgeBase')}</EntityListBadge>
+              )}
+              {knowledgeBaseFolder && (
+                <EntityListBadge colorClass="bg-foreground/10 text-foreground/60">{knowledgeBaseFolder}</EntityListBadge>
               )}
               {typeConfig && <EntityListBadge colorClass={typeConfig.colorClass}>{t(typeConfig.labelKey)}</EntityListBadge>}
               {statusConfig && (

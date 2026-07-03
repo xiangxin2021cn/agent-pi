@@ -33,6 +33,7 @@
     "./sessions": "./src/sessions/index.ts",
     "./sessions/context-pressure": "./src/sessions/context-pressure.ts",
     "./sources": "./src/sources/index.ts",
+    "./sources/knowledge-base": "./src/sources/knowledge-base.ts",
     "./sources/types": "./src/sources/types.ts",
     "./skills": "./src/skills/index.ts",
     "./workspaces": "./src/workspaces/index.ts",

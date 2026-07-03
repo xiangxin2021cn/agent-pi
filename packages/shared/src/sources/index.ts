@@ -112,12 +112,18 @@ export {
   KNOWLEDGE_BASE_METADATA_CATEGORY,
   KNOWLEDGE_BASE_SCOPE,
   KNOWLEDGE_BASE_FILE_EXTENSIONS,
+  buildKnowledgeBaseFolderTree,
   getKnowledgeBaseCategory,
+  getKnowledgeBaseFolder,
   isKnowledgeBaseSource,
   isSupportedKnowledgeBaseFile,
+  normalizeKnowledgeBaseFolder,
+  suggestKnowledgeBaseCategory,
 } from './knowledge-base.ts';
 export type {
   KnowledgeBaseFileExtension,
+  KnowledgeBaseFolderNode,
+  KnowledgeBaseCategorySuggestionInput,
   KnowledgeBaseSourceMetadata,
 } from './knowledge-base.ts';
 
