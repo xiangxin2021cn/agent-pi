@@ -14,13 +14,28 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.0. Next active development line: V1.2.1.**
+**Current release: V1.2.1. Next planning line: V1.2.2.**
 
-**当前发布版：V1.2.0。下一阶段开发线：V1.2.1。**
+**当前发布版：V1.2.1。下一阶段规划线：V1.2.2。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+
+## V1.2.1 Release / V1.2.1 发布
+
+V1.2.1 turns the V1.2 document-workbench direction into a release focused on higher-quality professional outputs, reusable enterprise knowledge, and more reliable export behavior.
+
+V1.2.1 将 V1.2 的文档工作台方向推进为正式发布版，重点提升专业成果质量、企业知识复用和导出稳定性。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Document Quality Composer | Adds industry-aware visual detection, source-backed diagram/table requirements, evidence-rich Markdown conventions, and stricter document-quality audit signals. | 新增行业化图表识别、来源支撑的图表/表格要求、有证据的 Markdown 写作规范和更严格的文档质量审计信号。 |
+| Professional reports | Adds construction-focused Gantt foundations with WBS grouping, baseline/current plan, progress line, critical path, milestones, legends, and A4/A3 landscape export intent; expands planning for investment, GIS, and simulation/CAE visuals. | 建立施工甘特图基础，支持 WBS、基线/当前计划、进度线、关键路径、里程碑、图例和 A4/A3 横向导出意图；同时扩展投资、GIS、仿真/CAE 图表规划。 |
+| Export stability | Resolves Markdown image assets for export, keeps Mermaid editable in Markdown while allowing stable SVG export, and fails loudly when referenced image assets are missing. | 导出时解析 Markdown 图片资源；Mermaid 在 Markdown 中保持可编辑，同时支持稳定 SVG 导出；缺失图片会明确失败，避免空白成果。 |
+| Template fidelity | Treats strict template matching as a code-level DOCX/OOXML template-rendering problem instead of prompt-only styling. | 将严格模板匹配定义为代码级 DOCX/OOXML 模板渲染问题，而不是只靠提示词控制样式。 |
+| Enterprise Knowledge Base | Promotes generated `.md`, `.txt`, and `.json` artifacts into file-memory MCP knowledge sources with category/folder metadata and explicit user activation. | 可将生成的 `.md`、`.txt`、`.json` 产物提升为 file-memory MCP 知识源，带分类/文件夹元数据，并要求用户显式启用。 |
+| Release packaging | Windows V1.2.1 installer is validated locally; GitHub Actions can generate macOS DMG/ZIP and Linux AppImage assets for the same release tag. | Windows V1.2.1 安装包已本地验证；GitHub Actions 可为同一 release tag 生成 macOS DMG/ZIP 与 Linux AppImage 资产。 |
 
 ## V1.2.0 Update / V1.2.0 更新
 
@@ -41,7 +56,7 @@ MinerU and AnySearch are **not enabled by default**. Token/API-key presence alon
 
 MinerU 和 AnySearch **默认不启用**。即使已经保存 token 或 API key，也不会自动开启；必须由用户在工作区或来源设置中显式启用。
 
-## V1.2.1 Direction / V1.2.1 方向
+## V1.2.1 Technical Scope / V1.2.1 技术范围
 
 V1.2.1 focuses on making Agent Pi a stronger document-production and knowledge-reuse workbench for professional project teams.
 
@@ -82,6 +97,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
+| V1.2.1 | Document Quality Composer, professional visual/export guardrails, code-level template-fidelity direction, enterprise Knowledge Base MCP promotion, and V1.2.1 cross-platform release packaging. | 文档质量编排、专业图表/导出护栏、代码级模板保真方向、企业知识库 MCP 提升，以及 V1.2.1 跨平台发布打包。 | [v1.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.1) |
 | V1.2.0 | Unified file preview/edit/export, AI selection rewrite, optional MinerU extraction, optional AnySearch MCP setup, folder path-only attachments, spawned-agent working-directory inheritance, construction schedule skill, and idle Pi runtime cleanup. | 统一文件预览/编辑/导出、选中文本 AI 改写、可选 MinerU、可选 AnySearch MCP、文件夹路径引用、分智能体继承工作目录、施工进度计划 skill、Pi 空闲 runtime 清理。 | [v1.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.0) |
 | V1.1.3 | MoA-inspired quality review council, quality routing, Project Memory reviewer telemetry, session UI recovery, stable workspace ordering, bundled Git, SDK upgrades. | MoA 启发质量评审、多角色质量路由、项目记忆沉淀、会话资产修复、工作目录排序修复、打包 Git、SDK 升级。 | [v1.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.3) |
 | V1.1.2 | Task Contract and Document Plan for document-heavy workflows. | 新增 Task Contract 与 Document Plan，强化文档任务硬约束。 | [v1.1.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.2) |
@@ -116,17 +132,18 @@ The manual covers installation, Workspace, working directories, session folding,
 
 ## Download / 下载
 
-Windows x64 installers are published from GitHub Releases after validation:
+Installers are published from GitHub Releases after validation:
 
-Windows x64 安装包会在验证通过后发布到 GitHub Releases：
+安装包会在验证通过后发布到 GitHub Releases：
 
 [https://github.com/xiangxin2021cn/agent-pi/releases/latest](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 
 Release assets / 发布资产:
 
-- `Agent-Pi-x64.exe`
-- `Agent-Pi-x64.exe.blockmap`
-- `latest.yml`
+- Windows x64: `Agent-Pi-x64.exe`, `Agent-Pi-x64.exe.blockmap`, `latest.yml`
+- macOS Apple Silicon: `Agent-Pi-arm64.dmg`, `Agent-Pi-arm64.zip`
+- macOS Intel: `Agent-Pi-x64.dmg`, `Agent-Pi-x64.zip`
+- Linux x64: `Agent-Pi-x64.AppImage`, `latest-linux.yml`
 
 ## Roadmap / 未来路线
 
