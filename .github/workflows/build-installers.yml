@@ -114,7 +114,6 @@ jobs:
           retention-days: 14
           path: |
             apps/electron/release/Agent-Pi-x64.AppImage
-            apps/electron/release/Agent-Pi-x64.AppImage.blockmap
             apps/electron/release/latest-linux.yml
 
       - name: Upload to GitHub Release
@@ -126,7 +125,6 @@ jobs:
           shopt -s nullglob
           assets=(
             "apps/electron/release/Agent-Pi-x64.AppImage"
-            "apps/electron/release/Agent-Pi-x64.AppImage.blockmap"
             "apps/electron/release/latest-linux.yml"
           )
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
