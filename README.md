@@ -14,13 +14,19 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.1. Next planning line: V1.2.2.**
+**Current release: V1.2.2. Next planning line: V1.2.3.**
 
-**当前发布版：V1.2.1。下一阶段规划线：V1.2.2。**
+**当前发布版：V1.2.2。下一阶段规划线：V1.2.3。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+
+## V1.2.2 Hotfix / V1.2.2 修复
+
+V1.2.2 fixes the About/update version source. V1.2.1 packages were correctly built as 1.2.1, but the About page read the shared workspace package version and could display 1.1.3. The updater state now reads Electron's packaged `app.getVersion()`, and stale cached installers without version metadata are no longer treated as ready-to-install updates.
+
+V1.2.2 修复“关于/检查更新”的版本来源。V1.2.1 安装包本身是 1.2.1，但关于页读取了 shared 工作区包版本，可能显示 1.1.3。现在更新状态改为读取 Electron 打包后的 `app.getVersion()`，并且不再把缺少版本元数据的旧缓存安装器误判为可安装更新。
 
 ## V1.2.1 Release / V1.2.1 发布
 
@@ -97,6 +103,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
+| V1.2.2 | Hotfix for About/update version source and stale updater-cache detection. | 修复关于页/检查更新版本来源，以及旧更新缓存误判。 | [v1.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.2) |
 | V1.2.1 | Document Quality Composer, professional visual/export guardrails, code-level template-fidelity direction, enterprise Knowledge Base MCP promotion, and V1.2.1 cross-platform release packaging. | 文档质量编排、专业图表/导出护栏、代码级模板保真方向、企业知识库 MCP 提升，以及 V1.2.1 跨平台发布打包。 | [v1.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.1) |
 | V1.2.0 | Unified file preview/edit/export, AI selection rewrite, optional MinerU extraction, optional AnySearch MCP setup, folder path-only attachments, spawned-agent working-directory inheritance, construction schedule skill, and idle Pi runtime cleanup. | 统一文件预览/编辑/导出、选中文本 AI 改写、可选 MinerU、可选 AnySearch MCP、文件夹路径引用、分智能体继承工作目录、施工进度计划 skill、Pi 空闲 runtime 清理。 | [v1.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.0) |
 | V1.1.3 | MoA-inspired quality review council, quality routing, Project Memory reviewer telemetry, session UI recovery, stable workspace ordering, bundled Git, SDK upgrades. | MoA 启发质量评审、多角色质量路由、项目记忆沉淀、会话资产修复、工作目录排序修复、打包 Git、SDK 升级。 | [v1.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.1.3) |

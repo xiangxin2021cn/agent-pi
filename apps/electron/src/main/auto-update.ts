@@ -20,7 +20,6 @@ import { platform } from 'os'
 import * as path from 'path'
 import * as fs from 'fs'
 import { mainLog, autoUpdateLog } from './logger'
-import { getAppVersion } from '@craft-agent/shared/version'
 import {
   getDismissedUpdateVersion,
   clearDismissedUpdateVersion,
@@ -56,7 +55,7 @@ function getUpdateCacheDir(): string {
 // Module state — keeps track of update info for IPC queries
 let updateInfo: UpdateInfo = {
   available: false,
-  currentVersion: getAppVersion(),
+  currentVersion: app.getVersion(),
   latestVersion: null,
   downloadState: 'idle',
   downloadProgress: 0,
@@ -163,7 +162,7 @@ autoUpdater.on('update-available', (info) => {
   }
 
   // Fallback: check if file exists in cache directory
-  const existing = checkForExistingDownload()
+  const existing = checkForExistingDownload(info.version)
   if (existing.exists) {
     mainLog.info(`[auto-update] Update already downloaded (file check), setting state to ready`)
     updateInfo = {
@@ -271,7 +270,7 @@ interface CheckOptions {
  * Check if a downloaded update already exists in the cache directory.
  * This helps detect updates that were downloaded in a previous session.
  */
-function checkForExistingDownload(): { exists: boolean; version?: string } {
+function checkForExistingDownload(expectedVersion?: string): { exists: boolean; version?: string } {
   try {
     const cacheDir = getUpdateCacheDir()
     mainLog.info(`[auto-update] Checking cache directory: ${cacheDir}`)
@@ -293,13 +292,26 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
 
       // electron-updater uses 'fileName' (not 'path') in update-info.json
       const fileName = (info?.fileName || info?.path) as string | undefined
+      const cachedVersion = typeof info?.version === 'string' ? info.version : undefined
+      if (expectedVersion && cachedVersion !== expectedVersion) {
+        mainLog.info(`[auto-update] Ignoring cached download for version ${cachedVersion ?? 'unknown'}; expected ${expectedVersion}`)
+        return { exists: false }
+      }
+
+      if (!expectedVersion && !cachedVersion) {
+        mainLog.info('[auto-update] Ignoring cached download without version metadata')
+        return { exists: false }
+      }
+
       if (fileName && fs.existsSync(path.join(cacheDir, fileName))) {
-        mainLog.info(`[auto-update] Found existing download via update-info.json: ${fileName}`)
+        mainLog.info(`[auto-update] Found existing download via update-info.json: ${fileName} (${cachedVersion ?? 'version unknown'})`)
         return { exists: true, version: info?.version as string }
       }
     }
 
-    // Fallback: check for any installer/zip/dmg file
+    // Never trust a bare installer in the cache. Older builds wrote
+    // update-info.json without a version field, and a stale installer can make
+    // the UI claim an unrelated update is ready.
     const downloadFile = files.find(f =>
       f.endsWith('.zip') ||
       f.endsWith('.exe') ||
@@ -308,8 +320,7 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
       f.endsWith('.nupkg')
     )
     if (downloadFile) {
-      mainLog.info(`[auto-update] Found existing download file: ${downloadFile}`)
-      return { exists: true }
+      mainLog.info(`[auto-update] Ignoring unvalidated cached download file: ${downloadFile}`)
     }
 
     mainLog.info(`[auto-update] No existing download found in cache`)
@@ -346,7 +357,7 @@ export async function checkForUpdates(options: CheckOptions = {}): Promise<Updat
 
       // Double-check: if we're still showing 'downloading' but file exists, update state
       if (updateInfo.downloadState === 'downloading') {
-        const existing = checkForExistingDownload()
+        const existing = checkForExistingDownload(result.updateInfo.version)
         if (existing.exists) {
           mainLog.info('[auto-update] Update already downloaded, updating state to ready')
           updateInfo = {
