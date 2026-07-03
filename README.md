@@ -14,13 +14,23 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.3. Next planning line: V1.2.4.**
+**Current release: V1.2.4. Next planning line: V1.2.5.**
 
-**当前发布版：V1.2.3。下一阶段规划线：V1.2.4。**
+**当前发布版：V1.2.4。下一阶段规划线：V1.2.5。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+
+## V1.2.4 Hotfix / V1.2.4 修复
+
+V1.2.4 restores the automatic Goal Loop self-correction path. A recoverable tool failure inside a completed turn no longer forces an immediate manual-review stop when the audit already has a concrete correction and the goal still has iteration budget. This fixes the case where users could see a self-review report but Agent Pi did not start the next improvement pass.
+
+V1.2.4 恢复 Goal Loop 的自动纠偏链路：当一次完整回合里出现可恢复工具失败时，只要审查已经给出明确修正方向且目标仍有迭代预算，就不再直接停到人工审查。这修复了“能看到自审查报告，但没有拉起下一轮自动改进”的问题。
+
+Safety boundaries remain: interrupted turns, no final assistant output, explicit system error messages, repeated identical failures, and exhausted budgets still stop for manual review.
+
+安全边界仍然保留：中断回合、没有最终助手输出、显式系统错误、连续重复同一失败、预算耗尽，仍会进入人工审查而不是无限循环。
 
 ## V1.2.3 Hotfix / V1.2.3 修复
 
@@ -113,6 +123,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
+| V1.2.4 | Hotfix for Goal Loop automatic self-correction after recoverable tool failures. | 修复可恢复工具失败后 Goal Loop 未继续自动纠偏的问题。 | [v1.2.4](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.4) |
 | V1.2.3 | Hotfix for in-app What's New release notes, versioned release-note loading, and completed-session read-state persistence. | 修复应用内“最新动态”更新说明缺失、限定只加载版本化更新说明，并修复完成会话已读状态重启回潮。 | [v1.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.3) |
 | V1.2.2 | Hotfix for About/update version source and stale updater-cache detection. | 修复关于页/检查更新版本来源，以及旧更新缓存误判。 | [v1.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.2) |
 | V1.2.1 | Document Quality Composer, professional visual/export guardrails, code-level template-fidelity direction, enterprise Knowledge Base MCP promotion, and V1.2.1 cross-platform release packaging. | 文档质量编排、专业图表/导出护栏、代码级模板保真方向、企业知识库 MCP 提升，以及 V1.2.1 跨平台发布打包。 | [v1.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.1) |

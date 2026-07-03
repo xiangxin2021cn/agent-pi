@@ -546,7 +546,7 @@ export class GoalController {
     const shouldAutoImprove = !reviewerFailed
       && !repeatedFailure
       && snapshot.stoppedReason === 'complete'
-      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0 && blockingFailedTools.length === 0))
+      && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
     const hasRemainingIterations = iteration < goalState.maxIterations
     const hasRemainingWallClock = goalState.budgets?.maxWallClockMs === undefined

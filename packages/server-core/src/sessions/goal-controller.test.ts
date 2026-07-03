@@ -1926,7 +1926,7 @@ describe('GoalController', () => {
     }
   })
 
-  test('does not auto-continue after tool failures', async () => {
+  test('does not auto-continue when the turn produced a system error message', async () => {
     const controller = new GoalController()
 
     const decision = await controller.onTurnStopped(goal({
@@ -1941,6 +1941,7 @@ describe('GoalController', () => {
       messages: [
         message('u1', 'user', 'write a report'),
         message('t1', 'tool', 'failed', { toolStatus: 'error', toolName: 'Read' }),
+        message('e1', 'error', 'Authentication failed. Please check your credentials.'),
         message('a1', 'assistant', 'Report complete.'),
       ],
       stoppedReason: 'complete',
@@ -1951,6 +1952,41 @@ describe('GoalController', () => {
     if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.reason).toContain('errors')
+    }
+  })
+
+  test('continues automatically after a recoverable tool failure reports missing work', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      maxIterations: 3,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the source spreadsheet.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report using source.xlsx'),
+        message('t1', 'tool', 'failed', {
+          toolStatus: 'error',
+          toolName: 'Read',
+          toolResult: 'ENOENT: source.xlsx was not found in the current directory',
+        }),
+        message('a1', 'assistant', 'I could not finish the cited report because source.xlsx was not found.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('tool_failure')
+      expect(decision.prompt).toContain('Resolve the failed tool')
+      expect(decision.prompt).toContain('source.xlsx')
     }
   })
 
