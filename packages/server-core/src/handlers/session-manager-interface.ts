@@ -24,6 +24,8 @@ import type {
   ShareResult,
   OptimizePromptRequest,
   OptimizePromptResult,
+  SuggestKnowledgeBaseCategoryRequest,
+  SuggestKnowledgeBaseCategoryResult,
   SessionGoalUpdate,
 } from '@craft-agent/shared/protocol'
 import type { SessionBundle, DispatchMode, SessionGoalMode } from '@craft-agent/shared/sessions'
@@ -197,6 +199,7 @@ export interface ISessionManager {
   getSessionPath(sessionId: string): string | null
   refreshTitle(sessionId: string): Promise<{ success: boolean; title?: string; error?: string }>
   optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
+  suggestKnowledgeBaseCategory(sessionId: string, request: SuggestKnowledgeBaseCategoryRequest): Promise<SuggestKnowledgeBaseCategoryResult>
   refreshBadge(): void
   getUnreadSummary(): UnreadSummary
 

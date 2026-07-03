@@ -273,6 +273,15 @@ export const mockElectronAPI = {
     }
   },
 
+  suggestKnowledgeBaseCategory: async (sessionId: string, request: { fileName: string }) => {
+    console.log('[Playground] suggestKnowledgeBaseCategory called:', { sessionId, request })
+    return {
+      category: request.fileName.toLowerCase().includes('review') ? 'Reviews' : 'General',
+      reason: 'Playground mock recommendation.',
+      fallback: false,
+    }
+  },
+
   watchSessionFiles: (sessionId: string) => {
     console.log('[Playground] watchSessionFiles called:', sessionId)
   },

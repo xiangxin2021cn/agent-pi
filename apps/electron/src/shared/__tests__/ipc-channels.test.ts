@@ -246,6 +246,7 @@ const EXPECTED_CHANNELS: string[] = [
   'sessions:searchContent',
   'sessions:sendMessage',
   'sessions:setNotes',
+  'sessions:suggestKnowledgeBaseCategory',
   'sessions:unreadSummaryChanged',
   'sessions:unwatchFiles',
   'sessions:watchFiles',

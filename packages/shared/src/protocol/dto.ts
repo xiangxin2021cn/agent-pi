@@ -454,6 +454,20 @@ export interface OptimizePromptResult {
   fallback?: boolean
 }
 
+export interface SuggestKnowledgeBaseCategoryRequest {
+  fileName: string
+  filePath?: string
+  existingCategories?: string[]
+  workingDirectory?: string
+  model?: string
+}
+
+export interface SuggestKnowledgeBaseCategoryResult {
+  category: string
+  reason?: string
+  fallback?: boolean
+}
+
 export interface SessionFile {
   name: string
   path: string

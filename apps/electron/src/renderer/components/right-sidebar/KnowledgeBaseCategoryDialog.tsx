@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Check, FolderOpen } from 'lucide-react'
+import { Check, FolderOpen, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   Dialog,
@@ -22,18 +22,24 @@ export interface KnowledgeBaseCategoryDialogProps {
   open: boolean
   fileName?: string
   suggestedCategory: string
+  suggestionReason?: string
+  isSuggestingCategory?: boolean
   existingCategories: string[]
   onOpenChange: (open: boolean) => void
   onConfirm: (category: string) => void
+  onRequestSuggestion?: () => void
 }
 
 export function KnowledgeBaseCategoryDialog({
   open,
   fileName,
   suggestedCategory,
+  suggestionReason,
+  isSuggestingCategory,
   existingCategories,
   onOpenChange,
   onConfirm,
+  onRequestSuggestion,
 }: KnowledgeBaseCategoryDialogProps) {
   const { t } = useTranslation()
   const options = React.useMemo(
@@ -41,9 +47,24 @@ export function KnowledgeBaseCategoryDialog({
     [existingCategories, suggestedCategory]
   )
   const [value, setValue] = React.useState(suggestedCategory)
+  const previousSuggestedCategoryRef = React.useRef(suggestedCategory)
 
   React.useEffect(() => {
-    if (open) setValue(suggestedCategory)
+    if (!open) {
+      previousSuggestedCategoryRef.current = suggestedCategory
+      return
+    }
+
+    setValue(currentValue => {
+      const previousSuggestion = previousSuggestedCategoryRef.current
+      previousSuggestedCategoryRef.current = suggestedCategory
+      const currentResolved = resolveKnowledgeBaseDialogValue(currentValue)
+      const previousResolved = resolveKnowledgeBaseDialogValue(previousSuggestion)
+      if (!currentResolved || currentResolved === previousResolved) {
+        return suggestedCategory
+      }
+      return currentValue
+    })
   }, [open, suggestedCategory])
 
   const resolvedValue = resolveKnowledgeBaseDialogValue(value)
@@ -67,7 +88,22 @@ export function KnowledgeBaseCategoryDialog({
 
         {options.length > 0 && (
           <div className="space-y-2">
-            <Label>{t('chat.knowledgeBaseExistingCategories')}</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>{t('chat.knowledgeBaseExistingCategories')}</Label>
+              {onRequestSuggestion && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={onRequestSuggestion}
+                  disabled={isSuggestingCategory}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {isSuggestingCategory ? t('chat.knowledgeBaseAiSuggesting') : t('chat.knowledgeBaseAiSuggest')}
+                </Button>
+              )}
+            </div>
             <div className="max-h-36 overflow-y-auto rounded-[8px] border border-border/70 p-1">
               {options.map(option => {
                 const selected = resolvedValue === option.value
@@ -93,6 +129,11 @@ export function KnowledgeBaseCategoryDialog({
                 )
               })}
             </div>
+            {suggestionReason && (
+              <div className="rounded-[8px] bg-primary/5 px-2.5 py-2 text-xs leading-5 text-muted-foreground">
+                {t('chat.knowledgeBaseSuggestionReason', { reason: suggestionReason })}
+              </div>
+            )}
           </div>
         )}
 

@@ -504,6 +504,8 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [hasSavedExpandedState, setHasSavedExpandedState] = useState(false)
   const [pendingKnowledgeBaseFile, setPendingKnowledgeBaseFile] = useState<SessionFile | null>(null)
+  const [knowledgeBaseAiSuggestion, setKnowledgeBaseAiSuggestion] = useState<{ category: string; reason?: string; fallback?: boolean } | null>(null)
+  const [isSuggestingKnowledgeBaseCategory, setIsSuggestingKnowledgeBaseCategory] = useState(false)
   const mountedRef = useRef(true)
 
   // Load expanded paths from storage when session changes.
@@ -696,7 +698,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [loadFiles, saveExpandedPaths, sessionId, t])
 
-  const pendingKnowledgeBaseSuggestion = React.useMemo(() => {
+  const pendingKnowledgeBaseLocalSuggestion = React.useMemo(() => {
     if (!pendingKnowledgeBaseFile) return ''
     return suggestKnowledgeBaseCategory({
       fileName: pendingKnowledgeBaseFile.name,
@@ -704,6 +706,38 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       existingCategories: knowledgeBaseCategories,
     })
   }, [knowledgeBaseCategories, pendingKnowledgeBaseFile])
+
+  const requestKnowledgeBaseAiSuggestion = useCallback(async () => {
+    if (!sessionId || !pendingKnowledgeBaseFile) return
+    setIsSuggestingKnowledgeBaseCategory(true)
+    try {
+      const result = await window.electronAPI.suggestKnowledgeBaseCategory(sessionId, {
+        fileName: pendingKnowledgeBaseFile.name,
+        filePath: pendingKnowledgeBaseFile.path,
+        existingCategories: knowledgeBaseCategories,
+        workingDirectory: session?.workingDirectory,
+      })
+      setKnowledgeBaseAiSuggestion(result)
+    } catch (error) {
+      setKnowledgeBaseAiSuggestion({
+        category: pendingKnowledgeBaseLocalSuggestion,
+        fallback: true,
+      })
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('chat.knowledgeBaseAiSuggestFailed'), { description: message })
+    } finally {
+      setIsSuggestingKnowledgeBaseCategory(false)
+    }
+  }, [knowledgeBaseCategories, pendingKnowledgeBaseFile, pendingKnowledgeBaseLocalSuggestion, session?.workingDirectory, sessionId, t])
+
+  useEffect(() => {
+    setKnowledgeBaseAiSuggestion(null)
+    if (pendingKnowledgeBaseFile) {
+      void requestKnowledgeBaseAiSuggestion()
+    }
+  }, [pendingKnowledgeBaseFile?.path, requestKnowledgeBaseAiSuggestion])
+
+  const pendingKnowledgeBaseSuggestion = knowledgeBaseAiSuggestion?.category ?? pendingKnowledgeBaseLocalSuggestion
 
   const handleCreateFileMemorySource = useCallback((file: SessionFile) => {
     if (!sessionId || file.type === 'directory') return
@@ -809,9 +843,12 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       open={!!pendingKnowledgeBaseFile}
       fileName={pendingKnowledgeBaseFile?.name}
       suggestedCategory={pendingKnowledgeBaseSuggestion}
+      suggestionReason={knowledgeBaseAiSuggestion?.reason}
+      isSuggestingCategory={isSuggestingKnowledgeBaseCategory}
       existingCategories={knowledgeBaseCategories}
       onOpenChange={handleCloseKnowledgeBaseDialog}
       onConfirm={handleConfirmKnowledgeBaseCategory}
+      onRequestSuggestion={requestKnowledgeBaseAiSuggestion}
     />
     </>
   )

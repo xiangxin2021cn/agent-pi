@@ -249,6 +249,8 @@ import type {
   MarkdownExportResult,
   OptimizePromptRequest,
   OptimizePromptResult,
+  SuggestKnowledgeBaseCategoryRequest,
+  SuggestKnowledgeBaseCategoryResult,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -261,6 +263,7 @@ export interface ElectronAPI {
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   optimizePrompt(sessionId: string, request: OptimizePromptRequest): Promise<OptimizePromptResult>
+  suggestKnowledgeBaseCategory(sessionId: string, request: SuggestKnowledgeBaseCategoryRequest): Promise<SuggestKnowledgeBaseCategoryResult>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>

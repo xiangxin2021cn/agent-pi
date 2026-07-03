@@ -14,6 +14,8 @@ import {
   type SessionOutputDirectory,
   type ProjectMemorySessionStatusResult,
   type ProjectMemoryQualityTelemetryResetResult,
+  type SuggestKnowledgeBaseCategoryRequest,
+  type SuggestKnowledgeBaseCategoryResult,
 } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
@@ -357,6 +359,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET_MESSAGES,
   RPC_CHANNELS.sessions.SEND_MESSAGE,
   RPC_CHANNELS.sessions.OPTIMIZE_PROMPT,
+  RPC_CHANNELS.sessions.SUGGEST_KNOWLEDGE_BASE_CATEGORY,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
@@ -509,6 +512,14 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   server.handle(RPC_CHANNELS.sessions.OPTIMIZE_PROMPT, async (_ctx, sessionId: string, request: import('@craft-agent/shared/protocol').OptimizePromptRequest) => {
     return sessionManager.optimizePrompt(sessionId, request)
+  })
+
+  server.handle(RPC_CHANNELS.sessions.SUGGEST_KNOWLEDGE_BASE_CATEGORY, async (
+    _ctx,
+    sessionId: string,
+    request: SuggestKnowledgeBaseCategoryRequest
+  ): Promise<SuggestKnowledgeBaseCategoryResult> => {
+    return sessionManager.suggestKnowledgeBaseCategory(sessionId, request)
   })
 
   // Cancel processing

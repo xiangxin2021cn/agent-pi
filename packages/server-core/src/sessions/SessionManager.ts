@@ -89,7 +89,7 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, type SessionGoalUpdate, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type OptimizePromptRequest, type OptimizePromptResult, type SuggestKnowledgeBaseCategoryRequest, type SuggestKnowledgeBaseCategoryResult, type SessionGoalUpdate, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -111,6 +111,11 @@ import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalR
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
+import {
+  buildKnowledgeBaseCategoryFallback,
+  buildKnowledgeBaseCategorySuggestionInstruction,
+  normalizeKnowledgeBaseCategorySuggestion,
+} from './knowledge-base-category-suggestion'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
 
@@ -6147,6 +6152,96 @@ export class SessionManager implements ISessionManager {
     } finally {
       if (isTemporary && agent) {
         await disposeTemporaryAgentRuntime(agent, 'optimizePrompt')
+      }
+    }
+  }
+
+  async suggestKnowledgeBaseCategory(
+    sessionId: string,
+    request: SuggestKnowledgeBaseCategoryRequest
+  ): Promise<SuggestKnowledgeBaseCategoryResult> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      throw new Error('Session not found')
+    }
+
+    const fileName = request.fileName.trim()
+    if (!fileName) {
+      throw new Error('File name is empty')
+    }
+
+    const fallbackCategory = buildKnowledgeBaseCategoryFallback({
+      fileName,
+      filePath: request.filePath,
+      existingCategories: request.existingCategories,
+    })
+
+    const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
+    const backendContext = resolveBackendContext({
+      sessionConnectionSlug: managed.llmConnection,
+      workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+      managedModel: request.model ?? managed.model,
+    })
+    const connection = backendContext.connection
+    const connectionSlug = connection?.slug
+    const selectedModel = request.model ?? managed.model ?? backendContext.resolvedModel
+
+    let agent: AgentInstance | null = managed.agent
+    let isTemporary = false
+
+    if (!agent && connectionSlug) {
+      try {
+        const resolvedMiniModel = selectedModel ?? (connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined)
+        agent = createBackendFromConnection(connectionSlug, {
+          workspace: managed.workspace,
+          model: selectedModel,
+          miniModel: resolvedMiniModel,
+          session: {
+            id: `kb-category-${managed.id}`,
+            workspaceRootPath: managed.workspace.rootPath,
+            llmConnection: connectionSlug,
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+          },
+          isHeadless: true,
+        }, buildBackendHostRuntimeContext()) as AgentInstance
+        await agent.postInit()
+        isTemporary = true
+      } catch (error) {
+        sessionLog.warn('suggestKnowledgeBaseCategory: failed to create temporary agent, using fallback:', error)
+      }
+    }
+
+    try {
+      if (!canQueryLlm(agent)) {
+        return { category: fallbackCategory, fallback: true }
+      }
+
+      const instruction = buildKnowledgeBaseCategorySuggestionInstruction({
+        fileName,
+        filePath: request.filePath,
+        existingCategories: request.existingCategories,
+        fallbackCategory,
+      })
+      const queryResult = await agent.queryLlm({
+        prompt: instruction,
+        model: selectedModel,
+        systemPrompt: 'Return only compact JSON. No markdown fences. No explanation outside JSON.',
+        temperature: 0.1,
+        maxTokens: 600,
+      })
+      const suggestion = normalizeKnowledgeBaseCategorySuggestion(queryResult.text, fallbackCategory)
+      return {
+        category: suggestion.category,
+        reason: suggestion.reason,
+        fallback: false,
+      }
+    } catch (error) {
+      sessionLog.warn('suggestKnowledgeBaseCategory: model suggestion failed, using fallback:', error)
+      return { category: fallbackCategory, fallback: true }
+    } finally {
+      if (isTemporary && agent) {
+        await disposeTemporaryAgentRuntime(agent, 'suggestKnowledgeBaseCategory')
       }
     }
   }

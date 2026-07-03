@@ -28,6 +28,7 @@ export const CHANNEL_MAP = {
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE),
   optimizePrompt: invoke(RPC_CHANNELS.sessions.OPTIMIZE_PROMPT),
+  suggestKnowledgeBaseCategory: invoke(RPC_CHANNELS.sessions.SUGGEST_KNOWLEDGE_BASE_CATEGORY),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
   getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),

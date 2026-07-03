@@ -27,6 +27,7 @@ export const RPC_CHANNELS = {
     GET_MESSAGES: 'sessions:getMessages',
     SEND_MESSAGE: 'sessions:sendMessage',
     OPTIMIZE_PROMPT: 'sessions:optimizePrompt',
+    SUGGEST_KNOWLEDGE_BASE_CATEGORY: 'sessions:suggestKnowledgeBaseCategory',
     CANCEL: 'sessions:cancel',
     KILL_SHELL: 'sessions:killShell',
     RESPOND_TO_PERMISSION: 'sessions:respondToPermission',
