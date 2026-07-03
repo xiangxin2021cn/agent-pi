@@ -11,7 +11,7 @@ on:
         description: Existing release tag to upload to when upload_to_release is enabled
         type: string
         required: false
-        default: v1.2.0
+        default: v1.2.1
 
 permissions:
   contents: write
