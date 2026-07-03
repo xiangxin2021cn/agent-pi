@@ -37,6 +37,7 @@ import {
   isSupportedKnowledgeBaseFile,
   suggestKnowledgeBaseCategory,
 } from '@craft-agent/shared/sources/knowledge-base'
+import { KnowledgeBaseCategoryDialog } from './KnowledgeBaseCategoryDialog'
 
 function isKnowledgeBaseCandidate(file: SessionFile): boolean {
   return file.type !== 'directory' && isSupportedKnowledgeBaseFile(file.name)
@@ -502,6 +503,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [isLoading, setIsLoading] = useState(false)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [hasSavedExpandedState, setHasSavedExpandedState] = useState(false)
+  const [pendingKnowledgeBaseFile, setPendingKnowledgeBaseFile] = useState<SessionFile | null>(null)
   const mountedRef = useRef(true)
 
   // Load expanded paths from storage when session changes.
@@ -694,21 +696,25 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [loadFiles, saveExpandedPaths, sessionId, t])
 
-  const handleCreateFileMemorySource = useCallback(async (file: SessionFile) => {
-    if (!sessionId || file.type === 'directory') return
-    const suggestedCategory = suggestKnowledgeBaseCategory({
-      fileName: file.name,
-      filePath: file.path,
+  const pendingKnowledgeBaseSuggestion = React.useMemo(() => {
+    if (!pendingKnowledgeBaseFile) return ''
+    return suggestKnowledgeBaseCategory({
+      fileName: pendingKnowledgeBaseFile.name,
+      filePath: pendingKnowledgeBaseFile.path,
       existingCategories: knowledgeBaseCategories,
     })
-    const existing = knowledgeBaseCategories.length > 0
-      ? `\n\n${t('chat.knowledgeBaseExistingCategories')}: ${knowledgeBaseCategories.join(', ')}`
-      : ''
-    const category = window.prompt(
-      `${t('chat.knowledgeBaseCategoryPrompt')}${existing}`,
-      suggestedCategory
-    )?.trim()
-    if (!category) return
+  }, [knowledgeBaseCategories, pendingKnowledgeBaseFile])
+
+  const handleCreateFileMemorySource = useCallback((file: SessionFile) => {
+    if (!sessionId || file.type === 'directory') return
+    setPendingKnowledgeBaseFile(file)
+  }, [sessionId])
+
+  const handleConfirmKnowledgeBaseCategory = useCallback(async (category: string) => {
+    if (!sessionId || !pendingKnowledgeBaseFile) return
+
+    const file = pendingKnowledgeBaseFile
+    setPendingKnowledgeBaseFile(null)
 
     try {
       const result = await window.electronAPI.createFileMemorySource(sessionId, file.path, {
@@ -722,13 +728,18 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       const message = error instanceof Error ? error.message : String(error)
       toast.error(t('chat.failedToCreateKnowledgeBaseSource'), { description: message })
     }
-  }, [knowledgeBaseCategories, sessionId, t])
+  }, [pendingKnowledgeBaseFile, sessionId, t])
+
+  const handleCloseKnowledgeBaseDialog = useCallback((open: boolean) => {
+    if (!open) setPendingKnowledgeBaseFile(null)
+  }, [])
 
   if (!sessionId) {
     return null
   }
 
   return (
+    <>
     <div className={cn('flex flex-col h-full min-h-0', className)}>
       {/* Header - matches sidebar styling with select-none, extra top padding for visual balance */}
       {!hideHeader && (
@@ -794,5 +805,14 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         )}
       </div>
     </div>
+    <KnowledgeBaseCategoryDialog
+      open={!!pendingKnowledgeBaseFile}
+      fileName={pendingKnowledgeBaseFile?.name}
+      suggestedCategory={pendingKnowledgeBaseSuggestion}
+      existingCategories={knowledgeBaseCategories}
+      onOpenChange={handleCloseKnowledgeBaseDialog}
+      onConfirm={handleConfirmKnowledgeBaseCategory}
+    />
+    </>
   )
 }
