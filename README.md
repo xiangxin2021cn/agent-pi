@@ -14,17 +14,17 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.5. Next major development line: V1.3.0.**
+**Current release: V1.3.0.**
 
-**当前发布版：V1.2.5。下一阶段重大开发线：V1.3.0。**
+**当前发布版：V1.3.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
-## V1.3.0 Development Focus / V1.3.0 开发重点
+## V1.3.0 Release / V1.3.0 正式发布
 
-V1.3.0 moves Agent Pi from a document workbench toward a professional delivery system: the agent can choose the right work mode, carry evidence through the task, reuse enterprise knowledge, and keep large document jobs auditable instead of relying on a single prompt.
+V1.3.0 moves Agent Pi from a document workbench toward a professional delivery system. The agent can choose the right work mode, carry evidence through the task, reuse enterprise knowledge, and keep large document jobs auditable instead of relying on a single prompt.
 
 V1.3.0 将 Agent π 从“文档工作台”继续推进到“专业交付系统”：智能体可按任务选择工作模式，贯穿证据链，复用企业知识，并让大型文档任务保持可审计，而不是只依赖一次提示词。
 
@@ -148,7 +148,9 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
-| V1.3.0 | Development line for document workflow modes, strict/deep Goal Loop quality gates, enterprise Knowledge Base indexing/loading, structured knowledge import, and professional document intelligence. | 开发线：文档工作流模式、严格/深度 Goal Loop 质量门禁、企业知识库索引与加载、结构化知识入库和专业文档智能。 | Planned |
+| V1.3.0 | Document workflow modes, strict/deep Goal Loop quality gates, enterprise Knowledge Base indexing/loading, structured knowledge import, and professional document intelligence. | 文档工作流模式、严格/深度 Goal Loop 质量门禁、企业知识库索引与加载、结构化知识入库和专业文档智能。 | [v1.3.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.3.0) |
+| V1.2.7 | Visual refresh retained from 1.2.6 plus release validation fixes for locale ordering and i18n checks. | 保留 1.2.6 视觉更新，并修复 locale 排序和 i18n 发布校验。 | [v1.2.7](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.7) |
+| V1.2.6 | Agent Pi visual polish with transparent logo assets, fixed logo sizing, refined default theme, and Warm/Bronze themes. | Agent Pi 视觉精修：透明 logo、logo 尺寸修复、默认主题优化，以及暖色/古铜主题。 | [v1.2.6](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.6) |
 | V1.2.5 | Hotfix for false Goal Loop failures caused by transient helper scripts and Windows output paths with spaces. | 修复临时脚本和带空格 Windows 输出路径导致的 Goal Loop 误判失败。 | [v1.2.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.5) |
 | V1.2.4 | Hotfix for Goal Loop automatic self-correction after recoverable tool failures. | 修复可恢复工具失败后 Goal Loop 未继续自动纠偏的问题。 | [v1.2.4](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.4) |
 | V1.2.3 | Hotfix for in-app What's New release notes, versioned release-note loading, and completed-session read-state persistence. | 修复应用内“最新动态”更新说明缺失、限定只加载版本化更新说明，并修复完成会话已读状态重启回潮。 | [v1.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.3) |
