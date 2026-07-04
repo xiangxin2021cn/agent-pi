@@ -223,6 +223,7 @@ export const CHANNEL_MAP = {
   // Sources
   getSources: invoke(RPC_CHANNELS.sources.GET),
   createSource: invoke(RPC_CHANNELS.sources.CREATE),
+  createKnowledgeBaseFileSource: invoke(RPC_CHANNELS.sources.CREATE_KNOWLEDGE_BASE_FILE_SOURCE),
   installRecommendedSource: invoke(RPC_CHANNELS.sources.INSTALL_RECOMMENDED),
   deleteSource: invoke(RPC_CHANNELS.sources.DELETE),
   startSourceOAuth: invoke(RPC_CHANNELS.sources.START_OAUTH),

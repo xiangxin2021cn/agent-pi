@@ -79,7 +79,7 @@ import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
 import type { AttachmentDialogMode, FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
-import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionDocumentQualityMode, SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
@@ -164,6 +164,8 @@ export interface FreeFormInputProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   goalLoopMode?: SessionGoalMode
   onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  documentQualityMode?: SessionDocumentQualityMode
+  onDocumentQualityModeChange?: (mode: SessionDocumentQualityMode | undefined) => void
   goalState?: SessionGoalState
   /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
   enabledModes?: PermissionMode[]
@@ -288,6 +290,8 @@ export function FreeFormInput({
   onPermissionModeChange,
   goalLoopMode,
   onGoalLoopModeChange,
+  documentQualityMode,
+  onDocumentQualityModeChange,
   goalState,
   enabledModes = ['safe', 'ask', 'allow-all'],
   inputValue,
@@ -539,6 +543,22 @@ export function FreeFormInput({
       prevEnabledSourceSlugsRef.current = enabledSourceSlugs
     }
   }, [enabledSourceSlugs])
+
+  const handleSourceSlugsChange = React.useCallback((newSlugs: string[]) => {
+    setOptimisticSourceSlugs(newSlugs)
+    onSourcesChange?.(newSlugs)
+  }, [onSourcesChange])
+
+  const handleToggleSourceSlug = React.useCallback((slug: string) => {
+    setOptimisticSourceSlugs(currentSlugs => {
+      const isEnabled = currentSlugs.includes(slug)
+      const newSlugs = isEnabled
+        ? currentSlugs.filter(currentSlug => currentSlug !== slug)
+        : [...currentSlugs, slug]
+      onSourcesChange?.(newSlugs)
+      return newSlugs
+    })
+  }, [onSourcesChange])
 
   // Sync from parent when inputValue changes externally (e.g., switching sessions)
   const prevInputValueRef = React.useRef(coerceInputText(inputValue))
@@ -2033,6 +2053,14 @@ export function FreeFormInput({
               onGoalLoopModeChange={onGoalLoopModeChange}
             />
           )}
+          {onDocumentQualityModeChange && (
+            <DocumentQualityModeDropdown
+              value={documentQualityMode}
+              onChange={onDocumentQualityModeChange}
+              disabled={disabled || isProcessing}
+              compact
+            />
+          )}
           {enableCompactModelPicker && (
             <CompactModelSelector
               currentModel={currentModel}
@@ -2109,14 +2137,8 @@ export function FreeFormInput({
                 onOpenChange={setSourceDropdownOpen}
                 sources={sources}
                 selectedSlugs={optimisticSourceSlugs}
-                onToggleSlug={(slug) => {
-                  const isEnabled = optimisticSourceSlugs.includes(slug)
-                  const newSlugs = isEnabled
-                    ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
-                    : [...optimisticSourceSlugs, slug]
-                  setOptimisticSourceSlugs(newSlugs)
-                  onSourcesChange?.(newSlugs)
-                }}
+                onToggleSlug={handleToggleSourceSlug}
+                onChangeSlugs={handleSourceSlugsChange}
               />
             </div>
           )}
@@ -2139,6 +2161,13 @@ export function FreeFormInput({
           {/* 1. Attach Files Badge */}
           {renderAttachmentControl(false)}
           {renderOptimizePromptControl(false)}
+          {onDocumentQualityModeChange && (
+            <DocumentQualityModeDropdown
+              value={documentQualityMode}
+              onChange={onDocumentQualityModeChange}
+              disabled={disabled || isProcessing}
+            />
+          )}
 
           {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (
@@ -2205,14 +2234,8 @@ export function FreeFormInput({
                 anchorRef={sourceButtonRef}
                 sources={sources}
                 selectedSlugs={optimisticSourceSlugs}
-                onToggleSlug={(slug) => {
-                  const isEnabled = optimisticSourceSlugs.includes(slug)
-                  const newSlugs = isEnabled
-                    ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
-                    : [...optimisticSourceSlugs, slug]
-                  setOptimisticSourceSlugs(newSlugs)
-                  onSourcesChange?.(newSlugs)
-                }}
+                onToggleSlug={handleToggleSourceSlug}
+                onChangeSlugs={handleSourceSlugsChange}
               />
             </div>
           )}
@@ -2925,5 +2948,107 @@ function WorkingDirectoryBadge({
     />
     </>
   )
+}
+
+type DocumentQualityModeSelectorValue = SessionDocumentQualityMode | 'auto'
+
+const DOCUMENT_QUALITY_MODE_VALUES: DocumentQualityModeSelectorValue[] = [
+  'auto',
+  'quick',
+  'professional_document',
+  'strict_delivery',
+  'multi_agent_deep',
+]
+
+function DocumentQualityModeDropdown({
+  value,
+  onChange,
+  disabled,
+  compact = false,
+}: {
+  value?: SessionDocumentQualityMode
+  onChange: (mode: SessionDocumentQualityMode | undefined) => void
+  disabled?: boolean
+  compact?: boolean
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = React.useState(false)
+  const selectedValue: DocumentQualityModeSelectorValue = value ?? 'auto'
+  const selectedLabel = getDocumentQualityModeOptionLabel(t, selectedValue)
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              className={cn(
+                "input-toolbar-btn inline-flex h-7 shrink-0 items-center gap-1 rounded-[6px] px-1.5 text-[13px] transition-colors hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+                open && "bg-foreground/5",
+                value && "bg-accent/5 text-accent",
+              )}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              {!compact && <span className="max-w-[96px] truncate">{selectedLabel}</span>}
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          {t('sessionInfo.documentQualityModeSelectorTooltip', { defaultValue: 'Document workflow mode for the next message' })}
+        </TooltipContent>
+      </Tooltip>
+      <StyledDropdownMenuContent side="top" align="start" sideOffset={8} className="min-w-[230px]">
+        {DOCUMENT_QUALITY_MODE_VALUES.map((mode) => (
+          <StyledDropdownMenuItem
+            key={mode}
+            onSelect={() => {
+              onChange(mode === 'auto' ? undefined : mode)
+              setOpen(false)
+            }}
+            className="flex items-start gap-2"
+          >
+            <Check className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", selectedValue === mode ? "opacity-100" : "opacity-0")} />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{getDocumentQualityModeOptionLabel(t, mode)}</span>
+              <span className="block text-xs leading-snug text-muted-foreground">{getDocumentQualityModeOptionDescription(t, mode)}</span>
+            </span>
+          </StyledDropdownMenuItem>
+        ))}
+      </StyledDropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function getDocumentQualityModeOptionLabel(t: ReturnType<typeof useTranslation>['t'], mode: DocumentQualityModeSelectorValue): string {
+  switch (mode) {
+    case 'auto':
+      return t('sessionInfo.documentQualityModeAuto', { defaultValue: '文档模式' })
+    case 'quick':
+      return t('sessionInfo.documentQualityModeQuick', { defaultValue: '快速' })
+    case 'professional_document':
+      return t('sessionInfo.documentQualityModeProfessional', { defaultValue: '专业文档' })
+    case 'strict_delivery':
+      return t('sessionInfo.documentQualityModeStrictDelivery', { defaultValue: '严格交付' })
+    case 'multi_agent_deep':
+      return t('sessionInfo.documentQualityModeMultiAgentDeep', { defaultValue: '多智能体深度' })
+  }
+}
+
+function getDocumentQualityModeOptionDescription(t: ReturnType<typeof useTranslation>['t'], mode: DocumentQualityModeSelectorValue): string {
+  switch (mode) {
+    case 'auto':
+      return t('sessionInfo.documentQualityModeAutoDesc', { defaultValue: '按任务自动选择质量模式。' })
+    case 'quick':
+      return t('sessionInfo.documentQualityModeQuickDesc', { defaultValue: '沿用轻量流程，减少额外审查。' })
+    case 'professional_document':
+      return t('sessionInfo.documentQualityModeProfessionalDesc', { defaultValue: '启用文档合同、证据矩阵、章节计划和质量审查。' })
+    case 'strict_delivery':
+      return t('sessionInfo.documentQualityModeStrictDeliveryDesc', { defaultValue: '来源、模板、导出、图表和格式门禁不通过则不交付。' })
+    case 'multi_agent_deep':
+      return t('sessionInfo.documentQualityModeMultiAgentDeepDesc', { defaultValue: '大型投标、工程、投资、尽调报告启用深度分工和评审。' })
+  }
 }
 

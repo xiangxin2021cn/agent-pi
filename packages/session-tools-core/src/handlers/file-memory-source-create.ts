@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import type { SourceConfig, ToolResult } from '../types.ts';
@@ -12,6 +12,7 @@ export interface FileMemorySourceCreateArgs {
   filePath: string;
   name?: string;
   sourceSlug?: string;
+  originalSourceFilePath?: string;
   chunkSize?: number;
   overlap?: number;
   autoEnable?: boolean;
@@ -40,6 +41,7 @@ export async function handleFileMemorySourceCreate(
 ): Promise<ToolResult> {
   try {
     const sourceFilePath = resolveAllowedInputFile(ctx, args.filePath);
+    const originalSourceFilePath = args.originalSourceFilePath?.trim() || sourceFilePath;
     const stats = ctx.fs.stat(sourceFilePath);
     if (stats.isDirectory()) {
       return errorResponse(`File memory sources require a file, not a directory: ${sourceFilePath}`);
@@ -60,8 +62,11 @@ export async function handleFileMemorySourceCreate(
     const sourceDir = getSourcePath(ctx.workspacePath, slug);
     const sourceConfigPath = getSourceConfigPath(ctx.workspacePath, slug);
     const sourceGuidePath = getSourceGuidePath(ctx.workspacePath, slug);
+    const indexedSourceFilePath = knowledgeBase
+      ? copyKnowledgeBaseSourceFile(resolveKnowledgeBaseRegistryRoot(ctx), sourceFilePath, slug, knowledgeBase)
+      : sourceFilePath;
 
-    const content = readFileSync(sourceFilePath, 'utf-8');
+    const content = readFileSync(indexedSourceFilePath, 'utf-8');
     const chunks = chunkText(content, {
       chunkSize: args.chunkSize ?? 3000,
       overlap: args.overlap ?? 300,
@@ -83,9 +88,10 @@ export async function handleFileMemorySourceCreate(
     const now = Date.now();
     const manifest = {
       version: 1,
-      sourceFile: sourceFilePath,
+      sourceFile: indexedSourceFilePath,
+      originalSourceFile: knowledgeBase ? sourceFilePath : undefined,
       displayName,
-      description: `Read-only file memory index generated from ${sourceFilePath}`,
+      description: `Read-only file memory index generated from ${indexedSourceFilePath}`,
       createdAt: now,
       indexedAt: now,
       knowledgeBase: knowledgeBase
@@ -100,7 +106,7 @@ export async function handleFileMemorySourceCreate(
         : undefined,
       chunks: chunks.map(chunk => ({
         ...chunk,
-        sourcePath: sourceFilePath,
+        sourcePath: indexedSourceFilePath,
       })),
     };
 
@@ -131,7 +137,8 @@ export async function handleFileMemorySourceCreate(
             scope: knowledgeBase.scope,
             sourceKind: knowledgeBase.sourceKind,
             fileExtension: knowledgeBase.fileExtension,
-            sourceFilePath,
+            sourceFilePath: indexedSourceFilePath,
+            originalSourceFilePath,
             createdAt: now,
           }
         : undefined,
@@ -140,12 +147,20 @@ export async function handleFileMemorySourceCreate(
     };
 
     writeFileSync(sourceConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-    writeFileSync(sourceGuidePath, buildGuide({ displayName, sourceFilePath, manifestPath, chunkCount: chunks.length, knowledgeBase }), 'utf-8');
+    writeFileSync(sourceGuidePath, buildGuide({
+      displayName,
+      sourceFilePath: indexedSourceFilePath,
+      originalSourceFilePath: knowledgeBase ? originalSourceFilePath : undefined,
+      manifestPath,
+      chunkCount: chunks.length,
+      knowledgeBase,
+    }), 'utf-8');
     if (knowledgeBase) {
       upsertKnowledgeBaseRegistry(resolveKnowledgeBaseRegistryRoot(ctx), {
         sourceSlug: slug,
         name: displayName,
-        sourceFilePath,
+        sourceFilePath: indexedSourceFilePath,
+        originalSourceFilePath,
         workspacePath: ctx.workspacePath,
         knowledgeCategory: knowledgeBase.knowledgeCategory,
         knowledgeFolder: knowledgeBase.knowledgeFolder,
@@ -163,7 +178,8 @@ export async function handleFileMemorySourceCreate(
     const validationText = validation.content.map(block => block.text).join('\n');
     const prefix = [
       `Created file memory source: ${slug}`,
-      `Source file: ${sourceFilePath}`,
+      `Source file: ${indexedSourceFilePath}`,
+      ...(knowledgeBase ? [`Original file: ${originalSourceFilePath}`] : []),
       `Manifest: ${manifestPath}`,
       `Chunks: ${chunks.length}`,
       `Runtime: ${runtime.command}`,
@@ -180,7 +196,8 @@ export async function handleFileMemorySourceCreate(
       }],
       structuredContent: {
         sourceSlug: slug,
-        sourceFilePath,
+        sourceFilePath: indexedSourceFilePath,
+        originalSourceFilePath: knowledgeBase ? originalSourceFilePath : undefined,
         manifestPath,
         sourceConfigPath,
         chunkCount: chunks.length,
@@ -206,6 +223,7 @@ interface KnowledgeBaseRegistryEntry extends KnowledgeBaseSourceMetadata {
   sourceSlug: string;
   name: string;
   sourceFilePath: string;
+  originalSourceFilePath?: string;
   workspacePath?: string;
   createdAt: number;
   updatedAt: number;
@@ -241,6 +259,40 @@ function normalizeKnowledgeBaseFolder(value: string | null | undefined): string 
   return segments.length > 0 ? segments.join('/') : null;
 }
 
+function copyKnowledgeBaseSourceFile(
+  rootPath: string,
+  sourceFilePath: string,
+  slug: string,
+  knowledgeBase: KnowledgeBaseSourceMetadata
+): string {
+  const folderSegments = knowledgeBase.knowledgeFolder
+    .split('/')
+    .map(sanitizePathSegment)
+    .filter(Boolean);
+  const fileName = sanitizeFileName(basename(sourceFilePath)) || `${slug}${knowledgeBase.fileExtension}`;
+  const targetDir = join(rootPath, 'knowledge-base', 'files', ...folderSegments, slug);
+  const targetPath = join(targetDir, fileName);
+  mkdirSync(targetDir, { recursive: true });
+  copyFileSync(sourceFilePath, targetPath);
+  return targetPath;
+}
+
+function sanitizePathSegment(value: string): string {
+  return value
+    .replace(/[<>:"|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 120) || 'Untitled';
+}
+
+function sanitizeFileName(value: string): string {
+  return value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 180) || 'knowledge-source';
+}
+
 function resolveKnowledgeBaseRegistryRoot(ctx: SessionToolContext): string {
   return ctx.knowledgeBaseRegistryRootPath
     || process.env.CRAFT_KNOWLEDGE_BASE_HOME?.trim()
@@ -259,6 +311,7 @@ function upsertKnowledgeBaseRegistry(rootPath: string, entry: KnowledgeBaseRegis
   );
   mkdirSync(registryDir, { recursive: true });
   writeFileSync(registryPath, JSON.stringify({ version: 1, entries }, null, 2), 'utf-8');
+  writeFileSync(join(registryDir, 'index.md'), buildKnowledgeBaseIndexMarkdown(entries), 'utf-8');
 }
 
 function readKnowledgeBaseRegistry(registryPath: string): { version: 1; entries: KnowledgeBaseRegistryEntry[] } {
@@ -272,6 +325,43 @@ function readKnowledgeBaseRegistry(registryPath: string): { version: 1; entries:
   } catch {
     return { version: 1, entries: [] };
   }
+}
+
+function buildKnowledgeBaseIndexMarkdown(entries: KnowledgeBaseRegistryEntry[]): string {
+  const lines = [
+    '# Agent Pi Knowledge Base Index',
+    '',
+    'This index lists local-global Knowledge Base file-memory MCP sources. Enable the relevant source slug in a session before using its file-memory tools.',
+    '',
+  ];
+
+  if (entries.length === 0) {
+    lines.push('_No knowledge base entries yet._', '');
+    return lines.join('\n');
+  }
+
+  const folders = new Map<string, KnowledgeBaseRegistryEntry[]>();
+  for (const entry of entries) {
+    const items = folders.get(entry.knowledgeFolder) ?? [];
+    items.push(entry);
+    folders.set(entry.knowledgeFolder, items);
+  }
+
+  for (const [folder, items] of [...folders.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    lines.push(`## ${folder}`, '');
+    for (const entry of [...items].sort((left, right) => left.name.localeCompare(right.name))) {
+      lines.push(`- ${entry.name}`);
+      lines.push(`  - Source slug: ${entry.sourceSlug}`);
+      lines.push(`  - Indexed file: ${entry.sourceFilePath}`);
+      if (entry.originalSourceFilePath) {
+        lines.push(`  - Original file: ${entry.originalSourceFilePath}`);
+      }
+      lines.push(`  - Extension: ${entry.fileExtension}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 function resolveAllowedInputFile(ctx: SessionToolContext, inputPath: string): string {
@@ -394,6 +484,7 @@ function lineNumberAt(content: string, offset: number): number {
 function buildGuide(args: {
   displayName: string;
   sourceFilePath: string;
+  originalSourceFilePath?: string;
   manifestPath: string;
   chunkCount: number;
   knowledgeBase?: KnowledgeBaseSourceMetadata | null;
@@ -408,6 +499,14 @@ function buildGuide(args: {
     `Use this source only for facts found in this indexed file:`,
     ``,
     `- ${args.sourceFilePath}`,
+    ...(args.originalSourceFilePath
+      ? [
+          ``,
+          `Original imported file:`,
+          ``,
+          `- ${args.originalSourceFilePath}`,
+        ]
+      : []),
     ``,
     `## Guidelines`,
     ``,

@@ -270,6 +270,7 @@ const EXPECTED_CHANNELS: string[] = [
   'skills:openFinder',
   'sources:changed',
   'sources:create',
+  'sources:createKnowledgeBaseFileSource',
   'sources:delete',
   'sources:get',
   'sources:getMcpTools',

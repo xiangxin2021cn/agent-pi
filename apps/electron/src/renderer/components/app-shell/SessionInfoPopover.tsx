@@ -8,7 +8,7 @@ import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { cn } from '@/lib/utils'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
 import { getGoalAuditViewModels, type GoalAuditViewModel } from './goal-audit-view-model'
-import { getDocumentPlanStatusText } from './document-enhancement-view-model'
+import { getDocumentPlanDetailItems, getDocumentPlanStatusText } from './document-enhancement-view-model'
 import { getGoalStatusText } from './goal-status-view-model'
 import { getContextPressureViewModel, resolveModelContextWindow } from './context-pressure-view-model'
 import { getProjectMemoryTelemetryResetAction } from './project-memory-view-model'
@@ -239,6 +239,10 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     () => getDocumentPlanStatusText(t, session?.goalState),
     [session?.goalState, t],
   )
+  const documentPlanDetailItems = React.useMemo(
+    () => getDocumentPlanDetailItems(t, session?.goalState),
+    [session?.goalState, t],
+  )
   const contextPressure = React.useMemo(() => getContextPressureViewModel({
     enabledSourceCount: sourceNames.length,
     contextWindow: session?.tokenUsage?.contextWindow ?? resolveModelContextWindow({
@@ -343,6 +347,20 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
           />
         ))}
       </InfoBlock>
+
+      {documentPlanDetailItems.length > 0 && (
+        <InfoBlock title={t('sessionInfo.documentPlanReview', { defaultValue: 'Document Review' })}>
+          {documentPlanDetailItems.map(item => (
+            <InfoLine
+              key={item.id}
+              icon={<FileText className="h-3.5 w-3.5" />}
+              label={item.label}
+              value={item.value}
+              active
+            />
+          ))}
+        </InfoBlock>
+      )}
 
       <InfoBlock title={t('sessionInfo.outputs')}>
         <InfoPathButton

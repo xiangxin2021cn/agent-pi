@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { DatabaseZap, Search } from 'lucide-react'
+import { DatabaseZap, Search, Upload } from 'lucide-react'
+import { toast } from 'sonner'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { deriveConnectionStatus } from '@/components/ui/source-status-indicator'
 import { EntityPanel } from '@/components/ui/entity-panel'
@@ -23,8 +24,9 @@ import { SendResourceToWorkspaceDialog } from './SendResourceToWorkspaceDialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig, type EditContextKey } from '@/components/ui/EditPopover'
 import type { LoadedSource, SourceConnectionStatus, SourceFilter } from '../../../shared/types'
-import { getKnowledgeBaseFolder, isKnowledgeBaseSource } from '@craft-agent/shared/sources/knowledge-base'
+import { getKnowledgeBaseFolder, isKnowledgeBaseSource, suggestKnowledgeBaseCategory } from '@craft-agent/shared/sources/knowledge-base'
 import { buildKnowledgeBaseSourceSections } from './knowledge-base-source-list-view-model'
+import { KnowledgeBaseCategoryDialog } from '../right-sidebar/KnowledgeBaseCategoryDialog'
 
 const ANYSEARCH_SOURCE_ID = 'anysearch-mcp'
 const ANYSEARCH_SOURCE_SLUG = 'anysearch-mcp'
@@ -79,6 +81,9 @@ export function SourcesListPanel({
   const [anySearchApiKey, setAnySearchApiKey] = React.useState('')
   const [anySearchError, setAnySearchError] = React.useState<string | null>(null)
   const [anySearchLoading, setAnySearchLoading] = React.useState(false)
+  const [collapsedKnowledgeBaseFolders, setCollapsedKnowledgeBaseFolders] = React.useState<Set<string>>(() => new Set())
+  const [pendingKnowledgeBaseImportPath, setPendingKnowledgeBaseImportPath] = React.useState<string | null>(null)
+  const [knowledgeBaseImportLoading, setKnowledgeBaseImportLoading] = React.useState(false)
 
   // Send to Workspace dialog state
   const [sendDialogOpen, setSendDialogOpen] = React.useState(false)
@@ -97,11 +102,55 @@ export function SourcesListPanel({
     if (sourceFilter?.kind !== 'knowledgeBase') return undefined
     return buildKnowledgeBaseSourceSections(filteredSources).map(section => ({
       key: section.folder,
-      label: section.folder,
+      label: section.label,
+      description: section.description,
       items: section.sources,
+      collapsible: section.collapsible,
+      collapsedCount: section.sources.length,
       variant: 'project' as const,
     }))
   }, [filteredSources, sourceFilter])
+
+  const knowledgeBaseCategories = React.useMemo(() => {
+    const categories = new Set<string>()
+    for (const source of sources) {
+      if (!isKnowledgeBaseSource(source)) continue
+      const folder = getKnowledgeBaseFolder(source)
+      if (folder) categories.add(folder)
+    }
+    return Array.from(categories).sort((a, b) => a.localeCompare(b))
+  }, [sources])
+
+  const pendingKnowledgeBaseImportFileName = React.useMemo(() => {
+    return pendingKnowledgeBaseImportPath ? getPathFileName(pendingKnowledgeBaseImportPath) : undefined
+  }, [pendingKnowledgeBaseImportPath])
+
+  const pendingKnowledgeBaseImportSuggestion = React.useMemo(() => {
+    if (!pendingKnowledgeBaseImportPath || !pendingKnowledgeBaseImportFileName) return ''
+    return suggestKnowledgeBaseCategory({
+      fileName: pendingKnowledgeBaseImportFileName,
+      filePath: pendingKnowledgeBaseImportPath,
+      existingCategories: knowledgeBaseCategories,
+    })
+  }, [knowledgeBaseCategories, pendingKnowledgeBaseImportFileName, pendingKnowledgeBaseImportPath])
+
+  const handleToggleKnowledgeBaseFolder = React.useCallback((folder: string) => {
+    setCollapsedKnowledgeBaseFolders(prev => {
+      const next = new Set(prev)
+      if (next.has(folder)) next.delete(folder)
+      else next.add(folder)
+      return next
+    })
+  }, [])
+
+  const handleCollapseAllKnowledgeBaseFolders = React.useCallback(() => {
+    const folders = knowledgeBaseGroups?.map(group => group.key) ?? []
+    setCollapsedKnowledgeBaseFolders(new Set(folders))
+  }, [knowledgeBaseGroups])
+
+  const handleExpandAllKnowledgeBaseFolders = React.useCallback(() => {
+    setCollapsedKnowledgeBaseFolders(new Set())
+  }, [])
 
   const emptyMessage = React.useMemo(() => {
     if (sourceFilter?.kind === 'knowledgeBase') {
@@ -120,6 +169,8 @@ export function SourcesListPanel({
     const filterAllowsMcp = !sourceFilter || (sourceFilter.kind === 'type' && sourceFilter.sourceType === 'mcp')
     return !!activeWorkspaceId && !hasAnySearch && filterAllowsMcp
   }, [activeWorkspaceId, sourceFilter, sources])
+
+  const showKnowledgeBaseFileLoader = !!activeWorkspaceId && sourceFilter?.kind === 'knowledgeBase'
 
   const handleLoadAnySearch = React.useCallback(async () => {
     if (!activeWorkspaceId) return
@@ -153,8 +204,60 @@ export function SourcesListPanel({
     }
   }, [activeWorkspaceId, anySearchApiKey])
 
+  const handleAddKnowledgeBaseFile = React.useCallback(async () => {
+    if (!activeWorkspaceId || knowledgeBaseImportLoading) return
+    const paths = await window.electronAPI.openFileDialog()
+    const filePath = paths[0]
+    if (filePath) {
+      setPendingKnowledgeBaseImportPath(filePath)
+    }
+  }, [activeWorkspaceId, knowledgeBaseImportLoading])
+
+  const handleConfirmKnowledgeBaseImportCategory = React.useCallback(async (category: string) => {
+    if (!activeWorkspaceId || !pendingKnowledgeBaseImportPath) return
+
+    const filePath = pendingKnowledgeBaseImportPath
+    setKnowledgeBaseImportLoading(true)
+    setPendingKnowledgeBaseImportPath(null)
+    try {
+      const result = await window.electronAPI.createKnowledgeBaseFileSource(activeWorkspaceId, filePath, {
+        name: getPathFileName(filePath),
+        autoEnable: false,
+        knowledgeBase: { category },
+      })
+      toast.success(t('chat.knowledgeBaseSourceCreated'), {
+        description: result.sourceSlug,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('chat.failedToCreateKnowledgeBaseSource'), { description: message })
+    } finally {
+      setKnowledgeBaseImportLoading(false)
+    }
+  }, [activeWorkspaceId, pendingKnowledgeBaseImportPath, t])
+
+  const handleCloseKnowledgeBaseImportDialog = React.useCallback((open: boolean) => {
+    if (!open) setPendingKnowledgeBaseImportPath(null)
+  }, [])
+
   return (
     <>
+    {showKnowledgeBaseFileLoader && (
+      <div className="px-2 pb-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full justify-start"
+          onClick={handleAddKnowledgeBaseFile}
+          disabled={knowledgeBaseImportLoading}
+        >
+          <Upload className="h-3.5 w-3.5" />
+          {t('sourcesList.addKnowledgeBaseFile')}
+        </Button>
+      </div>
+    )}
+
     {showAnySearchLoader && (
       <div className="px-2 pb-2">
         <Button
@@ -183,6 +286,10 @@ export function SourcesListPanel({
       selection={sourceSelection}
       selectedId={selectedSourceSlug}
       onItemClick={onSourceClick}
+      collapsedGroups={sourceFilter?.kind === 'knowledgeBase' ? collapsedKnowledgeBaseFolders : undefined}
+      onToggleCollapse={sourceFilter?.kind === 'knowledgeBase' ? handleToggleKnowledgeBaseFolder : undefined}
+      onCollapseAll={sourceFilter?.kind === 'knowledgeBase' ? handleCollapseAllKnowledgeBaseFolders : undefined}
+      onExpandAll={sourceFilter?.kind === 'knowledgeBase' ? handleExpandAllKnowledgeBaseFolders : undefined}
       className={className}
       containerProps={{ 'data-list-role': 'sources' }}
       emptyState={
@@ -331,7 +438,18 @@ export function SourcesListPanel({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <KnowledgeBaseCategoryDialog
+      open={!!pendingKnowledgeBaseImportPath}
+      fileName={pendingKnowledgeBaseImportFileName}
+      suggestedCategory={pendingKnowledgeBaseImportSuggestion}
+      existingCategories={knowledgeBaseCategories}
+      onOpenChange={handleCloseKnowledgeBaseImportDialog}
+      onConfirm={handleConfirmKnowledgeBaseImportCategory}
+    />
     </>
   )
 }
 
+function getPathFileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}

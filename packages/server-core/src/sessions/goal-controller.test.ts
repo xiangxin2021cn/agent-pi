@@ -422,6 +422,217 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept professional document output that ignores the evidence matrix', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成专业文档模式的投标分析报告，必须基于证据矩阵写作。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Executive Summary', 'Tender Requirements', 'Risk Review'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+          evidenceMatrix: [{
+            id: 'evidence-source-1',
+            source: 'tender-requirements.pdf',
+            sourceType: 'file',
+            supports: 'Tender requirements and risk constraints.',
+            reliabilityNote: 'User-provided tender document; cite page or clause before treating as verified.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Produce a source-backed tender analysis report.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use the evidence matrix for source-backed claims.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请生成专业文档模式的投标分析报告，必须基于证据矩阵写作。'),
+        message('a1', 'assistant', [
+          '# Executive Summary',
+          '',
+          'The tender is attractive and the project team should proceed with a focused delivery strategy.',
+          '',
+          '# Tender Requirements',
+          '',
+          'The requirements are clear, commercially manageable, and technically achievable with a standard execution plan.',
+          '',
+          '# Risk Review',
+          '',
+          'The main risks are schedule pressure, supplier coordination, and incomplete design inputs. The recommended mitigation is tighter governance and early procurement planning.',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing reference to evidence matrix sources, citations, or pending evidence gaps.')
+      expect(decision.result.failureCategories).toContain('evidence_gap')
+      expect(decision.prompt).toContain('Locate the source, artifact, or file evidence before finalizing')
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'evidence_matrix_audit'
+        && (item.detail ?? '').includes('evidence-source-1')
+      )).toBe(true)
+    }
+  })
+
+  test('does not treat a source filename list as evidence matrix citation coverage', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成专业文档模式的投标分析报告，必须基于证据矩阵写作并引用具体出处。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Executive Summary', 'Tender Requirements', 'Risk Review', 'Actions'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+          evidenceMatrix: [{
+            id: 'evidence-source-1',
+            source: 'tender-requirements.pdf',
+            sourceType: 'file',
+            supports: 'Tender requirements and risk constraints.',
+            reliabilityNote: 'User-provided tender document; cite page or clause before treating as verified.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Produce a source-backed tender analysis report.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use the evidence matrix for source-backed claims with source, locator, and claim fields.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请生成专业文档模式的投标分析报告，必须基于证据矩阵写作并引用具体出处。'),
+        message('a1', 'assistant', [
+          '# Executive Summary',
+          '',
+          'The tender appears commercially workable and technically executable if the project team preserves a controlled submission baseline. The recommended approach is to keep technical compliance, pricing exposure, and schedule interfaces under one review cadence before final submission.',
+          '',
+          '# Tender Requirements',
+          '',
+          'The requirements indicate a formal delivery process with scope, risk, and compliance obligations. The team should treat design interfaces, programme interfaces, and commercial exclusions as controlled items before submitting the final document.',
+          '',
+          '# Risk Review',
+          '',
+          '| Risk | Impact | Control |',
+          '| --- | --- | --- |',
+          '| Ambiguous scope boundary | May lead to pricing omissions | Maintain a scope clarification register |',
+          '| Late file review | May weaken evidence-backed claims | Schedule an internal file review before final delivery |',
+          '| Schedule compression | May reduce review quality | Use a staged review before final delivery |',
+          '',
+          '# Actions',
+          '',
+          'The next action is to reconcile the report against the tender requirements, update the risk register, and prepare the final submission narrative.',
+          '',
+          '# Input Materials',
+          '',
+          '- tender-requirements.pdf',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing claim-level evidence matrix citation with source, locator, or claim fields.')
+    }
+  })
+
+  test('requires every evidence matrix source to be cited or marked pending', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成专业文档模式的投标分析报告，必须覆盖证据矩阵中的每个来源。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Executive Summary', 'Tender Requirements', 'Cost Review', 'Actions'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+          evidenceMatrix: [{
+            id: 'evidence-source-1',
+            source: 'tender-requirements.pdf',
+            sourceType: 'file',
+            supports: 'Tender requirements and risk constraints.',
+            reliabilityNote: 'User-provided tender document; cite page or clause before treating as verified.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }, {
+            id: 'evidence-source-2',
+            source: 'cost-database.xlsx',
+            sourceType: 'file',
+            supports: 'Cost rates and pricing assumptions.',
+            reliabilityNote: 'User-provided cost workbook; cite worksheet or row before treating as verified.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Produce a source-backed tender analysis report.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use every evidence matrix source or mark the source-specific evidence gap.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请生成专业文档模式的投标分析报告，必须覆盖证据矩阵中的每个来源。'),
+        message('a1', 'assistant', [
+          '# Executive Summary',
+          '',
+          'The tender appears commercially workable and technically executable if the project team preserves a controlled submission baseline. The recommended approach is to keep technical compliance, pricing exposure, and schedule interfaces under one review cadence before final submission.',
+          '',
+          '# Tender Requirements',
+          '',
+          'Source: tender-requirements.pdf; Locator: p. 4; Claim: the submission must preserve formal compliance controls before final delivery.',
+          '',
+          '# Cost Review',
+          '',
+          'The cost review concludes that the pricing basis is manageable if the commercial team validates resource rates and escalation exposure before final submission.',
+          '',
+          '# Actions',
+          '',
+          'The next action is to reconcile the report against the tender requirements, update the risk register, and prepare the final submission narrative.',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing evidence matrix coverage for sources: cost-database.xlsx.')
+    }
+  })
+
   test('does not accept pure prose for a visual-heavy professional document task', async () => {
     const controller = new GoalController()
 
@@ -479,6 +690,68 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept construction gantt visual without requested A3 landscape page intent', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请生成专业施工进度报告，必须包含A3横向甘特图。',
+        taskType: 'document',
+        documentPlan: {
+          domain: 'construction',
+          visualPlan: {
+            mode: 'professional',
+            selectedKinds: ['construction-gantt'],
+            opportunities: [],
+            auditRequirements: [
+              'Every professional visual must have verified data, a caption, a source note, and an audit reason.',
+              'Construction Gantt visuals requested as A3 landscape must preserve A3 landscape page intent in the rendered asset or caption metadata.',
+            ],
+          },
+          sections: ['Schedule basis', 'Construction Gantt'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+        },
+        deliverables: ['Produce a professional construction schedule report with A3 landscape Gantt.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+      criteria: [{
+        id: 'crit-visual',
+        text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请生成专业施工进度报告，必须包含A3横向甘特图。'),
+        message('a1', 'assistant', [
+          '# Schedule basis',
+          '',
+          'The schedule is organized by WBS, baseline, current dates, critical path, and milestones.',
+          '',
+          '![Figure 1. Professional construction Gantt](schedule.svg)',
+          '',
+          'Figure 1. Professional construction Gantt. Source: verified project schedule. Audit reason: WBS, critical path, and milestones are easier to review visually.',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.includes('A3 landscape'))).toBe(true)
+    }
+  })
+
   test('does not accept prompt-only compliance for strict template fidelity', async () => {
     const controller = new GoalController()
 
@@ -527,6 +800,368 @@ describe('GoalController', () => {
         item.type === 'system'
         && item.label === 'template_fidelity_audit'
         && (item.detail ?? '').includes('Strict DOCX template audit requires exported DOCX structure evidence')
+      )).toBe(true)
+    }
+  })
+
+  test('enforces strict delivery contract gates even when criteria omit explicit audit items', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '严格交付一份带模板、图表、PDF和DOCX导出的正式报告。',
+        taskType: 'document',
+        documentQualityMode: 'strict_delivery',
+        documentPlan: {
+          templateProfileId: 'uploaded-template-profile',
+          strictTemplate: true,
+          visualPlan: {
+            mode: 'professional',
+            selectedKinds: ['construction-gantt'],
+            opportunities: [],
+            auditRequirements: [],
+          },
+          sections: ['Executive Summary', 'Schedule'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['PDF', 'DOCX'],
+          deliveryReviewPlan: {
+            mode: 'strict_delivery',
+            failureAction: 'needs_review_or_auto_improve',
+            gates: [{
+              id: 'export_files',
+              requirement: 'Every requested delivery format must be produced as a verifiable output file.',
+              evidence: 'Verified output files for PDF, DOCX.',
+            }],
+          },
+        },
+        deliverables: ['Produce a strict-delivery professional report.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Pass source, template, export, visual, and format gates.'],
+        outputFormats: ['PDF', 'DOCX'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '严格交付一份带模板、图表、PDF和DOCX导出的正式报告。'),
+        message('t1', 'tool', 'created markdown draft', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/final-report.md' },
+        }),
+        message('a1', 'assistant', '已完成正式报告草稿：/tmp/final-report.md'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 180,
+        preview: '# Executive Summary\n\nThe report is complete.\n\n# Schedule\n\nThe construction schedule is summarized in prose.',
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria).toContain('Requested output format was not produced: PDF.')
+      expect(decision.result.missingCriteria).toContain('Requested output format was not produced: DOCX.')
+      expect(decision.result.missingCriteria.some(item => item.includes('Template fidelity audit did not pass'))).toBe(true)
+      expect(decision.result.missingCriteria.some(item => item.includes('Visual block audit did not pass'))).toBe(true)
+      expect(decision.result.missingCriteria).toContain('Strict delivery gate failed: export_files - Every requested delivery format must be produced as a verifiable output file.')
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'delivery_review_gate'
+        && (item.detail ?? '').includes('export_files')
+      )).toBe(true)
+    }
+  })
+
+  test('fails strict delivery source gate when output has no source or pending-evidence marker', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '严格交付一份可审计的正式研究报告。',
+        taskType: 'document',
+        documentQualityMode: 'strict_delivery',
+        documentPlan: {
+          sections: ['Executive Summary', 'Findings'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          deliveryReviewPlan: {
+            mode: 'strict_delivery',
+            failureAction: 'needs_review_or_auto_improve',
+            gates: [{
+              id: 'source_integrity',
+              requirement: 'Source-backed claims, tables, and visuals must cite evidence or mark unavailable evidence as pending.',
+              evidence: 'Evidence matrix entries with locators, excerpts, values, or unresolved-gap notes.',
+            }],
+          },
+        },
+        deliverables: ['Produce an auditable formal report.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Pass source integrity before claiming completion.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '严格交付一份可审计的正式研究报告。'),
+        message('a1', 'assistant', [
+          '# Executive Summary',
+          '',
+          'The market is attractive and the project should proceed.',
+          '',
+          '# Findings',
+          '',
+          'The report recommends immediate execution because all indicators are favorable.',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Strict delivery gate failed: source_integrity - Source-backed claims, tables, and visuals must cite evidence or mark unavailable evidence as pending.')
+      expect(decision.prompt).toContain('source_integrity')
+      expect(decision.prompt).toContain('Source-backed claims, tables, and visuals must cite evidence')
+      expect(decision.prompt).toContain('Resolve each failed strict delivery gate before claiming the formal document is complete')
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'delivery_review_gate'
+        && (item.detail ?? '').includes('Source integrity gate did not find citations')
+      )).toBe(true)
+    }
+  })
+
+  test('fails strict delivery format gate when no format review evidence is documented', async () => {
+    const controller = new GoalController()
+    const content = [
+      '# Executive Summary',
+      '',
+      'This formal delivery report provides a structured summary of the project scope, commercial exposure, and implementation controls. The document is written as a complete artifact rather than a note. It describes the execution basis, records assumptions, and sets out the actions needed before final submission.',
+      '',
+      '# Delivery Basis',
+      '',
+      'The work package includes document preparation, source-backed analysis, risk review, and final submission packaging. The delivery team should keep the report structure stable, preserve the requested section order, and avoid replacing the formal deliverable with a short summary. The current narrative includes specific project controls, responsibility boundaries, and review expectations.',
+      '',
+      '# Risk Review',
+      '',
+      '| Risk | Impact | Control |',
+      '| --- | --- | --- |',
+      '| Schedule compression | May reduce review time and increase rework | Preserve review checkpoints before release |',
+      '| Incomplete source records | May weaken claims and figures | Keep source gaps visible until confirmed |',
+      '| Export mismatch | May produce a file that differs from the reviewed Markdown | Compare the final visible structure before acceptance |',
+      '',
+      '# Delivery Actions',
+      '',
+      'The final submission should retain the headings, table structure, and source-gap notes. Any missing evidence should be marked before acceptance. The report should not be treated as finished until all strict delivery gates have explicit evidence in the artifact or in verified output inspection records.',
+    ].join('\n')
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '严格交付一份正式报告，必须通过最终格式审查。',
+        taskType: 'document',
+        documentQualityMode: 'strict_delivery',
+        documentPlan: {
+          sections: ['Executive Summary', 'Delivery Basis', 'Risk Review', 'Delivery Actions'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          deliveryReviewPlan: {
+            mode: 'strict_delivery',
+            failureAction: 'needs_review_or_auto_improve',
+            gates: [{
+              id: 'format_review',
+              requirement: 'Final artifact structure, headings, tables, captions, and visible formatting must be reviewed before completion.',
+              evidence: 'Rendered preview, exported file inspection, or documented manual review findings.',
+            }],
+          },
+        },
+        deliverables: ['Produce a strict-delivery report with format review evidence.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Pass final formatting review before claiming completion.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '严格交付一份正式报告，必须通过最终格式审查。'),
+        message('a1', 'assistant', content),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Strict delivery gate failed: format_review - Final artifact structure, headings, tables, captions, and visible formatting must be reviewed before completion.')
+      expect(decision.prompt).toContain('format_review')
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'delivery_review_gate'
+        && (item.detail ?? '').includes('Format review gate did not find rendered preview, exported inspection, or documented format review evidence')
+      )).toBe(true)
+    }
+  })
+
+  test('does not treat a deferred visible formatting note as strict delivery format review evidence', async () => {
+    const controller = new GoalController()
+    const content = [
+      '# Executive Summary',
+      '',
+      'This formal delivery report gives a complete summary of project scope, commercial exposure, implementation controls, and final submission responsibilities. It is written as a complete artifact with stable headings, a risk table, and action records rather than as an outline or a short note.',
+      '',
+      '# Delivery Basis',
+      '',
+      'The work package includes document preparation, source-backed analysis, risk review, and final submission packaging. The team should preserve the requested section order, retain the formal report structure, and keep unresolved evidence visible until confirmed.',
+      '',
+      '# Risk Review',
+      '',
+      '| Risk | Impact | Control |',
+      '| --- | --- | --- |',
+      '| Schedule compression | May reduce review time and increase rework | Preserve review checkpoints before release |',
+      '| Export mismatch | May produce a file that differs from the reviewed Markdown | Compare the final visible formatting before acceptance |',
+      '',
+      '# Delivery Actions',
+      '',
+      'The visible formatting must be reviewed before completion, but this draft has not yet recorded a rendered preview, exported-file inspection, or manual review finding.',
+    ].join('\n')
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '严格交付一份正式报告，必须通过最终格式审查。不能只说以后要审查。',
+        taskType: 'document',
+        documentQualityMode: 'strict_delivery',
+        documentPlan: {
+          sections: ['Executive Summary', 'Delivery Basis', 'Risk Review', 'Delivery Actions'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          deliveryReviewPlan: {
+            mode: 'strict_delivery',
+            failureAction: 'needs_review_or_auto_improve',
+            gates: [{
+              id: 'format_review',
+              requirement: 'Final artifact structure, headings, tables, captions, and visible formatting must be reviewed before completion.',
+              evidence: 'Rendered preview, exported file inspection, or documented manual review findings.',
+            }],
+          },
+        },
+        deliverables: ['Produce a strict-delivery report with completed format review evidence.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Pass final formatting review before claiming completion.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '严格交付一份正式报告，必须通过最终格式审查。不能只说以后要审查。'),
+        message('a1', 'assistant', content),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('Strict delivery gate failed: format_review - Final artifact structure, headings, tables, captions, and visible formatting must be reviewed before completion.')
+    }
+  })
+
+  test('does not accept multi-agent deep output without chapter handoff and final synthesis evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请用多智能体深度模式生成大型投标报告，分章节完成并做总编合成。',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        documentPlan: {
+          sections: ['技术方案', '施工进度'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          agentPlan: {
+            mode: 'chapter_agents',
+            finalSynthesisOwner: 'final_synthesis_owner',
+            assignments: [{
+              id: 'chapter-agent-1',
+              title: '技术方案',
+              role: 'technical_chapter_agent',
+              reviewFocus: 'technical completeness and source-backed constraints',
+            }, {
+              id: 'chapter-agent-2',
+              title: '施工进度',
+              role: 'schedule_chapter_agent',
+              reviewFocus: 'schedule logic and milestone consistency',
+            }],
+            reviewStages: [
+              'Chapter evidence review before synthesis.',
+              'Cross-chapter consistency review before final synthesis.',
+            ],
+            guardrails: [
+              'Each chapter agent must list source gaps and unresolved assumptions before handoff.',
+              'Only the final synthesis owner may write or replace the final deliverable after chapter drafts are reviewed.',
+            ],
+          },
+        },
+        deliverables: ['Produce a large tender report with chapter-agent handoffs and final synthesis.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use chapter-level or discipline-level evidence coverage and resolve cross-chapter inconsistencies before final synthesis.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: ['Do not let multiple agents write the same final artifact concurrently; use one final synthesis owner.'],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请用多智能体深度模式生成大型投标报告，分章节完成并做总编合成。'),
+        message('a1', 'assistant', [
+          '# 技术方案',
+          '',
+          '施工组织设计已完成，主要施工方法清晰。',
+          '',
+          '# 施工进度',
+          '',
+          '总体进度计划已完成，关键节点可以满足投标要求。',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.includes('Multi-agent deep audit did not pass'))).toBe(true)
+      expect(decision.prompt).toContain('chapter-agent handoff')
+      expect(decision.prompt).toContain('final_synthesis_owner')
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'document_agent_plan_audit'
+        && (item.detail ?? '').includes('missingFinalSynthesisOwner: yes')
       )).toBe(true)
     }
   })

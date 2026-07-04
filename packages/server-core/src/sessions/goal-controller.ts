@@ -1,5 +1,7 @@
 import type { Message } from '@craft-agent/core/types'
 import type {
+  SessionDocumentDeliveryGate,
+  SessionDocumentEvidenceMatrixEntry,
   SessionGoalAuditEvidence,
   SessionGoalFailureCategory,
   SessionGoalAuditResult,
@@ -14,6 +16,7 @@ import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-
 import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
 import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
+import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
@@ -271,7 +274,7 @@ export class GoalController {
       const report = analyzeDocumentQuality({
         contents: outputPreviewTexts.length > 0 ? outputPreviewTexts : [finalAssistant.content],
         sourceFilePaths: sourceFileEvidencePaths,
-        strict: goalState.mode === 'strict_work',
+        strict: goalState.mode === 'strict_work' || isStrictDeliveryContract(goalState),
       })
       evidence.push({
         type: 'system',
@@ -281,6 +284,17 @@ export class GoalController {
       if (!report.passed) {
         const issueSummary = report.issues.length > 0 ? report.issues.join(' ') : 'Document quality score is below the required threshold.'
         contentVerificationIssues.push(`Document quality audit did not pass (${report.score}/${report.threshold}): ${issueSummary}`)
+      }
+    }
+    if (finalAssistant && requiresEvidenceMatrixAudit(goalState)) {
+      const report = auditEvidenceMatrixUsage(outputTexts, goalState)
+      evidence.push({
+        type: 'system',
+        label: 'evidence_matrix_audit',
+        detail: formatEvidenceMatrixAudit(report).slice(0, 3000),
+      })
+      if (!report.passed) {
+        contentVerificationIssues.push(`Evidence matrix audit did not pass: ${report.issues.join(' ')}`)
       }
     }
     if (finalAssistant && requiresVisualBlockAudit(goalState)) {
@@ -303,6 +317,17 @@ export class GoalController {
       })
       if (!report.passed) {
         contentVerificationIssues.push(`Template fidelity audit did not pass (${report.score}/100): ${report.issues.join(' ')}`)
+      }
+    }
+    if (finalAssistant && requiresDocumentAgentPlanAudit(goalState)) {
+      const report = auditDocumentAgentPlan(outputTexts, goalState)
+      evidence.push({
+        type: 'system',
+        label: 'document_agent_plan_audit',
+        detail: formatDocumentAgentPlanAudit(report).slice(0, 3000),
+      })
+      if (!report.passed) {
+        contentVerificationIssues.push(`Multi-agent deep audit did not pass: ${report.issues.join(' ')}`)
       }
     }
     const previousScopeCheckpointRequired = latestFailedAuditHasCategory(goalState.auditHistory, 'scope_gap')
@@ -355,6 +380,14 @@ export class GoalController {
         }
       }
     }
+    const deliveryReviewGateAudit = auditDeliveryReviewGates(goalState, {
+      fileVerificationIssues,
+      contentVerificationIssues,
+      toolVerificationIssues,
+      outputTexts,
+      sourceFileEvidencePaths,
+    })
+    evidence.push(...deliveryReviewGateAudit.evidence)
 
     for (const message of errorMessages) {
       evidence.push({
@@ -438,10 +471,12 @@ export class GoalController {
 
     if (contentVerificationIssues.length > 0) {
       status = 'fail'
-      deterministicFailureCategories.add(contentVerificationIssues.some(issue => issue.includes('scope') || issue.includes('contract')) ? 'scope_gap' : 'shallow_output')
+      deterministicFailureCategories.add(getContentVerificationFailureCategory(contentVerificationIssues))
       missingCriteria.push(...contentVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
-        summary = 'Goal audit failed because the produced work product was too shallow for the requested quality criteria.'
+        summary = contentVerificationIssues.some(isEvidenceVerificationIssue)
+          ? 'Goal audit failed because required evidence or source grounding was missing.'
+          : 'Goal audit failed because the produced work product was too shallow for the requested quality criteria.'
       }
     }
 
@@ -451,6 +486,15 @@ export class GoalController {
       missingCriteria.push(...toolVerificationIssues)
       if (summary === 'Goal audit passed deterministic completion checks.') {
         summary = 'Goal audit failed because requested verification tool evidence was missing.'
+      }
+    }
+
+    if (deliveryReviewGateAudit.missingCriteria.length > 0) {
+      status = 'fail'
+      deterministicFailureCategories.add('evidence_gap')
+      missingCriteria.push(...deliveryReviewGateAudit.missingCriteria)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because strict delivery review gates did not pass.'
       }
     }
 
@@ -676,6 +720,7 @@ function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
     && criterion.kind === 'deliverable'
     && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
   )
+    || (isStrictDeliveryContract(goalState) && getContractOutputFormats(goalState).length > 0)
 }
 
 function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {
@@ -692,6 +737,7 @@ function requiresSourceCitationMarker(goalState: SessionGoalState): boolean {
     && criterion.kind === 'evidence'
     && criterion.text.startsWith('Use and cite the referenced input material where relevant:')
   )
+    || isStrictDeliveryContract(goalState)
 }
 
 function requiresSubstantiveWorkProduct(goalState: SessionGoalState): boolean {
@@ -708,6 +754,7 @@ function requiresDocumentQualityAudit(goalState: SessionGoalState): boolean {
     && criterion.kind === 'coverage'
     && criterion.text === DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT
   )
+    || requiresDocumentWorkflowQualityAudit(goalState)
     || (goalState.mode === 'strict_work' && goalState.criteria.some(criterion =>
       criterion.required
       && (criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT || criterion.text.includes('structured, readable deliverable'))
@@ -720,6 +767,7 @@ function requiresVisualBlockAudit(goalState: SessionGoalState): boolean {
     && criterion.kind === 'coverage'
     && criterion.text === VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT
   )
+    || (requiresDocumentWorkflowQualityAudit(goalState) && hasProfessionalVisualPlan(goalState))
 }
 
 function requiresTemplateFidelityAudit(goalState: SessionGoalState): boolean {
@@ -728,6 +776,36 @@ function requiresTemplateFidelityAudit(goalState: SessionGoalState): boolean {
     && criterion.kind === 'coverage'
     && criterion.text === TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT
   )
+    || (isStrictDeliveryContract(goalState) && hasStrictTemplatePlan(goalState))
+}
+
+function isStrictDeliveryContract(goalState: SessionGoalState): boolean {
+  return goalState.taskContract?.documentQualityMode === 'strict_delivery'
+}
+
+function requiresDocumentWorkflowQualityAudit(goalState: SessionGoalState): boolean {
+  const mode = goalState.taskContract?.documentQualityMode
+  return mode === 'professional_document'
+    || mode === 'strict_delivery'
+    || mode === 'multi_agent_deep'
+}
+
+function hasProfessionalVisualPlan(goalState: SessionGoalState): boolean {
+  const plan = goalState.taskContract?.documentPlan?.visualPlan
+  return (plan?.selectedKinds.length ?? 0) > 0
+    || (plan?.auditRequirements.length ?? 0) > 0
+}
+
+function hasStrictTemplatePlan(goalState: SessionGoalState): boolean {
+  const plan = goalState.taskContract?.documentPlan
+  return plan?.strictTemplate === true || Boolean(plan?.templateProfileId)
+}
+
+function requiresEvidenceMatrixAudit(goalState: SessionGoalState): boolean {
+  const mode = goalState.taskContract?.documentQualityMode
+  return mode !== undefined
+    && mode !== 'quick'
+    && (goalState.taskContract?.documentPlan?.evidenceMatrix?.length ?? 0) > 0
 }
 
 function hasSubstantiveWorkProduct(contents: string[]): boolean {
@@ -755,11 +833,222 @@ interface VisualBlockAudit {
   opportunityCount: number
 }
 
+interface EvidenceMatrixAudit {
+  passed: boolean
+  issues: string[]
+  sourceCount: number
+  referencedSourceCount: number
+  sourceIds: string[]
+}
+
+interface DocumentAgentPlanAudit {
+  passed: boolean
+  issues: string[]
+  assignmentCount: number
+  coveredAssignmentCount: number
+  missingFinalSynthesisOwner: boolean
+  missingChapterHandoff: boolean
+  missingSourceGapReview: boolean
+  missingCrossChapterReview: boolean
+}
+
+interface DeliveryReviewGateAuditInput {
+  fileVerificationIssues: readonly string[]
+  contentVerificationIssues: readonly string[]
+  toolVerificationIssues: readonly string[]
+  outputTexts: readonly string[]
+  sourceFileEvidencePaths: readonly string[]
+}
+
+interface DeliveryReviewGateAudit {
+  missingCriteria: string[]
+  evidence: SessionGoalAuditEvidence[]
+}
+
+function auditEvidenceMatrixUsage(contents: string[], goalState: SessionGoalState): EvidenceMatrixAudit {
+  const markdown = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
+  const evidenceMatrix = goalState.taskContract?.documentPlan?.evidenceMatrix ?? []
+  const referencedSourceCount = evidenceMatrix.filter(entry => hasEvidenceMatrixEntryReference(markdown, entry)).length
+  const mentionedSourceCount = evidenceMatrix.filter(entry => hasEvidenceMatrixEntryMention(markdown, entry)).length
+  const missingSourceNames = evidenceMatrix
+    .filter(entry => !hasEvidenceMatrixEntryReference(markdown, entry) && !hasEvidenceMatrixEntryPendingMarker(markdown, entry))
+    .map(entry => basename(entry.source) || entry.source || entry.id)
+  const issues: string[] = []
+
+  if (evidenceMatrix.length > 0 && referencedSourceCount === 0 && !hasPendingEvidenceMarker(markdown)) {
+    issues.push(mentionedSourceCount > 0
+      ? 'Missing claim-level evidence matrix citation with source, locator, or claim fields.'
+      : 'Missing reference to evidence matrix sources, citations, or pending evidence gaps.')
+  } else if (missingSourceNames.length > 0 && missingSourceNames.length < evidenceMatrix.length) {
+    issues.push(`Missing evidence matrix coverage for sources: ${missingSourceNames.join(', ')}.`)
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues,
+    sourceCount: evidenceMatrix.length,
+    referencedSourceCount,
+    sourceIds: evidenceMatrix.map(entry => entry.id),
+  }
+}
+
+function hasEvidenceMatrixEntryReference(markdown: string, entry: SessionDocumentEvidenceMatrixEntry): boolean {
+  return getEvidenceMatrixMentionLines(markdown, entry).some(line =>
+    /(?:locator|page|p\.|clause|section|claim|citation|source note|出处|来源|引用|页码|页|条款|章节|主张|结论|依据)\s*[:：#-]?/i.test(line)
+  )
+}
+
+function hasEvidenceMatrixEntryMention(markdown: string, entry: SessionDocumentEvidenceMatrixEntry): boolean {
+  return getEvidenceMatrixMentionLines(markdown, entry).length > 0
+}
+
+function hasEvidenceMatrixEntryPendingMarker(markdown: string, entry: SessionDocumentEvidenceMatrixEntry): boolean {
+  return getEvidenceMatrixMentionLines(markdown, entry).some(line => hasPendingEvidenceMarker(line))
+}
+
+function getEvidenceMatrixMentionLines(markdown: string, entry: SessionDocumentEvidenceMatrixEntry): string[] {
+  const normalizedMarkdown = normalizeRequirementText(markdown)
+  const sourceName = basename(entry.source)
+  const markers = [entry.id, entry.source, sourceName]
+    .map(value => normalizeRequirementText(value))
+    .filter(value => value.length >= 3)
+  if (markers.length === 0 || !markers.some(value => normalizedMarkdown.includes(value))) return []
+
+  return markdown
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => {
+      const normalizedLine = normalizeRequirementText(line)
+      return markers.some(value => normalizedLine.includes(value))
+    })
+}
+
+function hasPendingEvidenceMarker(markdown: string): boolean {
+  return /assumption|pending evidence|evidence unavailable|source unavailable|unresolved gap|source gap|假设|证据待补充|证据不可用|来源待核实|来源缺口|证据缺口|未解决缺口/i.test(markdown)
+}
+
+function formatEvidenceMatrixAudit(report: EvidenceMatrixAudit): string {
+  return [
+    `status: ${report.passed ? 'pass' : 'fail'}`,
+    `sourceCoverage: ${report.referencedSourceCount}/${report.sourceCount}`,
+    `sourceIds: ${report.sourceIds.join(', ') || '(none)'}`,
+    `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
+  ].join('\n')
+}
+
+function getContentVerificationFailureCategory(issues: readonly string[]): SessionGoalFailureCategory {
+  if (issues.some(issue => issue.includes('scope') || issue.includes('contract'))) return 'scope_gap'
+  if (issues.some(isEvidenceVerificationIssue)) return 'evidence_gap'
+  return 'shallow_output'
+}
+
+function isEvidenceVerificationIssue(issue: string): boolean {
+  return /evidence matrix|source|citation|evidence|来源|引用|依据|证据/i.test(issue)
+}
+
+function auditDeliveryReviewGates(
+  goalState: SessionGoalState,
+  input: DeliveryReviewGateAuditInput,
+): DeliveryReviewGateAudit {
+  const gates = goalState.taskContract?.documentPlan?.deliveryReviewPlan?.gates ?? []
+  if (!isStrictDeliveryContract(goalState) || gates.length === 0) {
+    return { missingCriteria: [], evidence: [] }
+  }
+
+  const missingCriteria: string[] = []
+  const evidence: SessionGoalAuditEvidence[] = []
+  for (const gate of gates) {
+    const issues = getDeliveryGateIssues(gate, input)
+    const passed = issues.length === 0
+    evidence.push({
+      type: 'system',
+      label: 'delivery_review_gate',
+      detail: formatDeliveryReviewGateEvidence(gate, passed, issues).slice(0, 3000),
+    })
+    if (!passed) {
+      missingCriteria.push(`Strict delivery gate failed: ${gate.id} - ${gate.requirement}`)
+    }
+  }
+
+  return {
+    missingCriteria: [...new Set(missingCriteria)],
+    evidence,
+  }
+}
+
+function getDeliveryGateIssues(
+  gate: SessionDocumentDeliveryGate,
+  input: DeliveryReviewGateAuditInput,
+): string[] {
+  switch (gate.id) {
+    case 'source_integrity': {
+      const issues = input.fileVerificationIssues.filter(issue => /source|citation|evidence|来源|引用|依据/i.test(issue))
+      if (!hasSourceIntegrityMarker(input.outputTexts, input.sourceFileEvidencePaths)) {
+        issues.push('Source integrity gate did not find citations, source notes, or pending evidence markers.')
+      }
+      return issues
+    }
+    case 'template_fidelity':
+      return input.contentVerificationIssues.filter(issue => /Template fidelity audit/i.test(issue))
+    case 'export_files':
+      return input.fileVerificationIssues.filter(issue =>
+        /Requested output format was not produced|No verifiable output file path|Requested output file was not written|Referenced file was not found|Referenced file is empty/i.test(issue)
+      )
+    case 'visual_evidence':
+      return input.contentVerificationIssues.filter(issue => /Visual block audit/i.test(issue))
+    case 'format_review':
+      const issues = [
+        ...input.contentVerificationIssues.filter(issue => /Document quality audit/i.test(issue)),
+        ...input.toolVerificationIssues.filter(issue => /verification|review|check|验证|审查|检查/i.test(issue)),
+      ]
+      if (!hasFormatReviewEvidence(input.outputTexts)) {
+        issues.push('Format review gate did not find rendered preview, exported inspection, or documented format review evidence.')
+      }
+      return issues
+  }
+}
+
+function hasSourceIntegrityMarker(outputTexts: readonly string[], sourceFileEvidencePaths: readonly string[]): boolean {
+  return hasSourceCitationMarker([...outputTexts], [...sourceFileEvidencePaths])
+    || outputTexts.some(content => hasPendingEvidenceMarker(content))
+}
+
+function hasFormatReviewEvidence(outputTexts: readonly string[]): boolean {
+  return outputTexts.some(content =>
+    splitEvidenceSentences(content).some(sentence =>
+      /format review|format audit|layout review|rendered preview|export(?:ed)?[- ]file inspection|manual review|格式审查|格式复核|版式审查|版式复核|渲染预览|导出检查|导出复核|人工复核/i.test(sentence)
+      && !/not yet|has not|have not|not recorded|without|must be reviewed|should be reviewed|needs? to be reviewed|未记录|没有|尚未|待审查|待复核|需要审查|需要复核/i.test(sentence)
+    )
+  )
+}
+
+function splitEvidenceSentences(content: string): string[] {
+  return content
+    .split(/[\r\n]+|(?<=[.!?。！？])\s+/)
+    .map(sentence => sentence.trim())
+    .filter(Boolean)
+}
+
+function formatDeliveryReviewGateEvidence(
+  gate: SessionDocumentDeliveryGate,
+  passed: boolean,
+  issues: string[],
+): string {
+  return [
+    `status: ${passed ? 'pass' : 'fail'}`,
+    `gate: ${gate.id}`,
+    `requirement: ${gate.requirement}`,
+    `expectedEvidence: ${gate.evidence}`,
+    `issues: ${issues.length > 0 ? issues.join(' ') : '(none)'}`,
+  ].join('\n')
+}
+
 function auditVisualBlocks(contents: string[], goalState: SessionGoalState): VisualBlockAudit {
   const markdown = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
-  const expectedKinds = goalState.taskContract?.documentPlan?.visualPlan?.selectedKinds ?? []
+  const visualPlan = goalState.taskContract?.documentPlan?.visualPlan
+  const expectedKinds = visualPlan?.selectedKinds ?? []
   const analysis = analyzeVisualOpportunities(markdown, {
-    mode: goalState.taskContract?.documentPlan?.visualPlan?.mode ?? 'professional',
+    mode: visualPlan?.mode ?? 'professional',
     maxVisuals: 12,
   })
   const issues: string[] = []
@@ -778,6 +1067,9 @@ function auditVisualBlocks(contents: string[], goalState: SessionGoalState): Vis
   }
   if (expectedKinds.some(kind => kind.startsWith('simulation') || kind === 'time-history-plot') && !hasSimulationContext(markdown)) {
     issues.push('Simulation visual blocks must include solver/source, load case or timestep, units, and result component context.')
+  }
+  if (requiresA3LandscapeConstructionVisual(visualPlan) && !hasA3LandscapePageIntent(markdown)) {
+    issues.push('Construction Gantt visual requested as A3 landscape must include A3 landscape page intent in rendered asset metadata, filename, or caption.')
   }
 
   return {
@@ -814,12 +1106,85 @@ function hasSimulationContext(markdown: string): boolean {
   return /(?:solver|load case|time(?:step)?|component|unit|source|ansys|mpa|mm|求解器|工况|时步|分量|单位|来源)/i.test(markdown)
 }
 
+function requiresA3LandscapeConstructionVisual(visualPlan: VisualPlan | undefined): boolean {
+  return (visualPlan?.selectedKinds ?? []).includes('construction-gantt')
+    && (visualPlan?.auditRequirements ?? []).some(requirement => /A3\s*landscape|A3\s*横向/i.test(requirement))
+}
+
+function hasA3LandscapePageIntent(markdown: string): boolean {
+  return /data-page-size=["']A3["'][\s\S]{0,160}data-orientation=["']landscape["']/i.test(markdown)
+    || /data-orientation=["']landscape["'][\s\S]{0,160}data-page-size=["']A3["']/i.test(markdown)
+    || /(?:page intent|page size|页面|幅面|版面|文件名|filename)?\s*[:：-]?\s*A3\s*(?:landscape|横向)/i.test(markdown)
+    || /A3[-_\s]?landscape/i.test(markdown)
+}
+
 function formatVisualBlockAudit(report: VisualBlockAudit): string {
   return [
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `expectedKinds: ${report.expectedKinds.join(', ') || '(unspecified)'}`,
     `existingVisualCount: ${report.existingVisualCount}`,
     `opportunityCount: ${report.opportunityCount}`,
+    `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
+  ].join('\n')
+}
+
+function requiresDocumentAgentPlanAudit(goalState: SessionGoalState): boolean {
+  return goalState.taskContract?.documentQualityMode === 'multi_agent_deep'
+    && (goalState.taskContract.documentPlan?.agentPlan?.assignments.length ?? 0) > 0
+}
+
+function auditDocumentAgentPlan(contents: string[], goalState: SessionGoalState): DocumentAgentPlanAudit {
+  const markdown = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
+  const agentPlan = goalState.taskContract?.documentPlan?.agentPlan
+  const assignments = agentPlan?.assignments ?? []
+  const coveredAssignmentCount = assignments.filter(assignment => hasAssignmentEvidence(markdown, assignment.title) || hasAssignmentEvidence(markdown, assignment.id)).length
+  const missingFinalSynthesisOwner = !hasAssignmentEvidence(markdown, agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner')
+  const missingChapterHandoff = !/(chapter[-\s]?agent|章节智能体|chapter handoff|handoff|移交|交接|分工)/i.test(markdown)
+  const missingSourceGapReview = !/(source gaps?|unresolved assumptions?|evidence gaps?|来源缺口|证据缺口|未解决假设|待核实|待补充)/i.test(markdown)
+  const missingCrossChapterReview = !/(cross[-\s]?chapter|consistency review|cross-discipline|跨章节|一致性审查|交叉审查|冲突解决)/i.test(markdown)
+  const issues: string[] = []
+
+  if (coveredAssignmentCount < assignments.length) {
+    issues.push('Not every chapter-agent assignment is reflected in the deliverable or handoff notes.')
+  }
+  if (missingChapterHandoff) {
+    issues.push('Missing chapter-agent handoff evidence.')
+  }
+  if (missingSourceGapReview) {
+    issues.push('Missing source-gap or unresolved-assumption handoff notes.')
+  }
+  if (missingCrossChapterReview) {
+    issues.push('Missing cross-chapter consistency review evidence.')
+  }
+  if (missingFinalSynthesisOwner) {
+    issues.push(`Missing final synthesis owner evidence: ${agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner'}.`)
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues,
+    assignmentCount: assignments.length,
+    coveredAssignmentCount,
+    missingFinalSynthesisOwner,
+    missingChapterHandoff,
+    missingSourceGapReview,
+    missingCrossChapterReview,
+  }
+}
+
+function hasAssignmentEvidence(markdown: string, value: string): boolean {
+  const normalizedNeedle = normalizeRequirementText(value)
+  return Boolean(normalizedNeedle) && normalizeRequirementText(markdown).includes(normalizedNeedle)
+}
+
+function formatDocumentAgentPlanAudit(report: DocumentAgentPlanAudit): string {
+  return [
+    `status: ${report.passed ? 'pass' : 'fail'}`,
+    `assignmentCoverage: ${report.coveredAssignmentCount}/${report.assignmentCount}`,
+    `missingChapterHandoff: ${report.missingChapterHandoff ? 'yes' : 'no'}`,
+    `missingSourceGapReview: ${report.missingSourceGapReview ? 'yes' : 'no'}`,
+    `missingCrossChapterReview: ${report.missingCrossChapterReview ? 'yes' : 'no'}`,
+    `missingFinalSynthesisOwner: ${report.missingFinalSynthesisOwner ? 'yes' : 'no'}`,
     `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
   ].join('\n')
 }
@@ -905,7 +1270,7 @@ function hasSourceCitationMarkerInText(content: string, sourceFileEvidencePaths:
 }
 
 function getRequiredOutputFormats(goalState: SessionGoalState): string[] {
-  return [...new Set(goalState.criteria
+  const criteriaFormats = goalState.criteria
     .filter(criterion =>
       criterion.required
       && criterion.kind === 'format'
@@ -916,12 +1281,24 @@ function getRequiredOutputFormats(goalState: SessionGoalState): string[] {
       .replace(/\.$/, '')
       .split(',')
       .map(format => normalizeOutputFormatLabel(format))
-      .filter((format): format is string => format !== undefined)))]
+      .filter((format): format is string => format !== undefined))
+
+  return [...new Set([
+    ...criteriaFormats,
+    ...(isStrictDeliveryContract(goalState) ? getContractOutputFormats(goalState) : []),
+  ])]
 }
 
 function normalizeOutputFormatLabel(value: string): string | undefined {
   const normalized = value.trim().replace(/^\.+|\.+$/g, '').toUpperCase()
   return normalized || undefined
+}
+
+function getContractOutputFormats(goalState: SessionGoalState): string[] {
+  return [...new Set([
+    ...(goalState.taskContract?.outputFormats ?? []),
+    ...(goalState.taskContract?.documentPlan?.deliveryFormats ?? []),
+  ].map(format => normalizeOutputFormatLabel(format)).filter((format): format is string => format !== undefined))]
 }
 
 function getOutputFormatsForPath(filePath: string): string[] {
@@ -1344,6 +1721,14 @@ function buildHardGateRecoveryGuidance(result: SessionGoalAuditResult): string {
   }
   if (labels.has('previous_tool_failure_checkpoint_missing')) {
     guidance.push('A previous tool failure is still open. Produce a successful tool run that resolves the failed step before treating the goal as complete.')
+  }
+  if (labels.has('delivery_review_gate')) {
+    const failedGates = result.evidence
+      .filter(item => item.label === 'delivery_review_gate' && /status:\s*fail/i.test(item.detail ?? ''))
+      .map(item => item.detail?.match(/gate:\s*([^\n]+)/i)?.[1]?.trim())
+      .filter((gate): gate is string => Boolean(gate))
+    const suffix = failedGates.length > 0 ? ` Failed gates: ${[...new Set(failedGates)].join(', ')}.` : ''
+    guidance.push(`Resolve each failed strict delivery gate before claiming the formal document is complete.${suffix}`)
   }
 
   return guidance.length > 0

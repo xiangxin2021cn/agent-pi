@@ -14,13 +14,28 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.2.5. Next planning line: V1.2.6.**
+**Current release: V1.2.5. Next major development line: V1.3.0.**
 
-**当前发布版：V1.2.5。下一阶段规划线：V1.2.6。**
+**当前发布版：V1.2.5。下一阶段重大开发线：V1.3.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+
+## V1.3.0 Development Focus / V1.3.0 开发重点
+
+V1.3.0 moves Agent Pi from a document workbench toward a professional delivery system: the agent can choose the right work mode, carry evidence through the task, reuse enterprise knowledge, and keep large document jobs auditable instead of relying on a single prompt.
+
+V1.3.0 将 Agent π 从“文档工作台”继续推进到“专业交付系统”：智能体可按任务选择工作模式，贯穿证据链，复用企业知识，并让大型文档任务保持可审计，而不是只依赖一次提示词。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Document workflow modes | Adds Quick, Professional Document, Strict Delivery, and Multi-Agent Deep modes. Users can keep lightweight chat fast, or require evidence matrices, chapter plans, strict delivery gates, and multi-agent review for major tenders, engineering reports, investment reports, and due-diligence work. | 新增快速模式、专业文档模式、严格交付模式、多智能体深度模式。普通对话保持轻量；大型投标、工程报告、投资报告和尽调任务可启用证据矩阵、章节计划、严格交付门禁和多智能体评审。 |
+| Goal Loop quality gates | Strict and deep modes route work through stronger Goal Loop checks for sources, template fidelity, professional visuals, export formats, formatting review, chapter handoffs, and final synthesis ownership. | 严格/深度模式会触发更强 Goal Loop 审查，覆盖来源、模板保真、专业图表、导出格式、排版复核、章节交接和最终合成负责人。 |
+| Enterprise Knowledge Base | Knowledge Base files are copied into a stable app-level store, indexed into `knowledge-base/index.md`, grouped by folder, previewable/editable/exportable in the UI, and loadable into a chat from the data-source selector with single-entry or select-all selection. | 知识库文件会入库到应用级稳定目录，生成 `knowledge-base/index.md` 索引，按文件夹归类，可在 UI 中预览/编辑/导出，并可在对话框数据源中“加载知识库”，支持单选或全选。 |
+| Structured knowledge import | Knowledge Base ingestion is planned around Markdown-first memory: `.md`, `.txt`, `.json`, `.pdf`, Word, Excel, and CSV files can be converted into structured Markdown before becoming file-memory MCP sources. | 知识库入库采用 Markdown 优先记忆：`.md`、`.txt`、`.json`、`.pdf`、Word、Excel、CSV 等文件可先结构化为 Markdown，再创建 file-memory MCP 知识源。 |
+| Professional document intelligence | The document workflow can request source-backed diagrams, tables, construction Gantt visuals, investment tables, GIS-style figures, simulation/CAE summaries, and export-ready assets when the content calls for richer professional expression. | 文档工作流可在内容需要时要求生成有来源支撑的流程图、表格、施工甘特图、投资表、GIS 表达、仿真/CAE 摘要和可导出图文资产。 |
+| Reasoning for stronger local models | Professional modes include a bounded critical-reasoning protocol useful for DeepSeek-style models: decomposition, opposing-case review, third-party challenge, revision, and risk-qualified conclusion. Quick mode remains lightweight. | 专业模式内置适合 DeepSeek 类模型的有界批判推理流程：拆解、正反推演、第三方质疑、修正复盘、带条件和风险的结论；快速模式仍保持轻量。 |
 
 ## V1.2.5 Hotfix / V1.2.5 修复
 
@@ -133,6 +148,7 @@ V1.1.3 实验性引入 MoA 启发的质量评审 council、任务质量路由、
 
 | Version | English | 中文 | Release |
 | --- | --- | --- | --- |
+| V1.3.0 | Development line for document workflow modes, strict/deep Goal Loop quality gates, enterprise Knowledge Base indexing/loading, structured knowledge import, and professional document intelligence. | 开发线：文档工作流模式、严格/深度 Goal Loop 质量门禁、企业知识库索引与加载、结构化知识入库和专业文档智能。 | Planned |
 | V1.2.5 | Hotfix for false Goal Loop failures caused by transient helper scripts and Windows output paths with spaces. | 修复临时脚本和带空格 Windows 输出路径导致的 Goal Loop 误判失败。 | [v1.2.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.5) |
 | V1.2.4 | Hotfix for Goal Loop automatic self-correction after recoverable tool failures. | 修复可恢复工具失败后 Goal Loop 未继续自动纠偏的问题。 | [v1.2.4](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.4) |
 | V1.2.3 | Hotfix for in-app What's New release notes, versioned release-note loading, and completed-session read-state persistence. | 修复应用内“最新动态”更新说明缺失、限定只加载版本化更新说明，并修复完成会话已读状态重启回潮。 | [v1.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v1.2.3) |
@@ -195,7 +211,8 @@ Future directions include:
 
 - Construction and tender intelligence: PDF drawing recognition, OCR/vector extraction, BOQ reconciliation, quantity takeoff, construction planning, cost-loaded schedules, and highway/civil tender workflows.
 - Engineering and BIM workflows: road/corridor data models, IFC/GeoJSON/LandXML-style intermediate data, Blender/Bonsai/IfcOpenShell visualization, 4D progress views, and model-backed report figures.
-- Professional document automation: Word/PDF/DOCX output quality, strict template matching, evidence-rich Markdown, visual asset generation, and export verification.
+- Professional document automation: Word/PDF/DOCX output quality, strict template matching, structured evidence matrices, evidence-rich Markdown, visual asset generation, export verification, and Agent Pi's own document workflow quality modes: Quick, Professional Document, Strict Delivery, and Multi-Agent Deep.
+- Multi-agent document production: chapter-agent assignments, role review, final synthesis ownership, and cross-chapter consistency checks for large tenders, engineering reports, investment reports, and due diligence.
 - Enterprise knowledge: local-global knowledge MCPs first, then team/network knowledge bases, permission governance, category management, and reusable company standards.
 - Domain-specific intelligence: investment analysis, GIS reporting, simulation/ANSYS/CAE post-processing, legal/compliance review, and other vertical expert workflows.
 - Agent self-improvement: stronger Goal Loop audits, self-correction, reviewer telemetry, MoA-style quality review, and weaker/private model enhancement through tools and structured workflows.
@@ -204,7 +221,8 @@ Future directions include:
 
 - 施工与投标智能：PDF 图纸识别、OCR/矢量提取、BOQ 对照、工程量拆分、施工策划、成本加载进度计划、公路/市政投标工作流。
 - 工程与 BIM：道路/廊道数据模型、IFC/GeoJSON/LandXML 类中间数据、Blender/Bonsai/IfcOpenShell 可视化、4D 进度展示、模型驱动报告图。
-- 专业文档自动化：Word/PDF/DOCX 成果质量、严格模板匹配、有证据的 Markdown、专业图表资产生成和导出校验。
+- 专业文档自动化：Word/PDF/DOCX 成果质量、严格模板匹配、结构化证据矩阵、有证据的 Markdown、专业图表资产生成、导出校验，以及 Agent π 自有的文档工作流质量模式：快速模式、专业文档模式、严格交付模式、多智能体深度模式。
+- 多智能体文档生产：面向大型投标、工程报告、投资报告和尽调任务的章节智能体分工、多角色评审、最终合成负责人和跨章节一致性检查。
 - 知识库：先做本机全局知识 MCP 和 Obsidian 式分类/文件夹管理，再扩展团队/联网知识库、权限治理、分类管理和企业标准复用。
 - 垂直领域智能：投资分析、GIS 报告、仿真/ANSYS/CAE 后处理、法律合规审查以及更多行业专家工作流。
 - 智能体自我改进：更强 Goal Loop 审计、自我纠偏、评审经验沉淀、MoA 式质量评审，以及通过工具和结构化流程增强弱模型/私有化模型。

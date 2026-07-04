@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  getKnowledgeBaseIndexPath,
   getKnowledgeBaseRegistryPath,
   loadKnowledgeBaseRegistry,
   upsertKnowledgeBaseRegistryEntry,
@@ -25,6 +26,7 @@ describe('knowledge base registry storage', () => {
         sourceSlug: 'file-memory-standard',
         name: 'Company Standard',
         sourceFilePath: '/project/company-standard.md',
+        originalSourceFilePath: '/project/original/company-standard.md',
         workspacePath: '/workspace',
         collectionId: 'local-file-memory',
         knowledgeCategory: ' Standards \\ Method Statements ',
@@ -44,9 +46,18 @@ describe('knowledge base registry storage', () => {
         knowledgeFolder: 'Standards/Method Statements',
         scope: 'global',
         sourceKind: 'file-memory',
+        originalSourceFilePath: '/project/original/company-standard.md',
       });
       expect(existsSync(getKnowledgeBaseRegistryPath(root))).toBe(true);
       expect(JSON.parse(readFileSync(getKnowledgeBaseRegistryPath(root), 'utf-8')).entries).toHaveLength(1);
+      expect(existsSync(getKnowledgeBaseIndexPath(root))).toBe(true);
+
+      const index = readFileSync(getKnowledgeBaseIndexPath(root), 'utf-8');
+      expect(index).toContain('# Agent Pi Knowledge Base Index');
+      expect(index).toContain('## Standards/Method Statements');
+      expect(index).toContain('Company Standard');
+      expect(index).toContain('file-memory-standard');
+      expect(index).toContain('/project/original/company-standard.md');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

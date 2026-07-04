@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, DatabaseZap, Search } from 'lucide-react'
+import { Check, DatabaseZap, Library, Search } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { SourceAvatar } from '@/components/ui/source-avatar'
@@ -11,6 +11,8 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer'
 import type { LoadedSource } from '../../../shared/types'
+import { isKnowledgeBaseSource } from '@craft-agent/shared/sources/knowledge-base'
+import { KnowledgeBaseLoadDialog } from './KnowledgeBaseLoadDialog'
 
 export interface CompactSourceSelectorProps {
   open: boolean
@@ -18,6 +20,7 @@ export interface CompactSourceSelectorProps {
   sources: LoadedSource[]
   selectedSlugs: string[]
   onToggleSlug: (slug: string) => void
+  onChangeSlugs: (slugs: string[]) => void
 }
 
 /**
@@ -34,9 +37,12 @@ export function CompactSourceSelector({
   sources,
   selectedSlugs,
   onToggleSlug,
+  onChangeSlugs,
 }: CompactSourceSelectorProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = React.useState('')
+  const [knowledgeBaseDialogOpen, setKnowledgeBaseDialogOpen] = React.useState(false)
+  const hasKnowledgeBaseSources = React.useMemo(() => sources.some(isKnowledgeBaseSource), [sources])
 
   // Reset filter whenever the drawer closes so the next open starts fresh.
   React.useEffect(() => {
@@ -50,6 +56,7 @@ export function CompactSourceSelector({
   }, [sources, filter])
 
   return (
+    <>
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
         <DrawerHeader>
@@ -68,6 +75,22 @@ export function CompactSourceSelector({
                 className="w-full h-11 pl-10 pr-3 rounded-[10px] bg-foreground/5 text-base outline-none focus:bg-foreground/[0.07] transition-colors"
               />
             </div>
+          </div>
+        )}
+
+        {hasKnowledgeBaseSources && (
+          <div className="px-4 pb-2">
+            <button
+              type="button"
+              className="flex h-11 w-full items-center gap-3 rounded-[10px] bg-foreground/5 px-3 text-left text-sm font-medium hover:bg-foreground/10"
+              onClick={() => {
+                onOpenChange(false)
+                setKnowledgeBaseDialogOpen(true)
+              }}
+            >
+              <Library className="h-4 w-4 text-foreground/60" />
+              <span className="min-w-0 flex-1 truncate">{t('chat.loadKnowledgeBase')}</span>
+            </button>
           </div>
         )}
 
@@ -118,5 +141,13 @@ export function CompactSourceSelector({
         </div>
       </DrawerContent>
     </Drawer>
+    <KnowledgeBaseLoadDialog
+      open={knowledgeBaseDialogOpen}
+      onOpenChange={setKnowledgeBaseDialogOpen}
+      sources={sources}
+      selectedSlugs={selectedSlugs}
+      onChangeSlugs={onChangeSlugs}
+    />
+    </>
   )
 }

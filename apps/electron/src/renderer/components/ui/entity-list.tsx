@@ -300,7 +300,7 @@ export function EntityList<T>({
                       ) : (
                         <SectionHeader label={group.label} />
                       )}
-                      {group.items.map((item, indexInGroup) =>
+                      {!isCollapsed && group.items.map((item, indexInGroup) =>
                         <React.Fragment key={getKey(item)}>
                           {renderItem(item, indexInGroup, indexInGroup === 0)}
                         </React.Fragment>

@@ -78,6 +78,7 @@ import {
   type SessionGoalAuditResult,
   type SessionGoalState,
   type SessionGoalFailureCategory,
+  type SessionDocumentQualityMode,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -1709,6 +1710,11 @@ function isWorkLikeGoalMessage(
     return true
   }
 
+  const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
+  if (documentQualityMode && documentQualityMode !== 'quick') {
+    return true
+  }
+
   if (options?.badges?.some(badge => badge.type === 'file' || badge.type === 'folder' || badge.type === 'skill')) {
     return true
   }
@@ -1758,6 +1764,15 @@ function normalizeWorkspaceGoalLoopMaxExtraReviewers(value: unknown): number | u
 
 function normalizeSendGoalLoopMode(value: unknown): SessionGoalMode | undefined {
   return value === 'off' || value === 'check_only' || value === 'auto_improve' || value === 'strict_work'
+    ? value
+    : undefined
+}
+
+function normalizeSendDocumentQualityMode(value: unknown): SessionDocumentQualityMode | undefined {
+  return value === 'quick'
+    || value === 'professional_document'
+    || value === 'strict_delivery'
+    || value === 'multi_agent_deep'
     ? value
     : undefined
 }
@@ -7794,10 +7809,12 @@ export class SessionManager implements ISessionManager {
     }
 
     const now = Date.now()
+    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
     const criteria = buildGoalCriteriaFromMessage({
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
     }).map(criterion => ({
       id: randomUUID(),
       ...criterion,
@@ -7806,16 +7823,19 @@ export class SessionManager implements ISessionManager {
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
     })
     const taskContract = buildTaskContractFromMessage({
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
       workingDirectory: managed.workingDirectory,
     })
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
-    const mode = requestedMode ?? workspaceDefaultMode ?? policy.mode
+    const explicitDocumentWorkflowMode = Boolean(documentQualityMode && documentQualityMode !== 'quick')
+    const mode = requestedMode ?? (explicitDocumentWorkflowMode ? policy.mode : workspaceDefaultMode ?? policy.mode)
     if (mode === 'off') {
       return
     }
@@ -7858,10 +7878,12 @@ export class SessionManager implements ISessionManager {
     }
 
     const existingCriteria = new Set(current.criteria.map(criterion => `${criterion.kind}\u0000${criterion.text}`))
+    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
     const newCriteria = buildGoalCriteriaUpdateFromMessage({
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
     })
       .filter(criterion => !existingCriteria.has(`${criterion.kind}\u0000${criterion.text}`))
       .map(criterion => ({
@@ -7872,11 +7894,13 @@ export class SessionManager implements ISessionManager {
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
     })
     const taskContract = buildTaskContractFromMessage({
       message,
       storedAttachments,
       badges: options?.badges,
+      documentQualityMode,
       workingDirectory: managed.workingDirectory,
     })
     const existingTaskContract = current.taskContract ?? buildTaskContractFromMessage({

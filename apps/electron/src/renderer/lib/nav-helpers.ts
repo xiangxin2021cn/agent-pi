@@ -7,6 +7,7 @@
  */
 
 import type { NavigationState } from '../../shared/types'
+import { routes, type Route } from '../../shared/routes'
 
 /**
  * Returns true when the focused panel's nav state is in "detail" mode —
@@ -32,4 +33,23 @@ export function isDetailNavState(navState: NavigationState | null): boolean {
     case 'automations':
       return navState.details !== null
   }
+}
+
+export function getSourceRouteForNavigation(navState: NavigationState | null, sourceSlug?: string): Route {
+  if (navState?.navigator === 'sources' && navState.filter) {
+    if (navState.filter.kind === 'knowledgeBase') {
+      return routes.view.sourcesKnowledgeBase(sourceSlug)
+    }
+
+    switch (navState.filter.sourceType) {
+      case 'api':
+        return routes.view.sourcesApi(sourceSlug)
+      case 'mcp':
+        return routes.view.sourcesMcp(sourceSlug)
+      case 'local':
+        return routes.view.sourcesLocal(sourceSlug)
+    }
+  }
+
+  return routes.view.sources(sourceSlug ? { sourceSlug } : undefined)
 }

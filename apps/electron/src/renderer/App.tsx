@@ -1415,6 +1415,7 @@ export default function App() {
         badges: badges.length > 0 ? badges : undefined,
         optimisticMessageId: userMessage.id,
         goalLoopMode: optionsForSession.goalLoopMode,
+        documentQualityMode: optionsForSession.documentQualityMode,
       })
     } catch (error) {
       console.error('Failed to send message:', error)

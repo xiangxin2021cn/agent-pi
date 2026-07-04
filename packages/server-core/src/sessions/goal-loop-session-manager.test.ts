@@ -1741,6 +1741,46 @@ describe('SessionManager goal loop routing', () => {
     )).toBe(true)
   })
 
+  it('initializes a professional document goal when an explicit document workflow mode is selected', async () => {
+    const sessionId = 'goal-explicit-document-workflow-mode'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '你好', undefined, undefined, { documentQualityMode: 'professional_document' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.taskContract?.documentQualityMode).toBe('professional_document')
+    expect(managed.goalState?.taskContract?.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+    expect(events.some(event =>
+      event.type === 'goal_state_changed'
+      && event.goalState.id === managed.goalState?.id
+    )).toBe(true)
+  })
+
+  it('does not initialize a goal for a casual message when explicit quick document mode is selected', async () => {
+    const sessionId = 'goal-explicit-quick-document-workflow-mode'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '你好', undefined, undefined, { documentQualityMode: 'quick' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBeUndefined()
+    expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
+  })
+
+  it('uses auto-improve for explicit strict document mode even when workspace default is check-only', async () => {
+    saveWorkspaceGoalLoopDefault({ defaultMode: 'check_only' })
+    const sessionId = 'goal-explicit-strict-document-workflow-mode'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '你好', undefined, undefined, { documentQualityMode: 'strict_delivery' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState?.mode).toBe('auto_improve')
+    expect(managed.goalState?.maxIterations).toBe(4)
+    expect(managed.goalState?.taskContract?.documentQualityMode).toBe('strict_delivery')
+    expect(managed.goalState?.taskContract?.documentPlan?.deliveryReviewPlan?.mode).toBe('strict_delivery')
+  })
+
   it('does not initialize a goal for a work-like message when explicit send goal mode is off', async () => {
     const sessionId = 'goal-explicit-send-mode-off'
     const managed = buildSession(sessionId, { goalState: undefined })
@@ -1842,6 +1882,17 @@ describe('SessionManager goal loop routing', () => {
     captureEvents()
 
     await sm.sendMessage(sessionId, '谢谢').catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBe(originalGoal)
+  })
+
+  it('does not add casual quick-mode chat to an existing goal', async () => {
+    const sessionId = 'goal-ignore-casual-quick-follow-up'
+    const managed = buildSession(sessionId)
+    const originalGoal = managed.goalState
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '谢谢', undefined, undefined, { documentQualityMode: 'quick' }).catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState).toBe(originalGoal)
   })

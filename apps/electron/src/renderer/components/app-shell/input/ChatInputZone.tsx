@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { CHAT_LAYOUT } from '@/config/layout'
 import { flattenLabels, type LabelConfig } from '@craft-agent/shared/labels'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
-import type { SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionDocumentQualityMode, SessionGoalMode, SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 import type { SessionStatus } from '@/config/session-status-config'
 import type { BackgroundTask } from '../ActiveTasksBar'
@@ -18,6 +18,8 @@ interface ChatInputZoneProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   goalLoopMode?: SessionGoalMode
   onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  documentQualityMode?: SessionDocumentQualityMode
+  onDocumentQualityModeChange?: (mode: SessionDocumentQualityMode | undefined) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
@@ -45,6 +47,8 @@ export function ChatInputZone({
   onPermissionModeChange,
   goalLoopMode,
   onGoalLoopModeChange,
+  documentQualityMode,
+  onDocumentQualityModeChange,
   goalState,
   onGoalModeChange,
   onGoalAccept,
@@ -135,6 +139,8 @@ export function ChatInputZone({
           onPermissionModeChange={onPermissionModeChange}
           goalLoopMode={goalLoopMode}
           onGoalLoopModeChange={onGoalLoopModeChange}
+          documentQualityMode={documentQualityMode}
+          onDocumentQualityModeChange={onDocumentQualityModeChange}
           goalState={goalState}
           labels={labels}
           sessionLabels={sessionLabels}

@@ -20,6 +20,7 @@ import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
   SessionGoalAuditResult,
   SessionGoalCriterionKind,
+  SessionDocumentQualityMode,
   SessionGoalMode,
   SessionGoalState,
 } from '../sessions/types'
@@ -239,6 +240,7 @@ export interface SendMessageOptions {
   badges?: ContentBadge[]
   optimisticMessageId?: string
   goalLoopMode?: SessionGoalMode
+  documentQualityMode?: SessionDocumentQualityMode
 }
 
 // ---------------------------------------------------------------------------

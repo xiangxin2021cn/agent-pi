@@ -45,7 +45,7 @@ import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
-import type { SessionGoalMode, SessionGoalState } from "@craft-agent/shared/sessions"
+import type { SessionDocumentQualityMode, SessionGoalMode, SessionGoalState } from "@craft-agent/shared/sessions"
 import type { SessionGoalUpdate } from "@craft-agent/shared/protocol"
 import {
   TurnCard,
@@ -178,6 +178,8 @@ interface ChatDisplayProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
   goalLoopMode?: SessionGoalMode
   onGoalLoopModeChange?: (mode: SessionGoalMode | undefined) => void
+  documentQualityMode?: SessionDocumentQualityMode
+  onDocumentQualityModeChange?: (mode: SessionDocumentQualityMode | undefined) => void
   goalState?: SessionGoalState
   onGoalModeChange?: (mode: SessionGoalMode) => void
   onGoalAccept?: () => void
@@ -475,6 +477,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onPermissionModeChange,
   goalLoopMode,
   onGoalLoopModeChange,
+  documentQualityMode,
+  onDocumentQualityModeChange,
   goalState,
   onGoalModeChange,
   onGoalAccept,
@@ -1957,6 +1961,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onPermissionModeChange={onPermissionModeChange}
             goalLoopMode={goalLoopMode}
             onGoalLoopModeChange={onGoalLoopModeChange}
+            documentQualityMode={documentQualityMode}
+            onDocumentQualityModeChange={onDocumentQualityModeChange}
             goalState={goalState ?? session.goalState}
             onGoalModeChange={onGoalModeChange}
             onGoalAccept={onGoalAccept}

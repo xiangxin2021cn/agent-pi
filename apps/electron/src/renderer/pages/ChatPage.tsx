@@ -29,7 +29,7 @@ import { getSessionTitle } from '@/utils/session'
 import { isWindows } from '@/lib/platform'
 // Model resolution: connection.defaultModel (no hardcoded defaults)
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
-import type { SessionGoalMode } from '@craft-agent/shared/sessions'
+import type { SessionDocumentQualityMode, SessionGoalMode } from '@craft-agent/shared/sessions'
 import type { SessionGoalUpdate } from '@craft-agent/shared/protocol'
 
 export interface ChatPageProps {
@@ -552,6 +552,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [session?.goalState, sessionId, sessionMeta?.goalState, setOption, t])
 
+  const handleDocumentQualityModeChange = React.useCallback((mode: SessionDocumentQualityMode | undefined) => {
+    setOption('documentQualityMode', mode)
+  }, [setOption])
+
   const handleGoalAccept = React.useCallback(async () => {
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'acceptGoal' })
@@ -849,6 +853,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                   onPermissionModeChange={setPermissionMode}
                   goalLoopMode={sessionOpts.goalLoopMode}
                   onGoalLoopModeChange={handleGoalLoopModeChange}
+                  documentQualityMode={sessionOpts.documentQualityMode}
+                  onDocumentQualityModeChange={handleDocumentQualityModeChange}
                   goalState={sessionMeta.goalState}
                   onGoalModeChange={handleGoalModeChange}
                   enabledModes={enabledModes}
@@ -934,6 +940,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               onPermissionModeChange={setPermissionMode}
               goalLoopMode={sessionOpts.goalLoopMode}
               onGoalLoopModeChange={handleGoalLoopModeChange}
+              documentQualityMode={sessionOpts.documentQualityMode}
+              onDocumentQualityModeChange={handleDocumentQualityModeChange}
               goalState={session.goalState}
               onGoalModeChange={handleGoalModeChange}
               onGoalAccept={handleGoalAccept}

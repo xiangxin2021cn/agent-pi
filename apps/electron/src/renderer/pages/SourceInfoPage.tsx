@@ -8,13 +8,15 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, FileText } from 'lucide-react'
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
+import { Button } from '@/components/ui/button'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { SourceMenu } from '@/components/app-shell/SourceMenu'
 import { cn } from '@/lib/utils'
 import { routes, navigate } from '@/lib/navigate'
 import { useNavigation } from '@/contexts/NavigationContext'
+import { useAppShellContext } from '@/context/AppShellContext'
 import { toast } from 'sonner'
 import {
   Info_Page,
@@ -29,7 +31,7 @@ import {
 } from '@/components/info'
 import type { LoadedSource, McpToolWithPermission } from '../../shared/types'
 import type { PermissionsConfigFile } from '@craft-agent/shared/agent/modes'
-import { buildKnowledgeBaseInfoRows } from './source-info-view-model'
+import { buildKnowledgeBaseInfoRows, getKnowledgeBaseSourceFilePath } from './source-info-view-model'
 
 interface SourceInfoPageProps {
   sourceSlug: string
@@ -172,6 +174,7 @@ function getPermissionsDescription(source: LoadedSource, t: (key: string) => str
 export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: SourceInfoPageProps) {
   const { t } = useTranslation()
   const { navigateToSource } = useNavigation()
+  const { onOpenFile } = useAppShellContext()
   const [source, setSource] = useState<LoadedSource | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -318,6 +321,9 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
   const knowledgeBaseRows = useMemo(() => {
     return source ? buildKnowledgeBaseInfoRows(source) : []
   }, [source])
+  const knowledgeBaseSourceFilePath = useMemo(() => {
+    return source ? getKnowledgeBaseSourceFilePath(source) : null
+  }, [source])
 
   // Handle opening URL (website or folder)
   const handleOpenUrl = useCallback(async () => {
@@ -396,6 +402,17 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
               description={t('sourceInfo.knowledgeBaseDesc', {
                 defaultValue: 'Reusable file-memory source metadata. Enable this source explicitly before using it in a workspace or session.',
               })}
+              actions={knowledgeBaseSourceFilePath ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onOpenFile(knowledgeBaseSourceFilePath)}
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  {t('sourceInfo.viewKnowledgeBaseFile', { defaultValue: 'View knowledge base file' })}
+                </Button>
+              ) : undefined}
             >
               <Info_Table>
                 {knowledgeBaseRows.map((row) => (

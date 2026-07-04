@@ -34,6 +34,10 @@ export interface EntityPanelProps<T> {
   /** Extra data/aria attributes merged onto the inner list container.
    *  Use to set `data-list-role` so compact-mode CSS can target the right list. */
   containerProps?: Record<string, string>
+  collapsedGroups?: Set<string>
+  onToggleCollapse?: (groupKey: string) => void
+  onCollapseAll?: () => void
+  onExpandAll?: () => void
 }
 
 export function EntityPanel<T>({
@@ -47,9 +51,16 @@ export function EntityPanel<T>({
   emptyState,
   className,
   containerProps,
+  collapsedGroups,
+  onToggleCollapse,
+  onCollapseAll,
+  onExpandAll,
 }: EntityPanelProps<T>) {
   const selectionStore = selection.useSelectionStore()
-  const interactionItems = React.useMemo(() => groups?.flatMap(group => group.items) ?? items, [groups, items])
+  const interactionItems = React.useMemo(
+    () => groups?.flatMap(group => group.collapsible && collapsedGroups?.has(group.key) ? [] : group.items) ?? items,
+    [collapsedGroups, groups, items]
+  )
   const interactions = useEntityListInteractions<T>({
     items: interactionItems,
     getId,
@@ -79,6 +90,10 @@ export function EntityPanel<T>({
       containerRef={interactions.listProps.containerRef}
       containerProps={mergedContainerProps}
       className={className}
+      collapsedGroups={collapsedGroups}
+      onToggleCollapse={onToggleCollapse}
+      onCollapseAll={onCollapseAll}
+      onExpandAll={onExpandAll}
       emptyState={emptyState}
       renderItem={(item, index, isFirst) => {
         const mapped = mapItem(item)

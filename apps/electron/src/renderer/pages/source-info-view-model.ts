@@ -16,11 +16,19 @@ export function buildKnowledgeBaseInfoRows(source: LoadedSource): SourceInfoRow[
     row('sourceInfo.knowledgeBaseFolder', 'Folder', metadata.knowledgeFolder),
     row('sourceInfo.knowledgeBaseTags', 'Tags', formatTags(metadata.tags)),
     row('sourceInfo.knowledgeBaseSourceFile', 'Source file', metadata.sourceFilePath),
+    row('sourceInfo.knowledgeBaseOriginalSourceFile', 'Original imported file', metadata.originalSourceFilePath),
     row('sourceInfo.knowledgeBaseScope', 'Scope', metadata.scope),
     row('sourceInfo.knowledgeBaseSourceKind', 'Source kind', metadata.sourceKind),
     row('sourceInfo.knowledgeBaseFileExtension', 'File extension', metadata.fileExtension),
     row('sourceInfo.knowledgeBaseOwner', 'Owner', metadata.owner),
   ].filter((item): item is SourceInfoRow => item !== null)
+}
+
+export function getKnowledgeBaseSourceFilePath(source: LoadedSource): string | null {
+  const metadata = source.config.metadata
+  if (!metadata || metadata.category !== 'knowledge_base') return null
+  const sourceFilePath = metadata.sourceFilePath
+  return typeof sourceFilePath === 'string' && sourceFilePath.trim() ? sourceFilePath.trim() : null
 }
 
 function row(labelKey: string, defaultLabel: string, value: unknown): SourceInfoRow | null {

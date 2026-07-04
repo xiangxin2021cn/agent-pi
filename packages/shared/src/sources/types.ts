@@ -444,6 +444,7 @@ export interface SourceMetadata {
   sourceKind?: string;
   fileExtension?: string;
   sourceFilePath?: string;
+  originalSourceFilePath?: string;
   tags?: string[];
   owner?: string;
   createdAt?: number;

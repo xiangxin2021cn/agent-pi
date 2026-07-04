@@ -1,10 +1,31 @@
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
-import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
-import { isSourceUsable, loadWorkspaceSources, type LoadedSource } from '@craft-agent/shared/sources'
+import type { CreateFileMemorySourceOptions, CreateFileMemorySourceResult } from '@craft-agent/shared/protocol'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { basename, dirname, join } from 'path'
+import { CONFIG_DIR, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
+import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
+import {
+  isSourceUsable,
+  loadSourceConfig as loadWorkspaceSourceConfig,
+  loadWorkspaceSources,
+  saveSourceConfig as saveWorkspaceSourceConfig,
+  type FolderSourceConfig,
+  type LoadedSource,
+} from '@craft-agent/shared/sources'
 import { safeJsonParse } from '@craft-agent/shared/utils/files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
+import {
+  handleFileMemorySourceCreate,
+  type FileMemorySourceCreateArgs,
+  type SessionToolContext,
+  type SourceConfig as SessionToolSourceConfig,
+  type StdioMcpConfig,
+  type StdioValidationResult,
+  type ToolResult,
+} from '@craft-agent/session-tools-core'
 import type { HandlerDeps } from '../handler-deps'
+import { prepareKnowledgeBaseFileForImport } from './knowledge-base-file-import'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET,
@@ -13,6 +34,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.DELETE,
   RPC_CHANNELS.sources.START_OAUTH,
   RPC_CHANNELS.sources.SAVE_CREDENTIALS,
+  RPC_CHANNELS.sources.CREATE_KNOWLEDGE_BASE_FILE_SOURCE,
   RPC_CHANNELS.sources.GET_PERMISSIONS,
   RPC_CHANNELS.workspace.GET_PERMISSIONS,
   RPC_CHANNELS.permissions.GET_DEFAULTS,
@@ -26,6 +48,85 @@ export function getMcpToolsSourceReadinessError(source: LoadedSource): string | 
   if (source.config.connectionStatus === 'failed') return source.config.connectionError || 'Connection failed'
   if (source.config.connectionStatus === 'untested') return 'Source has not been tested yet'
   return null
+}
+
+function createWorkspaceFileMemoryToolContext(args: {
+  workspaceRootPath: string
+  workingDirectory: string
+  knowledgeBaseRegistryRootPath: string
+}): SessionToolContext {
+  const { workspaceRootPath, workingDirectory, knowledgeBaseRegistryRootPath } = args
+
+  return {
+    sessionId: 'workspace-knowledge-base-import',
+    workspacePath: workspaceRootPath,
+    knowledgeBaseRegistryRootPath,
+    get sourcesPath() { return join(workspaceRootPath, 'sources') },
+    get skillsPath() { return join(workspaceRootPath, 'skills') },
+    plansFolderPath: join(workspaceRootPath, 'plans'),
+    workingDirectory,
+    callbacks: {
+      onPlanSubmitted: () => {},
+      onAuthRequest: () => {},
+    },
+    fs: {
+      exists: (path: string) => existsSync(path),
+      readFile: (path: string) => readFileSync(path, 'utf-8'),
+      readFileBuffer: (path: string) => readFileSync(path),
+      writeFile: (path: string, content: string) => writeFileSync(path, content, 'utf-8'),
+      isDirectory: (path: string) => existsSync(path) && statSync(path).isDirectory(),
+      readdir: (path: string) => readdirSync(path),
+      stat: (path: string) => {
+        const stats = statSync(path)
+        return {
+          size: stats.size,
+          isDirectory: () => stats.isDirectory(),
+        }
+      },
+    },
+    loadSourceConfig: (sourceSlug: string): SessionToolSourceConfig | null => {
+      return loadWorkspaceSourceConfig(workspaceRootPath, sourceSlug) as unknown as SessionToolSourceConfig | null
+    },
+    saveSourceConfig: (source: SessionToolSourceConfig) => {
+      saveWorkspaceSourceConfig(workspaceRootPath, source as unknown as FolderSourceConfig)
+    },
+    validateStdioMcpConnection: async (config: StdioMcpConfig): Promise<StdioValidationResult> => {
+      try {
+        const result = await validateStdioMcpConnectionImpl(config)
+        return {
+          success: result.success,
+          error: result.error,
+          toolCount: result.tools?.length,
+          toolNames: result.tools,
+          serverName: result.serverInfo?.name,
+          serverVersion: result.serverInfo?.version,
+        }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Validation failed' }
+      }
+    },
+  }
+}
+
+function readFileMemoryCreateResult(result: ToolResult): CreateFileMemorySourceResult {
+  const validationText = result.content.map(block => block.text).join('\n')
+  const payload = result.structuredContent ?? {}
+  const sourceSlug = typeof payload.sourceSlug === 'string'
+    ? payload.sourceSlug
+    : validationText.match(/^Created file memory source: (.+)$/m)?.[1]?.trim()
+
+  if (!sourceSlug) {
+    throw new Error('File memory source was created, but no source slug was returned')
+  }
+
+  return {
+    sourceSlug,
+    sourceConfigPath: typeof payload.sourceConfigPath === 'string' ? payload.sourceConfigPath : undefined,
+    manifestPath: typeof payload.manifestPath === 'string' ? payload.manifestPath : undefined,
+    chunkCount: typeof payload.chunkCount === 'number' ? payload.chunkCount : undefined,
+    validationText,
+    activated: payload.activated === true,
+  }
 }
 
 export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -66,6 +167,52 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     const sources = loadWorkspaceSources(workspace.rootPath)
     pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
     return config
+  })
+
+  server.handle(RPC_CHANNELS.sources.CREATE_KNOWLEDGE_BASE_FILE_SOURCE, async (
+    _ctx,
+    workspaceId: string,
+    filePath: string,
+    options: CreateFileMemorySourceOptions
+  ): Promise<CreateFileMemorySourceResult> => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
+
+    const category = options?.knowledgeBase?.category?.trim()
+    if (!category) {
+      throw new Error('Knowledge base category is required')
+    }
+
+    const prepared = await prepareKnowledgeBaseFileForImport({
+      filePath,
+      appRootPath: CONFIG_DIR,
+    })
+    const toolContext = createWorkspaceFileMemoryToolContext({
+      workspaceRootPath: workspace.rootPath,
+      workingDirectory: dirname(prepared.filePath),
+      knowledgeBaseRegistryRootPath: CONFIG_DIR,
+    })
+    const args: FileMemorySourceCreateArgs = {
+      filePath: prepared.filePath,
+      originalSourceFilePath: prepared.originalSourceFilePath,
+      name: options?.name ?? basename(filePath),
+      sourceSlug: options?.sourceSlug,
+      chunkSize: options?.chunkSize,
+      overlap: options?.overlap,
+      autoEnable: options?.autoEnable ?? false,
+      knowledgeBase: { category },
+    }
+
+    const result = await handleFileMemorySourceCreate(toolContext, args)
+    if (result.isError) {
+      const message = result.content.map(block => block.text).join('\n') || 'Failed to create knowledge base file source'
+      throw new Error(message)
+    }
+
+    const created = readFileMemoryCreateResult(result)
+    const sources = loadWorkspaceSources(workspace.rootPath)
+    pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
+    return created
   })
 
   // Delete a source

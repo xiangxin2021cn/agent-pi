@@ -124,16 +124,18 @@ PDF templates support visual approximation only. For strict Word-level fidelity,
 
 ## Knowledge Base Sources
 
-Generated `.md`, `.txt`, and `.json` artifacts can be promoted into the Knowledge Base from the right-side file panel.
+Generated artifacts and imported files can be promoted into the Knowledge Base from the right-side file panel or the Knowledge Base add-file action.
 
 The MVP behavior is:
 
-1. Right-click a supported artifact.
-2. Choose Add to Knowledge Base.
+1. Right-click a supported artifact or add a file from Data Sources -> Knowledge Base.
+2. Choose Add to Knowledge Base or Add knowledge file.
 3. Accept the suggested category/folder or type a custom folder path.
-4. The app creates a disabled file-memory MCP source with knowledge-base metadata.
-5. The source appears under Data Sources -> Knowledge Base.
-6. The user explicitly enables or selects it before the agent can use it.
+4. The app copies the file into stable app-level Knowledge Base storage.
+5. Non-Markdown source formats are converted into structured Markdown before indexing when possible.
+6. The app creates a disabled file-memory MCP source with knowledge-base metadata.
+7. The source appears under Data Sources -> Knowledge Base and is listed in the Knowledge Base index.
+8. The user explicitly loads, enables, or selects it before the agent can use it.
 
 Knowledge Base sources are separate from Project Memory Lite. They are reusable sources, not automatic hidden memory.
 

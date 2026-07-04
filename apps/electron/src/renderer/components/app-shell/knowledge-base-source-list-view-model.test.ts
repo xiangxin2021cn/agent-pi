@@ -39,10 +39,13 @@ describe('buildKnowledgeBaseSourceSections', () => {
 
     expect(sections.map(section => ({
       folder: section.folder,
+      label: section.label,
+      description: section.description,
+      collapsible: section.collapsible,
       sourceNames: section.sources.map(item => item.config.name),
     }))).toEqual([
-      { folder: 'Construction/Schedule', sourceNames: ['Schedule A', 'Schedule B'] },
-      { folder: 'Tender Standards', sourceNames: ['Standard A'] },
+      { folder: 'Construction/Schedule', label: 'Schedule', description: 'Construction', collapsible: true, sourceNames: ['Schedule A', 'Schedule B'] },
+      { folder: 'Tender Standards', label: 'Tender Standards', description: undefined, collapsible: true, sourceNames: ['Standard A'] },
     ])
   })
 })

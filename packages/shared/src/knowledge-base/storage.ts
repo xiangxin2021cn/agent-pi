@@ -6,6 +6,7 @@ export interface KnowledgeBaseRegistryEntry {
   sourceSlug: string;
   name: string;
   sourceFilePath: string;
+  originalSourceFilePath?: string;
   workspacePath?: string;
   collectionId?: string;
   knowledgeCategory: string;
@@ -24,6 +25,10 @@ export interface KnowledgeBaseRegistry {
 
 export function getKnowledgeBaseRegistryPath(rootPath: string): string {
   return join(rootPath, 'knowledge-base', 'registry.json');
+}
+
+export function getKnowledgeBaseIndexPath(rootPath: string): string {
+  return join(rootPath, 'knowledge-base', 'index.md');
 }
 
 export function loadKnowledgeBaseRegistry(rootPath: string): KnowledgeBaseRegistry {
@@ -48,10 +53,12 @@ export function loadKnowledgeBaseRegistry(rootPath: string): KnowledgeBaseRegist
 export function saveKnowledgeBaseRegistry(rootPath: string, registry: KnowledgeBaseRegistry): void {
   const registryPath = getKnowledgeBaseRegistryPath(rootPath);
   mkdirSync(join(rootPath, 'knowledge-base'), { recursive: true });
+  const entries = registry.entries.map(normalizeRegistryEntry).filter((entry): entry is KnowledgeBaseRegistryEntry => Boolean(entry));
   writeFileSync(registryPath, JSON.stringify({
     version: 1,
-    entries: registry.entries.map(normalizeRegistryEntry).filter(Boolean),
+    entries,
   }, null, 2), 'utf-8');
+  writeFileSync(getKnowledgeBaseIndexPath(rootPath), buildKnowledgeBaseIndexMarkdown(entries), 'utf-8');
 }
 
 export function upsertKnowledgeBaseRegistryEntry(rootPath: string, entry: KnowledgeBaseRegistryEntry): KnowledgeBaseRegistry {
@@ -87,6 +94,7 @@ function normalizeRegistryEntry(value: Partial<KnowledgeBaseRegistryEntry>): Kno
     sourceSlug,
     name,
     sourceFilePath,
+    originalSourceFilePath: value.originalSourceFilePath?.trim() || undefined,
     workspacePath: value.workspacePath,
     collectionId: value.collectionId,
     knowledgeCategory,
@@ -97,6 +105,43 @@ function normalizeRegistryEntry(value: Partial<KnowledgeBaseRegistryEntry>): Kno
     createdAt: typeof value.createdAt === 'number' ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : now,
   };
+}
+
+function buildKnowledgeBaseIndexMarkdown(entries: KnowledgeBaseRegistryEntry[]): string {
+  const lines = [
+    '# Agent Pi Knowledge Base Index',
+    '',
+    'This index lists local-global Knowledge Base file-memory MCP sources. Enable the relevant source slug in a session before using its file-memory tools.',
+    '',
+  ];
+
+  if (entries.length === 0) {
+    lines.push('_No knowledge base entries yet._', '');
+    return lines.join('\n');
+  }
+
+  const folders = new Map<string, KnowledgeBaseRegistryEntry[]>();
+  for (const entry of entries) {
+    const items = folders.get(entry.knowledgeFolder) ?? [];
+    items.push(entry);
+    folders.set(entry.knowledgeFolder, items);
+  }
+
+  for (const [folder, items] of [...folders.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    lines.push(`## ${folder}`, '');
+    for (const entry of [...items].sort((left, right) => left.name.localeCompare(right.name))) {
+      lines.push(`- ${entry.name}`);
+      lines.push(`  - Source slug: ${entry.sourceSlug}`);
+      lines.push(`  - Indexed file: ${entry.sourceFilePath}`);
+      if (entry.originalSourceFilePath) {
+        lines.push(`  - Original file: ${entry.originalSourceFilePath}`);
+      }
+      lines.push(`  - Extension: ${entry.fileExtension}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 function isKnowledgeBaseFileExtension(value: unknown): value is KnowledgeBaseFileExtension {

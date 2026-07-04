@@ -508,6 +508,7 @@ export interface ElectronAPI {
   // Sources
   getSources(workspaceId: string): Promise<LoadedSource[]>
   createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
+  createKnowledgeBaseFileSource(workspaceId: string, filePath: string, options: CreateFileMemorySourceOptions): Promise<CreateFileMemorySourceResult>
   installRecommendedSource(workspaceId: string, sourceId: RecommendedSourceId): Promise<FolderSourceConfig>
   deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
   startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string }>

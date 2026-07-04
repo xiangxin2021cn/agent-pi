@@ -79,6 +79,7 @@ export const FileMemorySourceCreateSchema = z.object({
   filePath: z.string().describe('Absolute path, or path relative to the session working directory, for a text/Markdown/JSON file to index as one read-only MCP source'),
   name: z.string().optional().describe('Display name for the source. Defaults to the file name.'),
   sourceSlug: z.string().optional().describe('Optional source slug. If omitted, a file-memory-* slug is generated.'),
+  originalSourceFilePath: z.string().optional().describe('Original user-selected source path when filePath points to a structured Markdown sidecar generated during import.'),
   chunkSize: z.number().min(1000).max(12000).optional().describe('Approximate characters per chunk. Defaults to 3000.'),
   overlap: z.number().min(0).max(2000).optional().describe('Characters of overlap between chunks. Defaults to 300.'),
   autoEnable: z.boolean().optional().describe('Validate, enable, and activate the source after creation. Defaults to true.'),

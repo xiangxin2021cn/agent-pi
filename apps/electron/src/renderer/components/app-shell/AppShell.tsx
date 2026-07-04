@@ -3153,7 +3153,11 @@ function AppShellContent({
                         />
                       }
                       {...getEditConfig(
-                        sourceFilter?.kind === 'type' ? `add-source-${sourceFilter.sourceType}` as EditContextKey : 'add-source',
+                        sourceFilter?.kind === 'knowledgeBase'
+                          ? 'add-source-knowledge-base'
+                          : sourceFilter?.kind === 'type'
+                            ? `add-source-${sourceFilter.sourceType}` as EditContextKey
+                            : 'add-source',
                         activeWorkspace.rootPath
                       )}
                     />

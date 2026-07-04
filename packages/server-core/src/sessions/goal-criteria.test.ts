@@ -251,6 +251,18 @@ describe('buildGoalCriteriaFromMessage', () => {
 
     expect(criteria.some(criterion => criterion.text === COMPREHENSIVE_QUALITY_CRITERION_TEXT)).toBe(false)
   })
+
+  it('keeps explicit quick mode from adding document workflow audit criteria', () => {
+    const criteria = buildGoalCriteriaFromMessage({
+      message: '请严格按照上传的Word模板版式生成专业文档报告，包含A3横向甘特图。',
+      storedAttachments: [attachment('reference-template.docx')],
+      documentQualityMode: 'quick',
+    })
+
+    expect(criteria.some(criterion => criterion.text === DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT)).toBe(false)
+    expect(criteria.some(criterion => criterion.text === VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT)).toBe(false)
+    expect(criteria.some(criterion => criterion.text === TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT)).toBe(false)
+  })
 })
 
 describe('buildGoalExecutionPolicyFromMessage', () => {
@@ -301,9 +313,176 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     expect(policy.maxIterations).toBe(4)
     expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
   })
+
+  it('keeps explicit quick mode on the conservative budget for high-friction document prompts', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '请全面详细生成专业文档报告，包含A3横向甘特图和模板复核。',
+      storedAttachments: [attachment('reference-template.docx')],
+      documentQualityMode: 'quick',
+    })
+
+    expect(policy.maxIterations).toBe(2)
+    expect(policy.maxWallClockMs).toBe(15 * 60 * 1000)
+  })
+
+  it('uses the professional document budget when the mode is explicitly selected', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '整理一下这份材料。',
+      documentQualityMode: 'professional_document',
+    })
+
+    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
+  })
+
+  it('uses the strict delivery budget when the mode is explicitly selected', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '整理一下这份材料。',
+      documentQualityMode: 'strict_delivery',
+    })
+
+    expect(policy.maxIterations).toBe(4)
+    expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
+  })
+
+  it('uses the multi-agent deep budget when the mode is explicitly selected', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '整理一下这份材料。',
+      documentQualityMode: 'multi_agent_deep',
+    })
+
+    expect(policy.maxIterations).toBe(4)
+    expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
+  })
 })
 
 describe('buildTaskContractFromMessage', () => {
+  it('uses quick document workflow mode for ordinary small work', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '修复上传附件按钮',
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('quick')
+  })
+
+  it('uses professional document mode for formal long-form document work', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请根据招标文件生成一份专业文档报告，包含证据矩阵、章节计划和质量审查。',
+      storedAttachments: [attachment('tender.pdf')],
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
+    expect(contract.evidenceRequirements).toContain('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
+    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+  })
+
+  it('creates a reusable evidence matrix for professional document contracts', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请根据招标文件和BOQ生成专业文档报告，包含证据矩阵、风险表和趋势图。',
+      storedAttachments: [attachment('tender.pdf'), attachment('boq.xlsx')],
+    })
+
+    expect(contract.documentPlan?.evidenceMatrix).toEqual([
+      {
+        id: 'evidence-source-1',
+        source: 'tender.pdf',
+        sourceType: 'file',
+        supports: 'Source-backed claims, required sections, tables, visuals, and unresolved evidence gaps.',
+        reliabilityNote: 'User-provided file; cite page, clause, table, figure, sheet, or extracted text before using claims as verified.',
+        citationFields: ['source', 'locator', 'claim', 'excerpt_or_value', 'reliability_note'],
+        reuseStatus: 'candidate',
+      },
+      {
+        id: 'evidence-source-2',
+        source: 'boq.xlsx',
+        sourceType: 'file',
+        supports: 'Source-backed claims, required sections, tables, visuals, and unresolved evidence gaps.',
+        reliabilityNote: 'User-provided file; cite page, clause, table, figure, sheet, or extracted text before using claims as verified.',
+        citationFields: ['source', 'locator', 'claim', 'excerpt_or_value', 'reliability_note'],
+        reuseStatus: 'candidate',
+      },
+    ])
+  })
+
+  it('uses an explicit document workflow mode over automatic classification', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '整理一下这段会议纪要。',
+      documentQualityMode: 'professional_document',
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
+    expect(contract.taskType).toBe('document')
+    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+  })
+
+  it('uses strict delivery mode when template and export gates are mandatory', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请严格按照上传的Word模板版式生成正式交付版 DOCX 和 PDF，必须通过来源、模板、导出、图表、格式审查。',
+      storedAttachments: [attachment('reference-template.docx')],
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('strict_delivery')
+    expect(contract.evidenceRequirements).toContain('Pass strict delivery gates for sources, template fidelity, exports, visuals, and final formatting before claiming completion.')
+  })
+
+  it('creates a strict delivery review plan with explicit audit gates', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请严格按照上传的Word模板版式生成正式交付版 DOCX 和 PDF，必须通过来源、模板、导出、图表、格式审查。',
+      storedAttachments: [attachment('reference-template.docx')],
+    })
+
+    const reviewPlan = contract.documentPlan?.deliveryReviewPlan
+
+    expect(reviewPlan?.mode).toBe('strict_delivery')
+    expect(reviewPlan?.failureAction).toBe('needs_review_or_auto_improve')
+    expect(reviewPlan?.gates.map(gate => gate.id)).toEqual([
+      'source_integrity',
+      'template_fidelity',
+      'export_files',
+      'visual_evidence',
+      'format_review',
+    ])
+    expect(reviewPlan?.gates.find(gate => gate.id === 'template_fidelity')?.evidence).toBe('Parsed template profile and exported DOCX/PDF structure evidence.')
+  })
+
+  it('uses multi-agent deep mode for large tender and due-diligence style deliverables', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '针对大型投标工程报告启用多智能体深度模式，分章节智能体撰写并进行多角色评审后形成最终文件。',
+      storedAttachments: [attachment('boq.xlsx'), attachment('drawings.pdf')],
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('multi_agent_deep')
+    expect(contract.evidenceRequirements).toContain('Use chapter-level or discipline-level evidence coverage and resolve cross-chapter inconsistencies before final synthesis.')
+    expect(contract.forbiddenShortcuts).toContain('Do not let multiple agents write the same final artifact concurrently; use one final synthesis owner.')
+  })
+
+  it('creates a chapter-agent collaboration plan for multi-agent deep document work', () => {
+    const contract = buildTaskContractFromMessage({
+      message: [
+        '针对大型投标工程报告启用多智能体深度模式，要求：',
+        '1. 项目概况',
+        '2. 技术方案',
+        '3. 施工进度',
+        '4. 成本风险',
+        '最终由总编智能体统一合成。',
+      ].join('\n'),
+      storedAttachments: [attachment('boq.xlsx'), attachment('drawings.pdf')],
+    })
+
+    const agentPlan = contract.documentPlan?.agentPlan
+
+    expect(agentPlan?.mode).toBe('chapter_agents')
+    expect(agentPlan?.finalSynthesisOwner).toBe('final_synthesis_owner')
+    expect(agentPlan?.assignments.map(item => item.title)).toEqual([
+      '项目概况',
+      '技术方案',
+      '施工进度',
+      '成本风险',
+    ])
+    expect(agentPlan?.reviewStages).toContain('Cross-chapter consistency review before final synthesis.')
+    expect(agentPlan?.guardrails).toContain('Only the final synthesis owner may write or replace the final deliverable after chapter drafts are reviewed.')
+  })
+
   it('captures deliverables, hard requirements, evidence, and formats without using a domain-specific template', () => {
     const contract = buildTaskContractFromMessage({
       message: [
@@ -404,6 +583,7 @@ describe('buildTaskContractFromMessage', () => {
     })
     expect(contract.documentPlan?.domain).toBe('construction')
     expect(contract.documentPlan?.visualPlan?.selectedKinds).toContain('construction-gantt')
+    expect(contract.documentPlan?.visualPlan?.auditRequirements).toContain('Construction Gantt visuals requested as A3 landscape must preserve A3 landscape page intent in the rendered asset or caption metadata.')
     expect(contract.documentPlan?.enhancements).toContain('Render required professional visuals from verified data and include captions, source notes, and audit reasons.')
   })
 

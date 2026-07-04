@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import type { SourceConfig } from '../types.ts';
 import { handleFileMemorySourceCreate } from './file-memory-source-create.ts';
@@ -230,7 +230,17 @@ describe('file_memory_source_create', () => {
       });
       expect(config.enabled).toBe(false);
 
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { knowledgeBase?: Record<string, unknown> };
+      const stableSourceFilePath = String(config.metadata?.sourceFilePath);
+      expect(stableSourceFilePath).not.toBe(sourceFile);
+      expect(relative(join(knowledgeBaseRegistryRootPath, 'knowledge-base', 'files'), stableSourceFilePath)).toBe(
+        join('Tender Standards', 'Method Statements', 'file-memory-company-standard', 'company-standard.md')
+      );
+      expect(readFileSync(stableSourceFilePath, 'utf-8')).toContain('Use approved method statements.');
+      expect(config.metadata?.originalSourceFilePath).toBe(sourceFile);
+
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { sourceFile?: string; chunks: Array<{ sourcePath: string }>; knowledgeBase?: Record<string, unknown> };
+      expect(manifest.sourceFile).toBe(stableSourceFilePath);
+      expect(manifest.chunks[0]?.sourcePath).toBe(stableSourceFilePath);
       expect(manifest.knowledgeBase).toMatchObject({
         category: 'Tender Standards/Method Statements',
         scope: 'global',
@@ -249,7 +259,8 @@ describe('file_memory_source_create', () => {
       expect(registry.entries).toContainEqual(expect.objectContaining({
         sourceSlug: 'file-memory-company-standard',
         name: 'company-standard.md',
-        sourceFilePath: sourceFile,
+        sourceFilePath: stableSourceFilePath,
+        originalSourceFilePath: sourceFile,
         workspacePath,
         collectionId: 'local-file-memory',
         knowledgeCategory: 'Tender Standards/Method Statements',
@@ -258,6 +269,70 @@ describe('file_memory_source_create', () => {
         sourceKind: 'file-memory',
         fileExtension: '.md',
       }));
+
+      const indexPath = join(knowledgeBaseRegistryRootPath, 'knowledge-base', 'index.md');
+      const index = readFileSync(indexPath, 'utf-8');
+      expect(index).toContain('# Agent Pi Knowledge Base Index');
+      expect(index).toContain('## Tender Standards/Method Statements');
+      expect(index).toContain('file-memory-company-standard');
+      expect(index).toContain(sourceFile);
+    } finally {
+      if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+      else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;
+      if (previousBun === undefined) delete process.env.CRAFT_BUN;
+      else process.env.CRAFT_BUN = previousBun;
+      if (previousPackaged === undefined) delete process.env.CRAFT_IS_PACKAGED;
+      else process.env.CRAFT_IS_PACKAGED = previousPackaged;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps structured knowledge base copies with the indexed file extension', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
+    const previousServer = process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+    const previousBun = process.env.CRAFT_BUN;
+    const previousPackaged = process.env.CRAFT_IS_PACKAGED;
+
+    try {
+      const workspacePath = join(root, 'workspace');
+      const workingDirectory = join(root, 'project');
+      const knowledgeBaseRegistryRootPath = join(root, 'app');
+      mkdirSync(workspacePath, { recursive: true });
+      mkdirSync(workingDirectory, { recursive: true });
+
+      const fakeServer = join(root, 'file-memory-server.js');
+      writeFileSync(fakeServer, '// fake server', 'utf-8');
+      process.env.CRAFT_FILE_MEMORY_MCP_SERVER = fakeServer;
+      process.env.CRAFT_BUN = process.execPath;
+      process.env.CRAFT_IS_PACKAGED = '0';
+
+      const structuredFile = join(workingDirectory, 'drawing.pdf.structured.md');
+      const originalFile = join(root, 'original', 'drawing.pdf');
+      mkdirSync(dirname(originalFile), { recursive: true });
+      writeFileSync(structuredFile, '# Drawing\n\nStructured Markdown text.', 'utf-8');
+      writeFileSync(originalFile, 'binary-placeholder', 'utf-8');
+
+      const ctx = createTestContext(workspacePath, workingDirectory, { knowledgeBaseRegistryRootPath });
+      const result = await handleFileMemorySourceCreate(ctx, {
+        filePath: structuredFile,
+        originalSourceFilePath: originalFile,
+        name: 'drawing.pdf',
+        sourceSlug: 'file-memory-drawing',
+        autoEnable: false,
+        knowledgeBase: {
+          category: 'Drawings',
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const sourceConfigPath = join(workspacePath, 'sources', 'file-memory-drawing', 'config.json');
+      const config = JSON.parse(readFileSync(sourceConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
+      const stableSourceFilePath = String(config.metadata?.sourceFilePath);
+      expect(stableSourceFilePath.endsWith('.md')).toBe(true);
+      expect(stableSourceFilePath.endsWith('.pdf')).toBe(false);
+      expect(config.metadata?.originalSourceFilePath).toBe(originalFile);
+      expect(readFileSync(stableSourceFilePath, 'utf-8')).toContain('Structured Markdown text.');
     } finally {
       if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
       else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;

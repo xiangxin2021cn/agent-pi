@@ -423,6 +423,108 @@ describe('runGoalQualityCouncilReview', () => {
       .toContain('Check cited sources, unsupported claims, assumptions, and unresolved questions.')
   })
 
+  it('adds strict delivery reviewer for strict document workflow contracts', async () => {
+    const requests: LLMQueryRequest[] = []
+    const reviewedGoal = goal()
+    reviewedGoal.taskContract = {
+      originalRequest: 'Create a strict delivery report from a Word template.',
+      taskType: 'document',
+      documentQualityMode: 'strict_delivery',
+      deliverables: ['DOCX and PDF report'],
+      mustPreserve: ['Template layout'],
+      evidenceRequirements: ['Pass strict delivery gates.'],
+      outputFormats: ['DOCX', 'PDF'],
+      acceptanceCriteria: ['[coverage] Pass template and export audit.'],
+      forbiddenShortcuts: ['Do not claim template fidelity from prompt wording alone.'],
+    } as SessionGoalState['taskContract']
+    const queryLlm = async (request: LLMQueryRequest): Promise<LLMQueryResult> => {
+      requests.push(request)
+      return {
+        text: JSON.stringify({
+          status: 'pass',
+          summary: 'Reviewer did not find additional gaps.',
+          missingCriteria: [],
+        }),
+        model: 'local-reviewer',
+      }
+    }
+
+    await runGoalQualityCouncilReview({
+      input: {
+        goalState: reviewedGoal,
+        messages: [
+          message('u1', 'user', 'create strict delivery report'),
+          message('a1', 'assistant', 'Report complete.'),
+        ],
+        finalAssistant: message('a1', 'assistant', 'Report complete.'),
+        result: {
+          iteration: 1,
+          status: 'uncertain',
+          summary: 'Deterministic audit needs strict delivery review.',
+          missingCriteria: ['Pass template and export audit.'],
+          evidence: [],
+          createdAt: 1,
+        },
+      },
+      queryLlm,
+    })
+
+    expect(requests.some(request => request.prompt.includes('Role: strict_delivery_reviewer'))).toBe(true)
+    expect(requests.find(request => request.prompt.includes('Role: strict_delivery_reviewer'))?.prompt)
+      .toContain('Check source integrity, template fidelity, export evidence, visual evidence, and final formatting gates.')
+  })
+
+  it('adds synthesis consistency reviewer for multi-agent deep document workflow contracts', async () => {
+    const requests: LLMQueryRequest[] = []
+    const reviewedGoal = goal()
+    reviewedGoal.taskContract = {
+      originalRequest: 'Create a large tender report with chapter agents and role reviews.',
+      taskType: 'document',
+      documentQualityMode: 'multi_agent_deep',
+      deliverables: ['Final synthesized tender report'],
+      mustPreserve: ['Chapter coverage'],
+      evidenceRequirements: ['Resolve cross-chapter inconsistencies.'],
+      outputFormats: ['MD'],
+      acceptanceCriteria: ['[coverage] Chapter evidence and consistency must pass.'],
+      forbiddenShortcuts: ['Do not merge inconsistent chapter outputs.'],
+    } as SessionGoalState['taskContract']
+    const queryLlm = async (request: LLMQueryRequest): Promise<LLMQueryResult> => {
+      requests.push(request)
+      return {
+        text: JSON.stringify({
+          status: 'pass',
+          summary: 'Reviewer did not find additional gaps.',
+          missingCriteria: [],
+        }),
+        model: 'local-reviewer',
+      }
+    }
+
+    await runGoalQualityCouncilReview({
+      input: {
+        goalState: reviewedGoal,
+        messages: [
+          message('u1', 'user', 'create large tender report'),
+          message('a1', 'assistant', 'Report complete.'),
+        ],
+        finalAssistant: message('a1', 'assistant', 'Report complete.'),
+        result: {
+          iteration: 1,
+          status: 'uncertain',
+          summary: 'Deterministic audit needs synthesis review.',
+          missingCriteria: ['Chapter evidence and consistency must pass.'],
+          evidence: [],
+          createdAt: 1,
+        },
+      },
+      queryLlm,
+    })
+
+    expect(requests.some(request => request.prompt.includes('Role: synthesis_consistency_reviewer'))).toBe(true)
+    expect(requests.find(request => request.prompt.includes('Role: synthesis_consistency_reviewer'))?.prompt)
+      .toContain('Check chapter-level coverage, cross-chapter consistency, role-review resolution, and final synthesis ownership.')
+  })
+
   it('records deterministic quality route evidence for task-specific council reviews', async () => {
     const reviewedGoal = goal()
     reviewedGoal.taskContract = {

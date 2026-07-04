@@ -88,6 +88,7 @@ describe('buildAttachmentDialogSpec', () => {
     expect(spec.properties).toContain('openFile')
     expect(spec.properties).toContain('multiSelections')
     expect(spec.properties).not.toContain('openDirectory')
+    expect(spec.filters).toEqual([{ name: 'All Files', extensions: ['*'] }])
   })
 
   test('uses directory-only mode when attaching a folder', () => {

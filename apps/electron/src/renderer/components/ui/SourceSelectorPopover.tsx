@@ -1,10 +1,13 @@
 import * as React from 'react'
-import { Check, DatabaseZap } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Check, DatabaseZap, Library } from 'lucide-react'
 import { FilterableSelectPopover } from '@craft-agent/ui'
 
 import { cn } from '@/lib/utils'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import type { LoadedSource } from '../../../shared/types'
+import { isKnowledgeBaseSource } from '@craft-agent/shared/sources/knowledge-base'
+import { KnowledgeBaseLoadDialog } from './KnowledgeBaseLoadDialog'
 
 export interface SourceSelectorPopoverProps {
   open: boolean
@@ -13,6 +16,7 @@ export interface SourceSelectorPopoverProps {
   sources: LoadedSource[]
   selectedSlugs: string[]
   onToggleSlug: (slug: string) => void
+  onChangeSlugs: (slugs: string[]) => void
 }
 
 export function SourceSelectorPopover({
@@ -22,8 +26,14 @@ export function SourceSelectorPopover({
   sources,
   selectedSlugs,
   onToggleSlug,
+  onChangeSlugs,
 }: SourceSelectorPopoverProps) {
+  const { t } = useTranslation()
+  const [knowledgeBaseDialogOpen, setKnowledgeBaseDialogOpen] = React.useState(false)
+  const hasKnowledgeBaseSources = React.useMemo(() => sources.some(isKnowledgeBaseSource), [sources])
+
   return (
+    <>
     <FilterableSelectPopover
       open={open}
       onOpenChange={onOpenChange}
@@ -33,6 +43,21 @@ export function SourceSelectorPopover({
       getLabel={(source) => source.config.name}
       isSelected={(source) => selectedSlugs.includes(source.config.slug)}
       onToggle={(source) => onToggleSlug(source.config.slug)}
+      header={hasKnowledgeBaseSources ? (
+        <div className="border-b border-border/50 p-1">
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-[6px] px-3 py-2 text-left text-[13px] hover:bg-foreground/5"
+            onClick={() => {
+              onOpenChange(false)
+              setKnowledgeBaseDialogOpen(true)
+            }}
+          >
+            <Library className="h-4 w-4 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{t('chat.loadKnowledgeBase')}</span>
+          </button>
+        </div>
+      ) : undefined}
       filterPlaceholder="Search sources..."
       emptyState={(
         <>
@@ -70,5 +95,13 @@ export function SourceSelectorPopover({
         </div>
       )}
     />
+    <KnowledgeBaseLoadDialog
+      open={knowledgeBaseDialogOpen}
+      onOpenChange={setKnowledgeBaseDialogOpen}
+      sources={sources}
+      selectedSlugs={selectedSlugs}
+      onChangeSlugs={onChangeSlugs}
+    />
+    </>
   )
 }

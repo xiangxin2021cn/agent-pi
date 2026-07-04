@@ -68,9 +68,6 @@ const ATTACHMENT_DIALOG_MAX_FILES = 250
 
 const ATTACHMENT_DIALOG_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
-  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'] },
-  { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'txt', 'md', 'rtf'] },
-  { name: 'Code', extensions: ['js', 'ts', 'tsx', 'jsx', 'py', 'json', 'css', 'html', 'xml', 'yaml', 'yml', 'sh', 'sql', 'go', 'rs', 'rb', 'php', 'java', 'c', 'cpp', 'h', 'swift', 'kt'] },
 ]
 
 export function buildAttachmentDialogSpec(mode: AttachmentDialogMode = 'files') {

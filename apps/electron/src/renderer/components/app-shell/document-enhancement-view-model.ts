@@ -1,4 +1,4 @@
-import type { SessionDocumentPlan, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalState } from '@craft-agent/shared/sessions'
 
 type Translate = (key: string, values?: Record<string, unknown>) => string
 
@@ -8,6 +8,12 @@ export interface DocumentEnhancementViewModel {
   chips: string[]
   tooltip: string
   source: 'draft' | 'contract'
+}
+
+export interface DocumentPlanDetailItem {
+  id: 'evidenceMatrix' | 'deliveryReview' | 'visualAudit' | 'templateAudit' | 'exportAudit' | 'agentPlan' | 'agentReview'
+  label: string
+  value: string
 }
 
 const DOCUMENT_TASK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|简报|PPT|幻灯片|word|docx|pptx|pdf|report|proposal|document|summary|analysis|review|plan|manual|brief|slides?/i
@@ -27,7 +33,7 @@ export function getDocumentEnhancementViewModel(
   const contract = options.goalState?.taskContract
   const plan = contract?.documentPlan
   if (plan) {
-    return buildContractViewModel(t, plan, contract.forbiddenShortcuts)
+    return buildContractViewModel(t, plan, contract.forbiddenShortcuts, contract.documentQualityMode)
   }
 
   const input = options.input?.trim() ?? ''
@@ -46,7 +52,7 @@ export function getDocumentPlanStatusText(
   const plan = contract?.documentPlan
   if (!plan) return undefined
 
-  const chips = getPlanChips(t, plan, contract.forbiddenShortcuts)
+  const chips = getPlanChips(t, plan, contract.forbiddenShortcuts, contract.documentQualityMode)
   if (chips.length === 0) {
     return t('sessionInfo.documentPlanEnabled', { defaultValue: 'Task contract enabled' })
   }
@@ -55,6 +61,79 @@ export function getDocumentPlanStatusText(
     items: chips.join(' / '),
     defaultValue: `${chips.join(' / ')} enabled`,
   })
+}
+
+export function getDocumentPlanDetailItems(
+  t: Translate,
+  goalState?: SessionGoalState,
+): DocumentPlanDetailItem[] {
+  const plan = goalState?.taskContract?.documentPlan
+  if (!plan) return []
+
+  const details: DocumentPlanDetailItem[] = []
+  const evidenceSources = compactDisplayList((plan.evidenceMatrix ?? []).map(entry => entry.source))
+  if (evidenceSources) {
+    details.push({
+      id: 'evidenceMatrix',
+      label: t('sessionInfo.documentPlanEvidenceMatrix', { defaultValue: '证据矩阵' }),
+      value: evidenceSources,
+    })
+  }
+
+  const deliveryGates = compactDisplayList((plan.deliveryReviewPlan?.gates ?? []).map(gate => gate.id))
+  if (deliveryGates) {
+    details.push({
+      id: 'deliveryReview',
+      label: t('sessionInfo.documentPlanDeliveryReview', { defaultValue: '交付门槛' }),
+      value: deliveryGates,
+    })
+  }
+
+  const visualKinds = compactDisplayList(plan.visualPlan?.selectedKinds ?? [])
+  if (visualKinds) {
+    details.push({
+      id: 'visualAudit',
+      label: t('sessionInfo.documentPlanVisualAudit', { defaultValue: '图表审查' }),
+      value: visualKinds,
+    })
+  }
+
+  if (plan.strictTemplate) {
+    details.push({
+      id: 'templateAudit',
+      label: t('sessionInfo.documentPlanTemplateAudit', { defaultValue: '模板审计' }),
+      value: plan.templateProfileId ?? t('sessionInfo.documentPlanTemplateRequired', { defaultValue: 'required' }),
+    })
+  }
+
+  const deliveryFormats = compactDisplayList(plan.deliveryFormats ?? [])
+  if (deliveryFormats) {
+    details.push({
+      id: 'exportAudit',
+      label: t('sessionInfo.documentPlanExportAudit', { defaultValue: '导出校验' }),
+      value: deliveryFormats,
+    })
+  }
+
+  const agentAssignments = compactDisplayList((plan.agentPlan?.assignments ?? []).map(assignment => assignment.title))
+  if (agentAssignments) {
+    details.push({
+      id: 'agentPlan',
+      label: t('sessionInfo.documentPlanChapterAgents', { defaultValue: '章节智能体' }),
+      value: agentAssignments,
+    })
+  }
+
+  const agentReview = formatAgentReviewDetail(t, plan.agentPlan)
+  if (agentReview) {
+    details.push({
+      id: 'agentReview',
+      label: t('sessionInfo.documentPlanAgentReview', { defaultValue: '统稿与评审' }),
+      value: agentReview,
+    })
+  }
+
+  return details.slice(0, 7)
 }
 
 function shouldShowDraftHint(input: string): boolean {
@@ -70,17 +149,24 @@ function buildContractViewModel(
   t: Translate,
   plan: SessionDocumentPlan,
   forbiddenShortcuts: readonly string[] | undefined,
+  documentQualityMode: SessionDocumentQualityMode | undefined,
 ): DocumentEnhancementViewModel {
-  const chips = getPlanChips(t, plan, forbiddenShortcuts)
+  const chips = getPlanChips(t, plan, forbiddenShortcuts, documentQualityMode)
+  const modeLabel = getDocumentQualityModeLabel(t, documentQualityMode)
   return {
     title: t('sessionInfo.documentEnhancement', { defaultValue: '文档增强' }),
     summary: t('sessionInfo.documentEnhancementContractSummary', {
       defaultValue: '任务契约已启用，文档任务将按章节、表格、图表、引用和交付格式审查。',
     }),
     chips,
-    tooltip: t('sessionInfo.documentEnhancementContractTooltip', {
-      defaultValue: 'Document Plan 已进入当前会话的任务契约，Goal Loop 会按这些约束审查后续输出。',
-    }),
+    tooltip: modeLabel
+      ? t('sessionInfo.documentEnhancementContractModeTooltip', {
+          mode: modeLabel,
+          defaultValue: `${modeLabel}：Document Plan 已进入当前会话的任务契约，Goal Loop 会按这些约束审查后续输出。`,
+        })
+      : t('sessionInfo.documentEnhancementContractTooltip', {
+          defaultValue: 'Document Plan 已进入当前会话的任务契约，Goal Loop 会按这些约束审查后续输出。',
+        }),
     source: 'contract',
   }
 }
@@ -116,12 +202,17 @@ function getPlanChips(
   t: Translate,
   plan: SessionDocumentPlan,
   forbiddenShortcuts: readonly string[] | undefined,
+  documentQualityMode?: SessionDocumentQualityMode,
 ): string[] {
   const chips: string[] = []
+  const modeLabel = getDocumentQualityModeLabel(t, documentQualityMode)
+  if (modeLabel) chips.push(modeLabel)
   if ((plan.sections ?? []).length > 0) chips.push(t('sessionInfo.documentPlanSections', { defaultValue: '章节' }))
+  if ((plan.agentPlan?.assignments ?? []).length > 0) chips.push(t('sessionInfo.documentPlanChapterAgents', { defaultValue: '章节智能体' }))
   if ((plan.tables ?? []).length > 0) chips.push(t('sessionInfo.documentPlanTables', { defaultValue: '表格' }))
   if ((plan.charts ?? []).length > 0) chips.push(t('sessionInfo.documentPlanCharts', { defaultValue: '图表' }))
   addProfessionalVisualChips(t, plan, chips)
+  if ((plan.evidenceMatrix ?? []).length > 0) chips.push(t('sessionInfo.documentPlanEvidenceMatrix', { defaultValue: '证据矩阵' }))
   if ((plan.citations ?? []).length > 0) chips.push(t('sessionInfo.documentPlanCitations', { defaultValue: '引用' }))
   if ((plan.deliveryFormats ?? []).length > 0) chips.push(t('sessionInfo.documentPlanFormats', { defaultValue: '交付格式' }))
   if (hasNoFabricationRule(plan, forbiddenShortcuts)) {
@@ -137,6 +228,23 @@ function getPlanChips(
     chips.push(t('sessionInfo.documentPlanExportAudit', { defaultValue: '导出校验' }))
   }
   return unique(chips).slice(0, 12)
+}
+
+function getDocumentQualityModeLabel(
+  t: Translate,
+  mode: SessionDocumentQualityMode | undefined,
+): string | undefined {
+  switch (mode) {
+    case 'professional_document':
+      return t('sessionInfo.documentQualityModeProfessional', { defaultValue: '专业文档' })
+    case 'strict_delivery':
+      return t('sessionInfo.documentQualityModeStrictDelivery', { defaultValue: '严格交付' })
+    case 'multi_agent_deep':
+      return t('sessionInfo.documentQualityModeMultiAgentDeep', { defaultValue: '多智能体深度' })
+    case 'quick':
+    case undefined:
+      return undefined
+  }
 }
 
 function addProfessionalVisualChips(t: Translate, plan: SessionDocumentPlan, chips: string[]): void {
@@ -169,4 +277,31 @@ function hasNoFabricationRule(
 
 function unique(items: string[]): string[] {
   return [...new Set(items.map(item => item.trim()).filter(Boolean))]
+}
+
+function compactDisplayList(items: string[], maxItems = 3): string | undefined {
+  const values = unique(items).slice(0, maxItems)
+  if (values.length === 0) return undefined
+  return values.join(' · ')
+}
+
+function formatAgentReviewDetail(
+  t: Translate,
+  agentPlan: SessionDocumentPlan['agentPlan'] | undefined,
+): string | undefined {
+  if (!agentPlan) return undefined
+
+  const parts = [
+    `${t('sessionInfo.documentPlanFinalSynthesisOwner', { defaultValue: '最终统稿' })}: ${agentPlan.finalSynthesisOwner}`,
+  ]
+
+  if (agentPlan.reviewStages.length > 0) {
+    const reviewStageLabel = t('sessionInfo.documentPlanReviewStageCount', {
+      count: agentPlan.reviewStages.length,
+      defaultValue: `${agentPlan.reviewStages.length}项评审`,
+    })
+    parts.push(`${reviewStageLabel}: ${agentPlan.reviewStages[0]}`)
+  }
+
+  return parts.join(' · ')
 }

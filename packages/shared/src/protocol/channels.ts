@@ -244,6 +244,7 @@ export const RPC_CHANNELS = {
   sources: {
     GET: 'sources:get',
     CREATE: 'sources:create',
+    CREATE_KNOWLEDGE_BASE_FILE_SOURCE: 'sources:createKnowledgeBaseFileSource',
     INSTALL_RECOMMENDED: 'sources:installRecommended',
     DELETE: 'sources:delete',
     START_OAUTH: 'sources:startOAuth',

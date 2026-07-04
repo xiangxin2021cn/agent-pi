@@ -52,6 +52,7 @@ import { parsePermissionMode } from '@craft-agent/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
 import { buildSemanticHistoryKey, canRunInitialRestore } from './navigation-history'
+import { getSourceRouteForNavigation } from '@/lib/nav-helpers'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -1167,20 +1168,7 @@ export function NavigationProvider({
   // =========================================================================
 
   const navigateToSource = useCallback((sourceSlug?: string) => {
-    if (isSourcesNavigation(navigationState) && navigationState.filter?.kind === 'type') {
-      switch (navigationState.filter.sourceType) {
-        case 'api':
-          navigate(routes.view.sourcesApi(sourceSlug))
-          return
-        case 'mcp':
-          navigate(routes.view.sourcesMcp(sourceSlug))
-          return
-        case 'local':
-          navigate(routes.view.sourcesLocal(sourceSlug))
-          return
-      }
-    }
-    navigate(routes.view.sources(sourceSlug ? { sourceSlug } : undefined))
+    navigate(getSourceRouteForNavigation(navigationState, sourceSlug))
   }, [navigationState, navigate])
 
   const navigateToSession = useCallback((sessionId: string) => {

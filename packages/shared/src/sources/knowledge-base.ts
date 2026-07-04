@@ -15,6 +15,7 @@ export interface KnowledgeBaseSourceMetadata {
   sourceKind: 'file-memory';
   fileExtension?: KnowledgeBaseFileExtension;
   sourceFilePath?: string;
+  originalSourceFilePath?: string;
   tags?: string[];
   owner?: string;
   createdAt?: number;

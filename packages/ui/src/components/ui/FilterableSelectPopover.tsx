@@ -18,6 +18,7 @@ export interface FilterableSelectPopoverProps<T> {
   isSelected: (item: T) => boolean
   onToggle: (item: T) => void
   renderItem?: (item: T, state: FilterableSelectRenderState, index: number) => React.ReactNode
+  header?: React.ReactNode
   filterPlaceholder?: string
   emptyState?: React.ReactNode
   noResultsState?: React.ReactNode
@@ -43,6 +44,7 @@ export function FilterableSelectPopover<T>({
   isSelected,
   onToggle,
   renderItem,
+  header,
   filterPlaceholder,
   emptyState,
   noResultsState,
@@ -184,6 +186,8 @@ export function FilterableSelectPopover<T>({
                 className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground placeholder:select-none"
               />
             </div>
+
+            {header}
 
             <div ref={listRef} className="max-h-[240px] overflow-y-auto p-1">
               {!hasResults ? (

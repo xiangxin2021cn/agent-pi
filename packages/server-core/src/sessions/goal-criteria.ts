@@ -1,7 +1,7 @@
 import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
 import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
 import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
-import type { SessionDocumentPlan, SessionGoalCriterion, SessionGoalMode, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
+import type { SessionDocumentAgentPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
 
@@ -10,6 +10,7 @@ export interface BuildGoalCriteriaInput {
   storedAttachments?: StoredAttachment[]
   badges?: ContentBadge[]
   workingDirectory?: string
+  documentQualityMode?: SessionDocumentQualityMode
 }
 
 export interface GoalExecutionPolicy {
@@ -49,7 +50,7 @@ const CODE_CHANGE_SURFACE_PATTERN = /代码|源码|应用|程序|前端|后端|�
 const OUTPUT_FILE_REQUEST_PATTERN = /(?:生成|输出|导出|保存|写入|创建|另存|转换|generate|create|write|save|export|convert).{0,80}(?:文件|file|pdf|word|excel|markdown|md|docx?|xlsx?|pptx?|csv|html?|json|txt|\.pdf|\.md|\.docx?|\.xlsx?|\.pptx?|\.csv|\.html?|\.json|\.txt)/i
 const TOOL_VERIFICATION_REQUEST_PATTERN = /(?:运行|执行|跑|\b(?:run|execute)\b).{0,60}(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b)|(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build)\b).{0,40}(?:通过|成功|\b(?:pass|green|clean)\b)/i
 const OUTPUT_TARGET_SEGMENT_PATTERN = /(?:转换为|转换成|转为|转成|导出为|保存为|另存为|\bconvert\b.{0,60}\b(?:to|into|as)\b|\bexport\b.{0,60}\b(?:to|as)\b|\bsave\b.{0,60}\bas\b)(.{0,80})/i
-const EXPLICIT_REQUIREMENT_INTRO_PATTERN = /(?:必须包含|需要包含|应包含|至少包含|包含以下|包括以下|输出要求|验收标准|要求如下|requirements?|acceptance criteria|must include|should include|include the following)\s*[:：]?\s*([\s\S]*)/i
+const EXPLICIT_REQUIREMENT_INTRO_PATTERN = /(?:必须包含|需要包含|应包含|至少包含|包含以下|包括以下|输出要求|验收标准|要求(?:如下)?|requirements?|acceptance criteria|must include|should include|include the following)\s*[:：]?\s*([\s\S]*)/i
 const EXPLICIT_REQUIREMENT_ITEM_PATTERN = /^\s*(?:[-*•]|\d+[.)、]|[一二三四五六七八九十]+[、.．]|[a-z][.)])\s*(.+)$/i
 const DOCUMENT_AUDIENCE_PATTERN = /(?:面向|给|for)\s*([^，。,.；;\n]{2,40})(?:使用|阅读|汇报|生成|输出|制作|看的|$)/i
 const DOCUMENT_TONE_PATTERN = /(?:语气|风格|口吻|tone|style)\s*[:：为是]?\s*([^，。,.；;\n]{2,40})/i
@@ -60,6 +61,9 @@ const PROFESSIONAL_VISUAL_PATTERN = /专业.*(?:图|表|报告)|甘特|wbs|基�
 const STRICT_TEMPLATE_PATTERN = /严格.{0,12}(?:模板|版式|格式|布局|字体|目录|样式)|(?:按照|按|依照|复刻|保持|匹配).{0,24}(?:上传|参考|word|docx|pdf)?.{0,24}(?:模板|版式|格式|页面布局|字体|目录层级|大纲|样式)|template.{0,24}(?:layout|style|format|fidelity|strict)|reference.{0,16}template|word模板|pdf模板/i
 const EMBEDDED_HTML_PATTERN = /html|HTML|内嵌|嵌入|embed|embedded|interactive/i
 const PROCESS_VISUAL_PATTERN = /流程|关系|架构|步骤|路径|process|workflow|architecture|relationship|diagram/i
+const PROFESSIONAL_DOCUMENT_MODE_PATTERN = /专业文档|专业报告|正式报告|正式文档|证据矩阵|章节计划|质量审查|高质量报告|professional document|professional report|evidence matrix|chapter plan|quality audit/i
+const STRICT_DELIVERY_MODE_PATTERN = /正式交付|最终交付|交付版|必须通过.{0,40}(?:来源|模板|导出|图表|格式).*审查|strict delivery|delivery gates?/i
+const MULTI_AGENT_DEEP_MODE_PATTERN = /多智能体深度|多智能体|分章节智能体|子智能体|多角色评审|大型投标|大型.{0,12}(?:工程|投标|尽调|报告)|due diligence|large tender|multi[- ]agent|sub[- ]agent|chapter agents?|role review/i
 const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'PDF', pattern: /(?:\.pdf\b|\bpdf\b)/i },
   { label: 'DOCX', pattern: /(?:\.docx?\b|\bdocx?\b|\bword\b)/i },
@@ -79,6 +83,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
   const criteria: SessionGoalCriterionSpec[] = [BASE_DELIVERABLE_CRITERION]
   const message = input.message.trim()
   const referencedNames = getReferencedNames(input)
+  const explicitQuickMode = input.documentQualityMode === 'quick'
   const isDocumentWork = DOCUMENT_WORK_PATTERN.test(message)
   const isResearchWork = RESEARCH_WORK_PATTERN.test(message)
   const isComprehensiveWork = COMPREHENSIVE_PATTERN.test(message)
@@ -110,7 +115,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if ((isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
+  if (!explicitQuickMode && (isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
     criteria.push({
       text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
@@ -118,7 +123,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (requiresVisualBlockAudit(message)) {
+  if (!explicitQuickMode && requiresVisualBlockAudit(message)) {
     criteria.push({
       text: VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
@@ -126,7 +131,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (requiresTemplateFidelityAudit(message, input.storedAttachments)) {
+  if (!explicitQuickMode && requiresTemplateFidelityAudit(message, input.storedAttachments)) {
     criteria.push({
       text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
@@ -183,16 +188,19 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
   const referencedNames = getReferencedNames(input)
   const explicitRequirements = extractExplicitUserRequirements(message)
   const outputFormats = getRequestedOutputFormats(message)
-  const taskType = getTaskContractType(message)
+  const detectedTaskType = getTaskContractType(message)
+  const taskType = getTaskContractTypeWithDocumentMode(detectedTaskType, input.documentQualityMode)
+  const documentQualityMode = input.documentQualityMode ?? getDocumentQualityMode(message, input, taskType)
   const deliverables = buildTaskContractDeliverables(message, taskType)
   const documentPlan = buildDocumentPlan({
     message,
     taskType,
+    documentQualityMode,
     referencedNames,
     explicitRequirements,
     outputFormats,
   })
-  const evidenceRequirements = buildTaskContractEvidenceRequirements(message, referencedNames, taskType)
+  const evidenceRequirements = buildTaskContractEvidenceRequirements(message, referencedNames, taskType, documentQualityMode)
   const acceptanceCriteria = buildGoalCriteriaFromMessage(input).map(criterion => `[${criterion.kind}] ${criterion.text}`)
   const mustPreserve = uniqueBounded([
     ...explicitRequirements.map(item => `Explicit requirement: ${item}`),
@@ -201,11 +209,12 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
     ...extractLocalPathMentions(message).map(item => `Path: ${item}`),
     ...extractNumericDetails(message).map(item => `Numeric/date detail: ${item}`),
   ], 16)
-  const forbiddenShortcuts = buildForbiddenShortcuts(message, taskType)
+  const forbiddenShortcuts = buildForbiddenShortcuts(message, taskType, documentQualityMode)
 
   return {
     originalRequest: message.slice(0, 4000),
     taskType,
+    documentQualityMode,
     documentPlan,
     deliverables,
     mustPreserve,
@@ -228,6 +237,7 @@ export function mergeTaskContracts(current: SessionTaskContract | undefined, nex
       ...(next.followUpRequests ?? []),
     ], 8).map(item => item.slice(0, 1200)),
     taskType: current.taskType === 'general' ? next.taskType : current.taskType,
+    documentQualityMode: mergeDocumentQualityModes(current.documentQualityMode, next.documentQualityMode),
     documentPlan: mergeDocumentPlans(current.documentPlan, next.documentPlan),
     deliverables: uniqueBounded([...current.deliverables, ...next.deliverables], 12),
     mustPreserve: uniqueBounded([...current.mustPreserve, ...next.mustPreserve], 24),
@@ -244,6 +254,7 @@ export function formatTaskContractForPrompt(contract: SessionTaskContract | unde
 
   const sections = [
     ['Task type', contract.taskType],
+    ['Document workflow mode', contract.documentQualityMode ?? 'quick'],
     ['Document plan', formatDocumentPlan(contract.documentPlan)],
     ['Original request', contract.originalRequest],
     ['Follow-up requests', formatContractList(contract.followUpRequests)],
@@ -287,6 +298,43 @@ function getTaskContractType(message: string): SessionTaskContractType {
   return 'general'
 }
 
+function getTaskContractTypeWithDocumentMode(
+  taskType: SessionTaskContractType,
+  documentQualityMode: SessionDocumentQualityMode | undefined,
+): SessionTaskContractType {
+  if (!documentQualityMode || documentQualityMode === 'quick') return taskType
+  if (taskType === 'code' || taskType === 'automation') return taskType
+  return 'document'
+}
+
+function getDocumentQualityMode(
+  message: string,
+  input: BuildGoalCriteriaInput,
+  taskType: SessionTaskContractType,
+): SessionDocumentQualityMode {
+  if (taskType === 'code' || taskType === 'automation' || taskType === 'file') return 'quick'
+
+  const referencedCount = getReferencedNames(input).length
+  const documentLike = shouldCreateDocumentPlan(message, taskType)
+
+  if (documentLike && MULTI_AGENT_DEEP_MODE_PATTERN.test(message)) return 'multi_agent_deep'
+  if (documentLike && (requiresTemplateFidelityAudit(message, input.storedAttachments) || STRICT_DELIVERY_MODE_PATTERN.test(message))) return 'strict_delivery'
+  if (
+    documentLike
+    && (
+      PROFESSIONAL_DOCUMENT_MODE_PATTERN.test(message)
+      || COMPREHENSIVE_PATTERN.test(message)
+      || PROFESSIONAL_VISUAL_PATTERN.test(message)
+      || SOURCE_SENSITIVE_PATTERN.test(message)
+      || referencedCount > 0
+    )
+  ) {
+    return 'professional_document'
+  }
+
+  return 'quick'
+}
+
 function buildTaskContractDeliverables(message: string, taskType: SessionTaskContractType): string[] {
   const deliverables: string[] = []
 
@@ -317,6 +365,7 @@ function buildTaskContractEvidenceRequirements(
   message: string,
   referencedNames: string[],
   taskType: SessionTaskContractType,
+  documentQualityMode: SessionDocumentQualityMode,
 ): string[] {
   const requirements: string[] = []
 
@@ -337,6 +386,15 @@ function buildTaskContractEvidenceRequirements(
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {
     requirements.push('Create visual enhancements only from verified source data; if data is unavailable, state that the visualization cannot be supported.')
   }
+  if (documentQualityMode === 'professional_document' || documentQualityMode === 'strict_delivery' || documentQualityMode === 'multi_agent_deep') {
+    requirements.push('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
+  }
+  if (documentQualityMode === 'strict_delivery') {
+    requirements.push('Pass strict delivery gates for sources, template fidelity, exports, visuals, and final formatting before claiming completion.')
+  }
+  if (documentQualityMode === 'multi_agent_deep') {
+    requirements.push('Use chapter-level or discipline-level evidence coverage and resolve cross-chapter inconsistencies before final synthesis.')
+  }
 
   return uniqueBounded(requirements, 8)
 }
@@ -344,6 +402,7 @@ function buildTaskContractEvidenceRequirements(
 function buildDocumentPlan(input: {
   message: string
   taskType: SessionTaskContractType
+  documentQualityMode: SessionDocumentQualityMode
   referencedNames: string[]
   explicitRequirements: string[]
   outputFormats: string[]
@@ -357,7 +416,22 @@ function buildDocumentPlan(input: {
   const charts = buildDocumentPlanCharts(input.message, input.explicitRequirements)
   const visualPlan = buildVisualPlan(input.message)
   const strictTemplate = requiresTemplateFidelityAudit(input.message)
-  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate)
+  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate, input.documentQualityMode)
+  const agentPlan = buildDocumentAgentPlan(input.documentQualityMode, sections, input.message, input.taskType)
+  const evidenceMatrix = buildDocumentEvidenceMatrix({
+    documentQualityMode: input.documentQualityMode,
+    referencedNames: input.referencedNames,
+    message: input.message,
+    taskType: input.taskType,
+  })
+  const deliveryReviewPlan = buildDocumentDeliveryReviewPlan({
+    documentQualityMode: input.documentQualityMode,
+    message: input.message,
+    strictTemplate,
+    outputFormats: input.outputFormats,
+    visualPlan,
+    charts,
+  })
   const citations = input.referencedNames.length > 0
     ? input.referencedNames.map(name => `Cite or reference ${name} where it supports key facts.`)
     : SOURCE_SENSITIVE_PATTERN.test(input.message)
@@ -371,6 +445,9 @@ function buildDocumentPlan(input: {
     length: extractFirstMatch(input.message, DOCUMENT_LENGTH_PATTERN),
     domain: detectDocumentDomain(input.message),
     visualPlan,
+    agentPlan,
+    evidenceMatrix,
+    deliveryReviewPlan,
     templateProfileId: strictTemplate ? 'pending-template-profile' : undefined,
     strictTemplate: strictTemplate || undefined,
     sections,
@@ -440,9 +517,19 @@ function buildDocumentPlanCharts(message: string, explicitRequirements: string[]
   return uniqueBounded(charts, 8)
 }
 
-function buildDocumentPlanEnhancements(message: string, tables: string[], charts: string[], visualPlan: VisualPlan | undefined, strictTemplate: boolean): string[] {
+function buildDocumentPlanEnhancements(
+  message: string,
+  tables: string[],
+  charts: string[],
+  visualPlan: VisualPlan | undefined,
+  strictTemplate: boolean,
+  documentQualityMode: SessionDocumentQualityMode,
+): string[] {
   const enhancements: string[] = []
 
+  if (documentQualityMode !== 'quick') {
+    enhancements.push(`Use document workflow mode ${documentQualityMode} to drive the contract, evidence matrix, chapter plan, and quality audit depth.`)
+  }
   if (visualPlan && visualPlan.selectedKinds.length > 0) {
     enhancements.push('Render required professional visuals from verified data and include captions, source notes, and audit reasons.')
   }
@@ -465,6 +552,148 @@ function buildDocumentPlanEnhancements(message: string, tables: string[], charts
   return uniqueBounded(enhancements, 8)
 }
 
+function buildDocumentEvidenceMatrix(input: {
+  documentQualityMode: SessionDocumentQualityMode
+  referencedNames: string[]
+  message: string
+  taskType: SessionTaskContractType
+}): SessionDocumentEvidenceMatrixEntry[] | undefined {
+  if (input.documentQualityMode === 'quick') return undefined
+
+  const sources = uniqueBounded(input.referencedNames, 6)
+  if (sources.length > 0) {
+    return sources.map((source, index) => ({
+      id: `evidence-source-${index + 1}`,
+      source,
+      sourceType: 'file',
+      supports: 'Source-backed claims, required sections, tables, visuals, and unresolved evidence gaps.',
+      reliabilityNote: 'User-provided file; cite page, clause, table, figure, sheet, or extracted text before using claims as verified.',
+      citationFields: ['source', 'locator', 'claim', 'excerpt_or_value', 'reliability_note'],
+      reuseStatus: 'candidate',
+    }))
+  }
+
+  if (SOURCE_SENSITIVE_PATTERN.test(input.message) || input.taskType === 'research') {
+    return [{
+      id: 'evidence-source-1',
+      source: 'Pending source evidence',
+      sourceType: 'assumption',
+      supports: 'Claims that still need uploaded files, external search results, or explicit user evidence.',
+      reliabilityNote: 'Do not treat as verified until a source is attached, searched, or explicitly provided.',
+      citationFields: ['source', 'locator', 'claim', 'excerpt_or_value', 'reliability_note'],
+      reuseStatus: 'pending',
+    }]
+  }
+
+  return undefined
+}
+
+function buildDocumentDeliveryReviewPlan(input: {
+  documentQualityMode: SessionDocumentQualityMode
+  message: string
+  strictTemplate: boolean
+  outputFormats: string[]
+  visualPlan: VisualPlan | undefined
+  charts: string[]
+}): SessionDocumentDeliveryReviewPlan | undefined {
+  if (input.documentQualityMode !== 'strict_delivery') return undefined
+
+  const gates: SessionDocumentDeliveryGate[] = [{
+    id: 'source_integrity',
+    requirement: 'Source-backed claims, tables, and visuals must cite evidence or mark unavailable evidence as pending.',
+    evidence: 'Evidence matrix entries with locators, excerpts, values, or unresolved-gap notes.',
+  }]
+
+  if (input.strictTemplate) {
+    gates.push({
+      id: 'template_fidelity',
+      requirement: 'Uploaded or referenced template layout, styles, headings, and pagination constraints must be verified.',
+      evidence: 'Parsed template profile and exported DOCX/PDF structure evidence.',
+    })
+  }
+
+  if (input.outputFormats.length > 0) {
+    gates.push({
+      id: 'export_files',
+      requirement: 'Every requested delivery format must be produced as a verifiable output file.',
+      evidence: `Verified output files for ${input.outputFormats.join(', ')}.`,
+    })
+  }
+
+  if ((input.visualPlan?.selectedKinds ?? []).length > 0 || input.charts.length > 0 || VISUAL_ENHANCEMENT_PATTERN.test(input.message)) {
+    gates.push({
+      id: 'visual_evidence',
+      requirement: 'Charts, figures, diagrams, and visual blocks must be backed by source data or explicit user input.',
+      evidence: 'Chart specs, source tables, captions, and source notes for each visual.',
+    })
+  }
+
+  gates.push({
+    id: 'format_review',
+    requirement: 'Final artifact structure, headings, tables, captions, and visible formatting must be reviewed before completion.',
+    evidence: 'Rendered preview, exported file inspection, or documented manual review findings.',
+  })
+
+  return {
+    mode: 'strict_delivery',
+    failureAction: 'needs_review_or_auto_improve',
+    gates,
+  }
+}
+
+function buildDocumentAgentPlan(
+  documentQualityMode: SessionDocumentQualityMode,
+  sections: string[],
+  message: string,
+  taskType: SessionTaskContractType,
+): SessionDocumentAgentPlan | undefined {
+  if (documentQualityMode !== 'multi_agent_deep') return undefined
+
+  const baseTitles = sections.filter(section => !/table of contents|appendix|目录|附录/i.test(section) && !isFinalSynthesisInstruction(section))
+  const titles = uniqueBounded(baseTitles.length > 0 ? baseTitles : buildDocumentPlanSections(message, [], taskType), 8)
+
+  return {
+    mode: 'chapter_agents',
+    finalSynthesisOwner: 'final_synthesis_owner',
+    assignments: titles.map((title, index) => ({
+      id: `chapter-agent-${index + 1}`,
+      title,
+      role: getChapterAgentRole(title),
+      reviewFocus: getChapterAgentReviewFocus(title),
+    })),
+    reviewStages: [
+      'Chapter evidence review before synthesis.',
+      'Cross-chapter consistency review before final synthesis.',
+      'Final deliverable review by the final synthesis owner.',
+    ],
+    guardrails: [
+      'Each chapter agent must list source gaps and unresolved assumptions before handoff.',
+      'Only the final synthesis owner may write or replace the final deliverable after chapter drafts are reviewed.',
+      'Do not merge conflicting chapter claims without a recorded resolution.',
+    ],
+  }
+}
+
+function isFinalSynthesisInstruction(value: string): boolean {
+  return /最终.{0,16}合成|总编|统一合成|final synthesis|synthesis owner/i.test(value)
+}
+
+function getChapterAgentRole(title: string): string {
+  if (/进度|计划|甘特|wbs|schedule|programme|program|gantt/i.test(title)) return 'schedule_chapter_agent'
+  if (/成本|报价|投资|商务|风险|boq|cost|price|investment|commercial|risk/i.test(title)) return 'commercial_risk_agent'
+  if (/技术|设计|施工|方案|工程|technical|design|method|construction/i.test(title)) return 'technical_chapter_agent'
+  if (/证据|来源|引用|概况|背景|source|evidence|citation|overview|background/i.test(title)) return 'source_evidence_agent'
+  return 'document_chapter_agent'
+}
+
+function getChapterAgentReviewFocus(title: string): string {
+  if (/进度|计划|甘特|wbs|schedule|programme|program|gantt/i.test(title)) return 'schedule logic, milestones, dependencies, and critical-path consistency'
+  if (/成本|报价|投资|商务|风险|boq|cost|price|investment|commercial|risk/i.test(title)) return 'commercial assumptions, cost evidence, risks, and unresolved sensitivities'
+  if (/技术|设计|施工|方案|工程|technical|design|method|construction/i.test(title)) return 'technical completeness, method feasibility, and source-backed constraints'
+  if (/证据|来源|引用|概况|背景|source|evidence|citation|overview|background/i.test(title)) return 'source coverage, scope boundaries, and citation completeness'
+  return 'chapter completeness, evidence grounding, and handoff notes'
+}
+
 function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: SessionDocumentPlan | undefined): SessionDocumentPlan | undefined {
   if (!current) return next
   if (!next) return current
@@ -476,6 +705,9 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     length: current.length ?? next.length,
     domain: current.domain ?? next.domain,
     visualPlan: mergeVisualPlans(current.visualPlan, next.visualPlan),
+    agentPlan: mergeDocumentAgentPlans(current.agentPlan, next.agentPlan),
+    evidenceMatrix: mergeDocumentEvidenceMatrix(current.evidenceMatrix, next.evidenceMatrix),
+    deliveryReviewPlan: mergeDocumentDeliveryReviewPlans(current.deliveryReviewPlan, next.deliveryReviewPlan),
     templateProfileId: current.templateProfileId ?? next.templateProfileId,
     strictTemplate: current.strictTemplate || next.strictTemplate || undefined,
     sections: uniqueBounded([...current.sections, ...next.sections], 24),
@@ -485,6 +717,85 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     citations: uniqueBounded([...current.citations, ...next.citations], 12),
     deliveryFormats: uniqueBounded([...current.deliveryFormats, ...next.deliveryFormats], 8),
   }
+}
+
+function mergeDocumentDeliveryReviewPlans(
+  current: SessionDocumentDeliveryReviewPlan | undefined,
+  next: SessionDocumentDeliveryReviewPlan | undefined,
+): SessionDocumentDeliveryReviewPlan | undefined {
+  if (!current) return next
+  if (!next) return current
+
+  return {
+    mode: 'strict_delivery',
+    failureAction: 'needs_review_or_auto_improve',
+    gates: uniqueDeliveryGates([...current.gates, ...next.gates], 8),
+  }
+}
+
+function uniqueDeliveryGates(gates: SessionDocumentDeliveryGate[], maxItems: number): SessionDocumentDeliveryGate[] {
+  const seen = new Set<string>()
+  const output: SessionDocumentDeliveryGate[] = []
+  for (const gate of gates) {
+    if (seen.has(gate.id)) continue
+    seen.add(gate.id)
+    output.push(gate)
+    if (output.length >= maxItems) break
+  }
+  return output
+}
+
+function mergeDocumentEvidenceMatrix(
+  current: SessionDocumentEvidenceMatrixEntry[] | undefined,
+  next: SessionDocumentEvidenceMatrixEntry[] | undefined,
+): SessionDocumentEvidenceMatrixEntry[] | undefined {
+  if (!current || current.length === 0) return next
+  if (!next || next.length === 0) return current
+
+  const seen = new Set<string>()
+  const entries: SessionDocumentEvidenceMatrixEntry[] = []
+  for (const entry of [...current, ...next]) {
+    const sourceKey = entry.source.trim().toLowerCase()
+    if (!sourceKey) continue
+    const key = `${entry.sourceType}\u0000${sourceKey}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    entries.push(entry)
+    if (entries.length >= 12) break
+  }
+  return entries
+}
+
+function mergeDocumentAgentPlans(
+  current: SessionDocumentAgentPlan | undefined,
+  next: SessionDocumentAgentPlan | undefined,
+): SessionDocumentAgentPlan | undefined {
+  if (!current) return next
+  if (!next) return current
+
+  return {
+    mode: 'chapter_agents',
+    finalSynthesisOwner: current.finalSynthesisOwner || next.finalSynthesisOwner,
+    assignments: uniqueAssignmentList([...current.assignments, ...next.assignments], 12),
+    reviewStages: uniqueBounded([...current.reviewStages, ...next.reviewStages], 8),
+    guardrails: uniqueBounded([...current.guardrails, ...next.guardrails], 8),
+  }
+}
+
+function uniqueAssignmentList(
+  assignments: SessionDocumentAgentPlan['assignments'],
+  maxItems: number,
+): SessionDocumentAgentPlan['assignments'] {
+  const seen = new Set<string>()
+  const output: SessionDocumentAgentPlan['assignments'] = []
+  for (const assignment of assignments) {
+    const key = assignment.title.trim().toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    output.push(assignment)
+    if (output.length >= maxItems) break
+  }
+  return output
 }
 
 function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
@@ -498,6 +809,9 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Strict template: ${plan.strictTemplate ? 'yes' : 'no'}`,
     `Template profile: ${plan.templateProfileId ?? '(none)'}`,
     `Visual plan:\n${formatVisualPlan(plan.visualPlan)}`,
+    `Document agent plan:\n${formatDocumentAgentPlan(plan.agentPlan)}`,
+    `Evidence matrix:\n${formatDocumentEvidenceMatrix(plan.evidenceMatrix)}`,
+    `Delivery review plan:\n${formatDocumentDeliveryReviewPlan(plan.deliveryReviewPlan)}`,
     `Sections:\n${formatContractList(plan.sections)}`,
     `Tables:\n${formatContractList(plan.tables)}`,
     `Charts:\n${formatContractList(plan.charts)}`,
@@ -507,12 +821,43 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
   ].join('\n')
 }
 
+function formatDocumentDeliveryReviewPlan(plan: SessionDocumentDeliveryReviewPlan | undefined): string {
+  if (!plan) return '(none)'
+  return [
+    `Mode: ${plan.mode}`,
+    `Failure action: ${plan.failureAction}`,
+    `Gates:\n${formatContractList(plan.gates.map(gate => `${gate.id} requires ${gate.requirement} Evidence: ${gate.evidence}`))}`,
+  ].join('\n')
+}
+
+function formatDocumentEvidenceMatrix(entries: SessionDocumentEvidenceMatrixEntry[] | undefined): string {
+  if (!entries || entries.length === 0) return '(none)'
+  return formatContractList(entries.map(entry =>
+    `${entry.source} [${entry.sourceType}] supports ${entry.supports} Reliability: ${entry.reliabilityNote} Citation fields: ${entry.citationFields.join(', ')} Reuse: ${entry.reuseStatus}`
+  ))
+}
+
+function formatDocumentAgentPlan(plan: SessionDocumentAgentPlan | undefined): string {
+  if (!plan) return '(none)'
+  return [
+    `Mode: ${plan.mode}`,
+    `Final synthesis owner: ${plan.finalSynthesisOwner}`,
+    `Assignments:\n${formatContractList(plan.assignments.map(assignment => `${assignment.title} - ${assignment.role} - ${assignment.reviewFocus}`))}`,
+    `Review stages:\n${formatContractList(plan.reviewStages)}`,
+    `Guardrails:\n${formatContractList(plan.guardrails)}`,
+  ].join('\n')
+}
+
 function extractFirstMatch(message: string, pattern: RegExp): string | undefined {
   const value = message.match(pattern)?.[1]?.trim()
   return value || undefined
 }
 
-function buildForbiddenShortcuts(message: string, taskType: SessionTaskContractType): string[] {
+function buildForbiddenShortcuts(
+  message: string,
+  taskType: SessionTaskContractType,
+  documentQualityMode: SessionDocumentQualityMode,
+): string[] {
   const shortcuts: string[] = [
     'Do not silently simplify, summarize away, or omit explicit user requirements.',
     'Do not claim completion without evidence for requested files, checks, or source-backed facts.',
@@ -530,11 +875,30 @@ function buildForbiddenShortcuts(message: string, taskType: SessionTaskContractT
   if (requiresTemplateFidelityAudit(message)) {
     shortcuts.push('Do not claim template fidelity from prompt wording alone; strict template mode requires a parsed template profile and export evidence.')
   }
+  if (documentQualityMode === 'multi_agent_deep') {
+    shortcuts.push('Do not let multiple agents write the same final artifact concurrently; use one final synthesis owner.')
+  }
   if (taskType === 'code') {
     shortcuts.push('Do not refactor unrelated code or skip verification when the user asked for an implementation fix.')
   }
 
   return uniqueBounded(shortcuts, 8)
+}
+
+function mergeDocumentQualityModes(
+  current: SessionDocumentQualityMode | undefined,
+  next: SessionDocumentQualityMode | undefined,
+): SessionDocumentQualityMode | undefined {
+  if (!current) return next
+  if (!next) return current
+
+  const rank: Record<SessionDocumentQualityMode, number> = {
+    quick: 0,
+    professional_document: 1,
+    strict_delivery: 2,
+    multi_agent_deep: 3,
+  }
+  return rank[next] > rank[current] ? next : current
 }
 
 function requiresVisualBlockAudit(message: string): boolean {
@@ -566,14 +930,19 @@ function buildVisualPlan(message: string): VisualPlan | undefined {
     ? opportunities.map(opportunity => opportunity.recommendedKind)
     : fallbackVisualKinds(message)
 
+  const auditRequirements = [
+    'Every professional visual must have verified data, a caption, a source note, and an audit reason.',
+    'If required data is unavailable, the output must state the missing data instead of drawing an unsupported visual.',
+  ]
+  if (selectedKinds.includes('construction-gantt') && /A3\s*横向|A3\s*landscape/i.test(message)) {
+    auditRequirements.push('Construction Gantt visuals requested as A3 landscape must preserve A3 landscape page intent in the rendered asset or caption metadata.')
+  }
+
   return {
     mode: 'professional',
     opportunities,
     selectedKinds: uniqueBounded(selectedKinds, 8) as VisualPlan['selectedKinds'],
-    auditRequirements: [
-      'Every professional visual must have verified data, a caption, a source note, and an audit reason.',
-      'If required data is unavailable, the output must state the missing data instead of drawing an unsupported visual.',
-    ],
+    auditRequirements,
   }
 }
 
@@ -638,17 +1007,28 @@ function uniqueBounded(items: string[], limit: number): string[] {
 
 export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInput): GoalExecutionPolicy {
   const message = input.message.trim()
+  const explicitQuickMode = input.documentQualityMode === 'quick'
   let maxIterations = 2
   let maxWallClockMs = 15 * 60 * 1000
 
-  if ((input.storedAttachments?.length ?? 0) > 0 && (DOCUMENT_WORK_PATTERN.test(message) || SOURCE_SENSITIVE_PATTERN.test(message))) {
+  if (!explicitQuickMode && (input.storedAttachments?.length ?? 0) > 0 && (DOCUMENT_WORK_PATTERN.test(message) || SOURCE_SENSITIVE_PATTERN.test(message))) {
     maxIterations = 3
     maxWallClockMs = 30 * 60 * 1000
   }
 
-  if (COMPREHENSIVE_PATTERN.test(message)) {
+  if (!explicitQuickMode && COMPREHENSIVE_PATTERN.test(message)) {
     maxIterations = 3
     maxWallClockMs = 30 * 60 * 1000
+  }
+
+  if (input.documentQualityMode === 'professional_document') {
+    maxIterations = Math.max(maxIterations, 3)
+    maxWallClockMs = Math.max(maxWallClockMs, 30 * 60 * 1000)
+  }
+
+  if (input.documentQualityMode === 'strict_delivery' || input.documentQualityMode === 'multi_agent_deep') {
+    maxIterations = Math.max(maxIterations, 4)
+    maxWallClockMs = Math.max(maxWallClockMs, 45 * 60 * 1000)
   }
 
   if (UNTIL_DONE_PATTERN.test(message)) {

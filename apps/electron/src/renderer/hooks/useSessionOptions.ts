@@ -13,7 +13,7 @@
 import type { PermissionMode } from '../../shared/types'
 import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
-import type { SessionGoalMode } from '@craft-agent/shared/sessions'
+import type { SessionDocumentQualityMode, SessionGoalMode } from '@craft-agent/shared/sessions'
 
 /**
  * All session-scoped options in one place.
@@ -27,6 +27,8 @@ export interface SessionOptions {
   thinkingLevel: ThinkingLevel
   /** Optional per-session Goal Loop override for sends. Undefined keeps automatic routing. */
   goalLoopMode?: SessionGoalMode
+  /** Optional per-session document workflow mode override for sends. Undefined keeps automatic classification. */
+  documentQualityMode?: SessionDocumentQualityMode
 }
 
 /** Default values for new sessions */

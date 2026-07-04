@@ -202,6 +202,7 @@ function buildRolePrompt(
 function buildQualityReviewRoles(input: GoalReviewInput): QualityReviewRole[] {
   const roles: QualityReviewRole[] = [...QUALITY_REVIEW_ROLES]
   const taskType = input.goalState.taskContract?.taskType
+  const documentQualityMode = input.goalState.taskContract?.documentQualityMode
 
   if (taskType === 'research') {
     roles.push({
@@ -215,6 +216,27 @@ function buildQualityReviewRoles(input: GoalReviewInput): QualityReviewRole[] {
     })
   }
 
+  if (documentQualityMode === 'professional_document' || documentQualityMode === 'strict_delivery' || documentQualityMode === 'multi_agent_deep') {
+    roles.push({
+      name: 'document_evidence_reviewer',
+      focus: 'Check the document contract, evidence matrix, chapter plan, citations, tables, figures, and quality-audit depth.',
+    })
+  }
+
+  if (documentQualityMode === 'strict_delivery') {
+    roles.push({
+      name: 'strict_delivery_reviewer',
+      focus: 'Check source integrity, template fidelity, export evidence, visual evidence, and final formatting gates.',
+    })
+  }
+
+  if (documentQualityMode === 'multi_agent_deep') {
+    roles.push({
+      name: 'synthesis_consistency_reviewer',
+      focus: 'Check chapter-level coverage, cross-chapter consistency, role-review resolution, and final synthesis ownership.',
+    })
+  }
+
   return roles
 }
 
@@ -223,6 +245,7 @@ function buildQualityReviewRoute(
   options: QualityReviewRouteOptions = {},
 ): QualityReviewRoute {
   const taskType = input.goalState.taskContract?.taskType ?? 'unknown'
+  const documentQualityMode = input.goalState.taskContract?.documentQualityMode ?? 'quick'
   const telemetry = parseQualityRouteTelemetry(input.reviewerPerformanceMemory, taskType)
   const baseRoles = buildQualityReviewRoles(input)
   const maxExtraReviewers = normalizeMaxExtraReviewers(options.maxExtraReviewers)
@@ -252,6 +275,7 @@ function buildQualityReviewRoute(
       label: 'quality_route',
       detail: [
         `task=${taskType}`,
+        `document_mode=${documentQualityMode}`,
         `roles=${roles.map(role => role.name).join(',')}`,
         `models=${modelAssignments || 'none'}`,
         `telemetry_roles=${telemetry.roles.join(',') || 'none'}`,

@@ -114,10 +114,17 @@ export type SessionTaskContractType =
   | 'automation'
   | 'general';
 
+export type SessionDocumentQualityMode =
+  | 'quick'
+  | 'professional_document'
+  | 'strict_delivery'
+  | 'multi_agent_deep';
+
 export interface SessionTaskContract {
   originalRequest: string;
   followUpRequests?: string[];
   taskType: SessionTaskContractType;
+  documentQualityMode?: SessionDocumentQualityMode;
   documentPlan?: SessionDocumentPlan;
   deliverables: string[];
   mustPreserve: string[];
@@ -135,6 +142,9 @@ export interface SessionDocumentPlan {
   length?: string;
   domain?: DocumentDomain;
   visualPlan?: VisualPlan;
+  agentPlan?: SessionDocumentAgentPlan;
+  evidenceMatrix?: SessionDocumentEvidenceMatrixEntry[];
+  deliveryReviewPlan?: SessionDocumentDeliveryReviewPlan;
   templateProfileId?: string;
   strictTemplate?: boolean;
   sections: string[];
@@ -143,6 +153,50 @@ export interface SessionDocumentPlan {
   enhancements: string[];
   citations: string[];
   deliveryFormats: string[];
+}
+
+export interface SessionDocumentAgentPlan {
+  mode: 'chapter_agents';
+  finalSynthesisOwner: string;
+  assignments: SessionDocumentAgentAssignment[];
+  reviewStages: string[];
+  guardrails: string[];
+}
+
+export interface SessionDocumentAgentAssignment {
+  id: string;
+  title: string;
+  role: string;
+  reviewFocus: string;
+}
+
+export interface SessionDocumentEvidenceMatrixEntry {
+  id: string;
+  source: string;
+  sourceType: 'file' | 'external' | 'assumption';
+  supports: string;
+  reliabilityNote: string;
+  citationFields: string[];
+  reuseStatus: string;
+}
+
+export type SessionDocumentDeliveryGateId =
+  | 'source_integrity'
+  | 'template_fidelity'
+  | 'export_files'
+  | 'visual_evidence'
+  | 'format_review';
+
+export interface SessionDocumentDeliveryReviewPlan {
+  mode: 'strict_delivery';
+  failureAction: 'needs_review_or_auto_improve';
+  gates: SessionDocumentDeliveryGate[];
+}
+
+export interface SessionDocumentDeliveryGate {
+  id: SessionDocumentDeliveryGateId;
+  requirement: string;
+  evidence: string;
 }
 
 export interface SessionGoalAuditEvidence {
