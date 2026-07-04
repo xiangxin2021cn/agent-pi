@@ -246,6 +246,47 @@ describe('RPC', () => {
     expect(result).toBe('selected')
   })
 
+  test('handler timeout option can shorten slow handler budget', async () => {
+    const { server, client } = await createPair()
+
+    server.handle('slow:handler', async () => {
+      await new Promise(r => setTimeout(r, 80))
+      return 'too-late'
+    }, { timeoutMs: 10 })
+
+    try {
+      await client.invoke('slow:handler')
+      throw new Error('Should have thrown')
+    } catch (err: any) {
+      expect(err.code).toBe('HANDLER_ERROR')
+      expect(err.message).toContain('Handler timeout: slow:handler (10ms)')
+    }
+  })
+
+  test('handler timeoutMs=0 does not install the default 60s handler timer', async () => {
+    const { server, client } = await createPair()
+    let sawDefaultHandlerTimer = false
+    const originalSetTimeout = globalThis.setTimeout
+
+    server.handle('user:dialog:no-server-timeout', async () => 'selected', { timeoutMs: 0 })
+
+    ;(globalThis as any).setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+      const timeout = args[1]
+      if (timeout === 60_000) {
+        sawDefaultHandlerTimer = true
+      }
+      return originalSetTimeout(...args)
+    }) as typeof setTimeout
+
+    try {
+      const result = await client.invoke('user:dialog:no-server-timeout')
+      expect(result).toBe('selected')
+      expect(sawDefaultHandlerTimer).toBe(false)
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+  })
+
   test('Uint8Array response payload roundtrips intact', async () => {
     const { server, client } = await createPair()
 

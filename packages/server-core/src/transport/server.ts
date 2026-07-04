@@ -23,7 +23,7 @@ import {
   type PushTarget,
   type ErrorCode,
 } from '@craft-agent/shared/protocol'
-import type { RpcServer, HandlerFn, RequestContext, InvokeClientOptions } from './types'
+import type { RpcServer, HandlerFn, RequestContext, InvokeClientOptions, HandlerOptions } from './types'
 import { serializeEnvelope, deserializeEnvelope } from './codec'
 import { createLogger } from '@craft-agent/shared/utils'
 
@@ -59,6 +59,11 @@ interface PendingInvoke {
   resolve: (value: any) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout> | null
+}
+
+interface RegisteredHandler {
+  fn: HandlerFn
+  options: HandlerOptions
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +129,7 @@ export class WsRpcServer implements RpcServer {
   private httpServer: HttpServer | null = null
   private httpsServer: HttpsServer | null = null
   private clients = new Map<string, ClientConnection>()
-  private handlers = new Map<string, HandlerFn>()
+  private handlers = new Map<string, RegisteredHandler>()
   private pendingInvokes = new Map<string, PendingInvoke>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private _port = 0
@@ -180,11 +185,11 @@ export class WsRpcServer implements RpcServer {
   // RpcServer interface
   // -------------------------------------------------------------------------
 
-  handle(channel: string, handler: HandlerFn): void {
+  handle(channel: string, handler: HandlerFn, options: HandlerOptions = {}): void {
     if (this.handlers.has(channel)) {
       throw new Error(`Handler already registered for channel: ${channel}`)
     }
-    this.handlers.set(channel, handler)
+    this.handlers.set(channel, { fn: handler, options })
   }
 
   push(channel: string, target: PushTarget, ...args: any[]): void {
@@ -659,8 +664,8 @@ export class WsRpcServer implements RpcServer {
       return
     }
 
-    const handler = this.handlers.get(channel)
-    if (!handler) {
+    const handlerEntry = this.handlers.get(channel)
+    if (!handlerEntry) {
       this.sendResponseError(client.ws, id, channel, 'CHANNEL_NOT_FOUND', `No handler for: ${channel}`)
       return
     }
@@ -672,13 +677,12 @@ export class WsRpcServer implements RpcServer {
     }
 
     try {
-      const result = await Promise.race([
-        handler(ctx, ...(args ?? [])),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Handler timeout: ${channel} (${WsRpcServer.HANDLER_TIMEOUT_MS}ms)`)),
-            WsRpcServer.HANDLER_TIMEOUT_MS),
-        ),
-      ])
+      const timeoutMs = handlerEntry.options.timeoutMs ?? WsRpcServer.HANDLER_TIMEOUT_MS
+      const result = await this.runHandlerWithTimeout(
+        handlerEntry.fn(ctx, ...(args ?? [])),
+        channel,
+        timeoutMs,
+      )
       const response: MessageEnvelope = {
         id,
         type: 'response',
@@ -691,6 +695,29 @@ export class WsRpcServer implements RpcServer {
       const rawCode = (err as { code?: unknown } | null)?.code
       const code: ErrorCode = isErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
       this.sendResponseError(client.ws, id, channel, code, message)
+    }
+  }
+
+  private async runHandlerWithTimeout<T>(
+    operation: Promise<T> | T,
+    channel: string,
+    timeoutMs: number,
+  ): Promise<T> {
+    if (timeoutMs <= 0) return await operation
+
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error(`Handler timeout: ${channel} (${timeoutMs}ms)`)),
+            timeoutMs,
+          )
+        }),
+      ])
+    } finally {
+      if (timeout) clearTimeout(timeout)
     }
   }
 

@@ -8,4 +8,6 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
+- File and folder attachment pickers no longer expire after the default 60-second RPC handler window; user-driven native dialogs can remain open until the user selects or cancels.
+
 ## Breaking Changes

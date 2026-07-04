@@ -1655,7 +1655,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       ]
     })
     return result.canceled ? [] : result.filePaths
-  })
+  }, { timeoutMs: 0 })
 
   // Open native attachment dialog for selecting files or folders. Windows native
   // dialogs cannot reliably show files when openDirectory is mixed with openFile,
@@ -1695,7 +1695,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       truncated: collected.truncated,
       maxFiles: ATTACHMENT_DIALOG_MAX_FILES,
     }
-  })
+  }, { timeoutMs: 0 })
 
   // Read file and return as FileAttachment with Quick Look thumbnail
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
