@@ -11,7 +11,7 @@ import type {
 import { getContextPressureSignal } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
-import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
+import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, MAX_AUTOMATIC_GOAL_REPAIR_PASSES, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
 import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-quality'
 import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
 import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
@@ -20,6 +20,7 @@ import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
+const HUMAN_CONFIRMATION_REQUIRED_CRITERION = 'Assistant requested user confirmation before continuing.'
 
 export type GoalControllerDecision =
   | { action: 'skip' }
@@ -94,6 +95,14 @@ export class GoalController {
         type: 'message',
         label: 'final_assistant_message',
         detail: finalAssistant.id,
+      })
+    }
+    const humanInputRequest = finalAssistant ? detectBlockingHumanInputRequest(finalAssistant.content) : undefined
+    if (humanInputRequest) {
+      evidence.push({
+        type: 'message',
+        label: 'human_input_requested',
+        detail: humanInputRequest.slice(0, 500),
       })
     }
     for (const message of turnMessages) {
@@ -429,6 +438,14 @@ export class GoalController {
       summary = 'Goal audit failed because no final assistant response was produced.'
     }
 
+    if (humanInputRequest) {
+      status = 'uncertain'
+      missingCriteria.push(HUMAN_CONFIRMATION_REQUIRED_CRITERION)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit paused because the assistant requested user confirmation before continuing.'
+      }
+    }
+
     if (errorMessages.length > 0 || blockingFailedTools.length > 0) {
       status = 'fail'
       deterministicFailureCategories.add('tool_failure')
@@ -521,7 +538,7 @@ export class GoalController {
     }
 
     let reviewerFailed = false
-    if (status === 'uncertain' && finalAssistant && snapshot.reviewer) {
+    if (status === 'uncertain' && finalAssistant && snapshot.reviewer && !humanInputRequest) {
       try {
         const review = await snapshot.reviewer({
           goalState,
@@ -595,11 +612,13 @@ export class GoalController {
     }
 
     const shouldAutoImprove = !reviewerFailed
+      && !humanInputRequest
       && !repeatedFailure
       && snapshot.stoppedReason === 'complete'
       && (status === 'uncertain' || (status === 'fail' && finalAssistant !== undefined && errorMessages.length === 0))
       && (goalState.mode === 'auto_improve' || goalState.mode === 'strict_work')
-    const hasRemainingIterations = iteration < goalState.maxIterations
+    const effectiveMaxIterations = getEffectiveMaxIterations(goalState)
+    const hasRemainingIterations = iteration < effectiveMaxIterations
     const hasRemainingWallClock = goalState.budgets?.maxWallClockMs === undefined
       || now - goalState.createdAt < goalState.budgets.maxWallClockMs
     const correctivePrompt = shouldAutoImprove && hasRemainingIterations && hasRemainingWallClock
@@ -630,10 +649,12 @@ export class GoalController {
       }
     }
 
-    const reason = repeatedFailure
+    const reason = humanInputRequest
+      ? 'Assistant requested user confirmation before continuing; manual review is required.'
+      : repeatedFailure
       ? 'Repeated the same goal audit failure; manual review is required.'
       : shouldAutoImprove && !hasRemainingIterations
-      ? `Reached maximum goal iterations (${goalState.maxIterations}); manual review is required.`
+      ? `Reached maximum automatic repair passes (${effectiveMaxIterations}); manual review is required.`
       : shouldAutoImprove && !hasRemainingWallClock
       ? `Reached maximum goal wall-clock budget (${goalState.budgets?.maxWallClockMs}ms); manual review is required.`
       : status === 'uncertain'
@@ -664,6 +685,24 @@ function buildFileVerificationIssue(filePath: string, verification: GoalFileVeri
     return `Referenced file is empty: ${filePath}`
   }
   return undefined
+}
+
+function detectBlockingHumanInputRequest(content: string): string | undefined {
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  if (!normalized) return undefined
+
+  const directRequest = /(?:我|我们)?(?:需要|需|请|请您|请你|烦请|麻烦)(?:您|你|用户|人工|手动)?[^。！？.!?]{0,80}(?:确认|选择|决定|指示|指引|补充|澄清|回答|提供)|(?:need|needs|require|requires|please)[^.!?]{0,80}(?:confirmation|input|approval|guidance|clarification|answer|choose|provide)/i.test(normalized)
+  if (!directRequest) return undefined
+
+  const blockingContext = /(?:在实际执行前|执行前|开始前|继续前|下一步前|请对以上问题|请先|等待|我会据此|才能继续|before (?:i |we )?(?:continue|proceed|start)|before continuing|before proceeding|waiting for|then (?:i|we) will proceed)/i.test(normalized)
+  const questionCount = (content.match(/[?？]/g) ?? []).length
+  const numberedQuestionCount = (content.match(/(?:^|\n)\s*\d+[.)、]/g) ?? []).length
+
+  if (!blockingContext && questionCount + numberedQuestionCount < 2) {
+    return undefined
+  }
+
+  return normalized
 }
 
 function getUnresolvedFailedTools(messages: Message[]): Message[] {
@@ -1603,6 +1642,9 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Objective:',
     goalState.objective,
     '',
+    'Instruction-following gate:',
+    buildInstructionFollowingGate(goalState),
+    '',
     'Task contract:',
     taskContract,
     '',
@@ -1636,8 +1678,40 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     'Previous goal audits:',
     previousAudits,
     '',
-    'Continue from the existing conversation. Improve the actual deliverable while preserving the full task contract, verify the missing criteria, and finish with a concise summary of what changed.',
+    'Continue from the existing conversation. First satisfy the instruction-following gate, then improve the actual deliverable while preserving the full task contract, verify the missing criteria, and finish with a concise summary of what changed.',
     '</goal-audit>',
+  ].join('\n')
+}
+
+function getEffectiveMaxIterations(goalState: SessionGoalState): number {
+  if (goalState.iteration < MAX_AUTOMATIC_GOAL_REPAIR_PASSES) {
+    return Math.max(1, Math.min(goalState.maxIterations, MAX_AUTOMATIC_GOAL_REPAIR_PASSES))
+  }
+  return Math.max(goalState.iteration, goalState.maxIterations)
+}
+
+function buildInstructionFollowingGate(goalState: SessionGoalState): string {
+  const contract = goalState.taskContract
+  const followUps = contract?.followUpRequests?.length
+    ? contract.followUpRequests.map((request, index) => `${index + 1}. ${request}`).join('\n')
+    : '(none)'
+  const mustPreserve = contract?.mustPreserve?.length
+    ? contract.mustPreserve.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : '(none)'
+  const forbiddenShortcuts = contract?.forbiddenShortcuts?.length
+    ? contract.forbiddenShortcuts.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : '(none)'
+
+  return [
+    '1. Re-check the user instructions before judging document quality, evidence depth, or polish.',
+    `2. Original user request: ${contract?.originalRequest?.trim() || goalState.objective}`,
+    `3. Follow-up user instructions:\n${followUps}`,
+    `4. Must preserve:\n${mustPreserve}`,
+    `5. Forbidden broadening:\n${forbiddenShortcuts}`,
+    '6. Do not broaden the scope beyond the original request or follow-up instructions.',
+    '7. Preserve selected sources, named chapters/files/folders, requested output format, and response language.',
+    '8. If the previous output analyzed extra chapters, sources, formats, or languages, discard that extra work and rebuild only the requested scope.',
+    '9. Only after the instruction-following gate passes should you improve structure, citations, visuals, or wording.',
   ].join('\n')
 }
 

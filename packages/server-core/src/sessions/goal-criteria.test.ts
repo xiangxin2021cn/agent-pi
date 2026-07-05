@@ -69,7 +69,7 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
 
     expect(criteria).toContainEqual({
-      text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+      text: 'Ground key facts, figures, clauses, and requirements in user-selected sources, attachments, or explicitly named files/folders; clearly mark assumptions when source evidence is unavailable.',
       kind: 'evidence',
       required: true,
     })
@@ -201,7 +201,7 @@ describe('buildGoalCriteriaFromMessage', () => {
     })
 
     expect(criteria).toContainEqual({
-      text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+      text: 'Ground key facts, figures, clauses, and requirements in user-selected sources, attachments, or explicitly named files/folders; clearly mark assumptions when source evidence is unavailable.',
       kind: 'evidence',
       required: true,
     })
@@ -276,41 +276,41 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     })
   })
 
-  it('allows more passes for comprehensive review requests with documents', () => {
+  it('keeps the two-pass loop cap for comprehensive review requests with documents', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '请全面详细分析招标文件并认真复核输出质量',
       storedAttachments: [attachment('tender.pdf')],
     })
 
-    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
-  it('allows more passes for source-sensitive document work with attachments', () => {
+  it('keeps the two-pass loop cap for source-sensitive document work with attachments', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '招标文件条款有哪些风险？',
       storedAttachments: [attachment('tender.pdf')],
     })
 
-    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
-  it('allows more passes when the user explicitly asks for high-quality comprehensive work', () => {
+  it('keeps the two-pass loop cap when the user explicitly asks for high-quality comprehensive work', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '请全面详细分析这个项目并输出高质量报告',
     })
 
-    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
-  it('uses the highest bounded budget when the user explicitly asks to continue until done', () => {
+  it('keeps automatic repair to two passes even when the user asks to continue until done', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '反复检查并继续改进，直到成果满足要求再结束',
     })
 
-    expect(policy.maxIterations).toBe(4)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 
@@ -331,7 +331,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
       documentQualityMode: 'professional_document',
     })
 
-    expect(policy.maxIterations).toBe(3)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(30 * 60 * 1000)
   })
 
@@ -341,7 +341,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
       documentQualityMode: 'strict_delivery',
     })
 
-    expect(policy.maxIterations).toBe(4)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 
@@ -351,7 +351,7 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
       documentQualityMode: 'multi_agent_deep',
     })
 
-    expect(policy.maxIterations).toBe(4)
+    expect(policy.maxIterations).toBe(2)
     expect(policy.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 })

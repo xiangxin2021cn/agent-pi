@@ -9,12 +9,20 @@ mock.module('../../config/preferences.ts', () => ({
   formatPreferencesForPrompt: () => '',
 }))
 
-import { getSystemPrompt } from '../system'
+import { getSystemPrompt, getWorkingDirectoryContext } from '../system'
 
 const GIT_CONVENTIONS_HEADING = '## Git Conventions'
 const CO_AUTHOR_TRAILER = 'Co-Authored-By: Agent π <agents-noreply@craft.do>'
 
 describe('system prompt guidance', () => {
+  it('frames the working directory as a boundary and output location, not an implicit evidence corpus', () => {
+    const context = getWorkingDirectoryContext('/tmp/project', false)
+
+    expect(context).toContain('not an implicit evidence corpus')
+    expect(context).toContain('Do not list, search, or analyze this folder by default')
+    expect(context).toContain('Use selected sources, attached files, and user-named file or folder paths as task input')
+  })
+
   it('uses backend-neutral debug log querying guidance (rg/grep via Bash)', () => {
     const prompt = getSystemPrompt(
       undefined,
@@ -34,6 +42,14 @@ describe('system prompt guidance', () => {
 
     expect(prompt).toContain('The subtask needs file/shell tools (for example, Read or Bash)')
     expect(prompt).not.toContain('The subtask needs tools (Read, Bash, Grep)')
+  })
+
+  it('keeps permission-mode read/search guidance scoped to selected or user-named inputs', () => {
+    const prompt = getSystemPrompt(undefined, undefined, '/tmp/workspace', '/tmp/workspace')
+
+    expect(prompt).toContain('Explore selected sources, user-named files/folders, and necessary implementation files')
+    expect(prompt).toContain('Read operations are allowed, but still follow the input-scope policy above.')
+    expect(prompt).not.toContain('Read-only. Explore, search, read files.')
   })
 })
 

@@ -44,6 +44,10 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Evidence requirements:');
     expect(formatted).toContain('Acceptance criteria:');
     expect(formatted).toContain('Forbidden shortcuts:');
+    expect(formatted).toContain('Use only selected sources, attached files, and explicitly named file or folder paths as task input.');
+    expect(formatted).toContain('Do not inventory the working directory as a source corpus unless the user explicitly requests folder discovery.');
+    expect(formatted).toContain('Check instruction fidelity before improving document quality.');
+    expect(formatted).toContain('Do not broaden requested scope, selected sources, output format, or response language during improvement passes.');
     expect(formatted).toContain('Document workflow execution protocol:');
     expect(formatted).toContain('Build or update the evidence matrix before drafting source-backed claims.');
     expect(formatted).toContain('Plan sections, tables, visuals, and citations before writing final prose.');
@@ -116,9 +120,11 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Review stages:');
     expect(formatted).toContain('Guardrails:');
     expect(formatted).toContain('Document workflow execution protocol:');
-    expect(formatted).toContain('Use the chapter-agent assignments as the work breakdown before drafting the final artifact.');
+    expect(formatted).toContain('Before spawning chapter agents, restate the exact user-requested scope and selected sources.');
+    expect(formatted).toContain('If the request names a single chapter, source, file, or folder, do not spawn agents for other chapters or sources.');
+    expect(formatted).toContain('Use the chapter-agent assignments only within that user-requested scope before drafting the final artifact.');
     expect(formatted).toContain('Record chapter-agent handoff notes with source gaps and unresolved assumptions.');
-    expect(formatted).toContain('When spawn_session is available, call spawn_session with help=true first, then spawn one session per chapter-agent assignment.');
+    expect(formatted).toContain('When spawn_session is available, call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
     expect(formatted).toContain('Only final_synthesis_owner may write the final synthesized deliverable after cross-chapter review.');

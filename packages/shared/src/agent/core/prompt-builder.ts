@@ -189,7 +189,7 @@ export class PromptBuilder {
       signal.detail,
       'Execution guidance:',
       '- Before using source tools, identify which enabled sources are actually needed for this request.',
-      '- Prefer direct project files, attachments, or already verified evidence before broad source/tool exploration.',
+      '- Prefer task-scoped sources explicitly selected by the user, attachments, named project files, or already verified evidence before broad source/tool exploration.',
       '- If many sources are irrelevant, narrow enabled sources or ask the user before spending tool calls across them.',
       '- Summarize source evidence before final synthesis so the final answer is grounded and compact.',
       '</context_pressure>',

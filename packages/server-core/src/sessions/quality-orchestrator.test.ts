@@ -217,6 +217,8 @@ describe('runGoalQualityCouncilReview', () => {
 
     expect(requests).toHaveLength(3)
     expect(requests.every(request => request.prompt.includes('Task contract:'))).toBe(true)
+    expect(requests.every(request => request.prompt.includes('Instruction-following review comes first.'))).toBe(true)
+    expect(requests.every(request => request.prompt.includes('Fail with scope_gap when the output broadens beyond selected sources, named chapters/files/folders, requested output format, or response language.'))).toBe(true)
     expect(requests.every(request => request.prompt.includes('Do not replace the report with a short outline.'))).toBe(true)
     expect(requests.every(request => request.prompt.includes('Previous goal audits:'))).toBe(true)
     expect(requests.every(request => request.prompt.includes('Iteration 1: fail - Previous pass reduced the report to an outline.'))).toBe(true)

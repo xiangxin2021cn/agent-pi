@@ -106,6 +106,44 @@ describe('GoalController', () => {
     }
   })
 
+  test('needs review instead of auto-improving when the assistant asks for user confirmation', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-1',
+        text: 'Analyze the selected COTO knowledge base source.',
+        kind: 'evidence',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '请分析第一册 COTO 规范。'),
+        message('a1', 'assistant', [
+          '在实际执行前，我需要确认您的具体需求：',
+          '1. 目标范围：是所有章节还是本项目关键条款？',
+          '2. 输出格式：独立详解文件还是汇总文件？',
+          '请对以上问题给出指引，我会据此制定执行计划。',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.goalState.status).toBe('needs_review')
+      expect(decision.result.status).toBe('uncertain')
+      expect(decision.result.missingCriteria).toContain('Assistant requested user confirmation before continuing.')
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'message',
+        label: 'human_input_requested',
+      }))
+      expect(decision.reason).toContain('user confirmation')
+    }
+  })
+
   test('passes when reviewer proves explicit criteria', async () => {
     const controller = new GoalController()
 
@@ -1458,16 +1496,16 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.failureCategories).toContain('verification_gap')
       expect(decision.result.missingCriteria).toContain('Previous audit required verification evidence, but no successful tool evidence was produced in this turn.')
-      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
-  test('includes hard gate recovery guidance when a previous verification gap remains open', async () => {
+  test('records hard gate recovery evidence when a previous verification gap remains open on the final automatic pass', async () => {
     const controller = new GoalController()
 
     const decision = await controller.onTurnStopped(goal({
@@ -1503,11 +1541,13 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
-      expect(decision.prompt).toContain('Hard gate recovery:')
-      expect(decision.prompt).toContain('A previous verification gap is still open.')
-      expect(decision.prompt).toContain('successful verification tool')
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'tool',
+        label: 'previous_verification_checkpoint_missing',
+      }))
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
@@ -1547,12 +1587,12 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.failureCategories).toContain('evidence_gap')
       expect(decision.result.missingCriteria).toContain('Previous audit required file, source, or artifact evidence, but none was captured in this turn.')
-      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
@@ -1592,12 +1632,12 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.failureCategories).toContain('shallow_output')
       expect(decision.result.missingCriteria).toContain('Previous audit required substantive content, but this turn still produced a shallow deliverable.')
-      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
@@ -1637,12 +1677,12 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.failureCategories).toContain('scope_gap')
       expect(decision.result.missingCriteria).toContain('Previous audit required restoring full scope, but this turn still narrowed or deferred the requested deliverable.')
-      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
@@ -1682,16 +1722,16 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.status).toBe('fail')
       expect(decision.result.failureCategories).toContain('tool_failure')
       expect(decision.result.missingCriteria).toContain('Previous audit required resolving a failed tool, but no successful tool execution was captured in this turn.')
-      expect(decision.prompt).toContain('Required checkpoints:')
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
-  test('escalates corrective prompts when the same failure category repeats', async () => {
+  test('records repeated failure categories before stopping for user review on the final automatic pass', async () => {
     const controller = new GoalController()
 
     const decision = await controller.onTurnStopped(goal({
@@ -1728,16 +1768,15 @@ describe('GoalController', () => {
       }),
     })
 
-    expect(decision.action).toBe('continue')
-    if (decision.action === 'continue') {
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
       expect(decision.result.evidence).toContainEqual(expect.objectContaining({
         type: 'system',
         label: 'repeated_failure_categories',
         detail: 'evidence_gap',
       }))
-      expect(decision.prompt).toContain('Repeated failure pattern:')
-      expect(decision.prompt).toContain('evidence_gap')
-      expect(decision.prompt).toContain('Do not finish until the repeated failure categories are directly resolved')
+      expect(decision.result.correctivePrompt).toBeUndefined()
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
     }
   })
 
@@ -2366,7 +2405,7 @@ describe('GoalController', () => {
 
     const decision = await controller.onTurnStopped(goal({
       mode: 'auto_improve',
-      iteration: 1,
+      iteration: 0,
       maxIterations: 3,
       criteria: [{
         id: 'crit-1',
@@ -2375,7 +2414,7 @@ describe('GoalController', () => {
         required: true,
       }],
       auditHistory: [{
-        iteration: 1,
+        iteration: 0,
         status: 'fail',
         summary: 'The executive summary was still missing.',
         missingCriteria: ['The final report includes an executive summary.'],
@@ -2399,7 +2438,7 @@ describe('GoalController', () => {
     expect(decision.action).toBe('continue')
     if (decision.action === 'continue') {
       expect(decision.prompt).toContain('Previous goal audits:')
-      expect(decision.prompt).toContain('Iteration 1: fail - The executive summary was still missing.')
+      expect(decision.prompt).toContain('Iteration 0: fail - The executive summary was still missing.')
       expect(decision.prompt).toContain('Correction: Add a concise executive summary.')
     }
   })
@@ -2444,6 +2483,92 @@ describe('GoalController', () => {
         type: 'system',
         label: 'task_contract',
       }))
+    }
+  })
+
+  test('puts instruction-following before quality in automatic improvement prompts', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      maxIterations: 2,
+      objective: '只分析选中的 COTO Chapter 1 知识库。',
+      taskContract: {
+        originalRequest: '只分析我选中的 COTO Chapter 1 知识库，输出中文分析。',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        deliverables: ['Produce a focused Chapter 1 analysis.'],
+        mustPreserve: [
+          'Explicit scope: selected COTO Chapter 1 only.',
+          'Language: Chinese.',
+        ],
+        evidenceRequirements: ['Use the selected Chapter 1 knowledge base source.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[user_constraint] Analyze only selected Chapter 1.'],
+        forbiddenShortcuts: ['Do not broaden the task to all COTO chapters.'],
+      },
+      criteria: [{
+        id: 'crit-1',
+        text: 'Analyze only selected Chapter 1.',
+        kind: 'user_constraint',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '只分析我选中的 COTO Chapter 1 知识库，输出中文分析。'),
+        message('a1', 'assistant', 'I created a complete COTO all-chapter synthesis in English and Chinese.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.prompt).toContain('Instruction-following gate')
+      expect(decision.prompt).toContain('Original user request:')
+      expect(decision.prompt).toContain('只分析我选中的 COTO Chapter 1 知识库')
+      expect(decision.prompt).toContain('Do not broaden the scope beyond the original request or follow-up instructions.')
+      expect(decision.prompt).toContain('Only after the instruction-following gate passes')
+    }
+  })
+
+  test('stops for user review after the second automatic improvement pass even when older goals allow more iterations', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      maxIterations: 4,
+      iteration: 1,
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the selected knowledge base source.',
+        kind: 'evidence',
+        required: true,
+      }],
+      auditHistory: [{
+        iteration: 0,
+        status: 'fail',
+        summary: 'First pass did not cite the selected source.',
+        missingCriteria: ['The final report cites the selected knowledge base source.'],
+        failureCategories: ['evidence_gap'],
+        evidence: [],
+        createdAt: 5,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '只分析选中的 Chapter 1 知识库。'),
+        message('a1', 'assistant', 'Second attempt still has no selected knowledge-base citation.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.goalState.status).toBe('needs_review')
+      expect(decision.goalState.iteration).toBe(2)
+      expect(decision.reason).toBe('Reached maximum automatic repair passes (2); manual review is required.')
+      expect(decision.result.correctivePrompt).toBeUndefined()
     }
   })
 
@@ -2518,7 +2643,7 @@ describe('GoalController', () => {
     expect(decision.action).toBe('needs_review')
     if (decision.action === 'needs_review') {
       expect(decision.goalState.status).toBe('needs_review')
-      expect(decision.reason).toContain('maximum goal iterations')
+      expect(decision.reason).toContain('maximum automatic repair passes')
     }
   })
 

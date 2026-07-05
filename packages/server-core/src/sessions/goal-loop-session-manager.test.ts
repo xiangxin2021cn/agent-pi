@@ -711,6 +711,8 @@ describe('SessionManager goal loop routing', () => {
     expect(reviewPrompts[0]).toContain('tool Read: loaded source rows from the spreadsheet')
     expect(reviewPrompts[0]).toContain('The final report cites the source spreadsheet.')
     expect(reviewPrompts[0]).toContain(sourcePath)
+    expect(reviewPrompts[0]).toContain('Instruction-following review comes first.')
+    expect(reviewPrompts[0]).toContain('Do not pass outputs that broaden beyond selected sources, named chapters/files/folders, requested output format, or response language.')
     expect(reviewPrompts[0]).toContain('When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.')
     expect(reviewPrompts[0]).toContain('If any criterion is missing or any correctivePrompt is needed, status must not be "pass".')
     expect(managed.goalState?.status).toBe('passed')
@@ -1673,7 +1675,7 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.goalState?.taskContract?.documentPlan?.templateProfileId).toBe('pending-template-profile')
   })
 
-  it('uses a larger goal loop budget when the first work request asks to continue until done', async () => {
+  it('keeps two automatic repair passes when the first work request asks to continue until done', async () => {
     const sessionId = 'goal-auto-init-until-done'
     const managed = buildSession(sessionId, { goalState: undefined })
     captureEvents()
@@ -1681,7 +1683,7 @@ describe('SessionManager goal loop routing', () => {
     await sm.sendMessage(sessionId, '请反复检查并继续改进，直到成果满足要求再结束').catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState?.mode).toBe('auto_improve')
-    expect(managed.goalState?.maxIterations).toBe(4)
+    expect(managed.goalState?.maxIterations).toBe(2)
     expect(managed.goalState?.budgets?.maxWallClockMs).toBe(45 * 60 * 1000)
   })
 
@@ -1776,7 +1778,7 @@ describe('SessionManager goal loop routing', () => {
     await sm.sendMessage(sessionId, '你好', undefined, undefined, { documentQualityMode: 'strict_delivery' }).catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState?.mode).toBe('auto_improve')
-    expect(managed.goalState?.maxIterations).toBe(4)
+    expect(managed.goalState?.maxIterations).toBe(2)
     expect(managed.goalState?.taskContract?.documentQualityMode).toBe('strict_delivery')
     expect(managed.goalState?.taskContract?.documentPlan?.deliveryReviewPlan?.mode).toBe('strict_delivery')
   })

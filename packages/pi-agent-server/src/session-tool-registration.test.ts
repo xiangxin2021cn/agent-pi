@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { createSearchTool } from './tools/search/create-search-tool.ts';
 import { createWebFetchTool } from './tools/web-fetch.ts';
+import { createReadToolDefinition as createAgentPiReadToolDefinition } from './tools/read.ts';
 import type { WebSearchProvider } from './tools/search/types.ts';
 
 /**
@@ -83,6 +84,24 @@ describe('Pi subprocess tool shape contract', () => {
     const names = builtins.map(t => t.name);
     expect(new Set(names).size).toBe(names.length); // no duplicates
     expect(names).toEqual(['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']);
+  });
+
+  it('Agent Pi read wrapper treats past-end offsets as EOF instead of tool failure', async () => {
+    const tool = createAgentPiReadToolDefinition(process.cwd());
+    const result = await tool.execute(
+      'read-eof',
+      { path: 'package.json', offset: 100_000 },
+      undefined,
+      undefined,
+      undefined,
+    );
+    const text = result.content
+      .filter((item) => item.type === 'text')
+      .map((item) => item.text)
+      .join('\n');
+
+    expect(text).toContain('Reached end of file');
+    expect(text).toContain('do not retry with a larger offset');
   });
 });
 

@@ -15,6 +15,7 @@
 import { join } from 'node:path';
 import type { LoadedSource } from '../../sources/types.ts';
 import { sourceNeedsAuthentication } from '../../sources/credential-manager.ts';
+import { getKnowledgeBaseFolder, isKnowledgeBaseSource } from '../../sources/knowledge-base.ts';
 import type { SourceManagerConfig } from './types.ts';
 
 /** Slugs exempt from guide.md prerequisite (internal sources) */
@@ -177,6 +178,7 @@ export class SourceManager {
     const sourcesNeedingAttention = activeSources.filter(
       (s) => s.config.connectionStatus === 'needs_auth' || s.config.connectionStatus === 'failed'
     );
+    const activeKnowledgeBaseSources = activeSources.filter(isKnowledgeBaseSource);
 
     // Check if this is the first message (no sources known yet)
     const isFirstMessage = this.knownSlugs.size === 0;
@@ -217,6 +219,19 @@ export class SourceManager {
     );
     if (activeSourcesWithGuides.length > 0) {
       parts.push('Read each source\'s guide.md before first tool use — calls are blocked until guide is read.');
+    }
+
+    if (activeKnowledgeBaseSources.length > 0) {
+      parts.push('');
+      parts.push('Selected knowledge-base sources:');
+      for (const source of activeKnowledgeBaseSources) {
+        parts.push(`- ${source.config.slug}: ${source.config.name} (folder: ${getKnowledgeBaseFolder(source) ?? 'General'})`);
+      }
+      parts.push('Knowledge-base guardrails:');
+      parts.push('- Use selected knowledge-base sources first for source-sensitive analysis, specifications, clauses, standards, and cited document work.');
+      parts.push('- Do not search the working directory for alternate copies before querying the selected knowledge-base source, unless the user explicitly asks for project-folder discovery.');
+      parts.push('- If the selected knowledge base does not contain the requested evidence, state the gap or ask the user before broadening to working-directory files.');
+      parts.push('- For file-memory knowledge bases, call get_file_memory_manifest, search_file_memory, and read_file_memory_chunk before synthesizing source-backed conclusions.');
     }
 
     // Source descriptions (shown once per session when first introduced)

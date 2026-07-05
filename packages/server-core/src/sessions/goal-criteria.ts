@@ -19,6 +19,8 @@ export interface GoalExecutionPolicy {
   maxWallClockMs: number
 }
 
+export const MAX_AUTOMATIC_GOAL_REPAIR_PASSES = 2
+
 const BASE_DELIVERABLE_CRITERION: SessionGoalCriterionSpec = {
   text: 'Complete the user request, including any requested deliverables, constraints, referenced files, and verification steps.',
   kind: 'deliverable',
@@ -26,7 +28,7 @@ const BASE_DELIVERABLE_CRITERION: SessionGoalCriterionSpec = {
 }
 
 const SOURCE_GROUNDED_CRITERION: SessionGoalCriterionSpec = {
-  text: 'Ground key facts, figures, clauses, and requirements in available source material; clearly mark assumptions when source evidence is unavailable.',
+  text: 'Ground key facts, figures, clauses, and requirements in user-selected sources, attachments, or explicitly named files/folders; clearly mark assumptions when source evidence is unavailable.',
   kind: 'evidence',
   required: true,
 }
@@ -372,7 +374,7 @@ function buildTaskContractEvidenceRequirements(
   if (referencedNames.length > 0) {
     requirements.push(`Use the referenced material where relevant: ${referencedNames.join(', ')}.`)
   } else if (SOURCE_SENSITIVE_PATTERN.test(message)) {
-    requirements.push('Ground key facts, figures, clauses, and requirements in available source material; mark unsupported claims as assumptions.')
+    requirements.push('Ground key facts, figures, clauses, and requirements in user-selected sources, attachments, or explicitly named files/folders; mark unsupported claims as assumptions.')
   }
   if (taskType === 'research') {
     requirements.push('Ground research claims in cited sources or clearly mark unavailable evidence and assumptions.')
@@ -579,7 +581,7 @@ function buildDocumentEvidenceMatrix(input: {
       source: 'Pending source evidence',
       sourceType: 'assumption',
       supports: 'Claims that still need uploaded files, external search results, or explicit user evidence.',
-      reliabilityNote: 'Do not treat as verified until a source is attached, searched, or explicitly provided.',
+      reliabilityNote: 'Do not treat as verified until a source is selected, attached, searched externally by request, or explicitly provided. Do not mine the working directory as the default evidence corpus.',
       citationFields: ['source', 'locator', 'claim', 'excerpt_or_value', 'reliability_note'],
       reuseStatus: 'pending',
     }]
@@ -868,6 +870,7 @@ function buildForbiddenShortcuts(
   }
   if (SOURCE_SENSITIVE_PATTERN.test(message) || taskType === 'research') {
     shortcuts.push('Do not invent facts, figures, clauses, page numbers, file names, dates, prices, or technical parameters.')
+    shortcuts.push('Do not inventory or mine the working directory as a source corpus unless the user explicitly names that folder/path for analysis.')
   }
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {
     shortcuts.push('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')
@@ -1008,31 +1011,26 @@ function uniqueBounded(items: string[], limit: number): string[] {
 export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInput): GoalExecutionPolicy {
   const message = input.message.trim()
   const explicitQuickMode = input.documentQualityMode === 'quick'
-  let maxIterations = 2
+  const maxIterations = MAX_AUTOMATIC_GOAL_REPAIR_PASSES
   let maxWallClockMs = 15 * 60 * 1000
 
   if (!explicitQuickMode && (input.storedAttachments?.length ?? 0) > 0 && (DOCUMENT_WORK_PATTERN.test(message) || SOURCE_SENSITIVE_PATTERN.test(message))) {
-    maxIterations = 3
     maxWallClockMs = 30 * 60 * 1000
   }
 
   if (!explicitQuickMode && COMPREHENSIVE_PATTERN.test(message)) {
-    maxIterations = 3
     maxWallClockMs = 30 * 60 * 1000
   }
 
   if (input.documentQualityMode === 'professional_document') {
-    maxIterations = Math.max(maxIterations, 3)
     maxWallClockMs = Math.max(maxWallClockMs, 30 * 60 * 1000)
   }
 
   if (input.documentQualityMode === 'strict_delivery' || input.documentQualityMode === 'multi_agent_deep') {
-    maxIterations = Math.max(maxIterations, 4)
     maxWallClockMs = Math.max(maxWallClockMs, 45 * 60 * 1000)
   }
 
   if (UNTIL_DONE_PATTERN.test(message)) {
-    maxIterations = 4
     maxWallClockMs = 45 * 60 * 1000
   }
 

@@ -87,6 +87,7 @@ describe('mode transition session_state context', () => {
 
     expect(stateBlock).toContain('workingDirectory: /tmp/project');
     expect(stateBlock).toContain('projectBoundary: Treat workingDirectory as the physical project boundary');
+    expect(stateBlock).toContain('inputScope: workingDirectory is not an implicit evidence corpus');
     expect(stateBlock).toContain('projectBrainPath: /tmp/project/.agent-pi/brain');
 
     cleanupModeState(sessionId);

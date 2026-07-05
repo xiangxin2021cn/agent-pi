@@ -78,6 +78,7 @@ describe('PromptBuilder volatile/stable context split (issue #862)', () => {
 
     expect(volatileText).toContain('<context_pressure')
     expect(volatileText).toContain('12 sources')
+    expect(volatileText).toContain('task-scoped sources explicitly selected by the user')
     expect(volatileText).toContain('narrow enabled sources')
     expect(stableText).not.toContain('<context_pressure')
   })

@@ -2160,6 +2160,7 @@ export function formatSessionState(
   if (options?.workingDirectory) {
     result += `\nworkingDirectory: ${options.workingDirectory}`;
     result += '\nprojectBoundary: Treat workingDirectory as the physical project boundary for this session. Do not read, write, summarize, or reuse memory from other project folders unless the user explicitly names a controlled company or industry knowledge source.';
+    result += '\ninputScope: workingDirectory is not an implicit evidence corpus. Analyze selected sources, attached files, explicitly named files/folders, or necessary code/config files only; ask before broad folder discovery.';
   }
 
   // Always include plans folder path so agent knows where plans are stored

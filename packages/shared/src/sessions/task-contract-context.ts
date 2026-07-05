@@ -27,6 +27,10 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
     'Execution guidance:',
     '- Treat this contract as the acceptance boundary for the current task.',
     '- Preserve explicit requirements and referenced evidence before optimizing for brevity.',
+    '- Use only selected sources, attached files, and explicitly named file or folder paths as task input.',
+    '- Do not inventory the working directory as a source corpus unless the user explicitly requests folder discovery.',
+    '- Check instruction fidelity before improving document quality.',
+    '- Do not broaden requested scope, selected sources, output format, or response language during improvement passes.',
     '- Do not claim completion until deliverables, evidence requirements, and forbidden shortcuts are checked.',
     '',
     ...sections,
@@ -85,13 +89,15 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
   const finalSynthesisOwner = contract.documentPlan?.agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner';
   return [
     'Document workflow execution protocol:',
-    `1. Use the chapter-agent assignments as the work breakdown before drafting the final artifact.`,
-    `2. When spawn_session is available, call spawn_session with help=true first, then spawn one session per chapter-agent assignment.`,
-    `3. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
-    `4. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
-    `5. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
-    `6. Resolve cross-chapter consistency conflicts before final synthesis.`,
-    `7. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
+    `1. Before spawning chapter agents, restate the exact user-requested scope and selected sources.`,
+    `2. If the request names a single chapter, source, file, or folder, do not spawn agents for other chapters or sources.`,
+    `3. Use the chapter-agent assignments only within that user-requested scope before drafting the final artifact.`,
+    `4. When spawn_session is available, call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
+    `5. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
+    `6. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
+    `7. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
+    `8. Resolve cross-chapter consistency conflicts before final synthesis.`,
+    `9. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
   ].join('\n');
 }
 

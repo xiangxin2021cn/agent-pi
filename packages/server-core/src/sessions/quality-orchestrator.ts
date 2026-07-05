@@ -182,6 +182,8 @@ function buildRolePrompt(
     input.finalAssistant.content.slice(0, 8000),
     '',
     'Rules:',
+    '- Instruction-following review comes first. Compare the final response and verified artifacts against the original request, follow-up requests, selected sources, named chapters/files/folders, requested output format, and response language before judging polish or depth.',
+    '- Fail with scope_gap when the output broadens beyond selected sources, named chapters/files/folders, requested output format, or response language.',
     '- Treat the task contract as binding. Do not accept scope reduction, skipped granularity, missing deliverables, or omitted hard constraints.',
     '- Use pass only when the evidence clearly proves all required criteria.',
     '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',

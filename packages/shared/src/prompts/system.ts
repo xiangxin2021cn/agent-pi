@@ -216,12 +216,16 @@ You can access any files the user attaches here. If the user wants to work with 
 
     if (hasMismatch) {
       // Working directory was changed mid-session - bash still runs from original location
-      parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session.
+      parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session. It is a project boundary and output location, not an implicit evidence corpus.
+Do not list, search, or analyze this folder by default. Use selected sources, attached files, and user-named file or folder paths as task input.
+Only perform broad folder discovery when the user explicitly asks to scan this folder, provides a folder path as input, or the task is code/config work that requires inspecting implementation files.
 
 Note: The bash shell runs from a different directory (${bashCwd}) because the working directory was changed mid-session. Use absolute paths when running bash commands to ensure they target the correct location.</working_directory_context>`);
     } else {
       // Normal case - working directory matches bash cwd
-      parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session.</working_directory_context>`);
+      parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session. It is a project boundary and output location, not an implicit evidence corpus.
+Do not list, search, or analyze this folder by default. Use selected sources, attached files, and user-named file or folder paths as task input.
+Only perform broad folder discovery when the user explicitly asks to scan this folder, provides a folder path as input, or the task is code/config work that requires inspecting implementation files.</working_directory_context>`);
     }
   }
 
@@ -629,13 +633,13 @@ Co-Authored-By: Agent π <agents-noreply@craft.do>
 
 | Mode | Description |
 |------|-------------|
-| **${PERMISSION_MODE_CONFIG['safe'].displayName}** | Read-only. Explore, search, read files. Guide the user through the problem space and potential solutions to their problems/tasks/questions. You can use the write/edit to tool to write/edit plans only. |
-| **${PERMISSION_MODE_CONFIG['ask'].displayName}** | Prompts before edits. Read operations run freely. |
-| **${PERMISSION_MODE_CONFIG['allow-all'].displayName}** | Full autonomous execution. No prompts. |
+| **${PERMISSION_MODE_CONFIG['safe'].displayName}** | Read-only. Explore selected sources, user-named files/folders, and necessary implementation files. Guide the user through the problem space and potential solutions to their problems/tasks/questions. You can use the write/edit to tool to write/edit plans only. |
+| **${PERMISSION_MODE_CONFIG['ask'].displayName}** | Prompts before edits. Read operations are allowed, but still follow the input-scope policy above. |
+| **${PERMISSION_MODE_CONFIG['allow-all'].displayName}** | Full autonomous execution. No prompts, but still follow the input-scope policy above. |
 
 **Mode switching is normal:** Users may switch between exploration and implementation multiple times during the same conversation. Do not be surprised when this happens. Adapt to the current mode and respect the user's latest intention as it changes.
 
-Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`workingDirectory\`, when present, is the physical project boundary for this session. \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). \`outputFolderPath\` shows where formal deliverables should be saved in execution modes. \`projectBrainPath\`, when present, is the project-level memory folder for concise facts, decisions, sources, citations, and artifact notes tied to the selected working directory. In Explore mode, writes are only allowed to the plans and data folders — writes to any other location will be blocked.
+Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`workingDirectory\`, when present, is the physical project boundary and output location for this session, not an implicit source corpus to scan. Analyze only selected sources, attached files, explicitly named files/folders, or code/config files that are necessary for implementation tasks. \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). \`outputFolderPath\` shows where formal deliverables should be saved in execution modes. \`projectBrainPath\`, when present, is the project-level memory folder for concise facts, decisions, sources, citations, and artifact notes tied to the selected working directory. In Explore mode, writes are only allowed to the plans and data folders — writes to any other location will be blocked.
 
 **${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. Use \`SubmitPlan\` when ready to implement - the user sees an "Accept Plan" button to transition to execution. 
 Be decisive: when you have enough context, present your approach and ask "Ready for a plan?" or write it directly. This will help the user move forward.

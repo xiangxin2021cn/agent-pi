@@ -213,6 +213,36 @@ describe('SourceManager', () => {
 
       expect(formatted).toContain('github (no tools)');
     });
+
+    it('should add first-source guidance for selected knowledge base file memories', () => {
+      sourceManager.setAllSources([
+        createMockSource('file-memory-coto-book-1', {
+          name: 'COTO Book 1',
+          provider: 'file-memory',
+          tagline: 'Read-only evidence memory for COTO Book 1',
+          metadata: {
+            category: 'knowledge_base',
+            knowledgeCategory: 'COTO',
+            knowledgeFolder: 'COTO',
+            scope: 'global',
+            sourceKind: 'file-memory',
+            fileExtension: '.md',
+          },
+        }),
+        createMockSource('github', { tagline: 'GitHub integration' }),
+      ]);
+      sourceManager.updateActiveState(['file-memory-coto-book-1'], [], ['file-memory-coto-book-1']);
+
+      const formatted = sourceManager.formatSourceState();
+
+      expect(formatted).toContain('Selected knowledge-base sources:');
+      expect(formatted).toContain('- file-memory-coto-book-1: COTO Book 1 (folder: COTO)');
+      expect(formatted).toContain('Use selected knowledge-base sources first for source-sensitive analysis');
+      expect(formatted).toContain('Do not search the working directory for alternate copies before querying the selected knowledge-base source');
+      expect(formatted).toContain('get_file_memory_manifest');
+      expect(formatted).toContain('search_file_memory');
+      expect(formatted).toContain('read_file_memory_chunk');
+    });
   });
 
   describe('Authentication Utilities', () => {
