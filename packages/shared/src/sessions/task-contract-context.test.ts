@@ -120,14 +120,49 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Review stages:');
     expect(formatted).toContain('Guardrails:');
     expect(formatted).toContain('Document workflow execution protocol:');
-    expect(formatted).toContain('Before spawning chapter agents, restate the exact user-requested scope and selected sources.');
-    expect(formatted).toContain('If the request names a single chapter, source, file, or folder, do not spawn agents for other chapters or sources.');
-    expect(formatted).toContain('Use the chapter-agent assignments only within that user-requested scope before drafting the final artifact.');
-    expect(formatted).toContain('Record chapter-agent handoff notes with source gaps and unresolved assumptions.');
-    expect(formatted).toContain('When spawn_session is available, call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
+    expect(formatted).toContain('Before drafting, restate the exact user-requested scope and selected sources.');
+    expect(formatted).toContain('For multi-agent deep mode, create real spawned chapter sessions with spawn_session before final synthesis unless the user explicitly requests single-agent execution.');
+    expect(formatted).toContain('Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
+    expect(formatted).toContain('If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.');
+    expect(formatted).toContain('Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
+    expect(formatted).toContain('Record chapter-agent handoff notes with source gaps and unresolved assumptions.');
     expect(formatted).toContain('Only final_synthesis_owner may write the final synthesized deliverable after cross-chapter review.');
+  });
+
+  it('includes scoped orchestration instructions for complex professional document plans', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      taskType: 'document',
+      documentQualityMode: 'professional_document',
+      documentPlan: {
+        sections: ['项目概况', '技术方案', '施工进度', '成本风险'],
+        tables: [],
+        charts: [],
+        enhancements: [],
+        citations: [],
+        deliveryFormats: ['MD'],
+        agentPlan: {
+          mode: 'chapter_agents',
+          finalSynthesisOwner: 'final_synthesis_owner',
+          assignments: [
+            {
+              id: 'chapter-agent-1',
+              title: '项目概况',
+              role: 'source_evidence_agent',
+              reviewFocus: 'scope and evidence',
+            },
+          ],
+          reviewStages: ['Chapter evidence review before synthesis.'],
+          guardrails: ['Only the final synthesis owner may write or replace the final deliverable after chapter drafts are reviewed.'],
+        },
+      },
+    });
+
+    expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
+    expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
+    expect(formatted).toContain('The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.');
   });
 
   it('includes document evidence matrix entries when available', () => {

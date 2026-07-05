@@ -1204,6 +1204,71 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not accept multi-agent deep output that only claims handoffs without real spawned sessions', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请用多智能体深度模式生成施工策划报告。',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        documentPlan: {
+          sections: ['技术方案'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          agentPlan: {
+            mode: 'chapter_agents',
+            finalSynthesisOwner: 'final_synthesis_owner',
+            assignments: [{
+              id: 'chapter-agent-1',
+              title: '技术方案',
+              role: 'technical_chapter_agent',
+              reviewFocus: 'technical completeness and source-backed constraints',
+            }],
+            reviewStages: ['Cross-chapter consistency review before final synthesis.'],
+            guardrails: ['Each chapter agent must list source gaps and unresolved assumptions before handoff.'],
+          },
+        },
+        deliverables: ['Produce a report with a real chapter-agent handoff.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use selected knowledge-base evidence.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: ['Do not fake multi-agent handoff notes in the final artifact.'],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请用多智能体深度模式生成施工策划报告。'),
+        message('a1', 'assistant', [
+          '# 施工策划报告',
+          '',
+          'chapter-agent-1 技术方案 handoff: source gaps none; unresolved assumptions none.',
+          '',
+          'Cross-chapter consistency review complete.',
+          '',
+          'final_synthesis_owner 完成最终合成。',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      spawnedSessions: [],
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.includes('real spawned chapter sessions'))).toBe(true)
+      expect(decision.result.evidence.some(item =>
+        item.type === 'system'
+        && item.label === 'document_agent_plan_audit'
+        && (item.detail ?? '').includes('missingRealSpawnedSessions: yes')
+      )).toBe(true)
+    }
+  })
+
   test('does not accept reviewer pass when explicit required user item is missing', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

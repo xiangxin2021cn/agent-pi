@@ -108,7 +108,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
-import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult } from './goal-controller'
+import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
@@ -1304,6 +1304,14 @@ const GOAL_FILE_PREVIEW_TEXT_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
 ])
+const GOAL_SPAWN_PREVIEW_MAX_CHARS = 1200
+
+function compactGoalSpawnPreview(content: string): string {
+  const compact = content.replace(/\s+/g, ' ').trim()
+  return compact.length > GOAL_SPAWN_PREVIEW_MAX_CHARS
+    ? `${compact.slice(0, GOAL_SPAWN_PREVIEW_MAX_CHARS - 1)}…`
+    : compact
+}
 
 function ensureGoalPdfjsPolyfills(): void {
   if (typeof (globalThis as any).DOMMatrix === 'undefined') {
@@ -5828,6 +5836,28 @@ export class SessionManager implements ISessionManager {
     return undefined
   }
 
+  private getSpawnedSessionSummaries(parentSessionId: string): GoalSpawnedSessionSummary[] {
+    return [...this.sessions.values()]
+      .filter(session => session.parentSessionId === parentSessionId && session.parentSessionKind === 'spawn')
+      .map(session => {
+        const firstUserMessage = session.messages.find(message => message.role === 'user' && !message.isIntermediate)
+        const finalAssistantMessage = [...session.messages].reverse().find(message =>
+          message.role === 'assistant'
+          && !message.isIntermediate
+          && message.content.trim().length > 0
+        )
+
+        return {
+          id: session.id,
+          name: session.name,
+          messageCount: session.messages.length,
+          hasFinalAssistant: Boolean(finalAssistantMessage),
+          firstUserMessagePreview: firstUserMessage ? compactGoalSpawnPreview(firstUserMessage.content) : undefined,
+          finalAssistantPreview: finalAssistantMessage ? compactGoalSpawnPreview(finalAssistantMessage.content) : undefined,
+        }
+      })
+  }
+
   /**
    * Set which session the user is actively viewing.
    * Called when user navigates to a session. Used to determine whether to mark
@@ -7632,6 +7662,7 @@ export class SessionManager implements ISessionManager {
         reviewer: this.buildGoalReviewer(managed),
         fileVerifier: this.buildGoalFileVerifier(),
         expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
+        spawnedSessions: this.getSpawnedSessionSummaries(sessionId),
         contextPressure: {
           enabledSourceCount: managed.enabledSourceSlugs?.length ?? 0,
           contextWindow: managed.tokenUsage?.contextWindow,

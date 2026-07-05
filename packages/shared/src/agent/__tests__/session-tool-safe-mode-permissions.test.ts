@@ -12,6 +12,8 @@ describe('session tool safe-mode classification', () => {
   it('allows read-only session tools in safe mode', () => {
     const allowedTools = [
       'mcp__session__call_llm',
+      'mcp__session__spawn_session',
+      'mcp__session__send_agent_message',
       'mcp__session__browser_tool',
       'mcp__session__script_sandbox',
     ] as const;
@@ -26,7 +28,6 @@ describe('session tool safe-mode classification', () => {
     const blockedTools = [
       'mcp__session__source_oauth_trigger',
       'mcp__session__source_credential_prompt',
-      'mcp__session__spawn_session',
       'mcp__session__update_user_preferences',
     ] as const;
 

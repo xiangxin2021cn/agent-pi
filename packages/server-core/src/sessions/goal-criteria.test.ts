@@ -404,6 +404,31 @@ describe('buildTaskContractFromMessage', () => {
     ])
   })
 
+  it('creates a bounded helper-agent plan for complex professional document tasks', () => {
+    const contract = buildTaskContractFromMessage({
+      message: [
+        '请根据招标文件和BOQ生成专业文档报告，要求：',
+        '1. 项目概况',
+        '2. 技术方案',
+        '3. 施工进度',
+        '4. 成本风险',
+      ].join('\n'),
+      storedAttachments: [attachment('tender.pdf'), attachment('boq.xlsx')],
+      documentQualityMode: 'professional_document',
+    })
+
+    const agentPlan = contract.documentPlan?.agentPlan
+
+    expect(agentPlan?.mode).toBe('chapter_agents')
+    expect(agentPlan?.finalSynthesisOwner).toBe('final_synthesis_owner')
+    expect(agentPlan?.assignments.map(item => item.title)).toEqual([
+      '项目概况',
+      '技术方案',
+      '施工进度',
+      '成本风险',
+    ])
+  })
+
   it('uses an explicit document workflow mode over automatic classification', () => {
     const contract = buildTaskContractFromMessage({
       message: '整理一下这段会议纪要。',

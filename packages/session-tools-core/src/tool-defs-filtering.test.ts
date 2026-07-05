@@ -57,10 +57,11 @@ describe('session tool filtering helpers', () => {
     expect(allowed.has('call_llm')).toBe(true);
     expect(allowed.has('browser_tool')).toBe(true);
     expect(allowed.has('script_sandbox')).toBe(true);
+    expect(allowed.has('spawn_session')).toBe(true);
+    expect(allowed.has('send_agent_message')).toBe(true);
 
     expect(blocked.has('source_oauth_trigger')).toBe(true);
     expect(blocked.has('source_credential_prompt')).toBe(true);
-    expect(blocked.has('spawn_session')).toBe(true);
   });
 
   it('safe-mode helpers support MCP prefixing', () => {
@@ -70,7 +71,8 @@ describe('session tool filtering helpers', () => {
     expect(allowedPrefixed.has('mcp__session__send_developer_feedback')).toBe(true);
     expect(allowedPrefixed.has('mcp__session__call_llm')).toBe(true);
     expect(allowedPrefixed.has('mcp__session__script_sandbox')).toBe(true);
+    expect(allowedPrefixed.has('mcp__session__spawn_session')).toBe(true);
+    expect(allowedPrefixed.has('mcp__session__send_agent_message')).toBe(true);
     expect(blockedPrefixed.has('mcp__session__source_oauth_trigger')).toBe(true);
-    expect(blockedPrefixed.has('mcp__session__spawn_session')).toBe(true);
   });
 });

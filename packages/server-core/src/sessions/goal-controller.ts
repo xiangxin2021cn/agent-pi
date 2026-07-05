@@ -57,6 +57,15 @@ export interface GoalFileVerificationResult {
 
 export type GoalFileVerifier = (filePath: string) => Promise<GoalFileVerificationResult> | GoalFileVerificationResult
 
+export interface GoalSpawnedSessionSummary {
+  id: string
+  name?: string
+  messageCount: number
+  hasFinalAssistant: boolean
+  firstUserMessagePreview?: string
+  finalAssistantPreview?: string
+}
+
 export interface GoalTurnSnapshot {
   messages: Message[]
   turnStartFinalMessageId?: string
@@ -66,6 +75,7 @@ export interface GoalTurnSnapshot {
   reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
   fileVerifier?: GoalFileVerifier
   contextPressure?: ContextPressureInput
+  spawnedSessions?: GoalSpawnedSessionSummary[]
 }
 
 export class GoalController {
@@ -329,7 +339,7 @@ export class GoalController {
       }
     }
     if (finalAssistant && requiresDocumentAgentPlanAudit(goalState)) {
-      const report = auditDocumentAgentPlan(outputTexts, goalState)
+      const report = auditDocumentAgentPlan(outputTexts, goalState, snapshot.spawnedSessions ?? [])
       evidence.push({
         type: 'system',
         label: 'document_agent_plan_audit',
@@ -885,6 +895,10 @@ interface DocumentAgentPlanAudit {
   issues: string[]
   assignmentCount: number
   coveredAssignmentCount: number
+  requiredSpawnedSessionCount: number
+  actualSpawnedSessionCount: number
+  completedSpawnedSessionCount: number
+  missingRealSpawnedSessions: boolean
   missingFinalSynthesisOwner: boolean
   missingChapterHandoff: boolean
   missingSourceGapReview: boolean
@@ -1168,21 +1182,49 @@ function formatVisualBlockAudit(report: VisualBlockAudit): string {
 }
 
 function requiresDocumentAgentPlanAudit(goalState: SessionGoalState): boolean {
-  return goalState.taskContract?.documentQualityMode === 'multi_agent_deep'
+  return goalState.taskContract?.documentQualityMode !== undefined
+    && goalState.taskContract.documentQualityMode !== 'quick'
     && (goalState.taskContract.documentPlan?.agentPlan?.assignments.length ?? 0) > 0
 }
 
-function auditDocumentAgentPlan(contents: string[], goalState: SessionGoalState): DocumentAgentPlanAudit {
+function auditDocumentAgentPlan(
+  contents: string[],
+  goalState: SessionGoalState,
+  spawnedSessions: readonly GoalSpawnedSessionSummary[],
+): DocumentAgentPlanAudit {
   const markdown = contents.map(content => content.trim()).filter(Boolean).join('\n\n')
   const agentPlan = goalState.taskContract?.documentPlan?.agentPlan
   const assignments = agentPlan?.assignments ?? []
-  const coveredAssignmentCount = assignments.filter(assignment => hasAssignmentEvidence(markdown, assignment.title) || hasAssignmentEvidence(markdown, assignment.id)).length
+  const spawnedEvidenceText = spawnedSessions
+    .flatMap(session => [
+      session.name,
+      session.firstUserMessagePreview,
+      session.finalAssistantPreview,
+    ])
+    .map(value => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n')
+  const allAgentEvidence = [markdown, spawnedEvidenceText].filter(Boolean).join('\n\n')
+  const requiredSpawnedSessionCount = getRequiredSpawnedSessionCount(assignments.length)
+  const actualSpawnedSessionCount = spawnedSessions.length
+  const completedSpawnedSessionCount = spawnedSessions.filter(session => session.hasFinalAssistant).length
+  const missingRealSpawnedSessions =
+    requiredSpawnedSessionCount > 0 && actualSpawnedSessionCount < requiredSpawnedSessionCount
+  const missingCompletedSpawnHandoffs =
+    requiredSpawnedSessionCount > 0 && completedSpawnedSessionCount < requiredSpawnedSessionCount
+  const coveredAssignmentCount = assignments.filter(assignment => hasAssignmentEvidence(allAgentEvidence, assignment.title) || hasAssignmentEvidence(allAgentEvidence, assignment.id)).length
   const missingFinalSynthesisOwner = !hasAssignmentEvidence(markdown, agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner')
-  const missingChapterHandoff = !/(chapter[-\s]?agent|章节智能体|chapter handoff|handoff|移交|交接|分工)/i.test(markdown)
-  const missingSourceGapReview = !/(source gaps?|unresolved assumptions?|evidence gaps?|来源缺口|证据缺口|未解决假设|待核实|待补充)/i.test(markdown)
-  const missingCrossChapterReview = !/(cross[-\s]?chapter|consistency review|cross-discipline|跨章节|一致性审查|交叉审查|冲突解决)/i.test(markdown)
+  const missingChapterHandoff = missingCompletedSpawnHandoffs || !/(chapter[-\s]?agent|章节智能体|chapter handoff|handoff|移交|交接|分工)/i.test(allAgentEvidence)
+  const missingSourceGapReview = !/(source gaps?|unresolved assumptions?|evidence gaps?|来源缺口|证据缺口|未解决假设|待核实|待补充)/i.test(allAgentEvidence)
+  const missingCrossChapterReview = !/(cross[-\s]?chapter|consistency review|cross-discipline|跨章节|一致性审查|交叉审查|冲突解决)/i.test(allAgentEvidence)
   const issues: string[] = []
 
+  if (missingRealSpawnedSessions) {
+    issues.push(`Only ${actualSpawnedSessionCount}/${requiredSpawnedSessionCount} required real spawned chapter sessions exist for the document agent plan.`)
+  }
+  if (missingCompletedSpawnHandoffs) {
+    issues.push(`Only ${completedSpawnedSessionCount}/${requiredSpawnedSessionCount} required spawned chapter sessions returned a final handoff note.`)
+  }
   if (coveredAssignmentCount < assignments.length) {
     issues.push('Not every chapter-agent assignment is reflected in the deliverable or handoff notes.')
   }
@@ -1204,11 +1246,20 @@ function auditDocumentAgentPlan(contents: string[], goalState: SessionGoalState)
     issues,
     assignmentCount: assignments.length,
     coveredAssignmentCount,
+    requiredSpawnedSessionCount,
+    actualSpawnedSessionCount,
+    completedSpawnedSessionCount,
+    missingRealSpawnedSessions,
     missingFinalSynthesisOwner,
     missingChapterHandoff,
     missingSourceGapReview,
     missingCrossChapterReview,
   }
+}
+
+function getRequiredSpawnedSessionCount(assignmentCount: number): number {
+  if (assignmentCount <= 0) return 0
+  return Math.max(1, Math.min(assignmentCount, 4))
 }
 
 function hasAssignmentEvidence(markdown: string, value: string): boolean {
@@ -1220,6 +1271,9 @@ function formatDocumentAgentPlanAudit(report: DocumentAgentPlanAudit): string {
   return [
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `assignmentCoverage: ${report.coveredAssignmentCount}/${report.assignmentCount}`,
+    `spawnedSessions: ${report.actualSpawnedSessionCount}/${report.requiredSpawnedSessionCount}`,
+    `completedSpawnHandoffs: ${report.completedSpawnedSessionCount}/${report.requiredSpawnedSessionCount}`,
+    `missingRealSpawnedSessions: ${report.missingRealSpawnedSessions ? 'yes' : 'no'}`,
     `missingChapterHandoff: ${report.missingChapterHandoff ? 'yes' : 'no'}`,
     `missingSourceGapReview: ${report.missingSourceGapReview ? 'yes' : 'no'}`,
     `missingCrossChapterReview: ${report.missingCrossChapterReview ? 'yes' : 'no'}`,

@@ -26,13 +26,14 @@ GitHub Releases / 发布页:
 
 ### V1.3.1 Hotfix / V1.3.1 紧急修复
 
-V1.3.1 hardens knowledge-base scoped document execution and long-document reading. When users load selected knowledge-base entries, Agent Pi now treats those sources as the task scope, asks before broadening beyond them, and keeps Goal Loop focused first on instruction following before output polish.
+V1.3.1 hardens knowledge-base scoped document execution, real multi-agent dispatch, and long-document reading. When users load selected knowledge-base entries, Agent Pi now treats those sources as the task scope, asks before broadening beyond them, and keeps Goal Loop focused first on instruction following before output polish.
 
-V1.3.1 强化知识库限定范围下的文档执行：用户加载指定知识库后，Agent π 会优先把这些来源作为任务范围，扩大到工作目录前必须有明确理由或用户确认；Goal Loop 优先审查是否遵守用户指令，再审查成果质量。
+V1.3.1 强化知识库限定范围、多智能体真实派发和长文档读取：用户加载指定知识库后，Agent π 会优先把这些来源作为任务范围，扩大到工作目录前必须有明确理由或用户确认；Goal Loop 优先审查是否遵守用户指令，再审查成果质量。
 
 | Area / 模块 | English | 中文 |
 | --- | --- | --- |
 | Knowledge-base scope | Selected enterprise knowledge-base/file-memory sources are injected as first-class task scope before working-folder discovery. | 已选择的企业知识库/file-memory 来源会作为首要任务范围，不再默认先扫工作目录。 |
+| Real multi-agent dispatch | Multi-Agent Deep must create real spawned chapter sessions before final synthesis. Complex Professional/Strict tasks can also receive a bounded helper-agent plan after the main session decides orchestration. | 多智能体深度模式必须先真实创建章节分智能体再最终合成。复杂的专业文档/严格交付任务也会由主会话先判断并生成受控子智能体分工。 |
 | Goal Loop discipline | Automatic improvement checks the original instruction, follow-up feedback, selected sources, named chapters/files/folders, output format, and response language before judging quality. | 自动纠偏先核查原始指令、用户反馈、选中来源、指定章节/文件/文件夹、输出格式和语言，再审查质量。 |
 | Manual confirmation | If the assistant asks the user to confirm scope or choices, Goal Loop pauses for review instead of silently continuing. | 智能体要求用户确认范围或方案时，Goal Loop 会停到人工审查，不再掩盖确认环节继续执行。 |
 | Long-document Read | Pi-backed Read treats an offset past the end of a file as end-of-file, not a tool failure. | Pi Read 遇到超过文件末尾的 offset 时视为读完，不再误报工具失败。 |

@@ -66,6 +66,7 @@ const PROCESS_VISUAL_PATTERN = /流程|关系|架构|步骤|路径|process|workf
 const PROFESSIONAL_DOCUMENT_MODE_PATTERN = /专业文档|专业报告|正式报告|正式文档|证据矩阵|章节计划|质量审查|高质量报告|professional document|professional report|evidence matrix|chapter plan|quality audit/i
 const STRICT_DELIVERY_MODE_PATTERN = /正式交付|最终交付|交付版|必须通过.{0,40}(?:来源|模板|导出|图表|格式).*审查|strict delivery|delivery gates?/i
 const MULTI_AGENT_DEEP_MODE_PATTERN = /多智能体深度|多智能体|分章节智能体|子智能体|多角色评审|大型投标|大型.{0,12}(?:工程|投标|尽调|报告)|due diligence|large tender|multi[- ]agent|sub[- ]agent|chapter agents?|role review/i
+const COMPLEX_AGENT_ORCHESTRATION_PATTERN = /多文件|多来源|多章节|多专业|多角色|全文|全册|整册|全规范|大型|复杂|综合|投标|尽调|工程报告|施工组织|成本|进度|风险|many files|multiple sources|multi[- ]source|multi[- ]chapter|complex|large|full report|whole report|due diligence|tender|engineering report/i
 const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'PDF', pattern: /(?:\.pdf\b|\bpdf\b)/i },
   { label: 'DOCX', pattern: /(?:\.docx?\b|\bdocx?\b|\bword\b)/i },
@@ -649,10 +650,19 @@ function buildDocumentAgentPlan(
   message: string,
   taskType: SessionTaskContractType,
 ): SessionDocumentAgentPlan | undefined {
-  if (documentQualityMode !== 'multi_agent_deep') return undefined
-
   const baseTitles = sections.filter(section => !/table of contents|appendix|目录|附录/i.test(section) && !isFinalSynthesisInstruction(section))
-  const titles = uniqueBounded(baseTitles.length > 0 ? baseTitles : buildDocumentPlanSections(message, [], taskType), 8)
+  const candidateTitles = uniqueBounded(baseTitles.length > 0 ? baseTitles : buildDocumentPlanSections(message, [], taskType), 8)
+  const requiresDeepAgents = documentQualityMode === 'multi_agent_deep'
+  const shouldCreatePlan = requiresDeepAgents || shouldCreateComplexDocumentAgentPlan(
+    documentQualityMode,
+    candidateTitles,
+    message,
+    taskType,
+  )
+
+  if (!shouldCreatePlan) return undefined
+
+  const titles = uniqueBounded(candidateTitles, requiresDeepAgents ? 8 : 4)
 
   return {
     mode: 'chapter_agents',
@@ -674,6 +684,29 @@ function buildDocumentAgentPlan(
       'Do not merge conflicting chapter claims without a recorded resolution.',
     ],
   }
+}
+
+function shouldCreateComplexDocumentAgentPlan(
+  documentQualityMode: SessionDocumentQualityMode,
+  titles: string[],
+  message: string,
+  taskType: SessionTaskContractType,
+): boolean {
+  if (documentQualityMode === 'quick') return false
+  if (documentQualityMode === 'multi_agent_deep') return true
+
+  const titleCount = titles.filter(title => !isFinalSynthesisInstruction(title)).length
+  const complexText = COMPLEX_AGENT_ORCHESTRATION_PATTERN.test(message)
+    || (COMPREHENSIVE_PATTERN.test(message) && SOURCE_SENSITIVE_PATTERN.test(message))
+    || (PROFESSIONAL_VISUAL_PATTERN.test(message) && SOURCE_SENSITIVE_PATTERN.test(message))
+  const strictOrTemplate = documentQualityMode === 'strict_delivery'
+    || STRICT_TEMPLATE_PATTERN.test(message)
+    || STRICT_DELIVERY_MODE_PATTERN.test(message)
+
+  if (titleCount >= 4) return true
+  if (strictOrTemplate && titleCount >= 2) return true
+  if ((taskType === 'document' || taskType === 'research') && titleCount >= 3 && complexText) return true
+  return false
 }
 
 function isFinalSynthesisInstruction(value: string): boolean {

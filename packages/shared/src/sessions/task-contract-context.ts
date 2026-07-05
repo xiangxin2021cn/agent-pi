@@ -65,23 +65,27 @@ function formatCriticalReasoningProtocol(contract: SessionTaskContract): string 
 
 function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract): string | undefined {
   if (contract.documentQualityMode === 'professional_document') {
-    return [
+    const lines = [
       'Document workflow execution protocol:',
       '1. Build or update the evidence matrix before drafting source-backed claims.',
       '2. Plan sections, tables, visuals, and citations before writing final prose.',
       '3. Keep source notes for key claims, tables, and visual evidence.',
       '4. Run a document-quality pass before claiming completion.',
-    ].join('\n');
+    ];
+    appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    return lines.join('\n');
   }
 
   if (contract.documentQualityMode === 'strict_delivery') {
-    return [
+    const lines = [
       'Document workflow execution protocol:',
       '1. Resolve source, template, export, visual, and format gates before claiming strict delivery.',
       '2. Write missing gate evidence into the artifact or report the gate as blocked.',
       '3. Verify requested output files and cite the verification evidence before final response.',
       '4. Do not accept prompt-only compliance for template, export, visual, or source gates.',
-    ].join('\n');
+    ];
+    appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    return lines.join('\n');
   }
 
   if (contract.documentQualityMode !== 'multi_agent_deep') return undefined;
@@ -89,16 +93,26 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
   const finalSynthesisOwner = contract.documentPlan?.agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner';
   return [
     'Document workflow execution protocol:',
-    `1. Before spawning chapter agents, restate the exact user-requested scope and selected sources.`,
-    `2. If the request names a single chapter, source, file, or folder, do not spawn agents for other chapters or sources.`,
-    `3. Use the chapter-agent assignments only within that user-requested scope before drafting the final artifact.`,
-    `4. When spawn_session is available, call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
-    `5. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
-    `6. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
-    `7. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
-    `8. Resolve cross-chapter consistency conflicts before final synthesis.`,
-    `9. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
+    `1. Before drafting, restate the exact user-requested scope and selected sources.`,
+    `2. For multi-agent deep mode, create real spawned chapter sessions with spawn_session before final synthesis unless the user explicitly requests single-agent execution.`,
+    `3. Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
+    `4. If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.`,
+    `5. Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.`,
+    `6. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
+    `7. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
+    `8. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
+    `9. Resolve cross-chapter consistency conflicts before final synthesis.`,
+    `10. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
   ].join('\n');
+}
+
+function appendComplexAgentOrchestrationProtocol(lines: string[], contract: SessionTaskContract, startIndex: number): void {
+  const agentPlan = contract.documentPlan?.agentPlan;
+  if (!agentPlan || agentPlan.assignments.length === 0) return;
+
+  lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
+  lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
+  lines.push(`${startIndex + 2}. The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.`);
 }
 
 function formatGoalContractOpenTag(contract: SessionTaskContract): string {
