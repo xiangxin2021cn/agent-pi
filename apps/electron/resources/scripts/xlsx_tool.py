@@ -18,6 +18,12 @@ from pathlib import Path
 
 import click
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import range_boundaries
+
+
+DEFAULT_MAX_ROWS = 2000
+DEFAULT_MAX_COLS = 200
+DEFAULT_MAX_CELL_CHARS = 4096
 
 
 def _json_serial(obj: object) -> str:
@@ -42,13 +48,65 @@ def cli() -> None:
     pass
 
 
-def _read_sheet_data(ws, cell_range: str | None = None) -> list[list[object]]:
-    """Read data from a worksheet, returning list of rows."""
+def _truncate_cell_value(value: object, max_cell_chars: int | None) -> object:
+    if value is None or max_cell_chars is None:
+        return value
+    if isinstance(value, str) and len(value) > max_cell_chars:
+        return value[:max_cell_chars] + f"... [truncated {len(value) - max_cell_chars} chars]"
+    return value
+
+
+def _read_sheet_data(
+    ws,
+    cell_range: str | None = None,
+    max_rows: int | None = DEFAULT_MAX_ROWS,
+    max_cols: int | None = DEFAULT_MAX_COLS,
+    max_cell_chars: int | None = DEFAULT_MAX_CELL_CHARS,
+) -> tuple[list[list[object]], bool]:
+    """Read bounded data from a worksheet, returning rows and truncation status."""
     if cell_range:
-        rows = list(ws[cell_range])
+        min_col, min_row, raw_max_col, raw_max_row = range_boundaries(cell_range)
     else:
-        rows = list(ws.iter_rows())
-    return [[cell.value for cell in row] for row in rows]
+        min_row = 1
+        min_col = 1
+        raw_max_row = ws.max_row or 1
+        raw_max_col = ws.max_column or 1
+
+    max_row = raw_max_row if max_rows is None else min(raw_max_row, min_row + max_rows - 1)
+    max_col = raw_max_col if max_cols is None else min(raw_max_col, min_col + max_cols - 1)
+    truncated = max_row < raw_max_row or max_col < raw_max_col
+
+    rows = ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col)
+    return [
+        [_truncate_cell_value(cell.value, max_cell_chars) for cell in row]
+        for row in rows
+    ], truncated
+
+
+def _warn_if_truncated(sheet_name: str, max_rows: int | None, max_cols: int | None) -> None:
+    limits: list[str] = []
+    if max_rows is not None:
+        limits.append(f"first {max_rows} rows")
+    if max_cols is not None:
+        limits.append(f"first {max_cols} columns")
+    suffix = " and ".join(limits) if limits else "requested range"
+    click.echo(
+        f"Warning: sheet '{sheet_name}' was truncated to the {suffix}. "
+        "Use --range for a smaller exact area or --no-limit for a full read.",
+        err=True,
+    )
+
+
+def _validate_limits(max_rows: int, max_cols: int, max_cell_chars: int, no_limit: bool) -> tuple[int | None, int | None, int | None]:
+    if no_limit:
+        return None, None, None
+    if max_rows <= 0:
+        raise click.BadParameter("must be greater than 0", param_hint="--max-rows")
+    if max_cols <= 0:
+        raise click.BadParameter("must be greater than 0", param_hint="--max-cols")
+    if max_cell_chars <= 0:
+        raise click.BadParameter("must be greater than 0", param_hint="--max-cell-chars")
+    return max_rows, max_cols, max_cell_chars
 
 
 def _build_records(data: list[list[object]]) -> list[dict[str, object]]:
@@ -120,10 +178,26 @@ def _format_data(data: list[list[object]], fmt: str) -> str:
 @click.option("--all-sheets", is_flag=True, default=False, help="Read all sheets in the workbook.")
 @click.option("--range", "cell_range", type=str, default=None, help="Cell range, e.g. 'A1:C10'.")
 @click.option("--format", "fmt", type=click.Choice(["text", "csv", "json"]), default="text", help="Output format.")
+@click.option("--max-rows", type=int, default=DEFAULT_MAX_ROWS, show_default=True, help="Maximum rows to read per sheet unless --no-limit is set.")
+@click.option("--max-cols", type=int, default=DEFAULT_MAX_COLS, show_default=True, help="Maximum columns to read per sheet unless --no-limit is set.")
+@click.option("--max-cell-chars", type=int, default=DEFAULT_MAX_CELL_CHARS, show_default=True, help="Maximum characters retained per text cell unless --no-limit is set.")
+@click.option("--no-limit", is_flag=True, default=False, help="Read the full requested sheet or range. Use carefully on large workbooks.")
 @click.option("-o", "--output", type=click.Path(), default=None, help="Write output to file.")
-def read(file: str, sheet: str | None, all_sheets: bool, cell_range: str | None, fmt: str, output: str | None) -> None:
+def read(
+    file: str,
+    sheet: str | None,
+    all_sheets: bool,
+    cell_range: str | None,
+    fmt: str,
+    max_rows: int,
+    max_cols: int,
+    max_cell_chars: int,
+    no_limit: bool,
+    output: str | None,
+) -> None:
     """Read cells, ranges, or entire sheets from an Excel file."""
     try:
+        row_limit, col_limit, cell_char_limit = _validate_limits(max_rows, max_cols, max_cell_chars, no_limit)
         wb = load_workbook(file, read_only=True, data_only=True)
 
         if all_sheets and sheet:
@@ -137,14 +211,18 @@ def read(file: str, sheet: str | None, all_sheets: bool, cell_range: str | None,
                 all_data: dict[str, object] = {}
                 for name in wb.sheetnames:
                     ws = wb[name]
-                    data = _read_sheet_data(ws, cell_range)
+                    data, truncated = _read_sheet_data(ws, cell_range, row_limit, col_limit, cell_char_limit)
+                    if truncated:
+                        _warn_if_truncated(name, row_limit, col_limit)
                     all_data[name] = _build_records(data)
                 result = json.dumps(all_data, indent=2, default=_json_serial)
             else:
                 parts: list[str] = []
                 for name in wb.sheetnames:
                     ws = wb[name]
-                    data = _read_sheet_data(ws, cell_range)
+                    data, truncated = _read_sheet_data(ws, cell_range, row_limit, col_limit, cell_char_limit)
+                    if truncated:
+                        _warn_if_truncated(name, row_limit, col_limit)
                     if fmt == "csv":
                         parts.append(f"# Sheet: {name}")
                     else:
@@ -169,7 +247,9 @@ def read(file: str, sheet: str | None, all_sheets: bool, cell_range: str | None,
                 wb.close()
                 sys.exit(1)
 
-        data = _read_sheet_data(ws, cell_range)
+        data, truncated = _read_sheet_data(ws, cell_range, row_limit, col_limit, cell_char_limit)
+        if truncated:
+            _warn_if_truncated(ws.title, row_limit, col_limit)
         result = _format_data(data, fmt)
 
         wb.close()
@@ -332,14 +412,14 @@ def export(file: str, sheet: str | None, all_sheets: bool, fmt: str, output: str
                 all_data: dict[str, object] = {}
                 for name in wb.sheetnames:
                     ws = wb[name]
-                    data = _read_sheet_data(ws)
+                    data, _ = _read_sheet_data(ws, max_rows=None, max_cols=None, max_cell_chars=None)
                     all_data[name] = _build_records(data)
                 result = json.dumps(all_data, indent=2, default=_json_serial)
             else:
                 parts: list[str] = []
                 for name in wb.sheetnames:
                     ws = wb[name]
-                    data = _read_sheet_data(ws)
+                    data, _ = _read_sheet_data(ws, max_rows=None, max_cols=None, max_cell_chars=None)
                     parts.append(f"# Sheet: {name}")
                     parts.append(_format_data(data, "csv"))
                     parts.append("")
@@ -361,7 +441,7 @@ def export(file: str, sheet: str | None, all_sheets: bool, fmt: str, output: str
                 wb.close()
                 sys.exit(1)
 
-        data = _read_sheet_data(ws)
+        data, _ = _read_sheet_data(ws, max_rows=None, max_cols=None, max_cell_chars=None)
         result = _format_data(data, fmt)
 
         wb.close()

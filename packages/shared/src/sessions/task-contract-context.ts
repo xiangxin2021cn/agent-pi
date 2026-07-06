@@ -2,6 +2,8 @@ import type { SessionDocumentAgentPlan, SessionDocumentDeliveryReviewPlan, Sessi
 
 const MAX_ITEMS_PER_SECTION = 3;
 const MAX_ITEM_LENGTH = 260;
+const BOQ_PRICING_WORKBOOK_PROTOCOL_PATTERN = /组价|单价|报价|清单项|工程量清单|工程量|人材机|材料|机械|人工|boq|bill of quantities|pricing|unit[-\s]?rate|rate build[-\s]?up|resource rate|schedule of rates/i;
+const WORKBOOK_PROTOCOL_PATTERN = /excel|xlsx?|xlsm|workbook|spreadsheet|worksheet|sheet|表格|工作簿|工作表|清单|schedule|csv/i;
 
 export function formatTaskContractContext(contract: SessionTaskContract | undefined): string | undefined {
   if (!contract) return undefined;
@@ -72,7 +74,8 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
       '3. Keep source notes for key claims, tables, and visual evidence.',
       '4. Run a document-quality pass before claiming completion.',
     ];
-    appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    const nextIndex = appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    appendBoqPricingWorkbookProtocol(lines, contract, nextIndex);
     return lines.join('\n');
   }
 
@@ -84,14 +87,15 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
       '3. Verify requested output files and cite the verification evidence before final response.',
       '4. Do not accept prompt-only compliance for template, export, visual, or source gates.',
     ];
-    appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    const nextIndex = appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    appendBoqPricingWorkbookProtocol(lines, contract, nextIndex);
     return lines.join('\n');
   }
 
   if (contract.documentQualityMode !== 'multi_agent_deep') return undefined;
 
   const finalSynthesisOwner = contract.documentPlan?.agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner';
-  return [
+  const lines = [
     'Document workflow execution protocol:',
     `1. Before drafting, restate the exact user-requested scope and selected sources.`,
     `2. For multi-agent deep mode, create real spawned chapter sessions with spawn_session before final synthesis unless the user explicitly requests single-agent execution.`,
@@ -103,16 +107,43 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
     `8. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
     `9. Resolve cross-chapter consistency conflicts before final synthesis.`,
     `10. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
-  ].join('\n');
+  ];
+  appendBoqPricingWorkbookProtocol(lines, contract, 11);
+  return lines.join('\n');
 }
 
-function appendComplexAgentOrchestrationProtocol(lines: string[], contract: SessionTaskContract, startIndex: number): void {
+function appendComplexAgentOrchestrationProtocol(lines: string[], contract: SessionTaskContract, startIndex: number): number {
   const agentPlan = contract.documentPlan?.agentPlan;
-  if (!agentPlan || agentPlan.assignments.length === 0) return;
+  if (!agentPlan || agentPlan.assignments.length === 0) return startIndex;
 
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
   lines.push(`${startIndex + 2}. The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.`);
+  return startIndex + 3;
+}
+
+function appendBoqPricingWorkbookProtocol(lines: string[], contract: SessionTaskContract, startIndex: number): number {
+  if (!isBoqPricingWorkbookContract(contract)) return startIndex;
+
+  lines.push(`${startIndex}. For BOQ/pricing workbook tasks, run xlsx-tool info first to inventory worksheets, tables, dimensions, and candidate item ranges before any pricing derivation.`);
+  lines.push(`${startIndex + 1}. Do not read or export the full pricing workbook in one pass for derivation; use xlsx-tool read with --sheet, --range, and bounded reads.`);
+  lines.push(`${startIndex + 2}. Spawn one sheet-pricing agent per worksheet or BOQ table, but keep active sheet agents in small batches to avoid memory pressure.`);
+  lines.push(`${startIndex + 3}. If a sheet is still too large, that sheet agent must spawn item-range agents before deriving every BOQ item.`);
+  lines.push(`${startIndex + 4}. Each sheet or item-range agent returns a handoff only: sheet/range, items covered, unit-rate method, quantity/resource/productivity/rate/formula evidence, source gaps, and unresolved assumptions.`);
+  lines.push(`${startIndex + 5}. The final pricing synthesis owner merges sheet handoffs, checks missing worksheets/items, and must not invent rates where evidence is missing.`);
+  return startIndex + 6;
+}
+
+function isBoqPricingWorkbookContract(contract: SessionTaskContract): boolean {
+  const text = [
+    contract.originalRequest,
+    ...(contract.followUpRequests ?? []),
+    ...(contract.deliverables ?? []),
+    ...(contract.evidenceRequirements ?? []),
+    ...(contract.forbiddenShortcuts ?? []),
+    ...(contract.documentPlan?.agentPlan?.guardrails ?? []),
+  ].join('\n');
+  return BOQ_PRICING_WORKBOOK_PROTOCOL_PATTERN.test(text) && WORKBOOK_PROTOCOL_PATTERN.test(text);
 }
 
 function formatGoalContractOpenTag(contract: SessionTaskContract): string {

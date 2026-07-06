@@ -78,6 +78,28 @@ class XlsxToolSmokeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found", result.stderr)
 
+    def test_read_is_bounded_when_requested(self) -> None:
+        book = self.tmpdir / "bounded.xlsx"
+        for cell, value in (
+            ("A1", "name"),
+            ("A2", "alice"),
+            ("A3", "bob"),
+            ("A4", "carol"),
+        ):
+            write = self.run_tool("write", str(book), "--cell", cell, "--value", value)
+            self.assertEqual(write.returncode, 0, msg=write.stderr)
+
+        limited = self.run_tool("read", str(book), "--max-rows", "2", "--format", "json")
+        self.assertEqual(limited.returncode, 0, msg=limited.stderr)
+        self.assertIn("truncated", limited.stderr)
+        rows = json.loads(limited.stdout)
+        self.assertEqual(rows, [{"name": "alice"}])
+
+        full = self.run_tool("read", str(book), "--no-limit", "--format", "json")
+        self.assertEqual(full.returncode, 0, msg=full.stderr)
+        rows = json.loads(full.stdout)
+        self.assertEqual([row["name"] for row in rows], ["alice", "bob", "carol"])
+
 
 if __name__ == "__main__":
     unittest.main()

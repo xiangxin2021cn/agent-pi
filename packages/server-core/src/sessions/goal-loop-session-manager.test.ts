@@ -312,6 +312,29 @@ describe('SessionManager goal loop routing', () => {
     expect(managed.messages.some(m => m.role === 'assistant' && m.content === 'Improved report complete.')).toBe(true)
   })
 
+  it('schedules idle runtime cleanup when a hidden goal continuation is skipped', async () => {
+    const sessionId = 'goal-hidden-turn-skipped'
+    const managed = buildSession(sessionId)
+    managed.goalState = goal({
+      status: 'running',
+      iteration: 1,
+      maxIterations: 3,
+      criteria: [],
+    })
+    managed.agent = { disposeForRestart: async () => {} } as never
+    captureEvents()
+
+    await (sm as unknown as {
+      runGoalContinuation: (sessionId: string, prompt: string, iteration: number) => Promise<void>
+    }).runGoalContinuation(sessionId, '<goal-audit>improve</goal-audit>', 1)
+
+    expect(managed.idleRuntimeDisposeTimer).toBeDefined()
+    if (managed.idleRuntimeDisposeTimer) {
+      clearTimeout(managed.idleRuntimeDisposeTimer)
+      managed.idleRuntimeDisposeTimer = undefined
+    }
+  })
+
   it('recovers processing state when goal continuation cannot create an agent', async () => {
     const sessionId = 'goal-hidden-turn-agent-failure'
     const managed = buildSession(sessionId)

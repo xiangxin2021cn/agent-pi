@@ -131,6 +131,46 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Only final_synthesis_owner may write the final synthesized deliverable after cross-chapter review.');
   });
 
+  it('adds BOQ pricing workbook decomposition protocol', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      originalRequest: '请对 BOQ Excel 工作簿进行全量组价分析，每个表每个清单项都要推导报价。',
+      taskType: 'document',
+      documentQualityMode: 'multi_agent_deep',
+      evidenceRequirements: [
+        'Inventory workbook sheets/tables with xlsx-tool info before pricing derivation, then record sheet/table coverage and item-level pricing evidence or gaps.',
+      ],
+      documentPlan: {
+        sections: [],
+        tables: [],
+        charts: [],
+        enhancements: [],
+        citations: [],
+        deliveryFormats: ['MD'],
+        agentPlan: {
+          mode: 'chapter_agents',
+          finalSynthesisOwner: 'final_pricing_synthesis_owner',
+          assignments: [
+            {
+              id: 'pricing-agent-1',
+              title: 'Workbook sheet inventory and dispatch plan',
+              role: 'pricing_orchestration_agent',
+              reviewFocus: 'run xlsx-tool info first',
+            },
+          ],
+          reviewStages: ['Workbook sheet inventory before any pricing derivation.'],
+          guardrails: ['Run xlsx-tool info before xlsx-tool read/export on pricing workbooks.'],
+        },
+      },
+    });
+
+    expect(formatted).toContain('run xlsx-tool info first to inventory worksheets, tables, dimensions, and candidate item ranges');
+    expect(formatted).toContain('Do not read or export the full pricing workbook in one pass for derivation');
+    expect(formatted).toContain('Spawn one sheet-pricing agent per worksheet or BOQ table');
+    expect(formatted).toContain('that sheet agent must spawn item-range agents before deriving every BOQ item');
+    expect(formatted).toContain('The final pricing synthesis owner merges sheet handoffs');
+  });
+
   it('includes scoped orchestration instructions for complex professional document plans', () => {
     const formatted = formatTaskContractContext({
       ...contract,

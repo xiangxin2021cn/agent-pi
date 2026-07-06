@@ -804,7 +804,7 @@ type QueryLlmCapableAgent = AgentInstance & {
   queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult>
 }
 
-const DEFAULT_IDLE_AGENT_RUNTIME_DISPOSE_MS = 60_000
+const DEFAULT_IDLE_AGENT_RUNTIME_DISPOSE_MS = 30_000
 
 function getIdleAgentRuntimeDisposeMs(): number {
   const raw = process.env.CRAFT_IDLE_AGENT_RUNTIME_DISPOSE_MS
@@ -8038,6 +8038,7 @@ export class SessionManager implements ISessionManager {
         tokenUsage: managed.tokenUsage,
         hasUnread: managed.hasUnread,
       }, managed.workspace.id)
+      this.scheduleIdleRuntimeDispose(managed)
       return
     }
 

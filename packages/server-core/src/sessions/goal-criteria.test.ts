@@ -508,6 +508,22 @@ describe('buildTaskContractFromMessage', () => {
     expect(agentPlan?.guardrails).toContain('Only the final synthesis owner may write or replace the final deliverable after chapter drafts are reviewed.')
   })
 
+  it('creates sheet-level pricing agents for full BOQ workbook derivation', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请对 BOQ Excel 工作簿进行全量组价分析，每个表每个清单项都要推导报价。',
+      storedAttachments: [attachment('pricing.xlsx')],
+    })
+
+    const agentPlan = contract.documentPlan?.agentPlan
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('multi_agent_deep')
+    expect(agentPlan?.finalSynthesisOwner).toBe('final_pricing_synthesis_owner')
+    expect(agentPlan?.assignments.map(item => item.role)).toContain('sheet_pricing_agent_dispatcher')
+    expect(agentPlan?.guardrails).toContain('Run xlsx-tool info before xlsx-tool read/export on pricing workbooks.')
+    expect(contract.evidenceRequirements).toContain('Inventory workbook sheets/tables with xlsx-tool info before pricing derivation, then record sheet/table coverage and item-level pricing evidence or gaps.')
+    expect(contract.forbiddenShortcuts).toContain('Do not perform BOQ pricing derivation by reading or exporting the full workbook in one pass; inventory sheets first and split work by sheet/table/range.')
+  })
+
   it('captures deliverables, hard requirements, evidence, and formats without using a domain-specific template', () => {
     const contract = buildTaskContractFromMessage({
       message: [

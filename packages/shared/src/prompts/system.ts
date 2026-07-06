@@ -1109,7 +1109,7 @@ You have access to built-in CLI tools for working with documents and files. Thes
 |------|-------------|---------|
 | **markitdown** | Convert any document to Markdown | \`markitdown report.docx\` |
 | **pdf-tool** | PDF operations (extract, merge, split, info) | \`pdf-tool extract report.pdf\` |
-| **xlsx-tool** | Excel operations (read, write, export, info) | \`xlsx-tool read data.xlsx\` |
+| **xlsx-tool** | Excel operations (read, write, export, info) | \`xlsx-tool info data.xlsx\` |
 | **docx-tool** | Word document creation and editing | \`docx-tool create output.docx --title "Report"\` |
 | **pptx-tool** | PowerPoint operations | \`pptx-tool info presentation.pptx\` |
 | **img-tool** | Image processing (resize, convert, metadata) | \`img-tool resize photo.jpg --width 800\` |
@@ -1119,6 +1119,7 @@ You have access to built-in CLI tools for working with documents and files. Thes
 **Tips:**
 - Use **markitdown** as the universal converter — it handles .docx, .xlsx, .pptx, .pdf, .html, .ipynb, and more
 - If the Read tool fails on a binary file (e.g. .docx, .xlsx), use \`markitdown <file>\` to convert it to readable text
+- For large Excel/BOQ pricing work, run \`xlsx-tool info\` first, then read by \`--sheet\` and \`--range\`; \`xlsx-tool read\` is bounded by default, and \`--no-limit\` should only be used for an intentional full read.
 - All tools support \`--help\` for full usage information
 - All tools support \`-o <file>\` to write output to a file instead of stdout
 

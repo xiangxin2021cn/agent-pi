@@ -67,6 +67,9 @@ const PROFESSIONAL_DOCUMENT_MODE_PATTERN = /专业文档|专业报告|正式报�
 const STRICT_DELIVERY_MODE_PATTERN = /正式交付|最终交付|交付版|必须通过.{0,40}(?:来源|模板|导出|图表|格式).*审查|strict delivery|delivery gates?/i
 const MULTI_AGENT_DEEP_MODE_PATTERN = /多智能体深度|多智能体|分章节智能体|子智能体|多角色评审|大型投标|大型.{0,12}(?:工程|投标|尽调|报告)|due diligence|large tender|multi[- ]agent|sub[- ]agent|chapter agents?|role review/i
 const COMPLEX_AGENT_ORCHESTRATION_PATTERN = /多文件|多来源|多章节|多专业|多角色|全文|全册|整册|全规范|大型|复杂|综合|投标|尽调|工程报告|施工组织|成本|进度|风险|many files|multiple sources|multi[- ]source|multi[- ]chapter|complex|large|full report|whole report|due diligence|tender|engineering report/i
+const BOQ_PRICING_PATTERN = /组价|单价|报价|清单项|工程量清单|工程量|人材机|材料|机械|人工|boq|bill of quantities|pricing|unit[-\s]?rate|rate build[-\s]?up|resource rate|schedule of rates/i
+const WORKBOOK_SCOPE_PATTERN = /excel|xlsx?|xlsm|workbook|spreadsheet|worksheet|sheet|表格|工作簿|工作表|清单|schedule|csv/i
+const FULL_ITEM_SCOPE_PATTERN = /每个|每张|逐项|全部|全量|所有|整表|每个表|每张表|每个清单项|full|all|each|every|per[-\s]?sheet|per[-\s]?item/i
 const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'PDF', pattern: /(?:\.pdf\b|\bpdf\b)/i },
   { label: 'DOCX', pattern: /(?:\.docx?\b|\bdocx?\b|\bword\b)/i },
@@ -320,6 +323,7 @@ function getDocumentQualityMode(
   const referencedCount = getReferencedNames(input).length
   const documentLike = shouldCreateDocumentPlan(message, taskType)
 
+  if (documentLike && isBoqPricingWorkbookTask(message)) return 'multi_agent_deep'
   if (documentLike && MULTI_AGENT_DEEP_MODE_PATTERN.test(message)) return 'multi_agent_deep'
   if (documentLike && (requiresTemplateFidelityAudit(message, input.storedAttachments) || STRICT_DELIVERY_MODE_PATTERN.test(message))) return 'strict_delivery'
   if (
@@ -355,6 +359,9 @@ function buildTaskContractDeliverables(message: string, taskType: SessionTaskCon
   }
   if (taskType === 'data') {
     deliverables.push('Preserve important figures, tables, formulas, and data boundaries when analyzing or transforming data.')
+  }
+  if (isBoqPricingWorkbookTask(message)) {
+    deliverables.push('Produce sheet-level and item-level pricing derivation handoffs before final pricing synthesis.')
   }
 
   if (deliverables.length === 0) {
@@ -397,6 +404,9 @@ function buildTaskContractEvidenceRequirements(
   }
   if (documentQualityMode === 'multi_agent_deep') {
     requirements.push('Use chapter-level or discipline-level evidence coverage and resolve cross-chapter inconsistencies before final synthesis.')
+  }
+  if (isBoqPricingWorkbookTask(message)) {
+    requirements.push('Inventory workbook sheets/tables with xlsx-tool info before pricing derivation, then record sheet/table coverage and item-level pricing evidence or gaps.')
   }
 
   return uniqueBounded(requirements, 8)
@@ -650,6 +660,10 @@ function buildDocumentAgentPlan(
   message: string,
   taskType: SessionTaskContractType,
 ): SessionDocumentAgentPlan | undefined {
+  if (isBoqPricingWorkbookTask(message)) {
+    return buildBoqPricingAgentPlan()
+  }
+
   const baseTitles = sections.filter(section => !/table of contents|appendix|目录|附录/i.test(section) && !isFinalSynthesisInstruction(section))
   const candidateTitles = uniqueBounded(baseTitles.length > 0 ? baseTitles : buildDocumentPlanSections(message, [], taskType), 8)
   const requiresDeepAgents = documentQualityMode === 'multi_agent_deep'
@@ -709,11 +723,67 @@ function shouldCreateComplexDocumentAgentPlan(
   return false
 }
 
+function isBoqPricingWorkbookTask(message: string): boolean {
+  return BOQ_PRICING_PATTERN.test(message)
+    && WORKBOOK_SCOPE_PATTERN.test(message)
+    && (
+      FULL_ITEM_SCOPE_PATTERN.test(message)
+      || COMPREHENSIVE_PATTERN.test(message)
+      || COMPLEX_AGENT_ORCHESTRATION_PATTERN.test(message)
+      || MULTI_AGENT_DEEP_MODE_PATTERN.test(message)
+    )
+}
+
+function buildBoqPricingAgentPlan(): SessionDocumentAgentPlan {
+  return {
+    mode: 'chapter_agents',
+    finalSynthesisOwner: 'final_pricing_synthesis_owner',
+    assignments: [
+      {
+        id: 'pricing-agent-1',
+        title: 'Workbook sheet inventory and dispatch plan',
+        role: 'pricing_orchestration_agent',
+        reviewFocus: 'run xlsx-tool info first, list workbook sheets/tables/dimensions, define sheet scopes, and spawn per-sheet pricing agents before derivation',
+      },
+      {
+        id: 'pricing-agent-2',
+        title: 'Per-sheet BOQ pricing derivation agents',
+        role: 'sheet_pricing_agent_dispatcher',
+        reviewFocus: 'spawn one child agent per worksheet or BOQ table in small batches; each child handles only its sheet/range and returns item-level unit-rate handoff notes',
+      },
+      {
+        id: 'pricing-agent-3',
+        title: 'Item-level pricing evidence QA',
+        role: 'commercial_risk_agent',
+        reviewFocus: 'check every priced item has quantity, resource, productivity, rate, formula, source, and gap status',
+      },
+      {
+        id: 'pricing-agent-4',
+        title: 'Final pricing synthesis and variance review',
+        role: 'final_pricing_synthesis_owner',
+        reviewFocus: 'merge sheet handoffs, reconcile assumptions, flag missing sheets/items, and avoid overwriting per-sheet evidence',
+      },
+    ],
+    reviewStages: [
+      'Workbook sheet inventory before any pricing derivation.',
+      'Sheet-agent handoff review before final pricing synthesis.',
+      'Item-level source and formula QA before claiming completion.',
+    ],
+    guardrails: [
+      'Run xlsx-tool info before xlsx-tool read/export on pricing workbooks.',
+      'Do not read or export the full pricing workbook in one pass for derivation; use sheet, range, and bounded reads.',
+      'Spawn one sheet-pricing agent per worksheet or BOQ table, but keep active sheet agents in small batches to avoid memory pressure; if a sheet is still too large, the sheet agent must spawn item-range agents.',
+      'Only the final pricing synthesis owner may merge sheet handoffs into the final deliverable.',
+    ],
+  }
+}
+
 function isFinalSynthesisInstruction(value: string): boolean {
   return /最终.{0,16}合成|总编|统一合成|final synthesis|synthesis owner/i.test(value)
 }
 
 function getChapterAgentRole(title: string): string {
+  if (/pricing|boq|报价|组价|单价|清单/i.test(title)) return 'sheet_pricing_agent'
   if (/进度|计划|甘特|wbs|schedule|programme|program|gantt/i.test(title)) return 'schedule_chapter_agent'
   if (/成本|报价|投资|商务|风险|boq|cost|price|investment|commercial|risk/i.test(title)) return 'commercial_risk_agent'
   if (/技术|设计|施工|方案|工程|technical|design|method|construction/i.test(title)) return 'technical_chapter_agent'
@@ -722,6 +792,7 @@ function getChapterAgentRole(title: string): string {
 }
 
 function getChapterAgentReviewFocus(title: string): string {
+  if (/pricing|boq|报价|组价|单价|清单/i.test(title)) return 'sheet/table scope, item-level rate build-up evidence, formulas, and unresolved gaps'
   if (/进度|计划|甘特|wbs|schedule|programme|program|gantt/i.test(title)) return 'schedule logic, milestones, dependencies, and critical-path consistency'
   if (/成本|报价|投资|商务|风险|boq|cost|price|investment|commercial|risk/i.test(title)) return 'commercial assumptions, cost evidence, risks, and unresolved sensitivities'
   if (/技术|设计|施工|方案|工程|technical|design|method|construction/i.test(title)) return 'technical completeness, method feasibility, and source-backed constraints'
@@ -904,6 +975,10 @@ function buildForbiddenShortcuts(
   if (SOURCE_SENSITIVE_PATTERN.test(message) || taskType === 'research') {
     shortcuts.push('Do not invent facts, figures, clauses, page numbers, file names, dates, prices, or technical parameters.')
     shortcuts.push('Do not inventory or mine the working directory as a source corpus unless the user explicitly names that folder/path for analysis.')
+  }
+  if (isBoqPricingWorkbookTask(message)) {
+    shortcuts.push('Do not perform BOQ pricing derivation by reading or exporting the full workbook in one pass; inventory sheets first and split work by sheet/table/range.')
+    shortcuts.push('Do not collapse sheet-level or item-level pricing into a generic summary; every covered worksheet/table must have a handoff or an explicit pending gap.')
   }
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {
     shortcuts.push('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')
