@@ -51,6 +51,36 @@ describe('system prompt guidance', () => {
     expect(prompt).toContain('Read operations are allowed, but still follow the input-scope policy above.')
     expect(prompt).not.toContain('Read-only. Explore, search, read files.')
   })
+
+  it('requires source guides before external source tool calls', () => {
+    const prompt = getSystemPrompt(undefined, undefined, '/tmp/workspace', '/tmp/workspace')
+
+    expect(prompt).toContain('Before calling any tool from an external source, read that source')
+    expect(prompt).toContain('guide.md')
+    expect(prompt).toContain('If a source tool is rejected because its guide was not read')
+    expect(prompt).toContain('do not retry the source tool or guess parameters')
+  })
+
+  it('requires skill instructions and referenced files before skill execution', () => {
+    const prompt = getSystemPrompt(undefined, undefined, '/tmp/workspace', '/tmp/workspace')
+
+    expect(prompt).toContain('Before applying a skill')
+    expect(prompt).toContain('read the entire `SKILL.md`')
+    expect(prompt).toContain('read those required instruction/reference files before executing the skill')
+    expect(prompt).toContain('do not use the skill from memory or the skill name alone')
+  })
+
+  it('guides long markdown deliverables through chunked artifact writing', () => {
+    const prompt = getSystemPrompt(undefined, undefined, '/tmp/workspace', '/tmp/workspace')
+
+    expect(prompt).toContain('For long Markdown deliverables')
+    expect(prompt).toContain('write a manifest plus section chunks first')
+    expect(prompt).toContain('Do not send a long document body through one Write tool call')
+    expect(prompt).toContain('do not use heredoc or oversized inline Python/Bash strings')
+    expect(prompt).toContain('Every Write/Edit/MultiEdit call must include the explicit absolute target path or file_path')
+    expect(prompt).toContain('never send only content')
+    expect(prompt).toContain('If a section write fails, retry only that section')
+  })
 })
 
 describe('includeCoAuthoredBy handling', () => {

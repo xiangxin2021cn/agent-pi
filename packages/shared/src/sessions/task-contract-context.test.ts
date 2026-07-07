@@ -264,6 +264,28 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('2. DOCX');
   });
 
+  it('requires transactional artifact writing for professional long documents', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      taskType: 'document',
+      documentQualityMode: 'professional_document',
+      documentPlan: {
+        sections: ['执行摘要', '章节一', '章节二', '章节三'],
+        tables: ['证据矩阵'],
+        charts: [],
+        enhancements: [],
+        citations: ['引用来源页码或条款。'],
+        deliveryFormats: ['MD'],
+      },
+    });
+
+    expect(formatted).toContain('Document artifact writing protocol:');
+    expect(formatted).toContain('Create or update an artifact manifest before writing a long final Markdown deliverable.');
+    expect(formatted).toContain('Write long deliverables by section chunks, not by one large Write/Bash/Python/heredoc payload.');
+    expect(formatted).toContain('If one section write fails, rewrite only that section chunk and keep the original scope manifest.');
+    expect(formatted).toContain('Before final response, verify the final artifact path, section count, required headings, and non-empty content.');
+  });
+
   it('includes strict delivery review gates when available', () => {
     const formatted = formatTaskContractContext({
       ...contract,

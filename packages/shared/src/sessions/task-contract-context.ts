@@ -11,6 +11,7 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
   const sections = [
     formatInline('Document workflow mode', contract.documentQualityMode, 80),
     formatDocumentWorkflowExecutionProtocol(contract),
+    formatDocumentArtifactWritingProtocol(contract),
     formatCriticalReasoningProtocol(contract),
     formatDocumentPlan(contract.documentPlan),
     formatLine('Original request', contract.originalRequest, 500),
@@ -37,6 +38,20 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
     '',
     ...sections,
     '</goal_contract>',
+  ].join('\n');
+}
+
+function formatDocumentArtifactWritingProtocol(contract: SessionTaskContract): string | undefined {
+  const mode = contract.documentQualityMode;
+  if (mode !== 'professional_document' && mode !== 'strict_delivery' && mode !== 'multi_agent_deep') return undefined;
+
+  return [
+    'Document artifact writing protocol:',
+    '1. Create or update an artifact manifest before writing a long final Markdown deliverable.',
+    '2. Write long deliverables by section chunks, not by one large Write/Bash/Python/heredoc payload.',
+    '3. Store scratch section chunks in the session data folder and write only the assembled final artifact to the formal output folder.',
+    '4. If one section write fails, rewrite only that section chunk and keep the original scope manifest.',
+    '5. Before final response, verify the final artifact path, section count, required headings, and non-empty content.',
   ].join('\n');
 }
 

@@ -992,7 +992,7 @@ ${formattedMessages}
     const pathList = [...skillPaths.entries()]
       .map(([slug, path]) => `- ${path} (skill: ${slug})`)
       .join('\n');
-    return `Before proceeding with the user's request, you MUST read the following skill instruction files using the Read tool or \`cat\` via Bash:\n${pathList}\n\nDo not take any other action until you have read these files.`;
+    return `Before proceeding with the user's request, you MUST read the following skill instruction files using the Read tool or \`cat\` via Bash:\n${pathList}\n\nRead each SKILL.md completely. If it references required instruction or reference files, read those files before applying the skill. Follow the skill workflow, constraints, checklists, and output rules exactly. Do not take any other action, call tools, or rely on memory of the skill until these files have been read in this context.`;
   }
 
   // ============================================================

@@ -96,6 +96,7 @@ export class GoalController {
     const codeVerificationDiagnosticTools = getCodeVerificationDiagnosticTools(goalState, failedTools)
     const codeVerificationDiagnosticIds = new Set(codeVerificationDiagnosticTools.map(getMessageIdentity))
     const blockingFailedTools = failedTools.filter(message => !codeVerificationDiagnosticIds.has(getMessageIdentity(message)))
+    const artifactWriteFailures = blockingFailedTools.filter(isLongDocumentArtifactWriteFailure)
 
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
@@ -420,6 +421,13 @@ export class GoalController {
         type: 'tool',
         label: message.toolName ?? 'tool_error',
         detail: message.toolResult?.slice(0, 500),
+      })
+    }
+    for (const message of artifactWriteFailures) {
+      evidence.push({
+        type: 'tool',
+        label: 'artifact_write_failure',
+        detail: summarizeArtifactWriteFailure(message),
       })
     }
     if (codeVerificationDiagnosticTools.length > 0) {
@@ -1426,6 +1434,43 @@ function buildToolEvidenceText(message: Message): string {
   ].filter(Boolean).join('\n')
 }
 
+function isLongDocumentArtifactWriteFailure(message: Message): boolean {
+  const toolName = message.toolName ?? ''
+  if (!/(?:^|[_\-\s])(?:write|edit|multiedit|bash|run command)(?:$|[_\-\s])/i.test(toolName)) {
+    return false
+  }
+
+  const text = buildToolEvidenceText(message)
+  const paths = [
+    ...extractFilePaths(message.toolInput),
+    ...extractFilePathsFromText(message.toolResult),
+    ...extractFilePathsFromText(message.content),
+  ]
+  const targetsMarkdown = paths.some(path => /\.(?:md|markdown|txt)$/i.test(path))
+  const mentionsLongDocument = /long document|long markdown|formal deliverable|final artifact|artifact|完整长篇|长文档|正式交付|最终交付|施工组织|报告|方案/i.test(text)
+  const mentionsWriteLimit = /exceeds?.{0,40}(?:limit|tool input|message|payload)|too large|truncat|截断|限制|7\s*KB|heredoc|here-doc|command line is too long|argument list too long|内容太长|输入过长/i.test(text)
+  const missingTargetPath = isMissingTargetPathWriteFailure(text)
+  const hasMarkdownPayload = /"content"\s*:\s*"#|^#{1,6}\s|\\n#{1,6}\s|正式审计|Handoff Note|证据矩阵/i.test(text)
+
+  return (mentionsWriteLimit || missingTargetPath) && (targetsMarkdown || mentionsLongDocument || hasMarkdownPayload)
+}
+
+function isMissingTargetPathWriteFailure(text: string): boolean {
+  return /validation failed for tool\s+"?(?:write|edit|multiedit)"?/i.test(text)
+    && /(?:path|file_path).{0,80}must have required propert(?:y|ies)|must have required propert(?:y|ies).{0,80}(?:path|file_path)/i.test(text)
+}
+
+function summarizeArtifactWriteFailure(message: Message): string {
+  const paths = [
+    ...extractFilePaths(message.toolInput),
+    ...extractFilePathsFromText(message.toolResult),
+    ...extractFilePathsFromText(message.content),
+  ]
+  const target = paths.length > 0 ? `target=${paths[0]}; ` : ''
+  const result = buildToolEvidenceText(message).replace(/\s+/g, ' ').trim().slice(0, 500)
+  return `${target}${result}`
+}
+
 function stringifyToolEvidenceValue(value: unknown): string {
   if (value == null) return ''
   if (typeof value === 'string') return value.slice(0, 4000)
@@ -1715,7 +1760,7 @@ function buildCorrectivePrompt(goalState: SessionGoalState, result: SessionGoalA
     reviewerCorrection,
     '',
     'Execution strategy:',
-    buildExecutionStrategy(result.failureCategories),
+    buildExecutionStrategy(result),
     '',
     'Required checkpoints:',
     buildRequiredCheckpoints(result),
@@ -1772,12 +1817,16 @@ function buildInstructionFollowingGate(goalState: SessionGoalState): string {
 function buildRequiredCheckpoints(result: SessionGoalAuditResult): string {
   const normalized = new Set(result.failureCategories ?? [])
   const checkpoints: string[] = []
+  const labels = new Set(result.evidence.map(item => item.label))
   const councilDisagreement = result.evidence.find(item => item.label === 'quality_council_disagreement')?.detail
   const codeDiagnostics = result.evidence.find(item => item.label === 'code_verification_diagnostics')?.detail
   const contextPressure = result.evidence.find(item => item.label === 'context_pressure_high' || item.label === 'context_pressure_warning')?.detail
 
   if (normalized.has('tool_failure')) {
     checkpoints.push('Resolve the failed tool or command and confirm the later attempt succeeded.')
+  }
+  if (labels.has('artifact_write_failure')) {
+    checkpoints.push('After reassembly, verify the final artifact path, section count, required headings, and non-empty content.')
   }
   if (contextPressure) {
     checkpoints.push(`Reduce context/tool pressure by narrowing enabled sources, using only necessary source tools, or summarizing source evidence before the final answer: ${contextPressure}.`)
@@ -1808,10 +1857,15 @@ function buildRequiredCheckpoints(result: SessionGoalAuditResult): string {
   return checkpoints.map((checkpoint, index) => `${index + 1}. ${checkpoint}`).join('\n')
 }
 
-function buildExecutionStrategy(categories: SessionGoalFailureCategory[] | undefined): string {
-  const normalized = new Set(categories ?? [])
+function buildExecutionStrategy(result: SessionGoalAuditResult): string {
+  const normalized = new Set(result.failureCategories ?? [])
+  const labels = new Set(result.evidence.map(item => item.label))
   const steps: string[] = []
 
+  if (labels.has('artifact_write_failure')) {
+    steps.push('Resume from the artifact manifest and completed section chunks. Do not restart or rewrite the whole long document; retry only the failed section chunk, then reassemble the final Markdown artifact.')
+    steps.push('When retrying Write/Edit, include the exact target path or file_path on every tool call. Do not resend document content without a path.')
+  }
   if (normalized.has('tool_failure')) {
     steps.push('Resolve the failed command, tool call, or file operation first; do not continue from a broken intermediate state.')
   }

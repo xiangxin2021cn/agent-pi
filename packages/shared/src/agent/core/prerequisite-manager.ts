@@ -78,7 +78,8 @@ const RULES: PrerequisiteRule[] = [
       return existsSync(guidePath) ? guidePath : null;
     },
     blockMessage:
-      'You must read the source guide before using this tool. Please read the file at {filePath} first, then retry.',
+      'STOP. You must read this source guide before using any tool from this source. Use the Read tool on {filePath}, then retry the source tool. Do not retry source tools until the guide is read; re-read it after compaction.',
+    strict: true,
   },
 
   // API source tools: api_{slug} format
@@ -92,16 +93,18 @@ const RULES: PrerequisiteRule[] = [
       return existsSync(guidePath) ? guidePath : null;
     },
     blockMessage:
-      'You must read the source guide before using this tool. Please read the file at {filePath} first, then retry.',
+      'STOP. You must read this source guide before using any tool from this source. Use the Read tool on {filePath}, then retry the source tool. Do not retry source tools until the guide is read; re-read it after compaction.',
+    strict: true,
   },
 
   // Built-in browser tool: require browser-tools.md first.
   // Only matches the session-scoped tool (not external MCP browser tools like mcp__playwright__*),
   // and skipped entirely when the built-in browser tool is disabled.
   {
-    toolMatcher: (toolName: string) =>
-      getBrowserToolEnabled() &&
-      (toolName === 'browser_tool' || toolName === 'mcp__session__browser_tool'),
+    toolMatcher: (toolName: string) => {
+      if (toolName !== 'browser_tool' && toolName !== 'mcp__session__browser_tool') return false;
+      return getBrowserToolEnabled();
+    },
     resolveRequiredPath: () => {
       return existsSync(BROWSER_TOOLS_DOC_PATH) ? BROWSER_TOOLS_DOC_PATH : null;
     },
@@ -116,7 +119,7 @@ const RULES: PrerequisiteRule[] = [
 // ============================================================
 
 export class PrerequisiteManager {
-  /** Max times to block a tool for the same prerequisite before allowing through */
+  /** Max times to block a non-strict prerequisite before allowing through */
   private static readonly MAX_REJECTIONS = 1;
 
   private readFiles: Set<string> = new Set();
@@ -146,7 +149,8 @@ export class PrerequisiteManager {
   /**
    * Check if a tool call's prerequisites are met.
    * Iterates rules, checks if required files have been read.
-   * After MAX_REJECTIONS blocks for the same path, allows through gracefully.
+   * Strict rules block until read; non-strict rules allow through gracefully
+   * after MAX_REJECTIONS blocks for the same path.
    */
   checkPrerequisites(toolName: string): PrerequisiteCheckResult {
     // Check dynamic skill prerequisites first
@@ -193,20 +197,9 @@ export class PrerequisiteManager {
     if (toolName === 'Read') return { allowed: true };
 
     const pendingList = [...this.pendingSkillPaths].join(', ');
-    const key = `skill:${pendingList}`;
-    const count = (this.rejectionCounts.get(key) ?? 0) + 1;
-    this.rejectionCounts.set(key, count);
-
-    if (count <= PrerequisiteManager.MAX_REJECTIONS) {
-      const blockReason = `You must read the skill instruction files before proceeding. Use Read or \`cat\` via Bash to read: ${pendingList}`;
-      this.onDebug?.(`Skill prerequisite blocked (${count}/${PrerequisiteManager.MAX_REJECTIONS}): ${toolName} — pending: ${pendingList}`);
-      return { allowed: false, blockReason };
-    }
-
-    // Exceeded max rejections — allow through and clear
-    this.onDebug?.(`Skill prerequisite: allowing ${toolName} after ${count} rejections (max reached)`);
-    this.pendingSkillPaths.clear();
-    return { allowed: true };
+    const blockReason = `STOP. You must read the skill instruction files before proceeding. Use Read or \`cat\` via Bash to read: ${pendingList}. Do not use the skill, call tools, or continue from memory until these SKILL.md files have been read in this context.`;
+    this.onDebug?.(`Skill prerequisite blocked (strict): ${toolName} — pending: ${pendingList}`);
+    return { allowed: false, blockReason };
   }
 
   /**
@@ -231,23 +224,31 @@ export class PrerequisiteManager {
   }
 
   /**
-   * Check if a Bash command is reading a pending skill file.
+   * Check if a Bash command is reading a pending prerequisite file.
    * If it matches, clear the prerequisite and return true.
    * Called from the pre-tool-use pipeline to allow targeted Bash reads through.
    */
   trackBashSkillRead(input: Record<string, unknown>): boolean {
     const command = input.command as string;
-    if (!command || this.pendingSkillPaths.size === 0) return false;
+    if (!command) return false;
 
     let matched = false;
     for (const path of this.pendingSkillPaths) {
-      if (command.includes(path)) {
+      if (commandContainsPath(command, path)) {
         this.pendingSkillPaths.delete(path);
         this.readFiles.add(path);
         this.onDebug?.(`Prerequisite: cleared skill prerequisite via Bash: ${path}`);
         matched = true;
       }
     }
+
+    for (const path of extractSourceGuidePathsFromBashCommand(command, this.workspaceRootPath)) {
+      if (!existsSync(path)) continue;
+      this.readFiles.add(path);
+      this.onDebug?.(`Prerequisite: tracked source guide read via Bash: ${path}`);
+      matched = true;
+    }
+
     return matched;
   }
 
@@ -271,4 +272,33 @@ export class PrerequisiteManager {
   hasRead(filePath: string): boolean {
     return this.readFiles.has(expandPath(filePath));
   }
+}
+
+function extractSourceGuidePathsFromBashCommand(command: string, workspaceRootPath: string): string[] {
+  const paths = new Set<string>();
+  const normalizedWorkspace = resolve(workspaceRootPath);
+  const absolutePattern = /((?:[A-Za-z]:\\|\/)[^"'`\r\n]*?[\\/]sources[\\/][^"'`\s\r\n]+[\\/]guide\.md)/gi;
+  const relativePattern = /(?:^|[\s"'`])((?:\.?[\\/]?)?sources[\\/][^"'`\s\r\n]+[\\/]guide\.md)(?=$|[\s"'`])/gi;
+
+  for (const match of command.matchAll(absolutePattern)) {
+    if (match[1]) paths.add(resolve(match[1]));
+  }
+  for (const match of command.matchAll(relativePattern)) {
+    if (!match[1]) continue;
+    const cleaned = match[1].replace(/^[.\\/]+/, '');
+    paths.add(resolve(normalizedWorkspace, cleaned));
+  }
+
+  return [...paths];
+}
+
+function commandContainsPath(command: string, filePath: string): boolean {
+  const slashPath = filePath.replace(/\\/g, '/');
+  const variants = new Set([
+    filePath,
+    slashPath,
+    slashPath.replace(/^[A-Za-z]:/, ''),
+  ]);
+
+  return [...variants].some(variant => variant && command.includes(variant));
 }

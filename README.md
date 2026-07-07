@@ -14,15 +14,29 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.3.1.**
+**Current release: V1.3.2.**
 
-**当前发布版：V1.3.1。**
+**当前发布版：V1.3.2。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V1.3.2 Hotfix / V1.3.2 紧急修复
+
+V1.3.2 is an emergency reliability release for long Markdown and document deliverables. Agent Pi now uses a manifest-first, section-chunk artifact workflow for professional long documents, avoids one-shot oversized Write/heredoc/Python payloads, and lets Goal Loop resume from completed chunks instead of rewriting the whole document after a failed section.
+
+V1.3.2 是面向长 Markdown 和长文档交付物的紧急可靠性修复：专业长文档会先建立产物清单，再按章节分块写入和组装；智能体不再把完整长文档一次性塞进 Write、heredoc 或超长 Python/Bash 命令；某一章节失败时，Goal Loop 会从已完成分块继续，而不是整篇推倒重来。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Long-document writer | Professional Document, Strict Delivery, and Multi-Agent Deep modes now require manifest-first section writing for large deliverables. | 专业文档、严格交付、多智能体深度模式要求长交付物先建清单，再按章节分块写入。 |
+| Guide-first tools and skills | External MCP/API/Knowledge Base tools stay blocked until their `guide.md` is read; mentioned skills stay blocked until `SKILL.md` is read and followed. | 外挂 MCP/API/知识库工具读取 `guide.md` 前保持拦截；被调用的技能读取并遵循 `SKILL.md` 前也保持拦截。 |
+| Explicit write targets | Long-document Write/Edit retries must include the exact target path/file_path, avoiding failed calls that send only content. | 长文档 Write/Edit 重试必须带精确目标 path/file_path，避免只发送 content 导致工具校验失败。 |
+| Section-level recovery | Failed long-document writes resume from completed chunks and retry only the failed section before reassembling the final Markdown. | 长文档写入失败时从已完成分块继续，只重试失败章节，再组装最终 Markdown。 |
+| Artifact verification | Goal Loop checks the final path, section count, required headings, and non-empty content before accepting completion. | Goal Loop 会检查最终路径、章节数量、必需标题和非空内容后再接受完成。 |
 
 ### V1.3.1 Hotfix / V1.3.1 紧急修复
 
@@ -50,17 +64,6 @@ V1.3.0 将 Agent π 从“文档工作台”继续推进到“专业交付系统
 | Document workflow modes | Adds Quick, Professional Document, Strict Delivery, and Multi-Agent Deep modes. | 新增快速模式、专业文档模式、严格交付模式、多智能体深度模式。 |
 | Enterprise Knowledge Base | Knowledge Base files are copied into a stable app-level store, indexed, grouped by folder, previewable/editable/exportable, and loadable into chat. | 知识库文件入库到应用级稳定目录，支持索引、分类、预览、编辑、导出和会话加载。 |
 | Professional documents | Adds source-backed diagrams, construction Gantt intent, investment tables, GIS-style figures, simulation/CAE summaries, and export-ready assets. | 支持有来源支撑的流程图、施工甘特图意图、投资表、GIS 表达、仿真/CAE 摘要和可导出图文资产。 |
-
-### V1.2.7 Release / V1.2.7 发布
-
-V1.2.7 keeps the V1.2.6 visual refresh and fixes release validation issues around locale ordering and i18n checks.
-
-V1.2.7 保留 V1.2.6 的视觉更新，并修复 locale 排序和 i18n 发布校验问题。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Visual polish | Transparent logo assets, corrected logo sizing, refined default theme, and Warm/Bronze themes. | 透明 logo、logo 尺寸修复、默认主题优化，以及暖色/古铜主题。 |
-| Release validation | Locale ordering and i18n checks are stabilized for packaging. | 修复 locale 排序和 i18n 校验，提升打包稳定性。 |
 
 Older release details are available on GitHub Releases.
 

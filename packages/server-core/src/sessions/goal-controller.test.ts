@@ -2886,6 +2886,111 @@ describe('GoalController', () => {
     }
   })
 
+  test('uses transactional artifact recovery after long document write failure', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      maxIterations: 3,
+      taskContract: {
+        originalRequest: '生成完整长篇施工组织设计 Markdown 文件。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        deliverables: ['Produce a complete long Markdown deliverable.'],
+        mustPreserve: ['Original requested scope and section plan.'],
+        evidenceRequirements: ['Verify final artifact path and section completeness.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[deliverable] Long document artifact is complete.'],
+        forbiddenShortcuts: ['Do not restart the entire document after one section write fails.'],
+      },
+      criteria: [{
+        id: 'crit-1',
+        text: 'Long document artifact is complete.',
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成完整长篇施工组织设计 Markdown 文件。'),
+        message('t1', 'tool', 'write failed', {
+          toolStatus: 'error',
+          toolName: 'Write',
+          toolInput: { file_path: '/tmp/output/stage2_c12_env_safety.md' },
+          toolResult: 'content exceeds tool input limit after about 7KB',
+        }),
+        message('a1', 'assistant', '文件被 Write 工具截断了，我将重新构建完整增强文件。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.failureCategories).toContain('tool_failure')
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'tool',
+        label: 'artifact_write_failure',
+      }))
+      expect(decision.prompt).toContain('Resume from the artifact manifest and completed section chunks')
+      expect(decision.prompt).toContain('Do not restart or rewrite the whole long document')
+      expect(decision.prompt).toContain('retry only the failed section chunk')
+      expect(decision.prompt).toContain('verify the final artifact path, section count, required headings, and non-empty content')
+    }
+  })
+
+  test('requires an explicit target path after long document write validation fails', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      maxIterations: 3,
+      taskContract: {
+        originalRequest: '生成完整长篇施工组织设计 Markdown 文件。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        deliverables: ['Produce a complete long Markdown deliverable.'],
+        mustPreserve: ['Original requested scope and section plan.'],
+        evidenceRequirements: ['Verify final artifact path and section completeness.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[deliverable] Long document artifact is complete.'],
+        forbiddenShortcuts: ['Do not resend document content without a target path.'],
+      },
+      criteria: [{
+        id: 'crit-1',
+        text: 'Long document artifact is complete.',
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成完整长篇施工组织设计 Markdown 文件。'),
+        message('t1', 'tool', 'Write Failed', {
+          toolStatus: 'error',
+          toolName: 'Write',
+          toolInput: {
+            content: '# C1.2 全节证据矩阵 — 正式审计 Handoff Note\n\n## Part A: BOQ xlsx 逐行交叉验证\n\n长文档内容...',
+          },
+          toolResult: 'Validation failed for tool "write":\n  - path: must have required properties path\n\nReceived arguments:\n{\n  "content": "# C1.2 全节证据矩阵 — 正式审计 Handoff Note"\n}',
+        }),
+        message('a1', 'assistant', 'Write 工具校验失败，我继续重新写完整文件。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.failureCategories).toContain('tool_failure')
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'tool',
+        label: 'artifact_write_failure',
+      }))
+      expect(decision.prompt).toContain('include the exact target path')
+      expect(decision.prompt).toContain('Do not resend document content without a path')
+      expect(decision.prompt).toContain('Resume from the artifact manifest and completed section chunks')
+    }
+  })
+
   test('auto-continues after code verification diagnostics fail', async () => {
     const controller = new GoalController()
 
