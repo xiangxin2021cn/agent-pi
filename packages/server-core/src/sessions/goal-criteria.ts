@@ -70,6 +70,8 @@ const COMPLEX_AGENT_ORCHESTRATION_PATTERN = /多文件|多来源|多章节|多�
 const BOQ_PRICING_PATTERN = /组价|单价|报价|清单项|工程量清单|工程量|人材机|材料|机械|人工|boq|bill of quantities|pricing|unit[-\s]?rate|rate build[-\s]?up|resource rate|schedule of rates/i
 const WORKBOOK_SCOPE_PATTERN = /excel|xlsx?|xlsm|workbook|spreadsheet|worksheet|sheet|表格|工作簿|工作表|清单|schedule|csv/i
 const FULL_ITEM_SCOPE_PATTERN = /每个|每张|逐项|全部|全量|所有|整表|每个表|每张表|每个清单项|full|all|each|every|per[-\s]?sheet|per[-\s]?item/i
+const BROAD_BOQ_WORKBOOK_SCOPE_PATTERN = /全部|全量|所有|整表|整册|全册|全文|全规范|每个表|每张表|所有表|多表|多页|full workbook|whole workbook|entire workbook|all sheets?|every sheet|per[-\s]?sheet/i
+const NARROW_BOQ_SCOPE_PATTERN = /(?:只|仅|单独|这次|本次|only|just|single).{0,80}(?:页|页面|工作表|表页|sheet|worksheet|tab|page|清单)|(?:MEDIAN\s+BARRIER|median\s+barrier).{0,50}(?:页|页面|工作表|sheet|worksheet|tab|page|清单)|(?:不要|不用|无需|不得|禁止).{0,40}(?:多做|扩展|扩大|跨章|全量|全册|派生|分派|子智能体|拆分|spawn|delegate|sub[-\s]?agent|expand|more)/i
 const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'PDF', pattern: /(?:\.pdf\b|\bpdf\b)/i },
   { label: 'DOCX', pattern: /(?:\.docx?\b|\bdocx?\b|\bword\b)/i },
@@ -196,7 +198,7 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
   const outputFormats = getRequestedOutputFormats(message)
   const detectedTaskType = getTaskContractType(message)
   const taskType = getTaskContractTypeWithDocumentMode(detectedTaskType, input.documentQualityMode)
-  const documentQualityMode = input.documentQualityMode ?? getDocumentQualityMode(message, input, taskType)
+  const documentQualityMode = resolveDocumentQualityMode(message, input, taskType)
   const deliverables = buildTaskContractDeliverables(message, taskType)
   const documentPlan = buildDocumentPlan({
     message,
@@ -313,6 +315,18 @@ function getTaskContractTypeWithDocumentMode(
   return 'document'
 }
 
+function resolveDocumentQualityMode(
+  message: string,
+  input: BuildGoalCriteriaInput,
+  taskType: SessionTaskContractType,
+): SessionDocumentQualityMode {
+  const requestedMode = input.documentQualityMode ?? getDocumentQualityMode(message, input, taskType)
+  if (requestedMode === 'multi_agent_deep' && isNarrowBoqPricingScope(message)) {
+    return 'professional_document'
+  }
+  return requestedMode
+}
+
 function getDocumentQualityMode(
   message: string,
   input: BuildGoalCriteriaInput,
@@ -323,6 +337,7 @@ function getDocumentQualityMode(
   const referencedCount = getReferencedNames(input).length
   const documentLike = shouldCreateDocumentPlan(message, taskType)
 
+  if (documentLike && isNarrowBoqPricingScope(message)) return 'professional_document'
   if (documentLike && isBoqPricingWorkbookTask(message)) return 'multi_agent_deep'
   if (documentLike && MULTI_AGENT_DEEP_MODE_PATTERN.test(message)) return 'multi_agent_deep'
   if (documentLike && (requiresTemplateFidelityAudit(message, input.storedAttachments) || STRICT_DELIVERY_MODE_PATTERN.test(message))) return 'strict_delivery'
@@ -362,6 +377,8 @@ function buildTaskContractDeliverables(message: string, taskType: SessionTaskCon
   }
   if (isBoqPricingWorkbookTask(message)) {
     deliverables.push('Produce sheet-level and item-level pricing derivation handoffs before final pricing synthesis.')
+  } else if (isNarrowBoqPricingScope(message)) {
+    deliverables.push('Produce serial item-level pricing derivation only for the explicitly named BOQ page, sheet, or table; do not expand to other pages or workbook-wide synthesis.')
   }
 
   if (deliverables.length === 0) {
@@ -407,6 +424,8 @@ function buildTaskContractEvidenceRequirements(
   }
   if (isBoqPricingWorkbookTask(message)) {
     requirements.push('Inventory workbook sheets/tables with xlsx-tool info before pricing derivation, then record sheet/table coverage and item-level pricing evidence or gaps.')
+  } else if (isNarrowBoqPricingScope(message)) {
+    requirements.push('Record item-level pricing evidence and gaps for only the explicitly named BOQ page, sheet, or table.')
   }
 
   return uniqueBounded(requirements, 8)
@@ -660,6 +679,7 @@ function buildDocumentAgentPlan(
   message: string,
   taskType: SessionTaskContractType,
 ): SessionDocumentAgentPlan | undefined {
+  if (isNarrowBoqPricingScope(message)) return undefined
   if (isBoqPricingWorkbookTask(message)) {
     return buildBoqPricingAgentPlan()
   }
@@ -724,6 +744,8 @@ function shouldCreateComplexDocumentAgentPlan(
 }
 
 function isBoqPricingWorkbookTask(message: string): boolean {
+  if (isNarrowBoqPricingScope(message)) return false
+
   return BOQ_PRICING_PATTERN.test(message)
     && WORKBOOK_SCOPE_PATTERN.test(message)
     && (
@@ -732,6 +754,13 @@ function isBoqPricingWorkbookTask(message: string): boolean {
       || COMPLEX_AGENT_ORCHESTRATION_PATTERN.test(message)
       || MULTI_AGENT_DEEP_MODE_PATTERN.test(message)
     )
+}
+
+function isNarrowBoqPricingScope(message: string): boolean {
+  return BOQ_PRICING_PATTERN.test(message)
+    && WORKBOOK_SCOPE_PATTERN.test(message)
+    && NARROW_BOQ_SCOPE_PATTERN.test(message)
+    && !BROAD_BOQ_WORKBOOK_SCOPE_PATTERN.test(message)
 }
 
 function buildBoqPricingAgentPlan(): SessionDocumentAgentPlan {
@@ -979,6 +1008,9 @@ function buildForbiddenShortcuts(
   if (isBoqPricingWorkbookTask(message)) {
     shortcuts.push('Do not perform BOQ pricing derivation by reading or exporting the full workbook in one pass; inventory sheets first and split work by sheet/table/range.')
     shortcuts.push('Do not collapse sheet-level or item-level pricing into a generic summary; every covered worksheet/table must have a handoff or an explicit pending gap.')
+  } else if (isNarrowBoqPricingScope(message)) {
+    shortcuts.push('Do not expand a narrow BOQ pricing request beyond the explicitly named page, sheet, or table.')
+    shortcuts.push('Do not spawn sub-agents, cross-chapter reviews, or workbook-wide synthesis for a narrow BOQ page/sheet pricing request unless the user explicitly asks.')
   }
   if (VISUAL_ENHANCEMENT_PATTERN.test(message) || EMBEDDED_HTML_PATTERN.test(message)) {
     shortcuts.push('Do not create charts, HTML visual blocks, diagrams, or visual summaries from invented data; use verified data or mark the visualization basis as unavailable.')

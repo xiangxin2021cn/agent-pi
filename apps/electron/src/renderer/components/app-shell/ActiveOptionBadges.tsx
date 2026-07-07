@@ -39,6 +39,7 @@ import {
   type GoalCriterionEditDraft,
   type GoalEditDraft,
 } from './goal-status-view-model'
+import { getOrchestrationBadgePreview } from './orchestration-view-model'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -313,6 +314,7 @@ function GoalModeBadge({
   const activeMode = VISIBLE_GOAL_MODES.includes(goalState.mode) ? goalState.mode : 'auto_improve'
   const manualActions = React.useMemo(() => getGoalManualActions(t, goalState), [goalState, t])
   const latestAuditPreview = React.useMemo(() => getGoalLatestAuditPreview(goalState), [goalState])
+  const orchestrationPreview = React.useMemo(() => getOrchestrationBadgePreview(t, goalState), [goalState, t])
   const canSaveGoal = draft.objective.trim().length > 0 && draft.criteria.some(criterion => criterion.text.trim().length > 0)
   const badgeColor = activeMode === 'off'
     ? 'var(--foreground)'
@@ -392,7 +394,10 @@ function GoalModeBadge({
       <PopoverTrigger asChild>
         <MetadataBadge
           label={t('sessionInfo.goal')}
-          value={getGoalBadgeValue(t, goalState)}
+          value={[
+            getGoalBadgeValue(t, goalState),
+            orchestrationPreview?.label,
+          ].filter(Boolean).join(' · ')}
           badgeColor={badgeColor}
           interactive
           isActive={open}

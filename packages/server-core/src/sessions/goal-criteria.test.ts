@@ -524,6 +524,31 @@ describe('buildTaskContractFromMessage', () => {
     expect(contract.forbiddenShortcuts).toContain('Do not perform BOQ pricing derivation by reading or exporting the full workbook in one pass; inventory sheets first and split work by sheet/table/range.')
   })
 
+  it('keeps a named BOQ page pricing request serial instead of escalating to deep multi-agent mode', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '这次你只对 MEDIAN BARRIER 页的清单进行详细的每条清单项五步法推导成本，不要多做。',
+      storedAttachments: [attachment('pricing.xlsx')],
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.deliverables).toContain('Produce serial item-level pricing derivation only for the explicitly named BOQ page, sheet, or table; do not expand to other pages or workbook-wide synthesis.')
+    expect(contract.evidenceRequirements).toContain('Record item-level pricing evidence and gaps for only the explicitly named BOQ page, sheet, or table.')
+    expect(contract.forbiddenShortcuts).toContain('Do not spawn sub-agents, cross-chapter reviews, or workbook-wide synthesis for a narrow BOQ page/sheet pricing request unless the user explicitly asks.')
+  })
+
+  it('lets a narrow BOQ page instruction override an explicit deep multi-agent mode', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '本次 only do the MEDIAN BARRIER worksheet item-by-item five-step pricing. 不要扩展到其他页。',
+      documentQualityMode: 'multi_agent_deep',
+      storedAttachments: [attachment('pricing.xlsx')],
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.forbiddenShortcuts).toContain('Do not spawn sub-agents, cross-chapter reviews, or workbook-wide synthesis for a narrow BOQ page/sheet pricing request unless the user explicitly asks.')
+  })
+
   it('captures deliverables, hard requirements, evidence, and formats without using a domain-specific template', () => {
     const contract = buildTaskContractFromMessage({
       message: [

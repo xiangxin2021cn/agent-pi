@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import {
   appendSubAgentLifecycleEntry,
+  attachOrchestrationArtifacts,
   buildSessionOrchestrationState,
   formatOrchestrationContext,
   getOrchestrationEntropySignal,
+  updateOrchestrationTaskStatus,
 } from './orchestration.ts';
 import type { SessionTaskContract } from './types.ts';
 
@@ -90,6 +92,7 @@ describe('session orchestration state', () => {
     expect(formatted).toContain('<orchestration_state version="1" phase="plan">');
     expect(formatted).toContain('Plan/Audit/Merge separation:');
     expect(formatted).toContain('Task board is authoritative');
+    expect(formatted).toContain('Spawn governance: spawned sub-agents must not spawn further sessions');
     expect(formatted).toContain('Selected source hard boundary: file-memory-chapter-1');
     expect(formatted).toContain('Do not inventory or search the working directory as a source corpus');
     expect(formatted).toContain('<requires_user_decision>');
@@ -137,6 +140,36 @@ describe('session orchestration state', () => {
       sourceSlugs: ['file-memory-chapter-1'],
       expectedHandoff: expect.arrayContaining(['task_id', 'sources_used', 'gaps']),
     }));
+  });
+
+  it('tracks bounded-autonomy artifact paths and progress ledger counts', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+
+    const withArtifacts = attachOrchestrationArtifacts(orchestration, {
+      rootPath: 'C:/project/session/orchestration',
+      briefsPath: 'C:/project/session/orchestration/briefs',
+      reportsPath: 'C:/project/session/orchestration/reports',
+      evidencePackagesPath: 'C:/project/session/orchestration/evidence-packages',
+      progressLedgerPath: 'C:/project/session/orchestration/progress-ledger.json',
+    }, 150);
+    const updated = updateOrchestrationTaskStatus(withArtifacts, 'chapter-1-agent', 'running', {
+      currentTaskId: 'chapter-1-agent',
+      evidencePackagePath: 'C:/project/session/orchestration/evidence-packages/audit-1.json',
+      now: 200,
+    });
+
+    expect(updated?.artifacts?.briefsPath).toBe('C:/project/session/orchestration/briefs');
+    expect(updated?.ledger?.currentTaskId).toBe('chapter-1-agent');
+    expect(updated?.ledger?.running).toBe(1);
+    expect(updated?.ledger?.pending).toBe(2);
+    expect(updated?.ledger?.completed).toBe(0);
+    expect(updated?.ledger?.needsUserConfirmation).toBe(false);
+    expect(updated?.ledger?.evidencePackagePath).toBe('C:/project/session/orchestration/evidence-packages/audit-1.json');
   });
 
   describe('IWG-style regression checkpoints', () => {

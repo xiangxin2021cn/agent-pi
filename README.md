@@ -14,15 +14,31 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V2.0.0.**
+**Current release: V2.0.1.**
 
-**当前发布版：V2.0.0。**
+**当前发布版：V2.0.1。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.0.1 Orchestration Control Patch / V2.0.1 编排控制小修
+
+V2.0.1 makes the new orchestration layer visible and tighter. The Info popover now exposes phase, selected-source boundary, task board, sub-agent lifecycle, progress ledger, and entropy alerts; sub-agent dispatch is narrowed through file-backed briefs and reports; Goal Audit now prefers compact evidence packages before reconstructing a task from broader context.
+
+V2.0.1 让新的编排层更可见、更克制：“信息”弹窗展示阶段、来源硬边界、任务板、子智能体生命周期、进度账本和熵告警；子智能体通过文件化 brief/report 限定任务；Goal Audit 优先读取紧凑 evidence package，再回看更大的上下文。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Orchestration UI | Session Info shows phase, source boundary, task board, sub-agent lifecycle, progress ledger, evidence package path, and entropy alerts; the Goal badge only adds a short status hint. | 会话信息展示阶段、来源边界、任务板、子智能体生命周期、进度账本、证据包路径和熵告警；Goal badge 只加短状态提示。 |
+| Bounded autonomy files | Each orchestrated session gets `orchestration/briefs`, `reports`, `evidence-packages`, and `progress-ledger.json` so long tasks are inspectable and resumable. | 每个编排会话新增 `orchestration/briefs`、`reports`、`evidence-packages` 和 `progress-ledger.json`，让长任务可检查、可续跑。 |
+| Narrow sub-agent dispatch | Spawned agents receive only `brief_path`, allowed sources, report path, and evidence package path instead of a broad parent prompt. | 子智能体只接收 `brief_path`、允许来源、报告路径和证据包路径，不再直接吞入宽泛主提示词。 |
+| Evidence-first audit | Goal Audit writes an evidence package before model review and treats it as the preferred compact audit bundle. | Goal Audit 在模型审查前写入 evidence package，并优先作为紧凑审查证据。 |
+| Narrow BOQ scope | Named page/sheet pricing such as MEDIAN BARRIER remains serial and item-focused instead of triggering cross-sheet dispatch and final synthesis. | 类似 MEDIAN BARRIER 的指定页/表组价保持串行和逐项推导，不触发跨表分派和最终统稿。 |
+| Spawn governance | Spawned sub-agents may not spawn further child sessions; oversized work must return structured gaps and recommendations to the main session. | 子智能体不得继续派生子子智能体；任务过大时把缺口和建议结构化交回主会话。 |
+| Core dependency | Claude Agent SDK updated to 0.3.202; Anthropic SDK and Pi packages were already current. | Claude Agent SDK 升级到 0.3.202；Anthropic SDK 和 Pi 组件已是最新版。 |
 
 ### V2.0.0 Architecture Upgrade / V2.0.0 架构升级
 
@@ -52,21 +68,6 @@ V1.3.2 是面向长 Markdown 和长文档交付物的紧急可靠性修复：专
 | Explicit write targets | Long-document Write/Edit retries must include the exact target path/file_path, avoiding failed calls that send only content. | 长文档 Write/Edit 重试必须带精确目标 path/file_path，避免只发送 content 导致工具校验失败。 |
 | Section-level recovery | Failed long-document writes resume from completed chunks and retry only the failed section before reassembling the final Markdown. | 长文档写入失败时从已完成分块继续，只重试失败章节，再组装最终 Markdown。 |
 | Artifact verification | Goal Loop checks the final path, section count, required headings, and non-empty content before accepting completion. | Goal Loop 会检查最终路径、章节数量、必需标题和非空内容后再接受完成。 |
-
-### V1.3.1 Hotfix / V1.3.1 紧急修复
-
-V1.3.1 hardens knowledge-base scoped document execution, real multi-agent dispatch, BOQ/pricing workbook decomposition, and long-document/large-file reading. When users load selected knowledge-base entries, Agent Pi now treats those sources as the task scope, asks before broadening beyond them, and keeps Goal Loop focused first on instruction following before output polish.
-
-V1.3.1 强化知识库限定范围、多智能体真实派发、BOQ/组价工作簿拆分和长文档/大文件读取：用户加载指定知识库后，Agent π 会优先把这些来源作为任务范围，扩大到工作目录前必须有明确理由或用户确认；Goal Loop 优先审查是否遵守用户指令，再审查成果质量。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Knowledge-base scope | Selected enterprise knowledge-base/file-memory sources are injected as first-class task scope before working-folder discovery. | 已选择的企业知识库/file-memory 来源会作为首要任务范围，不再默认先扫工作目录。 |
-| Real multi-agent dispatch | Multi-Agent Deep must create real spawned chapter sessions before final synthesis. Complex Professional/Strict tasks can also receive a bounded helper-agent plan after the main session decides orchestration. | 多智能体深度模式必须先真实创建章节分智能体再最终合成。复杂的专业文档/严格交付任务也会由主会话先判断并生成受控子智能体分工。 |
-| BOQ/pricing decomposition | Full Excel/BOQ unit-rate work inventories sheets first, avoids one-pass workbook reads, and dispatches by worksheet/table/item range before final synthesis. | Excel/BOQ 全量组价会先清点工作表，避免一次性读取整本工作簿，并按工作表/表区/清单项区间派分后再总编合成。 |
-| Goal Loop discipline | Automatic improvement checks the original instruction, follow-up feedback, selected sources, named chapters/files/folders, output format, and response language before judging quality. | 自动纠偏先核查原始指令、用户反馈、选中来源、指定章节/文件/文件夹、输出格式和语言，再审查质量。 |
-| Manual confirmation | If the assistant asks the user to confirm scope or choices, Goal Loop pauses for review instead of silently continuing. | 智能体要求用户确认范围或方案时，Goal Loop 会停到人工审查，不再掩盖确认环节继续执行。 |
-| Large-file safety | Pi-backed Read treats an offset past the end of a file as end-of-file; Excel reads are bounded by default for large BOQ sheets. | Pi Read 超过文件末尾时视为读完；Excel 读取默认限幅，避免大型 BOQ 表推爆内存。 |
 
 Older release details are available on GitHub Releases.
 

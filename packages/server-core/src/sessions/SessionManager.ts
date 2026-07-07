@@ -79,8 +79,11 @@ import {
   type SessionGoalState,
   type SessionGoalFailureCategory,
   type SessionDocumentQualityMode,
+  type SessionOrchestrationState,
   buildSessionOrchestrationState,
   appendSubAgentLifecycleEntry,
+  attachOrchestrationArtifacts,
+  updateOrchestrationTaskStatus,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -110,10 +113,18 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
-import { GoalController, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
+import { GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
+import {
+  buildOrchestrationArtifactPaths,
+  getOrchestrationReportPath,
+  pickOrchestrationTaskForSpawn,
+  writeGoalEvidencePackage,
+  writeOrchestrationProgressLedger,
+  writeOrchestrationTaskBrief,
+} from './orchestration-artifacts'
 import {
   buildKnowledgeBaseCategoryFallback,
   buildKnowledgeBaseCategorySuggestionInstruction,
@@ -824,6 +835,49 @@ export function resolveSpawnedSessionWorkingDirectory(
   return parentWorkingDirectory ?? 'none'
 }
 
+export function buildSpawnedSessionGovernancePrompt(
+  prompt: string,
+  options: {
+    parentObjective?: string
+    orchestration?: SessionOrchestrationState
+    taskBriefPath?: string
+    reportPath?: string
+    evidencePackagesPath?: string
+  } = {},
+): string {
+  if (!options.orchestration) return prompt
+
+  const selectedSources = options.orchestration.policy.selectedSourceSlugs.length > 0
+    ? options.orchestration.policy.selectedSourceSlugs.join(', ')
+    : '(inherit selected sources)'
+  const sourceBoundary = options.orchestration.policy.forbidWorkingDirectoryDiscovery
+    ? 'Use only selected sources, user attachments, or explicitly named paths. Do not inventory/search the working directory as a source corpus.'
+    : 'Use working-directory discovery only if the parent prompt explicitly asks for it.'
+  const hasBriefDispatch = Boolean(options.taskBriefPath && options.reportPath)
+
+  return [
+    '<spawned_session_contract>',
+    'role: child_agent',
+    options.parentObjective ? `parent_objective: ${options.parentObjective.slice(0, 500)}` : undefined,
+    `selected_sources: ${selectedSources}`,
+    `allowed_sources: ${selectedSources}`,
+    options.taskBriefPath ? `brief_path: ${options.taskBriefPath}` : undefined,
+    options.reportPath ? `report_path: ${options.reportPath}` : undefined,
+    options.evidencePackagesPath ? `evidence_packages_path: ${options.evidencePackagesPath}` : undefined,
+    `source_boundary: ${sourceBoundary}`,
+    hasBriefDispatch
+      ? 'scope: read the task brief first, execute only that brief, and write the structured handoff report to report_path.'
+      : 'scope: execute only the assigned task in the parent prompt. Do not broaden to other pages, sheets, chapters, formats, or review stages.',
+    'spawn_session: forbidden. Do not call spawn_session or create child sessions. If the task is too large or ambiguous, return a structured <agent_handoff> with gaps and recommendation to the main session.',
+    'final_artifact: do not write final synthesis artifacts unless the parent prompt explicitly assigns you as final synthesis owner.',
+    '</spawned_session_contract>',
+    '',
+    hasBriefDispatch
+      ? 'Read brief_path, use only allowed_sources and explicitly attached files, write report_path, then reply with a concise status and the report path.'
+      : prompt,
+  ].filter(Boolean).join('\n')
+}
+
 function canQueryLlm(agent: AgentInstance | null): agent is QueryLlmCapableAgent {
   return !!agent && typeof (agent as { queryLlm?: unknown }).queryLlm === 'function'
 }
@@ -1130,6 +1184,7 @@ function buildGoalReviewPrompt(input: GoalReviewInput): string {
     '- Treat the task contract as binding. Do not accept scope reduction, skipped granularity, missing deliverables, or omitted hard constraints.',
     '- Use "pass" only when the final response and verified artifacts clearly satisfy every required criterion.',
     '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',
+    '- When orchestration_evidence_package evidence is present, treat it as the preferred compact audit bundle before inferring from broader conversation or workspace context.',
     '- When source_file_preview evidence is present, use it as source material for grounding and citation checks, not as proof that a requested output file was produced.',
     '- When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.',
     '- If any criterion is missing or any correctivePrompt is needed, status must not be "pass".',
@@ -5051,12 +5106,43 @@ export class SessionManager implements ISessionManager {
       managed.agent.onSpawnSession = async (request) => {
         sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
 
+        if (managed.parentSessionKind === 'spawn') {
+          throw new Error('Nested spawn_session is disabled for spawned sub-agents. Return a structured handoff with gaps and recommendations to the parent session instead.')
+        }
+
         const spawnedWorkingDirectory = resolveSpawnedSessionWorkingDirectory(request.workingDirectory, managed.workingDirectory)
+        const parentOrchestration = managed.goalState?.orchestration
+        const artifacts = parentOrchestration
+          ? parentOrchestration.artifacts ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
+          : undefined
+        const spawnTask = pickOrchestrationTaskForSpawn(parentOrchestration, request.name, request.prompt)
+        const allowedSourceSlugs = spawnTask?.allowedSourceSlugs?.length
+          ? spawnTask.allowedSourceSlugs
+          : request.enabledSourceSlugs ?? managed.enabledSourceSlugs ?? parentOrchestration?.policy.selectedSourceSlugs ?? []
+        const reportPath = artifacts ? getOrchestrationReportPath(artifacts, spawnTask?.id ?? request.name) : undefined
+        const taskBriefPath = artifacts && reportPath
+          ? await writeOrchestrationTaskBrief({
+              artifacts,
+              task: spawnTask,
+              parentObjective: managed.goalState?.objective,
+              prompt: request.prompt,
+              reportPath,
+              workingDirectory: spawnedWorkingDirectory,
+              allowedSourceSlugs,
+            })
+          : undefined
+        const spawnedPrompt = buildSpawnedSessionGovernancePrompt(request.prompt, {
+          parentObjective: managed.goalState?.objective,
+          orchestration: parentOrchestration,
+          taskBriefPath,
+          reportPath,
+          evidencePackagesPath: artifacts?.evidencePackagesPath,
+        })
         const session = await this.createSession(managed.workspace.id, {
           name: request.name,
           llmConnection: request.llmConnection ?? managed.llmConnection,
           model: request.model ?? managed.model,
-          enabledSourceSlugs: request.enabledSourceSlugs ?? managed.enabledSourceSlugs,
+          enabledSourceSlugs: allowedSourceSlugs,
           permissionMode: request.permissionMode ?? managed.permissionMode,
           thinkingLevel: request.thinkingLevel ?? managed.thinkingLevel,
           labels: request.labels ?? managed.labels,
@@ -5096,19 +5182,31 @@ export class SessionManager implements ISessionManager {
 
         const lifecycleUpdatedAt = Date.now()
         if (managed.goalState?.orchestration) {
+          const taskUpdated = updateOrchestrationTaskStatus(
+            attachOrchestrationArtifacts(managed.goalState.orchestration, artifacts ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id), lifecycleUpdatedAt),
+            spawnTask?.id,
+            'running',
+            {
+              currentTaskId: spawnTask?.id,
+              artifactPaths: [taskBriefPath, reportPath].filter((path): path is string => Boolean(path)),
+              now: lifecycleUpdatedAt,
+            },
+          )
           managed.goalState = {
             ...managed.goalState,
-            orchestration: appendSubAgentLifecycleEntry(managed.goalState.orchestration, {
+            orchestration: appendSubAgentLifecycleEntry(taskUpdated, {
               sessionId: session.id,
               name: session.name || request.name || session.id,
+              taskId: spawnTask?.id,
               status: 'started',
               workingDirectory: session.workingDirectory,
-              sourceSlugs: request.enabledSourceSlugs ?? managed.enabledSourceSlugs,
+              sourceSlugs: allowedSourceSlugs,
             }, lifecycleUpdatedAt),
             updatedAt: lifecycleUpdatedAt,
           }
           managed.agent?.updateSessionGoalState?.(managed.goalState)
           this.persistSession(managed)
+          this.persistOrchestrationLedgerInBackground(managed)
           this.sendEvent({
             type: 'goal_state_changed',
             sessionId: managed.id,
@@ -5117,7 +5215,7 @@ export class SessionManager implements ISessionManager {
         }
 
         // Fire and forget — send the message but don't await completion
-        this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
+        this.sendMessage(session.id, spawnedPrompt, fileAttachments).catch(err => {
           sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
         })
 
@@ -7663,15 +7761,27 @@ export class SessionManager implements ISessionManager {
 
       const goalStateBeforeAudit = managed.goalState
       if (goalStateBeforeAudit && goalStateBeforeAudit.mode !== 'off') {
+        const auditStartedAt = Date.now()
+        const auditingOrchestration = goalStateBeforeAudit.orchestration
+          ? updateOrchestrationTaskStatus({
+              ...goalStateBeforeAudit.orchestration,
+              phase: 'audit',
+            }, 'main-session-audit', 'running', {
+              currentTaskId: 'main-session-audit',
+              now: auditStartedAt,
+            })
+          : undefined
         const auditingGoalState: SessionGoalState = {
           ...goalStateBeforeAudit,
           status: 'auditing',
           iteration: goalStateBeforeAudit.iteration + 1,
-          updatedAt: Date.now(),
+          orchestration: auditingOrchestration ?? goalStateBeforeAudit.orchestration,
+          updatedAt: auditStartedAt,
         }
         managed.goalState = auditingGoalState
         managed.agent?.updateSessionGoalState?.(managed.goalState)
         this.persistSession(managed)
+        this.persistOrchestrationLedgerInBackground(managed)
         this.sendEvent({
           type: 'goal_audit_started',
           sessionId,
@@ -7686,6 +7796,7 @@ export class SessionManager implements ISessionManager {
         turnStartFinalMessageId,
         stoppedReason: reason,
         reviewer: this.buildGoalReviewer(managed),
+        evidencePackageWriter: this.buildGoalEvidencePackageWriter(managed),
         fileVerifier: this.buildGoalFileVerifier(),
         expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
         spawnedSessions: this.getSpawnedSessionSummaries(sessionId),
@@ -7696,31 +7807,50 @@ export class SessionManager implements ISessionManager {
         },
       })
       if (goalDecision.action !== 'skip') {
-        managed.goalState = goalDecision.goalState
+        const evidencePackagePath = goalDecision.result.evidence.find(item => item.label === 'orchestration_evidence_package')?.detail
+        const auditFinishedAt = Date.now()
+        const nextOrchestration = goalDecision.goalState.orchestration
+          ? updateOrchestrationTaskStatus({
+              ...goalDecision.goalState.orchestration,
+              phase: goalDecision.action === 'complete' ? 'merge' : goalDecision.action === 'needs_review' ? 'paused' : 'audit',
+            }, 'main-session-audit', goalDecision.action === 'complete' ? 'completed' : goalDecision.action === 'needs_review' ? 'blocked' : 'needs_review', {
+              currentTaskId: 'main-session-audit',
+              evidencePackagePath,
+              needsUserConfirmation: goalDecision.action === 'needs_review',
+              now: auditFinishedAt,
+            })
+          : undefined
+        const goalStateAfterAudit: SessionGoalState = {
+          ...goalDecision.goalState,
+          orchestration: nextOrchestration ?? goalDecision.goalState.orchestration,
+          updatedAt: auditFinishedAt,
+        }
+        managed.goalState = goalStateAfterAudit
         managed.agent?.updateSessionGoalState?.(managed.goalState)
         this.persistSession(managed)
-        this.recordGoalAuditInProjectMemoryInBackground(managed, goalDecision.result, goalDecision.goalState)
+        this.persistOrchestrationLedgerInBackground(managed)
+        this.recordGoalAuditInProjectMemoryInBackground(managed, goalDecision.result, goalStateAfterAudit)
         this.sendEvent({
           type: 'goal_audit_result',
           sessionId,
-          goalId: goalDecision.goalState.id,
+          goalId: goalStateAfterAudit.id,
           result: goalDecision.result,
-          goalState: goalDecision.goalState,
+          goalState: goalStateAfterAudit,
         }, managed.workspace.id)
 
         if (goalDecision.action === 'complete') {
           this.sendEvent({
             type: 'goal_completed',
             sessionId,
-            goalId: goalDecision.goalState.id,
-            goalState: goalDecision.goalState,
+            goalId: goalStateAfterAudit.id,
+            goalState: goalStateAfterAudit,
           }, managed.workspace.id)
         } else if (goalDecision.action === 'needs_review') {
           this.sendEvent({
             type: 'goal_needs_review',
             sessionId,
-            goalId: goalDecision.goalState.id,
-            goalState: goalDecision.goalState,
+            goalId: goalStateAfterAudit.id,
+            goalState: goalStateAfterAudit,
             reason: goalDecision.reason,
           }, managed.workspace.id)
         } else {
@@ -7844,6 +7974,57 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  private buildOrchestrationStateForGoal(
+    managed: ManagedSession,
+    input: {
+      objective: string
+      taskContract: SessionGoalState['taskContract']
+      enabledSourceSlugs?: string[]
+      now: number
+      existing?: SessionOrchestrationState
+    },
+  ): SessionOrchestrationState | undefined {
+    const orchestration = buildSessionOrchestrationState({
+      objective: input.objective,
+      taskContract: input.taskContract,
+      enabledSourceSlugs: input.enabledSourceSlugs,
+      now: input.now,
+    }) ?? input.existing
+    if (!orchestration) return undefined
+
+    const artifacts = input.existing?.artifacts ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
+    return attachOrchestrationArtifacts(orchestration, artifacts, input.now)
+  }
+
+  private persistOrchestrationLedgerInBackground(managed: ManagedSession): void {
+    const orchestration = managed.goalState?.orchestration
+    const artifacts = orchestration?.artifacts
+    if (!orchestration || !artifacts) return
+    writeOrchestrationProgressLedger({
+      artifacts,
+      sessionId: managed.id,
+      orchestration,
+    }).catch(error => {
+      sessionLog.warn(`Failed to write orchestration progress ledger for session ${managed.id}: ${error instanceof Error ? error.message : error}`)
+    })
+  }
+
+  private buildGoalEvidencePackageWriter(managed: ManagedSession): GoalEvidencePackageWriter | undefined {
+    if (!managed.goalState?.orchestration) return undefined
+    return async (input) => {
+      const artifacts = input.goalState.orchestration?.artifacts
+        ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
+      const evidence = await writeGoalEvidencePackage({
+        artifacts,
+        goalState: input.goalState,
+        result: input.result,
+        messages: input.messages,
+        finalAssistant: input.finalAssistant,
+      })
+      return evidence
+    }
+  }
+
   private maybeInitializeGoalStateForUserMessage(
     managed: ManagedSession,
     message: string,
@@ -7911,7 +8092,7 @@ export class SessionManager implements ISessionManager {
       maxIterations: mode === 'check_only' ? 1 : policy.maxIterations,
       criteria,
       taskContract,
-      orchestration: buildSessionOrchestrationState({
+      orchestration: this.buildOrchestrationStateForGoal(managed, {
         objective: message.trim().slice(0, 4000),
         taskContract,
         enabledSourceSlugs: managed.enabledSourceSlugs,
@@ -7925,6 +8106,7 @@ export class SessionManager implements ISessionManager {
     managed.goalState = goalState
     managed.agent?.updateSessionGoalState?.(managed.goalState)
     this.persistSession(managed)
+    this.persistOrchestrationLedgerInBackground(managed)
     this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
     this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
   }
@@ -7986,11 +8168,12 @@ export class SessionManager implements ISessionManager {
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
       taskContract: mergedTaskContract,
-      orchestration: buildSessionOrchestrationState({
+      orchestration: this.buildOrchestrationStateForGoal(managed, {
         objective: nextObjective,
         taskContract: mergedTaskContract,
         enabledSourceSlugs: managed.enabledSourceSlugs,
         now,
+        existing: current.orchestration,
       }) ?? current.orchestration,
       budgets: {
         ...current.budgets,
@@ -8001,6 +8184,7 @@ export class SessionManager implements ISessionManager {
     managed.goalState = goalState
     managed.agent?.updateSessionGoalState?.(managed.goalState)
     this.persistSession(managed)
+    this.persistOrchestrationLedgerInBackground(managed)
     this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
     this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
   }

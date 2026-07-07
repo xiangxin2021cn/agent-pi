@@ -176,6 +176,68 @@ describe('GoalController', () => {
     }
   })
 
+  test('writes an orchestration evidence package before reviewer evaluation', async () => {
+    const controller = new GoalController()
+    let reviewerSawPackage = false
+
+    const decision = await controller.onTurnStopped(goal({
+      criteria: [{
+        id: 'crit-1',
+        text: 'The final report cites the selected knowledge base.',
+        kind: 'evidence',
+        required: true,
+      }],
+      orchestration: {
+        version: 1,
+        phase: 'audit',
+        createdAt: 1,
+        updatedAt: 1,
+        policy: {
+          selectedSourceSlugs: ['kb-coto-chapter-1'],
+          forbidWorkingDirectoryDiscovery: true,
+          requireStructuredHandoff: true,
+          requireUserConfirmationPause: true,
+          maxAutomaticRepairPasses: 2,
+        },
+        taskBoard: { tasks: [] },
+        subAgents: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Analyze selected COTO Chapter 1 knowledge base only.'),
+        message('a1', 'assistant', 'The scoped analysis is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      evidencePackageWriter: async () => ({
+        type: 'file',
+        label: 'orchestration_evidence_package',
+        detail: 'C:/session/orchestration/evidence-packages/audit-1.json',
+      }),
+      reviewer: async (input) => {
+        reviewerSawPackage = input.result.evidence.some(item =>
+          item.label === 'orchestration_evidence_package'
+          && item.detail === 'C:/session/orchestration/evidence-packages/audit-1.json'
+        )
+        return {
+          status: 'pass',
+          summary: 'Evidence package proves scoped completion.',
+          missingCriteria: [],
+        }
+      },
+    })
+
+    expect(reviewerSawPackage).toBe(true)
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'orchestration_evidence_package',
+        detail: 'C:/session/orchestration/evidence-packages/audit-1.json',
+      })
+    }
+  })
+
   test('does not accept reviewer pass when required source citation markers are missing', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

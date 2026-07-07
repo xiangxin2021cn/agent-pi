@@ -1,6 +1,6 @@
 {
   "name": "@agent-pi/electron",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Electron desktop app for Agent Pi",
   "main": "dist/main.cjs",
   "private": true,

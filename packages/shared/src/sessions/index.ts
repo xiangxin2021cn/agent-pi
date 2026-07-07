@@ -41,6 +41,8 @@ export type {
   SessionOrchestrationTask,
   SessionSubAgentLifecycleEntry,
   SessionOrchestrationEntropySignal,
+  SessionOrchestrationArtifactPaths,
+  SessionOrchestrationProgressLedger,
   SessionOrchestrationState,
 } from './types.ts';
 
@@ -59,8 +61,11 @@ export {
   formatOrchestrationContext,
   getOrchestrationEntropySignal,
   appendSubAgentLifecycleEntry,
+  attachOrchestrationArtifacts,
+  refreshOrchestrationLedger,
+  updateOrchestrationTaskStatus,
 } from './orchestration.ts';
-export type { OrchestrationEntropyInput } from './orchestration.ts';
+export type { OrchestrationEntropyInput, UpdateOrchestrationTaskStatusOptions } from './orchestration.ts';
 
 // Storage functions
 export {

@@ -1,7 +1,10 @@
 import type {
+  SessionOrchestrationArtifactPaths,
   SessionOrchestrationEntropySignal,
+  SessionOrchestrationProgressLedger,
   SessionOrchestrationState,
   SessionOrchestrationTask,
+  SessionOrchestrationTaskStatus,
   SessionSubAgentLifecycleEntry,
   SessionTaskContract,
 } from './types.ts';
@@ -21,6 +24,14 @@ export interface OrchestrationEntropyInput {
   workspaceDiscoveryCount?: number;
   repeatedFailureCount?: number;
   contextUsagePercent?: number;
+  now?: number;
+}
+
+export interface UpdateOrchestrationTaskStatusOptions {
+  currentTaskId?: string;
+  evidencePackagePath?: string;
+  needsUserConfirmation?: boolean;
+  artifactPaths?: string[];
   now?: number;
 }
 
@@ -94,6 +105,58 @@ export function appendSubAgentLifecycleEntry(
   };
 }
 
+export function attachOrchestrationArtifacts(
+  orchestration: SessionOrchestrationState | undefined,
+  artifacts: SessionOrchestrationArtifactPaths,
+  now = Date.now(),
+): SessionOrchestrationState | undefined {
+  if (!orchestration) return orchestration;
+  return refreshOrchestrationLedger({
+    ...orchestration,
+    artifacts,
+    updatedAt: now,
+  }, { now });
+}
+
+export function updateOrchestrationTaskStatus(
+  orchestration: SessionOrchestrationState | undefined,
+  taskId: string | undefined,
+  status: SessionOrchestrationTaskStatus,
+  options: UpdateOrchestrationTaskStatusOptions = {},
+): SessionOrchestrationState | undefined {
+  if (!orchestration || !taskId) return orchestration;
+  const now = options.now ?? Date.now();
+  const tasks = orchestration.taskBoard.tasks.map(task => {
+    if (task.id !== taskId) return task;
+    return {
+      ...task,
+      status,
+      artifactPaths: options.artifactPaths
+        ? unique([...(task.artifactPaths ?? []), ...options.artifactPaths])
+        : task.artifactPaths,
+    };
+  });
+  return refreshOrchestrationLedger({
+    ...orchestration,
+    updatedAt: now,
+    taskBoard: { tasks },
+  }, options);
+}
+
+export function refreshOrchestrationLedger(
+  orchestration: SessionOrchestrationState | undefined,
+  options: UpdateOrchestrationTaskStatusOptions = {},
+): SessionOrchestrationState | undefined {
+  if (!orchestration) return orchestration;
+  const now = options.now ?? Date.now();
+  const ledger = buildProgressLedger(orchestration, options, now);
+  return {
+    ...orchestration,
+    updatedAt: now,
+    ledger,
+  };
+}
+
 export function formatOrchestrationContext(orchestration: SessionOrchestrationState | undefined): string | undefined {
   if (!orchestration) return undefined;
 
@@ -106,6 +169,24 @@ export function formatOrchestrationContext(orchestration: SessionOrchestrationSt
   const entropy = orchestration.entropy
     ? `Current orchestration entropy: ${orchestration.entropy.level} (${orchestration.entropy.score}) - ${orchestration.entropy.reasons.join('; ')}`
     : 'Current orchestration entropy: not elevated.';
+  const artifactPaths = orchestration.artifacts
+    ? [
+        `briefs=${orchestration.artifacts.briefsPath}`,
+        `reports=${orchestration.artifacts.reportsPath}`,
+        `evidence_packages=${orchestration.artifacts.evidencePackagesPath}`,
+        `progress_ledger=${orchestration.artifacts.progressLedgerPath}`,
+      ].join('; ')
+    : '(not initialized)';
+  const ledger = orchestration.ledger
+    ? [
+        `current_task=${orchestration.ledger.currentTaskId ?? '(none)'}`,
+        `completed=${orchestration.ledger.completed}`,
+        `running=${orchestration.ledger.running}`,
+        `blocked=${orchestration.ledger.blocked}`,
+        `needs_review=${orchestration.ledger.needsReview}`,
+        `needs_user_confirmation=${orchestration.ledger.needsUserConfirmation ? 'yes' : 'no'}`,
+      ].join('; ')
+    : '(not initialized)';
 
   return [
     `<orchestration_state version="${orchestration.version}" phase="${orchestration.phase}">`,
@@ -115,6 +196,7 @@ export function formatOrchestrationContext(orchestration: SessionOrchestrationSt
     '- MERGE: only the main synthesis owner writes the final artifact after audited handoffs are available.',
     '',
     'Task board is authoritative. Do not add tasks, sources, chapters, formats, languages, or working-directory discovery outside this board unless the user explicitly approves it.',
+    'Spawn governance: spawned sub-agents must not spawn further sessions or create extra child-agent layers; if work is too large, return a structured handoff with gaps and recommendation to the main session.',
     `Selected source hard boundary: ${selectedSources}`,
     orchestration.policy.forbidWorkingDirectoryDiscovery
       ? 'Do not inventory or search the working directory as a source corpus. Use only selected sources, user attachments, or explicitly named file/folder paths.'
@@ -133,6 +215,11 @@ export function formatOrchestrationContext(orchestration: SessionOrchestrationSt
     '',
     'Task board:',
     tasks,
+    '',
+    `Bounded autonomy artifact paths: ${artifactPaths}`,
+    `Progress ledger: ${ledger}`,
+    'Spawn dispatch rule: child agents receive only brief_path, allowed_sources, and report_path; they must read the brief and write their report instead of relying on broad parent context.',
+    'Audit rule: before scanning conversation history or working directories, prefer evidence packages and report paths listed in the ledger.',
     '',
     entropy,
     '</orchestration_state>',
@@ -258,6 +345,58 @@ function formatTask(task: SessionOrchestrationTask): string {
   const sources = task.allowedSourceSlugs.length > 0 ? task.allowedSourceSlugs.join(', ') : '(inherit current selected sources)';
   const deps = task.dependencies.length > 0 ? task.dependencies.join(', ') : '(none)';
   return `- ${task.id} [${task.phase}/${task.status}] ${task.title}; scope=${task.scope}; role=${task.role}; deps=${deps}; allowed_sources=${sources}`;
+}
+
+function buildProgressLedger(
+  orchestration: SessionOrchestrationState,
+  options: UpdateOrchestrationTaskStatusOptions,
+  now: number,
+): SessionOrchestrationProgressLedger {
+  const counts = {
+    pending: 0,
+    running: 0,
+    handoffReady: 0,
+    completed: 0,
+    needsReview: 0,
+    blocked: 0,
+    cancelled: 0,
+  };
+
+  for (const task of orchestration.taskBoard.tasks) {
+    switch (task.status) {
+      case 'pending':
+        counts.pending += 1;
+        break;
+      case 'running':
+        counts.running += 1;
+        break;
+      case 'handoff_ready':
+        counts.handoffReady += 1;
+        break;
+      case 'completed':
+        counts.completed += 1;
+        break;
+      case 'needs_review':
+        counts.needsReview += 1;
+        break;
+      case 'blocked':
+        counts.blocked += 1;
+        break;
+      case 'cancelled':
+        counts.cancelled += 1;
+        break;
+    }
+  }
+
+  return {
+    currentTaskId: options.currentTaskId ?? orchestration.ledger?.currentTaskId,
+    ...counts,
+    needsUserConfirmation: options.needsUserConfirmation
+      ?? orchestration.ledger?.needsUserConfirmation
+      ?? (orchestration.phase === 'paused' || counts.blocked > 0),
+    evidencePackagePath: options.evidencePackagePath ?? orchestration.ledger?.evidencePackagePath,
+    updatedAt: now,
+  };
 }
 
 function unique(values: string[]): string[] {

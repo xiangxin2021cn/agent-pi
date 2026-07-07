@@ -57,6 +57,15 @@ export interface GoalFileVerificationResult {
 
 export type GoalFileVerifier = (filePath: string) => Promise<GoalFileVerificationResult> | GoalFileVerificationResult
 
+export interface GoalEvidencePackageInput {
+  goalState: SessionGoalState
+  messages: Message[]
+  finalAssistant?: Message
+  result: SessionGoalAuditResult
+}
+
+export type GoalEvidencePackageWriter = (input: GoalEvidencePackageInput) => Promise<SessionGoalAuditEvidence | undefined> | SessionGoalAuditEvidence | undefined
+
 export interface GoalSpawnedSessionSummary {
   id: string
   name?: string
@@ -73,6 +82,7 @@ export interface GoalTurnSnapshot {
   now?: number
   expectedOutputDirectory?: string
   reviewer?: (input: GoalReviewInput) => Promise<GoalReviewResult>
+  evidencePackageWriter?: GoalEvidencePackageWriter
   fileVerifier?: GoalFileVerifier
   contextPressure?: ContextPressureInput
   spawnedSessions?: GoalSpawnedSessionSummary[]
@@ -578,6 +588,34 @@ export class GoalController {
         : [...deterministicFailureCategories],
       evidence,
       createdAt: now,
+    }
+
+    if (snapshot.evidencePackageWriter && goalState.orchestration) {
+      try {
+        const packageEvidence = await snapshot.evidencePackageWriter({
+          goalState,
+          messages: turnMessages,
+          finalAssistant,
+          result,
+        })
+        if (packageEvidence) {
+          evidence.push(packageEvidence)
+          result = {
+            ...result,
+            evidence,
+          }
+        }
+      } catch (error) {
+        evidence.push({
+          type: 'system',
+          label: 'orchestration_evidence_package_error',
+          detail: error instanceof Error ? error.message : String(error),
+        })
+        result = {
+          ...result,
+          evidence,
+        }
+      }
     }
 
     let reviewerFailed = false
@@ -1871,6 +1909,7 @@ function buildRequiredCheckpoints(result: SessionGoalAuditResult): string {
   const councilDisagreement = result.evidence.find(item => item.label === 'quality_council_disagreement')?.detail
   const codeDiagnostics = result.evidence.find(item => item.label === 'code_verification_diagnostics')?.detail
   const contextPressure = result.evidence.find(item => item.label === 'context_pressure_high' || item.label === 'context_pressure_warning')?.detail
+  const orchestrationEvidencePackage = result.evidence.find(item => item.label === 'orchestration_evidence_package')?.detail
 
   if (normalized.has('tool_failure')) {
     checkpoints.push('Resolve the failed tool or command and confirm the later attempt succeeded.')
@@ -1880,6 +1919,9 @@ function buildRequiredCheckpoints(result: SessionGoalAuditResult): string {
   }
   if (contextPressure) {
     checkpoints.push(`Reduce context/tool pressure by narrowing enabled sources, using only necessary source tools, or summarizing source evidence before the final answer: ${contextPressure}.`)
+  }
+  if (orchestrationEvidencePackage) {
+    checkpoints.push(`Read the orchestration evidence package before scanning conversation history or working directories: ${orchestrationEvidencePackage}.`)
   }
   if (codeDiagnostics) {
     checkpoints.push(`Fix the reported code diagnostics, then rerun the failed verification command: ${codeDiagnostics}.`)

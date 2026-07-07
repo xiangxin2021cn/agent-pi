@@ -289,6 +289,28 @@ export interface SessionOrchestrationEntropySignal {
   createdAt: number;
 }
 
+export interface SessionOrchestrationArtifactPaths {
+  rootPath: string;
+  briefsPath: string;
+  reportsPath: string;
+  evidencePackagesPath: string;
+  progressLedgerPath: string;
+}
+
+export interface SessionOrchestrationProgressLedger {
+  currentTaskId?: string;
+  pending: number;
+  running: number;
+  handoffReady: number;
+  completed: number;
+  needsReview: number;
+  blocked: number;
+  cancelled: number;
+  needsUserConfirmation: boolean;
+  evidencePackagePath?: string;
+  updatedAt: number;
+}
+
 export interface SessionOrchestrationState {
   version: 1;
   phase: SessionOrchestrationPhase;
@@ -305,6 +327,8 @@ export interface SessionOrchestrationState {
     tasks: SessionOrchestrationTask[];
   };
   subAgents: SessionSubAgentLifecycleEntry[];
+  artifacts?: SessionOrchestrationArtifactPaths;
+  ledger?: SessionOrchestrationProgressLedger;
   entropy?: SessionOrchestrationEntropySignal;
 }
 

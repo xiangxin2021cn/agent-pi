@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, Loader2, RotateCcw, Target } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle2, Circle, DatabaseZap, FileText, FolderOpen, GitBranch, ListChecks, Loader2, RotateCcw, Target, Users } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,7 @@ import { getDocumentPlanDetailItems, getDocumentPlanStatusText } from './documen
 import { getGoalStatusText } from './goal-status-view-model'
 import { getContextPressureViewModel, resolveModelContextWindow } from './context-pressure-view-model'
 import { getProjectMemoryTelemetryResetAction } from './project-memory-view-model'
+import { getOrchestrationInfoViewModel, type OrchestrationInfoViewModel, type OrchestrationTone } from './orchestration-view-model'
 import type { ProjectMemorySessionStatusResult, SessionOutputDirectory } from '../../../shared/types'
 
 interface SessionInfoPopoverProps {
@@ -222,12 +223,15 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
     return slug ? llmConnections.find(conn => conn.slug === slug) : llmConnections.find(conn => conn.isDefault)
   }, [llmConnections, session?.llmConnection, workspaceDefaultLlmConnection])
 
+  const sourceNameBySlug = React.useMemo(() => (
+    new Map((enabledSources ?? []).map(source => [source.config.slug, source.config.name]))
+  ), [enabledSources])
+
   const sourceNames = React.useMemo(() => {
     const slugs = session?.enabledSourceSlugs ?? []
     if (slugs.length === 0) return []
-    const bySlug = new Map((enabledSources ?? []).map(source => [source.config.slug, source.config.name]))
-    return slugs.map(slug => bySlug.get(slug) ?? slug)
-  }, [enabledSources, session?.enabledSourceSlugs])
+    return slugs.map(slug => sourceNameBySlug.get(slug) ?? slug)
+  }, [session?.enabledSourceSlugs, sourceNameBySlug])
 
   const goalStatus = session?.goalState
     ? getGoalStatusText(t, session.goalState.status, session.goalState.iteration, session.goalState.maxIterations)
@@ -242,6 +246,10 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
   const documentPlanDetailItems = React.useMemo(
     () => getDocumentPlanDetailItems(t, session?.goalState),
     [session?.goalState, t],
+  )
+  const orchestrationInfo = React.useMemo(
+    () => getOrchestrationInfoViewModel(t, session?.goalState, { sourceNameBySlug }),
+    [session?.goalState, sourceNameBySlug, t],
   )
   const contextPressure = React.useMemo(() => getContextPressureViewModel({
     enabledSourceCount: sourceNames.length,
@@ -304,6 +312,15 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       label: t('sessionInfo.documentPlan', { defaultValue: 'Document Plan' }),
       value: documentPlanStatus,
       active: true,
+    }] : []),
+    ...(orchestrationInfo ? [{
+      key: 'orchestration',
+      icon: <GitBranch className="h-3.5 w-3.5" />,
+      label: t('sessionInfo.orchestration', { defaultValue: '编排' }),
+      value: orchestrationInfo.entropy
+        ? `${orchestrationInfo.phase} · ${orchestrationInfo.entropy.label}`
+        : `${orchestrationInfo.phase} · ${orchestrationInfo.ledger?.summary ?? orchestrationInfo.taskBoardSummary}`,
+      active: !!orchestrationInfo.entropy || orchestrationInfo.ledger?.tone === 'warning' || orchestrationInfo.ledger?.tone === 'danger',
     }] : []),
     ...(contextPressure ? [{
       key: 'contextPressure',
@@ -407,6 +424,10 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
         )}
       </InfoBlock>
 
+      {orchestrationInfo && (
+        <OrchestrationInfoBlock info={orchestrationInfo} />
+      )}
+
       {goalAuditItems.length > 0 && (
         <InfoBlock title={t('sessionInfo.goalAuditHistory')}>
           <div className="space-y-1.5">
@@ -426,6 +447,116 @@ function SessionInfoBoard({ sessionId, sessionFolderPath }: { sessionId: string;
       )}
     </div>
   )
+}
+
+function OrchestrationInfoBlock({ info }: { info: OrchestrationInfoViewModel }) {
+  const { t } = useTranslation()
+
+  return (
+    <InfoBlock title={t('sessionInfo.orchestration', { defaultValue: '编排' })}>
+      <InfoLine
+        icon={<GitBranch className="h-3.5 w-3.5" />}
+        label={t('sessionInfo.orchestrationPhase', { defaultValue: '当前阶段' })}
+        value={info.phase}
+        active={info.entropy?.tone === 'danger'}
+      />
+      {info.ledger && (
+        <InfoLine
+          icon={<ListChecks className="h-3.5 w-3.5" />}
+          label={t('sessionInfo.orchestrationLedger', { defaultValue: '进度账本' })}
+          value={info.ledger.evidencePackagePath
+            ? `${info.ledger.summary} · ${info.ledger.evidencePackagePath}`
+            : info.ledger.summary}
+          active={info.ledger.tone === 'warning' || info.ledger.tone === 'danger'}
+        />
+      )}
+      <InfoLine
+        icon={<DatabaseZap className="h-3.5 w-3.5" />}
+        label={t('sessionInfo.orchestrationSourceBoundary', { defaultValue: '选中来源硬边界' })}
+        value={info.selectedSourceBoundary}
+        active
+      />
+      <InfoLine
+        icon={<ListChecks className="h-3.5 w-3.5" />}
+        label={t('sessionInfo.orchestrationTaskBoard', { defaultValue: '任务板' })}
+        value={info.taskBoardSummary}
+      />
+      {info.tasks.length > 0 && (
+        <div className="space-y-1">
+          {info.tasks.map(item => (
+            <OrchestrationListItem key={item.id} item={item} />
+          ))}
+          {info.hiddenTaskCount > 0 && (
+            <OrchestrationHiddenCount count={info.hiddenTaskCount} />
+          )}
+        </div>
+      )}
+      <InfoLine
+        icon={<Users className="h-3.5 w-3.5" />}
+        label={t('sessionInfo.orchestrationSubAgents', { defaultValue: '子智能体生命周期' })}
+        value={info.subAgentSummary}
+      />
+      {info.subAgents.length > 0 && (
+        <div className="space-y-1">
+          {info.subAgents.map(item => (
+            <OrchestrationListItem key={item.id} item={item} />
+          ))}
+          {info.hiddenSubAgentCount > 0 && (
+            <OrchestrationHiddenCount count={info.hiddenSubAgentCount} />
+          )}
+        </div>
+      )}
+      <InfoLine
+        icon={<AlertTriangle className="h-3.5 w-3.5" />}
+        label={t('sessionInfo.orchestrationEntropy', { defaultValue: '熵告警' })}
+        value={info.entropy ? `${info.entropy.label} · ${info.entropy.detail}` : t('sessionInfo.orchestrationEntropyClear', { defaultValue: '无告警' })}
+        active={!!info.entropy}
+      />
+    </InfoBlock>
+  )
+}
+
+function OrchestrationListItem({ item }: { item: OrchestrationInfoViewModel['tasks'][number] }) {
+  return (
+    <div className="rounded-[7px] bg-foreground/[0.025] px-2 py-1.5">
+      <div className="flex items-start gap-2">
+        <Circle className={cn('mt-1 h-2.5 w-2.5 shrink-0', getOrchestrationToneClass(item.tone))} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12px] font-medium text-foreground/82" title={item.title}>
+            {item.title}
+          </div>
+          <div className="truncate text-[11px] leading-4 text-muted-foreground" title={item.meta}>
+            {item.meta}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OrchestrationHiddenCount({ count }: { count: number }) {
+  const { t } = useTranslation()
+  return (
+    <div className="rounded-[6px] bg-foreground/[0.025] px-2 py-1 text-[11px] text-muted-foreground">
+      {t('sessionInfo.orchestrationMoreItems', {
+        count,
+        defaultValue: '还有 {{count}} 项已折叠。',
+      })}
+    </div>
+  )
+}
+
+function getOrchestrationToneClass(tone: OrchestrationTone): string {
+  switch (tone) {
+    case 'success':
+      return 'text-success fill-current'
+    case 'warning':
+      return 'text-warning fill-current'
+    case 'danger':
+      return 'text-destructive fill-current'
+    case 'default':
+      return 'text-muted-foreground fill-current'
+  }
 }
 
 function GoalAuditCard({ item }: { item: GoalAuditViewModel }) {
