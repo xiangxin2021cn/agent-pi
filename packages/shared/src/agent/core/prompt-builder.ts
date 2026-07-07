@@ -19,6 +19,7 @@ import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/sy
 import { getSessionPlansPath, getSessionDataPath, getSessionOutputPath, getSessionPath, getProjectBrainPath, loadProjectMemoryContextForSession } from '../../sessions/storage.ts';
 import { getContextPressureSignal } from '../../sessions/context-pressure.ts';
 import { formatTaskContractContext } from '../../sessions/task-contract-context.ts';
+import { formatOrchestrationContext } from '../../sessions/orchestration.ts';
 import type {
   PromptBuilderConfig,
   ContextBlockOptions,
@@ -139,6 +140,10 @@ export class PromptBuilder {
     const goalContractContext = formatTaskContractContext(this.config.session?.goalState?.taskContract);
     if (goalContractContext) {
       parts.push(goalContractContext);
+    }
+    const orchestrationContext = formatOrchestrationContext(this.config.session?.goalState?.orchestration);
+    if (orchestrationContext) {
+      parts.push(orchestrationContext);
     }
 
     // Source state if provided

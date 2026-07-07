@@ -234,6 +234,7 @@ export interface SessionGoalState {
   maxIterations: number;
   criteria: SessionGoalCriterion[];
   taskContract?: SessionTaskContract;
+  orchestration?: SessionOrchestrationState;
   auditHistory: SessionGoalAuditResult[];
   budgets?: {
     maxExtraTurns?: number;
@@ -241,6 +242,70 @@ export interface SessionGoalState {
     maxExtraOutputTokens?: number;
     maxWallClockMs?: number;
   };
+}
+
+export type SessionOrchestrationPhase = 'plan' | 'audit' | 'merge' | 'paused';
+
+export type SessionOrchestrationTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'handoff_ready'
+  | 'completed'
+  | 'needs_review'
+  | 'blocked'
+  | 'cancelled';
+
+export interface SessionOrchestrationTask {
+  id: string;
+  title: string;
+  phase: Exclude<SessionOrchestrationPhase, 'paused'>;
+  role: string;
+  status: SessionOrchestrationTaskStatus;
+  scope: string;
+  dependencies: string[];
+  allowedSourceSlugs: string[];
+  forbiddenActions: string[];
+  expectedHandoff: string[];
+  ownerSessionId?: string;
+  artifactPaths?: string[];
+}
+
+export interface SessionSubAgentLifecycleEntry {
+  sessionId: string;
+  name?: string;
+  taskId?: string;
+  status: 'started' | 'handoff_received' | 'completed' | 'needs_review' | 'failed';
+  sourceSlugs: string[];
+  workingDirectory?: string;
+  createdAt: number;
+  updatedAt: number;
+  expectedHandoff: string[];
+}
+
+export interface SessionOrchestrationEntropySignal {
+  level: 'warning' | 'high';
+  score: number;
+  reasons: string[];
+  createdAt: number;
+}
+
+export interface SessionOrchestrationState {
+  version: 1;
+  phase: SessionOrchestrationPhase;
+  createdAt: number;
+  updatedAt: number;
+  policy: {
+    selectedSourceSlugs: string[];
+    forbidWorkingDirectoryDiscovery: boolean;
+    requireStructuredHandoff: boolean;
+    requireUserConfirmationPause: boolean;
+    maxAutomaticRepairPasses: number;
+  };
+  taskBoard: {
+    tasks: SessionOrchestrationTask[];
+  };
+  subAgents: SessionSubAgentLifecycleEntry[];
+  entropy?: SessionOrchestrationEntropySignal;
 }
 
 /**

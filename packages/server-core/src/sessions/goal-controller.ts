@@ -8,7 +8,7 @@ import type {
   SessionGoalState,
   ContextPressureInput,
 } from '@craft-agent/shared/sessions'
-import { getContextPressureSignal } from '@craft-agent/shared/sessions'
+import { getContextPressureSignal, getOrchestrationEntropySignal } from '@craft-agent/shared/sessions'
 import { basename, extname } from 'path'
 import { pathStartsWith } from '@craft-agent/shared/utils'
 import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT, FILE_OUTPUT_REQUIRED_CRITERION_TEXT, MAX_AUTOMATIC_GOAL_REPAIR_PASSES, OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT, formatTaskContractForPrompt } from './goal-criteria'
@@ -97,6 +97,7 @@ export class GoalController {
     const codeVerificationDiagnosticIds = new Set(codeVerificationDiagnosticTools.map(getMessageIdentity))
     const blockingFailedTools = failedTools.filter(message => !codeVerificationDiagnosticIds.has(getMessageIdentity(message)))
     const artifactWriteFailures = blockingFailedTools.filter(isLongDocumentArtifactWriteFailure)
+    const unauthorizedWorkspaceDiscovery = getUnauthorizedWorkspaceDiscoveryMessages(goalState, turnMessages)
 
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
@@ -168,6 +169,15 @@ export class GoalController {
         type: 'system',
         label: `context_pressure_${contextPressure.level}`,
         detail: contextPressure.detail,
+      })
+    }
+    if (unauthorizedWorkspaceDiscovery.length > 0) {
+      deterministicFailureCategories.add('scope_gap')
+      contentVerificationIssues.push('Unauthorized working directory discovery occurred under selected-source hard-boundary policy.')
+      evidence.push({
+        type: 'tool',
+        label: 'unauthorized_workspace_discovery',
+        detail: unauthorizedWorkspaceDiscovery.map(summarizeToolVerificationMessage).join('\n').slice(0, 1200),
       })
     }
     const requiredOutputFormats = getRequiredOutputFormats(goalState)
@@ -437,6 +447,21 @@ export class GoalController {
         detail: codeVerificationDiagnosticTools.map(summarizeToolVerificationMessage).join('\n').slice(0, 1200),
       })
     }
+    const orchestrationEntropy = getOrchestrationEntropySignal({
+      enabledSourceCount: snapshot.contextPressure?.enabledSourceCount ?? goalState.orchestration?.policy.selectedSourceSlugs.length ?? 0,
+      spawnedSessionCount: snapshot.spawnedSessions?.length ?? goalState.orchestration?.subAgents.length ?? 0,
+      failedToolCount: blockingFailedTools.length,
+      artifactWriteFailureCount: artifactWriteFailures.length,
+      workspaceDiscoveryCount: unauthorizedWorkspaceDiscovery.length,
+      now,
+    })
+    if (orchestrationEntropy) {
+      evidence.push({
+        type: 'system',
+        label: `orchestration_entropy_${orchestrationEntropy.level}`,
+        detail: `score=${orchestrationEntropy.score}; reasons=${orchestrationEntropy.reasons.join(', ')}`,
+      })
+    }
 
     const missingCriteria: string[] = []
     let status: SessionGoalAuditResult['status'] = 'pass'
@@ -651,6 +676,9 @@ export class GoalController {
       status: status === 'pass' ? 'passed' : correctivePrompt ? 'improving' : 'needs_review',
       iteration,
       updatedAt: now,
+      orchestration: goalState.orchestration && orchestrationEntropy
+        ? { ...goalState.orchestration, entropy: orchestrationEntropy, updatedAt: now }
+        : goalState.orchestration,
       auditHistory: [...goalState.auditHistory, result],
     }
 
@@ -708,6 +736,9 @@ function buildFileVerificationIssue(filePath: string, verification: GoalFileVeri
 function detectBlockingHumanInputRequest(content: string): string | undefined {
   const normalized = content.replace(/\s+/g, ' ').trim()
   if (!normalized) return undefined
+  if (/<requires_user_decision\b[^>]*>[\s\S]*<\/requires_user_decision>/i.test(content)) {
+    return normalized
+  }
 
   const directRequest = /(?:我|我们)?(?:需要|需|请|请您|请你|烦请|麻烦)(?:您|你|用户|人工|手动)?[^。！？.!?]{0,80}(?:确认|选择|决定|指示|指引|补充|澄清|回答|提供)|(?:need|needs|require|requires|please)[^.!?]{0,80}(?:confirmation|input|approval|guidance|clarification|answer|choose|provide)/i.test(normalized)
   if (!directRequest) return undefined
@@ -1432,6 +1463,25 @@ function buildToolEvidenceText(message: Message): string {
     stringifyToolEvidenceValue(message.toolInput),
     stringifyToolEvidenceValue(message.toolResult),
   ].filter(Boolean).join('\n')
+}
+
+function getUnauthorizedWorkspaceDiscoveryMessages(goalState: SessionGoalState, messages: Message[]): Message[] {
+  if (!goalState.orchestration?.policy.forbidWorkingDirectoryDiscovery) return []
+  if (goalState.orchestration.policy.selectedSourceSlugs.length === 0) return []
+
+  return messages.filter(message => message.role === 'tool' && isWorkingDirectoryDiscoveryTool(message))
+}
+
+function isWorkingDirectoryDiscoveryTool(message: Message): boolean {
+  const toolName = (message.toolName ?? '').toLowerCase()
+  const evidence = buildToolEvidenceText(message)
+  if (/^(glob|grep|list directory|search files)$/.test(toolName)) return true
+  if (/(?:list|search).{0,20}(?:directory|files)|(?:directory|files).{0,20}(?:list|search)/i.test(toolName)) return true
+  if (toolName !== 'bash' && toolName !== 'powershell' && toolName !== 'shell') {
+    return false
+  }
+
+  return /(?:^|[\s;&|])(?:ls|dir|find|rg|grep|fd|tree|gci|get-childitem)\b/i.test(evidence)
 }
 
 function isLongDocumentArtifactWriteFailure(message: Message): boolean {

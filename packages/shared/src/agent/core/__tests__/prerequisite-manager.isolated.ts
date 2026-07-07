@@ -265,6 +265,36 @@ describe('PrerequisiteManager', () => {
   // ============================================================
 
   describe('source guide enforcement', () => {
+    it('blocks source tools outside the selected-source hard boundary', () => {
+      manager = new PrerequisiteManager({
+        workspaceRootPath: WORKSPACE_ROOT,
+        allowedSourceSlugs: ['file-memory-chapter-1'],
+        onDebug: (msg) => debugMessages.push(msg),
+      });
+      mockExistsPaths.add(guidePath('file-memory-chapter-2'));
+
+      const result = manager.checkPrerequisites('mcp__file-memory-chapter-2__search_file_memory');
+
+      expect(result.allowed).toBe(false);
+      expect(result.blockReason).toContain('not selected for this session');
+      expect(result.blockReason).toContain('file-memory-chapter-1');
+    });
+
+    it('allows selected source tools after the selected source guide is read', () => {
+      manager = new PrerequisiteManager({
+        workspaceRootPath: WORKSPACE_ROOT,
+        allowedSourceSlugs: ['file-memory-chapter-1'],
+        onDebug: (msg) => debugMessages.push(msg),
+      });
+      const guideFile = guidePath('file-memory-chapter-1');
+      mockExistsPaths.add(guideFile);
+
+      expect(manager.checkPrerequisites('mcp__file-memory-chapter-1__search_file_memory').allowed).toBe(false);
+      manager.trackReadTool({ file_path: guideFile });
+
+      expect(manager.checkPrerequisites('mcp__file-memory-chapter-1__search_file_memory').allowed).toBe(true);
+    });
+
     it('does not bypass an MCP source guide after repeated rejections', () => {
       mockExistsPaths.add(guidePath('linear'));
 

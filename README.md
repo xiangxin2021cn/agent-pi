@@ -14,15 +14,30 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V1.3.2.**
+**Current release: V2.0.0.**
 
-**当前发布版：V1.3.2。**
+**当前发布版：V2.0.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.0.0 Architecture Upgrade / V2.0.0 架构升级
+
+V2.0.0 turns Agent Pi's long-task execution into a structured orchestration system. The app now carries a task board through the run, separates planning, auditing, and final merging, monitors orchestration entropy, and records sub-agent lifecycle state so large document jobs stay scoped, auditable, and recoverable.
+
+V2.0.0 将 Agent π 的长任务执行升级为结构化编排系统：任务板贯穿执行过程，Plan/Audit/Merge 分离，编排熵持续监控，子智能体生命周期可追踪，让大型文档和知识库任务保持边界清晰、可审查、可恢复。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Structured task board | Every professional long task can carry task scope, role, dependencies, selected sources, forbidden actions, and expected handoff fields. | 专业长任务可携带任务范围、角色、依赖、选中来源、禁止动作和交接字段。 |
+| Plan / Audit / Merge | Sub-agents produce scoped evidence handoffs; the main session audits instruction fidelity and source compliance before final synthesis. | 分智能体产出范围化证据交接；主会话先审指令遵守和来源合规，再最终合成。 |
+| Knowledge-base hard boundary | Selected knowledge-base entries become a hard source boundary; unselected source tools and working-directory corpus scans are blocked unless the user expands scope. | 选中的知识库条目成为硬边界；未选来源工具和工作目录语料扫描会被拦截，除非用户明确扩大范围。 |
+| Human confirmation pause | Structured `<requires_user_decision>` blocks pause Goal Loop for manual review instead of being auto-covered by the next loop. | 结构化 `<requires_user_decision>` 会暂停到人工确认，不再被下一轮自动纠偏掩盖。 |
+| Entropy and lifecycle | The audit layer tracks many-source/many-agent/tool-failure/write-failure/workspace-scan pressure and records spawned-agent lifecycle state. | 审查层记录多来源、多智能体、工具失败、写入失败、工作目录扫描压力，并记录分智能体生命周期。 |
+| Regression suite | Adds IWG-style regression tests for source scope, task board prompts, tool preflight blocking, structured pauses, and entropy signals. | 新增 IWG 风格回归测试，覆盖来源边界、任务板提示、工具前置拦截、结构化暂停和熵信号。 |
 
 ### V1.3.2 Hotfix / V1.3.2 紧急修复
 
@@ -52,18 +67,6 @@ V1.3.1 强化知识库限定范围、多智能体真实派发、BOQ/组价工作
 | Goal Loop discipline | Automatic improvement checks the original instruction, follow-up feedback, selected sources, named chapters/files/folders, output format, and response language before judging quality. | 自动纠偏先核查原始指令、用户反馈、选中来源、指定章节/文件/文件夹、输出格式和语言，再审查质量。 |
 | Manual confirmation | If the assistant asks the user to confirm scope or choices, Goal Loop pauses for review instead of silently continuing. | 智能体要求用户确认范围或方案时，Goal Loop 会停到人工审查，不再掩盖确认环节继续执行。 |
 | Large-file safety | Pi-backed Read treats an offset past the end of a file as end-of-file; Excel reads are bounded by default for large BOQ sheets. | Pi Read 超过文件末尾时视为读完；Excel 读取默认限幅，避免大型 BOQ 表推爆内存。 |
-
-### V1.3.0 Release / V1.3.0 正式发布
-
-V1.3.0 moves Agent Pi from a document workbench toward a professional delivery system. The agent can choose the right work mode, carry evidence through the task, reuse enterprise knowledge, and keep large document jobs auditable instead of relying on a single prompt.
-
-V1.3.0 将 Agent π 从“文档工作台”继续推进到“专业交付系统”：智能体可按任务选择工作模式，贯穿证据链，复用企业知识，并让大型文档任务保持可审计，而不是只依赖一次提示词。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Document workflow modes | Adds Quick, Professional Document, Strict Delivery, and Multi-Agent Deep modes. | 新增快速模式、专业文档模式、严格交付模式、多智能体深度模式。 |
-| Enterprise Knowledge Base | Knowledge Base files are copied into a stable app-level store, indexed, grouped by folder, previewable/editable/exportable, and loadable into chat. | 知识库文件入库到应用级稳定目录，支持索引、分类、预览、编辑、导出和会话加载。 |
-| Professional documents | Adds source-backed diagrams, construction Gantt intent, investment tables, GIS-style figures, simulation/CAE summaries, and export-ready assets. | 支持有来源支撑的流程图、施工甘特图意图、投资表、GIS 表达、仿真/CAE 摘要和可导出图文资产。 |
 
 Older release details are available on GitHub Releases.
 

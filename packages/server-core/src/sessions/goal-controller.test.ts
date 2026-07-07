@@ -2886,6 +2886,88 @@ describe('GoalController', () => {
     }
   })
 
+  test('needs review when the assistant emits a structured user-decision pause', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+    }), {
+      messages: [
+        message('u1', 'user', '只分析选中的 Chapter 1 知识库。'),
+        message('a1', 'assistant', [
+          '<requires_user_decision>',
+          'scope: confirm whether to analyze only Chapter 1 or all chapters',
+          '</requires_user_decision>',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria).toContain('Assistant requested user confirmation before continuing.')
+      expect(decision.reason).toContain('user confirmation')
+    }
+  })
+
+  test('fails scoped-source goals that inventory the working directory as a source corpus', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '只分析选中的 COTO Chapter 1 知识库。',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        deliverables: ['Chapter 1 analysis'],
+        mustPreserve: ['Selected source: file-memory-chapter-1'],
+        evidenceRequirements: ['Use only selected source.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: ['[evidence] cite selected source'],
+        forbiddenShortcuts: ['Do not analyze other chapters.'],
+      },
+      orchestration: {
+        version: 1,
+        phase: 'plan',
+        createdAt: 1,
+        updatedAt: 1,
+        policy: {
+          selectedSourceSlugs: ['file-memory-chapter-1'],
+          forbidWorkingDirectoryDiscovery: true,
+          requireStructuredHandoff: true,
+          requireUserConfirmationPause: true,
+          maxAutomaticRepairPasses: 2,
+        },
+        taskBoard: {
+          tasks: [],
+        },
+        subAgents: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '只分析选中的 COTO Chapter 1 知识库。'),
+        message('t1', 'tool', '', {
+          toolName: 'List Directory',
+          toolStatus: 'completed',
+          toolInput: { path: 'E:\\南非项目\\投标项目\\South Africa\\ROUTE 3 SECTION 1' },
+          toolResult: 'Volume 3 Tender document\nAgent Pi Outputs\nAgent Pi Knowledge',
+        }),
+        message('a1', 'assistant', '我已经扫描工作目录并开始分析全部规范。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.failureCategories).toContain('scope_gap')
+      expect(decision.result.missingCriteria.some(item => item.includes('working directory discovery'))).toBe(true)
+      expect(decision.prompt).toContain('discard that extra work and rebuild only the requested scope')
+    }
+  })
+
   test('uses transactional artifact recovery after long document write failure', async () => {
     const controller = new GoalController()
 

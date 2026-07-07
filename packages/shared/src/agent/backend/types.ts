@@ -566,6 +566,9 @@ export interface AgentBackend {
   /** Update the SDK cwd (transcript storage location) */
   updateSdkCwd(path: string): void;
 
+  /** Update the current session goal/orchestration state without rebuilding the backend. */
+  updateSessionGoalState(goalState: Session['goalState']): void;
+
   /** Set workspace configuration */
   setWorkspace(workspace: Workspace): void;
 

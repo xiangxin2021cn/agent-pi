@@ -324,6 +324,42 @@ describe('runPreToolUseChecks', () => {
     });
   });
 
+  describe('step 2b: selected-source working-directory boundary', () => {
+    it('blocks directory search tools when selected knowledge sources define the scope', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Glob',
+        input: { pattern: '**/*.md', path: 'C:/work/project' },
+        workspaceRootPath: 'C:/work/project',
+        workingDirectory: 'C:/work/project',
+        orchestrationPolicy: {
+          selectedSourceSlugs: ['file-memory-chapter-1'],
+          forbidWorkingDirectoryDiscovery: true,
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('selected-source hard boundary');
+        expect(result.reason).toContain('file-memory-chapter-1');
+      }
+    });
+
+    it('allows explicit file reads under the same source-boundary policy', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/work/project/user-named.md' },
+        workspaceRootPath: 'C:/work/project',
+        workingDirectory: 'C:/work/project',
+        orchestrationPolicy: {
+          selectedSourceSlugs: ['file-memory-chapter-1'],
+          forbidWorkingDirectoryDiscovery: true,
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+  });
+
   // ============================================================
   // Step 3: Prerequisite check
   // ============================================================

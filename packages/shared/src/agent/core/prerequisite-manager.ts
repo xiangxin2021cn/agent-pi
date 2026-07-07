@@ -38,6 +38,7 @@ export interface PrerequisiteCheckResult {
 
 export interface PrerequisiteManagerConfig {
   workspaceRootPath: string;
+  allowedSourceSlugs?: string[];
   onDebug?: (message: string) => void;
 }
 
@@ -125,12 +126,22 @@ export class PrerequisiteManager {
   private readFiles: Set<string> = new Set();
   private rejectionCounts: Map<string, number> = new Map();
   private pendingSkillPaths: Set<string> = new Set();
+  private allowedSourceSlugs?: Set<string>;
   private workspaceRootPath: string;
   private onDebug?: (message: string) => void;
 
   constructor(config: PrerequisiteManagerConfig) {
     this.workspaceRootPath = config.workspaceRootPath;
+    this.allowedSourceSlugs = config.allowedSourceSlugs && config.allowedSourceSlugs.length > 0
+      ? new Set(config.allowedSourceSlugs)
+      : undefined;
     this.onDebug = config.onDebug;
+  }
+
+  setAllowedSourceSlugs(sourceSlugs: string[] | undefined): void {
+    this.allowedSourceSlugs = sourceSlugs && sourceSlugs.length > 0
+      ? new Set(sourceSlugs)
+      : undefined;
   }
 
   /**
@@ -153,6 +164,14 @@ export class PrerequisiteManager {
    * after MAX_REJECTIONS blocks for the same path.
    */
   checkPrerequisites(toolName: string): PrerequisiteCheckResult {
+    const sourceSlug = getSourceSlugFromToolName(toolName);
+    if (sourceSlug && this.allowedSourceSlugs && !this.allowedSourceSlugs.has(sourceSlug)) {
+      const allowed = [...this.allowedSourceSlugs].join(', ');
+      const blockReason = `STOP. Source "${sourceSlug}" is not selected for this session. Use only selected source slugs: ${allowed}. Ask the user before expanding the source scope.`;
+      this.onDebug?.(`Selected-source boundary blocked: ${toolName} source=${sourceSlug}`);
+      return { allowed: false, blockReason };
+    }
+
     // Check dynamic skill prerequisites first
     const skillResult = this.checkSkillPrerequisites(toolName);
     if (!skillResult.allowed) return skillResult;
@@ -272,6 +291,20 @@ export class PrerequisiteManager {
   hasRead(filePath: string): boolean {
     return this.readFiles.has(expandPath(filePath));
   }
+}
+
+function getSourceSlugFromToolName(toolName: string): string | undefined {
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.split('__');
+    if (parts.length < 3) return undefined;
+    const slug = parts[1];
+    return slug && !EXEMPT_SLUGS.has(slug) ? slug : undefined;
+  }
+  if (toolName.startsWith('api_')) {
+    const slug = toolName.slice(4);
+    return slug || undefined;
+  }
+  return undefined;
 }
 
 function extractSourceGuidePathsFromBashCommand(command: string, workspaceRootPath: string): string[] {

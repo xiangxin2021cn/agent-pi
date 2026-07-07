@@ -638,6 +638,11 @@ export interface PreToolUseInput {
   backendMetadata?: { intent?: string; displayName?: string };
   /** RTK Bash-rewrite context (undefined when toggle is off or rtk binary missing) */
   rtkContext?: import('./rtk-rewrite.ts').RtkContext;
+  /** Session orchestration source-boundary policy. */
+  orchestrationPolicy?: {
+    selectedSourceSlugs?: string[];
+    forbidWorkingDirectoryDiscovery?: boolean;
+  };
   /** Debug callback */
   onDebug?: (message: string) => void;
 }
@@ -667,6 +672,62 @@ const BUILT_IN_MCP_SERVERS = new Set(['session', 'craft-agents-docs']);
 
 /** File write tools that require permission in ask mode */
 const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+/** Tools that can turn a directory into an implicit source corpus. */
+const DIRECTORY_DISCOVERY_TOOLS = new Set(['Glob', 'Grep']);
+
+function getWorkingDirectoryDiscoveryBlock(input: {
+  toolName: string;
+  input: Record<string, unknown>;
+  workspaceRootPath: string;
+  workingDirectory?: string;
+  orchestrationPolicy?: PreToolUseInput['orchestrationPolicy'];
+}): string | null {
+  const policy = input.orchestrationPolicy;
+  if (!policy?.forbidWorkingDirectoryDiscovery) return null;
+  if ((policy.selectedSourceSlugs?.length ?? 0) === 0) return null;
+
+  const workingDirectory = resolve(input.workingDirectory ?? input.workspaceRootPath);
+  const workspaceRoot = resolve(input.workspaceRootPath);
+
+  if (DIRECTORY_DISCOVERY_TOOLS.has(input.toolName)) {
+    const target = typeof input.input.path === 'string'
+      ? resolve(workingDirectory, input.input.path)
+      : workingDirectory;
+    if (isSameOrChildPath(target, workingDirectory) || isSameOrChildPath(target, workspaceRoot)) {
+      return buildWorkingDirectoryDiscoveryBlockReason(policy.selectedSourceSlugs);
+    }
+  }
+
+  if (input.toolName === 'Bash') {
+    const command = typeof input.input.command === 'string' ? input.input.command.trim() : '';
+    if (isWorkingDirectoryDiscoveryCommand(command)) {
+      return buildWorkingDirectoryDiscoveryBlockReason(policy.selectedSourceSlugs);
+    }
+  }
+
+  return null;
+}
+
+function buildWorkingDirectoryDiscoveryBlockReason(selectedSourceSlugs?: string[]): string {
+  const selectedSources = selectedSourceSlugs?.join(', ') || '(none)';
+  return [
+    'STOP. This session has a selected-source hard boundary.',
+    `Use only selected source slugs: ${selectedSources}.`,
+    'Do not inventory or search the working directory as a source corpus unless the user explicitly expands the scope.',
+  ].join(' ');
+}
+
+function isSameOrChildPath(candidate: string, parent: string): boolean {
+  const normalizedCandidate = resolve(candidate).replace(/\\/g, '/').replace(/\/?$/, '/');
+  const normalizedParent = resolve(parent).replace(/\\/g, '/').replace(/\/?$/, '/');
+  return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(normalizedParent);
+}
+
+function isWorkingDirectoryDiscoveryCommand(command: string): boolean {
+  if (!command) return false;
+  return /(?:^|[\s;&|()])(?:ls|dir|find|rg|grep|fd|tree|gci|get-childitem)(?:\s|$)/i.test(command);
+}
 
 /**
  * Centralized PreToolUse pipeline.
@@ -714,6 +775,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     permissionManager,
     prerequisiteManager,
     backendMetadata,
+    orchestrationPolicy,
     onDebug,
   } = ctx;
 
@@ -749,6 +811,18 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     const reasonWithContext = withPermissionModeContext(modeResult.reason, sessionId, effectivePermissionMode);
     onDebug?.(`Permission mode ${effectivePermissionMode}: blocking ${toolName} — ${reasonWithContext}`);
     return { type: 'block', reason: reasonWithContext };
+  }
+
+  const workspaceDiscoveryBlock = getWorkingDirectoryDiscoveryBlock({
+    toolName,
+    input,
+    workspaceRootPath,
+    workingDirectory,
+    orchestrationPolicy,
+  });
+  if (workspaceDiscoveryBlock) {
+    onDebug?.(`Orchestration policy blocked ${toolName}: ${workspaceDiscoveryBlock}`);
+    return { type: 'block', reason: workspaceDiscoveryBlock };
   }
 
   // ============================================================

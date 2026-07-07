@@ -59,7 +59,7 @@ import { PrerequisiteManager } from './core/prerequisite-manager.ts';
 // Automation system for agent events
 import type { AutomationSystem } from '../automations/automation-system.ts';
 import type { AgentEvent as AutomationAgentEvent, SdkAutomationInput } from '../automations/types.ts';
-import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../sessions/storage.ts';
+import { getSessionPlansPath, getSessionDataPath, getSessionPath, type SessionConfig } from '../sessions/storage.ts';
 import { getMiniAgentSystemPrompt } from '../prompts/system.ts';
 import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../utils/title-generator.ts';
 
@@ -311,6 +311,7 @@ export abstract class BaseAgent implements AgentBackend {
     // PrerequisiteManager: blocks source tool calls until guide.md is read
     this.prerequisiteManager = new PrerequisiteManager({
       workspaceRootPath: config.workspace.rootPath,
+      allowedSourceSlugs: config.session?.goalState?.orchestration?.policy.selectedSourceSlugs,
       onDebug: (msg) => this.debug(msg),
     });
 
@@ -592,6 +593,13 @@ export abstract class BaseAgent implements AgentBackend {
       this.config.session.sdkCwd = path;
     }
     this.debug(`SDK cwd updated: ${path}`);
+  }
+
+  updateSessionGoalState(goalState: SessionConfig['goalState']): void {
+    if (!this.config.session) return;
+    this.config.session.goalState = goalState;
+    this.promptBuilder.setSession(this.config.session);
+    this.prerequisiteManager.setAllowedSourceSlugs(goalState?.orchestration?.policy.selectedSourceSlugs);
   }
 
   // ============================================================

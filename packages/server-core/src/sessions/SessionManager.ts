@@ -79,6 +79,8 @@ import {
   type SessionGoalState,
   type SessionGoalFailureCategory,
   type SessionDocumentQualityMode,
+  buildSessionOrchestrationState,
+  appendSubAgentLifecycleEntry,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, hasRenewEndpoint, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -4268,6 +4270,7 @@ export class SessionManager implements ISessionManager {
         llmConnection: managed.llmConnection,
         permissionMode: managed.permissionMode,
         previousPermissionMode: managed.previousPermissionMode,
+        goalState: managed.goalState,
       }
 
       const onSdkSessionIdUpdate = (sdkSessionId: string) => {
@@ -5090,6 +5093,28 @@ export class SessionManager implements ISessionManager {
         // before streaming events arrive. Without this, the renderer creates
         // a synthetic empty session and shows "New Chat" in the sidebar.
         this.sendEvent({ type: 'session_created', sessionId: session.id }, managed.workspace.id)
+
+        const lifecycleUpdatedAt = Date.now()
+        if (managed.goalState?.orchestration) {
+          managed.goalState = {
+            ...managed.goalState,
+            orchestration: appendSubAgentLifecycleEntry(managed.goalState.orchestration, {
+              sessionId: session.id,
+              name: session.name || request.name || session.id,
+              status: 'started',
+              workingDirectory: session.workingDirectory,
+              sourceSlugs: request.enabledSourceSlugs ?? managed.enabledSourceSlugs,
+            }, lifecycleUpdatedAt),
+            updatedAt: lifecycleUpdatedAt,
+          }
+          managed.agent?.updateSessionGoalState?.(managed.goalState)
+          this.persistSession(managed)
+          this.sendEvent({
+            type: 'goal_state_changed',
+            sessionId: managed.id,
+            goalState: managed.goalState,
+          }, managed.workspace.id)
+        }
 
         // Fire and forget — send the message but don't await completion
         this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
@@ -7645,6 +7670,7 @@ export class SessionManager implements ISessionManager {
           updatedAt: Date.now(),
         }
         managed.goalState = auditingGoalState
+        managed.agent?.updateSessionGoalState?.(managed.goalState)
         this.persistSession(managed)
         this.sendEvent({
           type: 'goal_audit_started',
@@ -7671,6 +7697,7 @@ export class SessionManager implements ISessionManager {
       })
       if (goalDecision.action !== 'skip') {
         managed.goalState = goalDecision.goalState
+        managed.agent?.updateSessionGoalState?.(managed.goalState)
         this.persistSession(managed)
         this.recordGoalAuditInProjectMemoryInBackground(managed, goalDecision.result, goalDecision.goalState)
         this.sendEvent({
@@ -7884,12 +7911,19 @@ export class SessionManager implements ISessionManager {
       maxIterations: mode === 'check_only' ? 1 : policy.maxIterations,
       criteria,
       taskContract,
+      orchestration: buildSessionOrchestrationState({
+        objective: message.trim().slice(0, 4000),
+        taskContract,
+        enabledSourceSlugs: managed.enabledSourceSlugs,
+        now,
+      }),
       auditHistory: [],
       budgets: {
         maxWallClockMs: policy.maxWallClockMs,
       },
     }
     managed.goalState = goalState
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
     this.persistSession(managed)
     this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
     this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
@@ -7942,14 +7976,22 @@ export class SessionManager implements ISessionManager {
     })
     const now = Date.now()
     const elapsedWallClockMs = Math.max(0, now - current.createdAt)
+    const nextObjective = appendGoalObjectiveFollowUp(current.objective, message)
+    const mergedTaskContract = mergeTaskContracts(existingTaskContract, taskContract)
     const goalState: SessionGoalState = {
       ...current,
-      objective: appendGoalObjectiveFollowUp(current.objective, message),
+      objective: nextObjective,
       status: 'running',
       updatedAt: now,
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
-      taskContract: mergeTaskContracts(existingTaskContract, taskContract),
+      taskContract: mergedTaskContract,
+      orchestration: buildSessionOrchestrationState({
+        objective: nextObjective,
+        taskContract: mergedTaskContract,
+        enabledSourceSlugs: managed.enabledSourceSlugs,
+        now,
+      }) ?? current.orchestration,
       budgets: {
         ...current.budgets,
         maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, elapsedWallClockMs + policy.maxWallClockMs),
@@ -7957,6 +7999,7 @@ export class SessionManager implements ISessionManager {
     }
 
     managed.goalState = goalState
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
     this.persistSession(managed)
     this.sendEvent({ type: 'goal_state_changed', sessionId: managed.id, goalState }, managed.workspace.id)
     this.sendEvent({ type: 'session_metadata_changed', sessionId: managed.id }, managed.workspace.id)
@@ -8561,6 +8604,7 @@ export class SessionManager implements ISessionManager {
       status: nextStatus,
       updatedAt: Date.now(),
     }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
 
     sessionLog.info('Session goal mode changed', {
       sessionId,
@@ -8617,6 +8661,7 @@ export class SessionManager implements ISessionManager {
       updatedAt: Date.now(),
       criteria,
     }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
 
     this.sendEvent({
       type: 'goal_state_changed',
@@ -8643,6 +8688,7 @@ export class SessionManager implements ISessionManager {
       status: 'passed',
       updatedAt: Date.now(),
     }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
 
     this.sendEvent({
       type: 'goal_state_changed',
@@ -8681,6 +8727,7 @@ export class SessionManager implements ISessionManager {
       maxIterations: current.iteration + 1,
       updatedAt: Date.now(),
     }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
 
     this.sendEvent({
       type: 'goal_state_changed',

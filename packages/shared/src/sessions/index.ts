@@ -36,6 +36,12 @@ export type {
   SessionGoalFailureCategory,
   SessionGoalAuditResult,
   SessionGoalState,
+  SessionOrchestrationPhase,
+  SessionOrchestrationTaskStatus,
+  SessionOrchestrationTask,
+  SessionSubAgentLifecycleEntry,
+  SessionOrchestrationEntropySignal,
+  SessionOrchestrationState,
 } from './types.ts';
 
 export type { ProjectMemoryContextEntry } from './storage.ts';
@@ -48,6 +54,13 @@ export type {
 } from './context-pressure.ts';
 export { getContextPressureSignal } from './context-pressure.ts';
 export { formatTaskContractContext } from './task-contract-context.ts';
+export {
+  buildSessionOrchestrationState,
+  formatOrchestrationContext,
+  getOrchestrationEntropySignal,
+  appendSubAgentLifecycleEntry,
+} from './orchestration.ts';
+export type { OrchestrationEntropyInput } from './orchestration.ts';
 
 // Storage functions
 export {
