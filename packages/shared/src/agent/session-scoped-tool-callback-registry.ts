@@ -57,6 +57,8 @@ export interface SessionScopedToolCallbacks {
   setSessionStatusFn?: (sessionId: string | undefined, status: string) => void | Promise<void>;
   /** Get detailed info about a session (defaults to current). */
   getSessionInfoFn?: (sessionId?: string) => import('@craft-agent/session-tools-core').SessionInfo | null;
+  /** Get runtime handoff state for a spawned session (defaults to current). */
+  getSpawnStatusFn?: (sessionId?: string) => import('@craft-agent/session-tools-core').SessionSpawnStatus | null;
   /** List sessions in the workspace with pagination. */
   listSessionsFn?: (options?: import('@craft-agent/session-tools-core').ListSessionsOptions) => import('@craft-agent/session-tools-core').ListSessionsResult;
   /** Resolve label display names to IDs. */

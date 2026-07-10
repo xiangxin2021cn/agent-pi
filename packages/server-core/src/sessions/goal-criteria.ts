@@ -1,7 +1,7 @@
 import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
 import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
 import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
-import type { SessionDocumentAgentPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
+import type { SessionDocumentAgentPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
 
@@ -218,6 +218,15 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
     ...extractNumericDetails(message).map(item => `Numeric/date detail: ${item}`),
   ], 16)
   const forbiddenShortcuts = buildForbiddenShortcuts(message, taskType, documentQualityMode)
+  const requirementLedger = buildRequirementLedger({
+    originalRequest: message,
+    deliverables,
+    mustPreserve,
+    evidenceRequirements,
+    outputFormats,
+    acceptanceCriteria,
+    referencedNames,
+  })
 
   return {
     originalRequest: message.slice(0, 4000),
@@ -230,6 +239,7 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
     outputFormats,
     acceptanceCriteria,
     forbiddenShortcuts,
+    requirementLedger,
     workingDirectory: input.workingDirectory,
   }
 }
@@ -253,6 +263,7 @@ export function mergeTaskContracts(current: SessionTaskContract | undefined, nex
     outputFormats: uniqueBounded([...current.outputFormats, ...next.outputFormats], 8),
     acceptanceCriteria: uniqueBounded([...current.acceptanceCriteria, ...next.acceptanceCriteria], 24),
     forbiddenShortcuts: uniqueBounded([...current.forbiddenShortcuts, ...next.forbiddenShortcuts], 12),
+    requirementLedger: mergeRequirementLedgers(current.requirementLedger, next.requirementLedger),
     workingDirectory: current.workingDirectory ?? next.workingDirectory,
   }
 }
@@ -272,6 +283,7 @@ export function formatTaskContractForPrompt(contract: SessionTaskContract | unde
     ['Output formats', formatContractList(contract.outputFormats)],
     ['Acceptance criteria', formatContractList(contract.acceptanceCriteria)],
     ['Forbidden shortcuts', formatContractList(contract.forbiddenShortcuts)],
+    ['Requirement ledger', formatRequirementLedgerForPrompt(contract.requirementLedger)],
     ['Working directory', contract.workingDirectory ?? '(none)'],
   ]
 
@@ -313,6 +325,78 @@ function getTaskContractTypeWithDocumentMode(
   if (!documentQualityMode || documentQualityMode === 'quick') return taskType
   if (taskType === 'code' || taskType === 'automation') return taskType
   return 'document'
+}
+
+function buildRequirementLedger(input: {
+  originalRequest: string
+  deliverables: string[]
+  mustPreserve: string[]
+  evidenceRequirements: string[]
+  outputFormats: string[]
+  acceptanceCriteria: string[]
+  referencedNames: string[]
+}): SessionRequirementLedger {
+  const entries: SessionRequirementLedgerEntry[] = []
+  const sourceRefs = uniqueBounded(input.referencedNames, 12)
+
+  const append = (kind: SessionRequirementKind, values: string[], verification: (value: string) => string) => {
+    for (const text of values) {
+      const normalized = text.replace(/\s+/g, ' ').trim()
+      if (!normalized) continue
+      const id = buildRequirementId(kind, normalized)
+      if (entries.some(entry => entry.id === id)) continue
+      entries.push({
+        id,
+        kind,
+        text: normalized,
+        verification: verification(normalized),
+        sourceRefs: kind === 'evidence' ? sourceRefs : [],
+        status: 'pending',
+      })
+    }
+  }
+
+  append('deliverable', input.deliverables, value => `Verify the final artifact or output evidence satisfies: ${value}`)
+  append('constraint', [`User request: ${input.originalRequest}`], value => `Verify the completed work follows: ${value}`)
+  append('constraint', input.mustPreserve, value => `Verify the final artifact preserves: ${value}`)
+  append('evidence', input.evidenceRequirements, value => `Verify source locators or explicit gap markers support: ${value}`)
+  append('format', input.outputFormats.map(value => `Requested output format: ${value}`), value => `Verify a readable output file exists for: ${value}`)
+  append('verification', input.acceptanceCriteria, value => `Verify the acceptance check passes: ${value}`)
+
+  return { version: 1, entries: entries.slice(0, 48) }
+}
+
+function mergeRequirementLedgers(
+  current: SessionRequirementLedger | undefined,
+  next: SessionRequirementLedger | undefined,
+): SessionRequirementLedger | undefined {
+  if (!current) return next
+  if (!next) return current
+
+  const entries = [...current.entries]
+  for (const entry of next.entries) {
+    if (entries.some(existing => existing.id === entry.id)) continue
+    entries.push(entry)
+    if (entries.length >= 48) break
+  }
+  return { version: 1, entries }
+}
+
+function buildRequirementId(kind: SessionRequirementKind, text: string): string {
+  const input = `${kind}\u0000${text.toLowerCase()}`
+  let hash = 2166136261
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `req-${kind.slice(0, 3)}-${(hash >>> 0).toString(36)}`
+}
+
+function formatRequirementLedgerForPrompt(ledger: SessionRequirementLedger | undefined): string {
+  if (!ledger || ledger.entries.length === 0) return '(none)'
+  return ledger.entries
+    .map(entry => `${entry.id} [${entry.kind}/${entry.status}] ${entry.text} Verification: ${entry.verification}`)
+    .join('\n')
 }
 
 function resolveDocumentQualityMode(

@@ -2,6 +2,7 @@ import type {
   SessionGoalState,
   SessionOrchestrationPhase,
   SessionOrchestrationTaskStatus,
+  SessionRequirementLedger,
   SessionSubAgentLifecycleEntry,
 } from '@craft-agent/shared/sessions'
 
@@ -28,10 +29,18 @@ export interface OrchestrationLedgerViewModel {
   tone: OrchestrationTone
 }
 
+export interface RequirementLedgerViewModel {
+  summary: string
+  items: OrchestrationListItemViewModel[]
+  hiddenItemCount: number
+  tone: OrchestrationTone
+}
+
 export interface OrchestrationInfoViewModel {
   phase: string
   selectedSourceBoundary: string
   ledger?: OrchestrationLedgerViewModel
+  requirements?: RequirementLedgerViewModel
   taskBoardSummary: string
   tasks: OrchestrationListItemViewModel[]
   hiddenTaskCount: number
@@ -48,6 +57,7 @@ export interface OrchestrationBadgePreview {
 
 const TASK_LIMIT = 5
 const SUB_AGENT_LIMIT = 4
+const REQUIREMENT_LIMIT = 6
 
 export function getOrchestrationInfoViewModel(
   t: Translate,
@@ -87,11 +97,13 @@ export function getOrchestrationInfoViewModel(
             : 'default' as const,
       }
     : undefined
+  const requirements = formatRequirementLedger(t, goalState.taskContract?.requirementLedger)
 
   return {
     phase: getPhaseLabel(t, orchestration.phase),
     selectedSourceBoundary: `${selectedSources} · ${boundaryState}`,
     ledger,
+    requirements,
     taskBoardSummary: t('sessionInfo.orchestrationTaskBoardSummary', {
       count: tasks.length,
       defaultValue: `${tasks.length} 项任务`,
@@ -122,6 +134,104 @@ export function getOrchestrationInfoViewModel(
   }
 }
 
+function formatRequirementLedger(
+  t: Translate,
+  ledger: SessionRequirementLedger | undefined,
+): RequirementLedgerViewModel | undefined {
+  if (!ledger || ledger.entries.length === 0) return undefined
+
+  const counts = {
+    satisfied: 0,
+    pending: 0,
+    blocked: 0,
+    failed: 0,
+  }
+  for (const entry of ledger.entries) counts[entry.status] += 1
+
+  const summary = [
+    t('sessionInfo.requirementSatisfied', {
+      count: counts.satisfied,
+      defaultValue: `${counts.satisfied} satisfied`,
+    }),
+    t('sessionInfo.requirementPending', {
+      count: counts.pending,
+      defaultValue: `${counts.pending} pending`,
+    }),
+    counts.blocked > 0
+      ? t('sessionInfo.requirementBlocked', {
+          count: counts.blocked,
+          defaultValue: `${counts.blocked} blocked`,
+        })
+      : undefined,
+    counts.failed > 0
+      ? t('sessionInfo.requirementFailed', {
+          count: counts.failed,
+          defaultValue: `${counts.failed} failed`,
+        })
+      : undefined,
+  ].filter(Boolean).join(' · ')
+
+  return {
+    summary,
+    items: ledger.entries.slice(0, REQUIREMENT_LIMIT).map(entry => ({
+      id: entry.id,
+      title: entry.text,
+      meta: [
+        getRequirementStatusLabel(t, entry.status),
+        entry.verification,
+        entry.sourceRefs.length > 0
+          ? t('sessionInfo.requirementSourceCount', {
+              count: entry.sourceRefs.length,
+              defaultValue: `${entry.sourceRefs.length} source${entry.sourceRefs.length === 1 ? '' : 's'}`,
+            })
+          : undefined,
+        (entry.evidenceRefs?.length ?? 0) > 0
+          ? t('sessionInfo.requirementEvidenceCount', {
+              count: entry.evidenceRefs?.length ?? 0,
+              defaultValue: `${entry.evidenceRefs?.length ?? 0} evidence`,
+            })
+          : undefined,
+        entry.failureReason,
+      ].filter(Boolean).join(' · '),
+      tone: getRequirementTone(entry.status),
+    })),
+    hiddenItemCount: Math.max(0, ledger.entries.length - REQUIREMENT_LIMIT),
+    tone: counts.failed > 0 || counts.blocked > 0
+      ? 'danger'
+      : counts.pending > 0
+        ? 'warning'
+        : 'success',
+  }
+}
+
+function getRequirementStatusLabel(
+  t: Translate,
+  status: 'pending' | 'satisfied' | 'blocked' | 'failed',
+): string {
+  switch (status) {
+    case 'pending':
+      return t('sessionInfo.requirementStatus.pending', { defaultValue: 'Pending' })
+    case 'satisfied':
+      return t('sessionInfo.requirementStatus.satisfied', { defaultValue: 'Satisfied' })
+    case 'blocked':
+      return t('sessionInfo.requirementStatus.blocked', { defaultValue: 'Blocked' })
+    case 'failed':
+      return t('sessionInfo.requirementStatus.failed', { defaultValue: 'Failed' })
+  }
+}
+
+function getRequirementTone(status: 'pending' | 'satisfied' | 'blocked' | 'failed'): OrchestrationTone {
+  switch (status) {
+    case 'satisfied':
+      return 'success'
+    case 'pending':
+      return 'warning'
+    case 'blocked':
+    case 'failed':
+      return 'danger'
+  }
+}
+
 export function getOrchestrationBadgePreview(
   t: Translate,
   goalState?: SessionGoalState,
@@ -140,7 +250,11 @@ export function getOrchestrationBadgePreview(
 
   return {
     label: getPhaseLabel(t, orchestration.phase),
-    tone: orchestration.phase === 'paused' ? 'warning' : 'default',
+    tone: orchestration.phase === 'done'
+      ? 'success'
+      : orchestration.phase === 'paused'
+        ? 'warning'
+        : 'default',
   }
 }
 
@@ -193,6 +307,8 @@ function getPhaseLabel(t: Translate, phase: SessionOrchestrationPhase): string {
       return t('sessionInfo.orchestrationPhaseMerge', { defaultValue: '合并' })
     case 'paused':
       return t('sessionInfo.orchestrationPhasePaused', { defaultValue: '暂停' })
+    case 'done':
+      return t('sessionInfo.orchestrationPhaseDone', { defaultValue: 'Completed' })
   }
 }
 

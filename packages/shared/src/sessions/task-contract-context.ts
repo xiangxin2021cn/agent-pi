@@ -1,4 +1,4 @@
-import type { SessionDocumentAgentPlan, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionTaskContract } from './types.ts';
+import type { SessionDocumentAgentPlan, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionRequirementLedger, SessionTaskContract } from './types.ts';
 
 const MAX_ITEMS_PER_SECTION = 3;
 const MAX_ITEM_LENGTH = 260;
@@ -21,6 +21,7 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
     formatList('Output formats', contract.outputFormats),
     formatList('Acceptance criteria', contract.acceptanceCriteria),
     formatList('Forbidden shortcuts', contract.forbiddenShortcuts),
+    formatRequirementLedger(contract.requirementLedger),
   ].filter(Boolean);
 
   if (sections.length === 0) return undefined;
@@ -41,17 +42,27 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
   ].join('\n');
 }
 
+function formatRequirementLedger(ledger: SessionRequirementLedger | undefined): string | undefined {
+  if (!ledger || ledger.entries.length === 0) return undefined;
+  const entries = ledger.entries.slice(0, 48).map(entry => {
+    const sources = entry.sourceRefs.length > 0 ? ` Sources: ${entry.sourceRefs.join(', ')}.` : '';
+    return `${entry.id} [${entry.kind}/${entry.status}] ${entry.text} Verification: ${entry.verification}.${sources}`;
+  });
+  return ['Requirement ledger:', ...entries.map((entry, index) => `${index + 1}. ${entry}`)].join('\n');
+}
+
 function formatDocumentArtifactWritingProtocol(contract: SessionTaskContract): string | undefined {
   const mode = contract.documentQualityMode;
   if (mode !== 'professional_document' && mode !== 'strict_delivery' && mode !== 'multi_agent_deep') return undefined;
 
   return [
     'Document artifact writing protocol:',
-    '1. Create or update an artifact manifest before writing a long final Markdown deliverable.',
-    '2. Write long deliverables by section chunks, not by one large Write/Bash/Python/heredoc payload.',
-    '3. Store scratch section chunks in the session data folder and write only the assembled final artifact to the formal output folder.',
-    '4. If one section write fails, rewrite only that section chunk and keep the original scope manifest.',
-    '5. Before final response, verify the final artifact path, section count, required headings, and non-empty content.',
+    '1. Use document_artifact for long Markdown deliverables; do not construct them with one large Write/Bash/Python/heredoc payload.',
+    '2. Follow this transaction exactly: init -> write_section -> status -> prepare_merge -> assemble -> validate.',
+    '3. Declare the complete ordered section manifest during init and write one bounded section at a time.',
+    '4. If one section write fails, rewrite only that section; never rebuild the whole document from model memory.',
+    '5. Do not bypass prepare_merge or assemble: they freeze section hashes and atomically write only the verified set to the formal output folder.',
+    '6. Before final response, call validate with exact required headings or constraint markers from the task contract.',
   ].join('\n');
 }
 
@@ -117,13 +128,15 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
     `3. Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
     `4. If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.`,
     `5. Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.`,
-    `6. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
-    `7. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
-    `8. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
-    `9. Resolve cross-chapter consistency conflicts before final synthesis.`,
-    `10. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
+    `6. After spawn_session returns, wait at least pollAfterMs when provided and use get_spawn_status to check handoffStatus/reportPathExists/reportSize; never treat session status "todo" as child failure.`,
+    `7. Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.`,
+    `8. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
+    `9. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
+    `10. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
+    `11. Resolve cross-chapter consistency conflicts before final synthesis.`,
+    `12. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
   ];
-  appendBoqPricingWorkbookProtocol(lines, contract, 11);
+  appendBoqPricingWorkbookProtocol(lines, contract, 13);
   return lines.join('\n');
 }
 
@@ -133,8 +146,9 @@ function appendComplexAgentOrchestrationProtocol(lines: string[], contract: Sess
 
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
-  lines.push(`${startIndex + 2}. The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.`);
-  return startIndex + 3;
+  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status and report_path readiness for helper progress; do not treat status "todo" as failed execution.`);
+  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.`);
+  return startIndex + 4;
 }
 
 function appendBoqPricingWorkbookProtocol(lines: string[], contract: SessionTaskContract, startIndex: number): number {

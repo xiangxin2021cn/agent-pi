@@ -470,6 +470,24 @@ function OrchestrationInfoBlock({ info }: { info: OrchestrationInfoViewModel }) 
           active={info.ledger.tone === 'warning' || info.ledger.tone === 'danger'}
         />
       )}
+      {info.requirements && (
+        <>
+          <InfoLine
+            icon={<ListChecks className="h-3.5 w-3.5" />}
+            label={t('sessionInfo.requirementLedger', { defaultValue: 'Requirement ledger' })}
+            value={info.requirements.summary}
+            active={info.requirements.tone === 'warning' || info.requirements.tone === 'danger'}
+          />
+          <div className="space-y-1">
+            {info.requirements.items.map(item => (
+              <OrchestrationListItem key={item.id} item={item} />
+            ))}
+            {info.requirements.hiddenItemCount > 0 && (
+              <OrchestrationHiddenCount count={info.requirements.hiddenItemCount} />
+            )}
+          </div>
+        </>
+      )}
       <InfoLine
         icon={<DatabaseZap className="h-3.5 w-3.5" />}
         label={t('sessionInfo.orchestrationSourceBoundary', { defaultValue: '选中来源硬边界' })}

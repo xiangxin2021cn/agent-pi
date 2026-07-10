@@ -124,4 +124,14 @@ export function attachSessionSelfManagementBindings(
     configurable: true,
     enumerable: true,
   });
+
+  Object.defineProperty(context, 'getSpawnStatus', {
+    get() {
+      const fn = getSessionScopedToolCallbacks(sessionId)?.getSpawnStatusFn;
+      if (!fn) return undefined;
+      return (sid?: string) => fn(sid ?? sessionId);
+    },
+    configurable: true,
+    enumerable: true,
+  });
 }

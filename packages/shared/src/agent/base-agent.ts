@@ -109,6 +109,11 @@ export interface SpawnSessionResult {
   status: 'started';
   connection?: string;
   model?: string;
+  taskId?: string;
+  briefPath?: string;
+  reportPath?: string;
+  pollAfterMs?: number;
+  handoffRequired?: boolean;
 }
 
 export interface SpawnSessionHelpResult {

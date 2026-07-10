@@ -6,6 +6,8 @@ import type {
   SessionGoalFailureCategory,
   SessionGoalAuditResult,
   SessionGoalState,
+  SessionRequirementLedgerEntry,
+  SessionTaskContract,
   ContextPressureInput,
 } from '@craft-agent/shared/sessions'
 import { getContextPressureSignal, getOrchestrationEntropySignal } from '@craft-agent/shared/sessions'
@@ -21,10 +23,11 @@ import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 const SUBSTANTIVE_WORK_PRODUCT_MISSING = 'Substantive work product was not produced for the requested high-quality comprehensive deliverable.'
 const EXPLICIT_USER_REQUIREMENT_PREFIX = 'Must satisfy explicit user requirement: '
 const HUMAN_CONFIRMATION_REQUIRED_CRITERION = 'Assistant requested user confirmation before continuing.'
+export const GOAL_FULL_TEXT_AUDIT_MAX_BYTES = 5 * 1024 * 1024
 
 export type GoalControllerDecision =
   | { action: 'skip' }
-  | { action: 'complete'; goalState: SessionGoalState; result: SessionGoalAuditResult }
+  | { action: 'complete'; goalState: SessionGoalState; result: SessionGoalAuditResult; verifiedOutputPaths: string[] }
   | { action: 'needs_review'; goalState: SessionGoalState; result: SessionGoalAuditResult; reason: string }
   | { action: 'continue'; goalState: SessionGoalState; result: SessionGoalAuditResult; prompt: string }
 
@@ -52,6 +55,8 @@ export interface GoalFileVerificationResult {
   sizeBytes?: number
   preview?: string
   previewTruncated?: boolean
+  auditContent?: string
+  auditContentOversized?: boolean
   error?: string
 }
 
@@ -73,6 +78,11 @@ export interface GoalSpawnedSessionSummary {
   hasFinalAssistant: boolean
   firstUserMessagePreview?: string
   finalAssistantPreview?: string
+  taskId?: string
+  reportPath?: string
+  reportPathExists?: boolean
+  reportSize?: number
+  handoffStatus?: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed'
 }
 
 export interface GoalTurnSnapshot {
@@ -112,6 +122,8 @@ export class GoalController {
     const evidence: SessionGoalAuditEvidence[] = []
     const fileEvidencePaths = new Set<string>()
     const outputFileEvidencePaths = new Set<string>()
+    const implicitOutputCandidatePaths = new Set<string>()
+    const verifiedOutputPaths = new Set<string>()
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -144,6 +156,9 @@ export class GoalController {
       if (message.role !== 'tool') continue
       const inputPaths = extractFilePaths(message.toolInput)
       const resultPaths = extractFilePathsFromText(message.toolResult)
+      if (isSuccessfulTool(message) && isCommandOutputCandidateTool(message.toolName)) {
+        for (const path of resultPaths) implicitOutputCandidatePaths.add(path)
+      }
       const paths = new Set([
         ...inputPaths,
         ...resultPaths,
@@ -192,7 +207,7 @@ export class GoalController {
     }
     const requiredOutputFormats = getRequiredOutputFormats(goalState)
     promoteFormalOutputFileEvidencePaths({
-      fileEvidencePaths,
+      candidatePaths: implicitOutputCandidatePaths,
       outputFileEvidencePaths,
       expectedOutputDirectory: snapshot.expectedOutputDirectory,
       requiredOutputFormats,
@@ -237,7 +252,7 @@ export class GoalController {
         })
       }
     }
-    const outputPreviewTexts: string[] = []
+    const outputAuditTexts: string[] = []
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
@@ -257,13 +272,33 @@ export class GoalController {
             detail: `${filePath}${size}`.slice(0, 500),
           })
           const preview = verification.preview?.trim()
-          if (preview) {
-            if (outputFileEvidencePaths.has(filePath)) {
-              outputPreviewTexts.push(preview)
-            }
+          const isOutputFile = outputFileEvidencePaths.has(filePath)
+          if (isOutputFile) {
+            verifiedOutputPaths.add(filePath)
             evidence.push({
               type: 'file',
-              label: buildFilePreviewEvidenceLabel(verification, outputFileEvidencePaths.has(filePath)),
+              label: 'output_file_verified',
+              detail: filePath.slice(0, 500),
+            })
+          }
+          if (isOutputFile && verification.auditContentOversized && requiresFullTextArtifactAudit(goalState)) {
+            contentVerificationIssues.push(
+              `Full document audit was not performed because output exceeds the ${GOAL_FULL_TEXT_AUDIT_MAX_BYTES} byte safety limit: ${filePath}`,
+            )
+            evidence.push({
+              type: 'file',
+              label: 'file_full_audit_oversized',
+              detail: filePath.slice(0, 500),
+            })
+          }
+          if (isOutputFile) {
+            const auditContent = verification.auditContent?.trim() || preview
+            if (auditContent) outputAuditTexts.push(auditContent)
+          }
+          if (preview) {
+            evidence.push({
+              type: 'file',
+              label: buildFilePreviewEvidenceLabel(verification, isOutputFile),
               detail: `${filePath}\n${preview}`.slice(0, 3000),
             })
           }
@@ -275,7 +310,7 @@ export class GoalController {
       finalAssistant
       && sourceFileEvidencePaths.length > 0
       && requiresSourceCitationMarker(goalState)
-      && !hasSourceCitationMarker([finalAssistant.content, ...outputPreviewTexts], sourceFileEvidencePaths)
+      && !hasSourceCitationMarker([finalAssistant.content, ...outputAuditTexts], sourceFileEvidencePaths)
     ) {
       fileVerificationIssues.push('Final response did not include a source citation marker for required source evidence.')
       evidence.push({
@@ -287,7 +322,7 @@ export class GoalController {
     if (
       finalAssistant
       && requiresSubstantiveWorkProduct(goalState)
-      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputPreviewTexts])
+      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputAuditTexts])
     ) {
       contentVerificationIssues.push(SUBSTANTIVE_WORK_PRODUCT_MISSING)
       evidence.push({
@@ -300,7 +335,7 @@ export class GoalController {
     if (
       finalAssistant
       && previousShallowOutputCheckpointRequired
-      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputPreviewTexts])
+      && !hasSubstantiveWorkProduct([finalAssistant.content, ...outputAuditTexts])
     ) {
       contentVerificationIssues.push('Previous audit required substantive content, but this turn still produced a shallow deliverable.')
       evidence.push({
@@ -309,10 +344,10 @@ export class GoalController {
         detail: finalAssistant.id,
       })
     }
-    const outputTexts = finalAssistant ? [finalAssistant.content, ...outputPreviewTexts] : outputPreviewTexts
+    const outputTexts = finalAssistant ? [finalAssistant.content, ...outputAuditTexts] : outputAuditTexts
     if (finalAssistant && requiresDocumentQualityAudit(goalState)) {
       const report = analyzeDocumentQuality({
-        contents: outputPreviewTexts.length > 0 ? outputPreviewTexts : [finalAssistant.content],
+        contents: outputAuditTexts.length > 0 ? outputAuditTexts : [finalAssistant.content],
         sourceFilePaths: sourceFileEvidencePaths,
         strict: goalState.mode === 'strict_work' || isStrictDeliveryContract(goalState),
       })
@@ -389,7 +424,7 @@ export class GoalController {
     }
     if (finalAssistant) {
       for (const requirement of getExplicitUserRequirements(goalState)) {
-        if (hasExplicitUserRequirement([finalAssistant.content, ...outputPreviewTexts], requirement)) continue
+        if (hasExplicitUserRequirement([finalAssistant.content, ...outputAuditTexts], requirement)) continue
         contentVerificationIssues.push(`Final response or verified output preview did not address explicit user requirement: ${requirement}.`)
         evidence.push({
           type: 'message',
@@ -568,12 +603,17 @@ export class GoalController {
       }
     }
 
-    if (status === 'pass' && goalState.criteria.some(criterion => criterion.required)) {
+    const pendingRequirementLedgerEntries = getPendingRequirementLedgerEntries(goalState)
+    if (status === 'pass' && (
+      goalState.criteria.some(criterion => criterion.required)
+      || pendingRequirementLedgerEntries.length > 0
+    )) {
       status = 'uncertain'
       missingCriteria.push(
         ...goalState.criteria
           .filter(criterion => criterion.required)
-          .map(criterion => criterion.text)
+          .map(criterion => criterion.text),
+        ...pendingRequirementLedgerEntries.map(entry => `[${entry.id}] ${entry.text}`),
       )
       summary = 'Goal audit could not prove all explicit criteria with deterministic checks only.'
     }
@@ -711,6 +751,7 @@ export class GoalController {
 
     const nextGoalState: SessionGoalState = {
       ...goalState,
+      taskContract: updateRequirementLedgerAfterAudit(goalState.taskContract, result),
       status: status === 'pass' ? 'passed' : correctivePrompt ? 'improving' : 'needs_review',
       iteration,
       updatedAt: now,
@@ -721,7 +762,12 @@ export class GoalController {
     }
 
     if (status === 'pass') {
-      return { action: 'complete', goalState: nextGoalState, result }
+      return {
+        action: 'complete',
+        goalState: nextGoalState,
+        result,
+        verifiedOutputPaths: [...verifiedOutputPaths],
+      }
     }
 
     if (correctivePrompt) {
@@ -1275,6 +1321,9 @@ function auditDocumentAgentPlan(
   const spawnedEvidenceText = spawnedSessions
     .flatMap(session => [
       session.name,
+      session.taskId,
+      session.reportPath,
+      session.handoffStatus === 'ready' ? 'structured handoff report ready' : undefined,
       session.firstUserMessagePreview,
       session.finalAssistantPreview,
     ])
@@ -1284,7 +1333,7 @@ function auditDocumentAgentPlan(
   const allAgentEvidence = [markdown, spawnedEvidenceText].filter(Boolean).join('\n\n')
   const requiredSpawnedSessionCount = getRequiredSpawnedSessionCount(assignments.length)
   const actualSpawnedSessionCount = spawnedSessions.length
-  const completedSpawnedSessionCount = spawnedSessions.filter(session => session.hasFinalAssistant).length
+  const completedSpawnedSessionCount = spawnedSessions.filter(hasCompletedSpawnedHandoff).length
   const missingRealSpawnedSessions =
     requiredSpawnedSessionCount > 0 && actualSpawnedSessionCount < requiredSpawnedSessionCount
   const missingCompletedSpawnHandoffs =
@@ -1332,6 +1381,23 @@ function auditDocumentAgentPlan(
     missingSourceGapReview,
     missingCrossChapterReview,
   }
+}
+
+function requiresFullTextArtifactAudit(goalState: SessionGoalState): boolean {
+  return requiresDocumentQualityAudit(goalState)
+    || requiresEvidenceMatrixAudit(goalState)
+    || requiresTemplateFidelityAudit(goalState)
+    || requiresVisualBlockAudit(goalState)
+    || getExplicitUserRequirements(goalState).length > 0
+}
+
+function hasCompletedSpawnedHandoff(session: GoalSpawnedSessionSummary): boolean {
+  return session.hasFinalAssistant
+    || (
+      session.handoffStatus === 'ready'
+      && session.reportPathExists === true
+      && (session.reportSize ?? 0) > 0
+    )
 }
 
 function getRequiredSpawnedSessionCount(assignmentCount: number): number {
@@ -1407,6 +1473,87 @@ function getExplicitUserRequirements(goalState: SessionGoalState): string[] {
       .replace(/\.$/, '')
       .trim())
     .filter(Boolean)
+}
+
+function getPendingRequirementLedgerEntries(goalState: SessionGoalState): SessionRequirementLedgerEntry[] {
+  if (goalState.taskContract?.documentQualityMode === 'quick') return []
+  return goalState.taskContract?.requirementLedger?.entries.filter(entry => entry.status === 'pending') ?? []
+}
+
+function updateRequirementLedgerAfterAudit(
+  taskContract: SessionTaskContract | undefined,
+  result: SessionGoalAuditResult,
+): SessionTaskContract | undefined {
+  const ledger = taskContract?.requirementLedger
+  if (!taskContract || !ledger) return taskContract
+
+  const missingText = normalizeRequirementText(result.missingCriteria.join('\n'))
+  const humanDecisionBlocked = result.evidence.some(item => item.label === 'human_input_requested')
+  return {
+    ...taskContract,
+    requirementLedger: {
+      ...ledger,
+      entries: ledger.entries.map(entry => {
+        const evidenceRefs = selectRequirementEvidence(entry.kind, result)
+        if (result.status === 'pass') {
+          return {
+            ...entry,
+            status: 'satisfied' as const,
+            evidenceRefs,
+            failureReason: undefined,
+            verifiedAt: result.createdAt,
+          }
+        }
+        const entryText = normalizeRequirementText(entry.text)
+        const failureReason = result.missingCriteria.find(item => item.includes(`[${entry.id}]`))
+          ?? (entryText ? result.missingCriteria.find(item => normalizeRequirementText(item).includes(entryText)) : undefined)
+        const explicitlyMissing = Boolean(failureReason) || Boolean(entryText && missingText.includes(entryText))
+        return explicitlyMissing
+          ? {
+              ...entry,
+              status: humanDecisionBlocked ? 'blocked' as const : 'failed' as const,
+              evidenceRefs,
+              failureReason: failureReason ?? entry.text,
+              verifiedAt: result.createdAt,
+            }
+          : entry
+      }),
+    },
+  }
+}
+
+function selectRequirementEvidence(
+  kind: SessionRequirementLedgerEntry['kind'],
+  result: SessionGoalAuditResult,
+): SessionGoalAuditEvidence[] {
+  const selected = result.evidence.filter(item => {
+    switch (kind) {
+      case 'deliverable':
+      case 'format':
+        return item.type === 'file'
+          && item.label !== 'user_attachment'
+          && !item.label.startsWith('source_file_')
+      case 'evidence':
+        return item.type === 'file'
+          || item.label.includes('evidence')
+          || item.label.includes('citation')
+      case 'verification':
+        return item.type === 'test'
+          || item.type === 'tool'
+          || item.label.includes('verification')
+          || item.label.includes('audit')
+      case 'constraint':
+        return item.type === 'message'
+          || item.label.includes('scope')
+          || item.label === 'task_contract'
+    }
+  })
+  if (selected.length > 0) return selected.slice(0, 8)
+  return [{
+    type: 'system',
+    label: result.status === 'pass' ? 'goal_audit_requirement_pass' : 'goal_audit_requirement_gap',
+    detail: result.summary.slice(0, 500),
+  }]
 }
 
 function hasExplicitUserRequirement(contents: string[], requirement: string): boolean {
@@ -1676,12 +1823,13 @@ const OUTPUT_FILE_PATH_INPUT_KEYS = new Set([
 ])
 
 const OUTPUT_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:write|writemany|writefile|edit|multiedit|notebookedit|save|export|convert|generate|create|update|replace)(?:$|[_\-\s])/i
+const COMMAND_OUTPUT_CANDIDATE_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:bash|shell|powershell|pwsh|python|cmd|command|exec|execute|run)(?:$|[_\-\s])/i
 const OUTPUT_RESULT_TEXT_PATTERN = /(?:created|wrote|written|saved|exported|converted|generated|updated|创建|生成|写入|保存|导出|转换|更新).{0,200}(?:[A-Za-z]:\\|\/)/i
 const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^"'<>|\r\n]+?|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
 const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
 
 function promoteFormalOutputFileEvidencePaths(input: {
-  fileEvidencePaths: Set<string>
+  candidatePaths: Set<string>
   outputFileEvidencePaths: Set<string>
   expectedOutputDirectory?: string
   requiredOutputFormats: string[]
@@ -1691,7 +1839,7 @@ function promoteFormalOutputFileEvidencePaths(input: {
   }
 
   const requiredFormats = new Set(input.requiredOutputFormats)
-  for (const filePath of input.fileEvidencePaths) {
+  for (const filePath of input.candidatePaths) {
     if (input.outputFileEvidencePaths.has(filePath)) continue
     if (!pathStartsWith(filePath, input.expectedOutputDirectory)) continue
     if (!getOutputFormatsForPath(filePath).some(format => requiredFormats.has(format))) continue
@@ -1699,13 +1847,26 @@ function promoteFormalOutputFileEvidencePaths(input: {
   }
 }
 
+function isCommandOutputCandidateTool(toolName: string | undefined): boolean {
+  return COMMAND_OUTPUT_CANDIDATE_TOOL_NAME_PATTERN.test(toolName ?? '')
+}
+
 function extractOutputFilePaths(message: Message, inputPaths: string[], resultPaths: string[]): string[] {
   if (!isSuccessfulTool(message)) {
     return []
   }
 
-  const paths = new Set<string>(extractFilePaths(message.toolInput, undefined, OUTPUT_FILE_PATH_INPUT_KEYS))
   const toolName = message.toolName ?? ''
+  if (/(?:^|[_\-\s])document[_\-\s]?artifact$/i.test(toolName)) {
+    const action = typeof message.toolInput === 'object' && message.toolInput !== null
+      ? (message.toolInput as Record<string, unknown>).action
+      : undefined
+    return action === 'assemble' || action === 'validate'
+      ? resultPaths.filter(path => getOutputFormatsForPath(path).length > 0)
+      : []
+  }
+
+  const paths = new Set<string>(extractFilePaths(message.toolInput, undefined, OUTPUT_FILE_PATH_INPUT_KEYS))
   const toolResult = typeof message.toolResult === 'string' ? message.toolResult : ''
 
   if (OUTPUT_TOOL_NAME_PATTERN.test(toolName)) {

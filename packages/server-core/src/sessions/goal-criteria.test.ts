@@ -597,6 +597,29 @@ describe('buildTaskContractFromMessage', () => {
     expect(merged.workingDirectory).toBe('/project-a')
   })
 
+  it('keeps requirement ledger ids stable while adding follow-up requirements', () => {
+    const current = buildTaskContractFromMessage({
+      message: '请生成项目分析报告，必须包含：\n1. 风险清单\n2. 引用页码',
+      storedAttachments: [attachment('source.pdf')],
+    })
+    const next = buildTaskContractFromMessage({
+      message: '补充预算风险，并导出 PDF。',
+      storedAttachments: [attachment('source.pdf')],
+    })
+
+    const originalIds = new Map(
+      current.requirementLedger?.entries.map(entry => [entry.text, entry.id]) ?? [],
+    )
+    const merged = mergeTaskContracts(current, next)
+
+    expect(originalIds.size).toBeGreaterThan(0)
+    for (const [text, id] of originalIds) {
+      expect(merged.requirementLedger?.entries.find(entry => entry.text === text)?.id).toBe(id)
+    }
+    expect(merged.requirementLedger?.entries.some(entry => entry.text.includes('预算风险'))).toBe(true)
+    expect(merged.requirementLedger?.entries.some(entry => entry.kind === 'format' && entry.text.includes('PDF'))).toBe(true)
+  })
+
   it('captures chart and audience hints for formal document production', () => {
     const contract = buildTaskContractFromMessage({
       message: '请面向管理层生成研究简报，包含趋势图和对比表，语气正式，篇幅 5 页，导出为 PPTX。',

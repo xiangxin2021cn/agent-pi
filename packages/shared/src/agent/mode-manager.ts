@@ -198,6 +198,12 @@ function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
 
   const realBase = existsSync(resolvedBase) ? realpathSync.native(resolvedBase) : resolvedBase;
 
+  // A not-yet-created app-owned output directory cannot contain a symlink yet.
+  // The lexical containment check above is sufficient until the base exists.
+  if (!existsSync(resolvedBase)) {
+    return true;
+  }
+
   if (existsSync(resolvedTarget)) {
     const realTarget = realpathSync.native(resolvedTarget);
     return isWithin(realBase, realTarget);
@@ -1611,7 +1617,7 @@ export function extractBashWriteTarget(command: string): string | null {
   // Pattern 2: shell -c/-lc with inner redirect (Codex pattern, unquoted paths)
   // Match: /bin/zsh -lc "... > /path/to/file ..." or bash -c '... > /path ...'
   const shellExecMatch = command.match(
-    /(?:\/bin\/)?(?:zsh|bash|sh)\s+(?:-\w+\s+)*["'].*?>\s*([^\s'"\\]+)/
+    /(?:\/bin\/)?(?:zsh|bash|sh)\s+(?:-\w+\s+)*["'].*?>\s*([^\s'"]+)/
   );
   if (shellExecMatch?.[1] && shellExecMatch[1] !== '/dev/null') {
     return shellExecMatch[1];

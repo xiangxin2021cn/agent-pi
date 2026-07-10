@@ -322,6 +322,9 @@ export interface SessionToolContext {
   /** Get detailed info about a session. Defaults to current session if no ID given. Injected by backend. */
   getSessionInfo?(sessionId?: string): SessionInfo | null;
 
+  /** Get runtime handoff state for a spawned session. Defaults to current session if no ID given. Injected by backend. */
+  getSpawnStatus?(sessionId?: string): SessionSpawnStatus | null;
+
   /** List sessions in the workspace with pagination. Injected by backend. */
   listSessions?(options?: ListSessionsOptions): ListSessionsResult;
 
@@ -437,6 +440,30 @@ export interface SessionInfo {
   llmConnection?: string;
   model?: string;
   isActive: boolean;
+  parentSessionId?: string;
+  parentSessionKind?: string;
+  isProcessing?: boolean;
+  queueLength?: number;
+  lastMessageAt?: number;
+  spawnStatus?: SessionSpawnStatus;
+}
+
+/** Runtime handoff state for a spawned session. */
+export interface SessionSpawnStatus {
+  sessionId: string;
+  parentSessionId?: string;
+  taskId?: string;
+  lifecycleStatus?: 'started' | 'running' | 'handoff_received' | 'handoff_ready' | 'completed' | 'needs_review' | 'failed' | 'unknown';
+  isActive: boolean;
+  isProcessing: boolean;
+  queueLength: number;
+  userStatus: string;
+  reportPath?: string;
+  reportPathExists: boolean;
+  reportSize?: number;
+  handoffStatus: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed';
+  lastActivityAt?: number;
+  briefPath?: string;
 }
 
 /** Compact session summary (returned by list_sessions). */

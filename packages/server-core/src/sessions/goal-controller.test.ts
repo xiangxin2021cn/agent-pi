@@ -176,6 +176,92 @@ describe('GoalController', () => {
     }
   })
 
+  test('requires review for pending professional requirement ledger entries and satisfies them on reviewer pass', async () => {
+    const controller = new GoalController()
+    const taskContract: NonNullable<SessionGoalState['taskContract']> = {
+      originalRequest: 'Produce a professional report.',
+      taskType: 'document',
+      documentQualityMode: 'professional_document',
+      deliverables: ['Professional report'],
+      mustPreserve: [],
+      evidenceRequirements: [],
+      outputFormats: ['MD'],
+      acceptanceCriteria: [],
+      forbiddenShortcuts: [],
+      requirementLedger: {
+        version: 1,
+        entries: [{
+          id: 'req-del-report',
+          kind: 'deliverable',
+          text: 'Professional report',
+          verification: 'Verify the final artifact.',
+          sourceRefs: [],
+          status: 'pending',
+        }],
+      },
+    }
+    const reportContent = [
+      '# Professional Report',
+      '## Scope and Evidence',
+      'This report records the requested scope, evidence boundaries, assumptions, and verification method. Each conclusion is linked to a stated basis, and unavailable evidence is identified as a gap rather than inferred.',
+      '## Findings',
+      '| Finding | Evidence | Impact | Action |',
+      '| --- | --- | --- | --- |',
+      '| Delivery scope is defined | User request | Controls completeness | Verify every required section |',
+      '| Evidence gaps remain visible | Gap register | Prevents unsupported claims | Escalate gaps for review |',
+      '## Risks and Recommendations',
+      'The principal risks are incomplete source coverage, accidental scope expansion, and unverified formatting. The recommended controls are a requirement ledger, bounded evidence review, and final artifact validation before completion.',
+      '## Conclusion',
+      'The deliverable is ready when every listed requirement has evidence, each unresolved gap is explicit, and the formal output passes structural and content verification.',
+    ].join('\n\n')
+    const messages = [
+      message('u1', 'user', 'Produce a professional report.'),
+      message('a1', 'assistant', reportContent),
+    ]
+
+    const withoutReviewer = await controller.onTurnStopped(goal({ taskContract }), {
+      messages,
+      stoppedReason: 'complete',
+      now: 10,
+    })
+    expect(withoutReviewer.action).toBe('needs_review')
+    if (withoutReviewer.action === 'needs_review') {
+      expect(withoutReviewer.result.missingCriteria).toContain('[req-del-report] Professional report')
+      expect(withoutReviewer.goalState.taskContract?.requirementLedger?.entries[0]).toEqual(expect.objectContaining({
+        status: 'failed',
+        failureReason: '[req-del-report] Professional report',
+      }))
+    }
+
+    const withReviewer = await controller.onTurnStopped(goal({ taskContract }), {
+      messages,
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The requirement ledger is satisfied.',
+        missingCriteria: [],
+        evidence: [{
+          type: 'file',
+          label: 'file_verified_output',
+          detail: 'C:/outputs/professional-report.md',
+        }],
+      }),
+    })
+    expect(withReviewer.action).toBe('complete')
+    if (withReviewer.action === 'complete') {
+      expect(withReviewer.verifiedOutputPaths).toEqual([])
+      expect(withReviewer.goalState.taskContract?.requirementLedger?.entries[0]).toEqual(expect.objectContaining({
+        status: 'satisfied',
+        verifiedAt: 10,
+        evidenceRefs: [expect.objectContaining({
+          label: 'file_verified_output',
+          detail: 'C:/outputs/professional-report.md',
+        })],
+      }))
+    }
+  })
+
   test('writes an orchestration evidence package before reviewer evaluation', async () => {
     const controller = new GoalController()
     let reviewerSawPackage = false
@@ -230,6 +316,7 @@ describe('GoalController', () => {
     expect(reviewerSawPackage).toBe(true)
     expect(decision.action).toBe('complete')
     if (decision.action === 'complete') {
+      expect(decision.verifiedOutputPaths).toEqual([])
       expect(decision.result.evidence).toContainEqual({
         type: 'file',
         label: 'orchestration_evidence_package',
@@ -1331,6 +1418,82 @@ describe('GoalController', () => {
     }
   })
 
+  test('uses a ready spawned report path as completed handoff evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: '请用多智能体深度模式生成施工策划报告。',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        documentPlan: {
+          sections: ['技术方案'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          agentPlan: {
+            mode: 'chapter_agents',
+            finalSynthesisOwner: 'final_synthesis_owner',
+            assignments: [{
+              id: 'chapter-agent-1',
+              title: '技术方案',
+              role: 'technical_chapter_agent',
+              reviewFocus: 'technical completeness and source-backed constraints',
+            }],
+            reviewStages: ['Cross-chapter consistency review before final synthesis.'],
+            guardrails: ['Each chapter agent must list source gaps and unresolved assumptions before handoff.'],
+          },
+        },
+        deliverables: ['Produce a report with a real chapter-agent handoff.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use selected knowledge-base evidence.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: ['Do not fake multi-agent handoff notes in the final artifact.'],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '请用多智能体深度模式生成施工策划报告。'),
+        message('a1', 'assistant', [
+          '# 施工策划报告',
+          '',
+          'chapter-agent-1 技术方案 handoff is ready in the report path.',
+          'source gaps: none; unresolved assumptions: none.',
+          'Cross-chapter consistency review complete.',
+          'final_synthesis_owner 完成最终合成。',
+        ].join('\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      spawnedSessions: [{
+        id: 'child-1',
+        name: '技术方案 child',
+        messageCount: 2,
+        hasFinalAssistant: false,
+        taskId: 'chapter-agent-1',
+        reportPath: 'C:/session/orchestration/reports/chapter-agent-1.md',
+        reportPathExists: true,
+        reportSize: 2048,
+        handoffStatus: 'ready',
+      }],
+    })
+
+    const auditEvidence = decision.action === 'complete'
+      ? decision.result.evidence.find(item => item.label === 'document_agent_plan_audit')
+      : decision.action === 'continue' || decision.action === 'needs_review'
+        ? decision.result.evidence.find(item => item.label === 'document_agent_plan_audit')
+        : undefined
+
+    expect(auditEvidence?.detail).toContain('completedSpawnHandoffs: 1/1')
+    expect(auditEvidence?.detail).toContain('missingChapterHandoff: no')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.includes('spawned chapter sessions returned a final handoff note'))).toBe(false)
+    }
+  })
+
   test('does not accept reviewer pass when explicit required user item is missing', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
@@ -2128,6 +2291,59 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not promote a previously generated file read from the formal output directory', async () => {
+    const controller = new GoalController()
+    const outputDirectory = '/tmp/project/Agent Pi Outputs/session-1'
+    const staleOutputPath = `${outputDirectory}/earlier-report.md`
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }, {
+        id: 'crit-output-format',
+        text: 'Create output file(s) in the requested format(s): MD.',
+        kind: 'format',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Create a new Markdown report.'),
+        message('t1', 'tool', `Read ${staleOutputPath}`, {
+          toolName: 'Read',
+          toolStatus: 'completed',
+          toolInput: { file_path: staleOutputPath },
+          toolResult: `Read ${staleOutputPath}`,
+        }),
+        message('a1', 'assistant', 'The report is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      expectedOutputDirectory: outputDirectory,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 100,
+        preview: '# Earlier report',
+      }),
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The requested output is complete.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria).toContain('No verifiable output file path was produced for the requested file deliverable.')
+      expect(decision.result.evidence).not.toContainEqual(expect.objectContaining({ label: 'output_file_verified' }))
+    }
+  })
+
   test('does not accept requested output files outside the formal output directory', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []
@@ -2388,6 +2604,153 @@ describe('GoalController', () => {
         label: 'file_preview',
         detail: '/tmp/report.md\nExecutive summary\nKey risk: missing permits.',
       })
+    }
+  })
+
+  test('recognizes document_artifact assemble output as formal file evidence', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      criteria: [{
+        id: 'crit-file-output',
+        text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+        kind: 'deliverable',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'write a report file'),
+        message('t1', 'tool', 'assembled', {
+          toolName: 'document_artifact',
+          toolStatus: 'completed',
+          toolInput: { action: 'assemble', artifactId: 'final-report' },
+          toolResult: '{"finalPath":"/tmp/report.md","phase":"assembled"}',
+        }),
+        message('a1', 'assistant', 'Report file complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 42,
+        preview: '# Report\n\nComplete content.',
+        auditContent: '# Report\n\nComplete content.',
+      }),
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The file deliverable exists.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.verifiedOutputPaths).toEqual(['/tmp/report.md'])
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'file_verified',
+        detail: '/tmp/report.md (42 bytes)',
+      })
+      expect(decision.result.evidence).toContainEqual({
+        type: 'file',
+        label: 'output_file_verified',
+        detail: '/tmp/report.md',
+      })
+    }
+  })
+
+  test('audits full text content beyond the bounded evidence preview', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      criteria: [{
+        id: 'crit-deep-appendix',
+        text: 'Must satisfy explicit user requirement: 深层附录风险清单.',
+        kind: 'user_constraint',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', '生成报告，必须包含深层附录风险清单。'),
+        message('t1', 'tool', 'created /tmp/report.md', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.md' },
+        }),
+        message('a1', 'assistant', '报告文件已完成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 20_000,
+        preview: '# 报告\n\n前部预览不含目标附录。',
+        previewTruncated: true,
+        auditContent: '# 报告\n\n前部内容。\n\n# 深层附录风险清单\n\n风险 A。',
+      }),
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The verified artifact satisfies the explicit requirement.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.missingCriteria).toEqual([])
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        label: 'file_preview_truncated',
+      }))
+    }
+  })
+
+  test('fails closed when a required full text audit exceeds the safety limit', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      taskContract: {
+        originalRequest: '生成专业长报告。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        deliverables: ['专业长报告'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '生成专业长报告。'),
+        message('t1', 'tool', 'created /tmp/large-report.md', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/large-report.md' },
+        }),
+        message('a1', 'assistant', '专业报告文件已完成。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 6 * 1024 * 1024,
+        preview: '# Executive Summary\n\nA bounded preview.',
+        previewTruncated: true,
+        auditContentOversized: true,
+      }),
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria).toContain(
+        'Full document audit was not performed because output exceeds the 5242880 byte safety limit: /tmp/large-report.md',
+      )
     }
   })
 

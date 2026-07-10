@@ -24,6 +24,10 @@ export type {
   SessionGoalCriterion,
   SessionTaskContractType,
   SessionDocumentQualityMode,
+  SessionRequirementKind,
+  SessionRequirementStatus,
+  SessionRequirementLedgerEntry,
+  SessionRequirementLedger,
   SessionTaskContract,
   SessionDocumentPlan,
   SessionDocumentAgentPlan,
@@ -37,6 +41,7 @@ export type {
   SessionGoalAuditResult,
   SessionGoalState,
   SessionOrchestrationPhase,
+  SessionOrchestrationTaskPhase,
   SessionOrchestrationTaskStatus,
   SessionOrchestrationTask,
   SessionSubAgentLifecycleEntry,
@@ -59,13 +64,26 @@ export { formatTaskContractContext } from './task-contract-context.ts';
 export {
   buildSessionOrchestrationState,
   formatOrchestrationContext,
+  getRunnableOrchestrationTasks,
   getOrchestrationEntropySignal,
   appendSubAgentLifecycleEntry,
   attachOrchestrationArtifacts,
+  markSubAgentHandoffNeedsReview,
+  markSubAgentHandoffReady,
+  mergeSessionOrchestrationState,
+  resumeSessionOrchestrationForFollowUp,
   refreshOrchestrationLedger,
+  transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
 } from './orchestration.ts';
-export type { OrchestrationEntropyInput, UpdateOrchestrationTaskStatusOptions } from './orchestration.ts';
+export type {
+  MarkSubAgentHandoffNeedsReviewInput,
+  MarkSubAgentHandoffReadyInput,
+  OrchestrationEntropyInput,
+  OrchestrationPhaseTransitionResult,
+  TransitionOrchestrationPhaseOptions,
+  UpdateOrchestrationTaskStatusOptions,
+} from './orchestration.ts';
 
 // Storage functions
 export {

@@ -129,6 +129,73 @@ describe('orchestration view model', () => {
     expect(info?.ledger?.summary).toContain('待确认')
   })
 
+  it('summarizes the requirement ledger with bounded visible items and verification metadata', () => {
+    const entries = Array.from({ length: 8 }, (_, index) => ({
+      id: `req-${index + 1}`,
+      kind: index === 0 ? 'deliverable' as const : 'constraint' as const,
+      text: index === 0 ? 'Write the final Markdown report' : `Preserve constraint ${index}`,
+      verification: index === 0 ? 'Verify the formal output file.' : 'Audit the final artifact.',
+      sourceRefs: index === 0 ? ['file-memory-coto-1'] : [],
+      status: index === 0
+        ? 'satisfied' as const
+        : index === 1
+          ? 'failed' as const
+          : index === 2
+            ? 'blocked' as const
+            : 'pending' as const,
+      evidenceRefs: index <= 1
+        ? [{ type: 'file' as const, label: 'file_verified_output', detail: 'C:/outputs/final.md' }]
+        : [],
+      failureReason: index === 1 ? 'Required appendix is missing.' : undefined,
+    }))
+    const info = getOrchestrationInfoViewModel(t, goalState({
+      taskContract: {
+        originalRequest: 'Create a report.',
+        taskType: 'document',
+        documentQualityMode: 'strict_delivery',
+        deliverables: ['Write the final Markdown report'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+        requirementLedger: { version: 1, entries },
+      },
+      orchestration: {
+        version: 1,
+        phase: 'paused',
+        createdAt: 1,
+        updatedAt: 2,
+        policy: {
+          selectedSourceSlugs: ['file-memory-coto-1'],
+          forbidWorkingDirectoryDiscovery: true,
+          requireStructuredHandoff: true,
+          requireUserConfirmationPause: true,
+          maxAutomaticRepairPasses: 2,
+        },
+        taskBoard: { tasks: [] },
+        subAgents: [],
+      },
+    }))
+
+    expect(info?.requirements?.summary).toContain('1 satisfied')
+    expect(info?.requirements?.summary).toContain('5 pending')
+    expect(info?.requirements?.summary).toContain('1 blocked')
+    expect(info?.requirements?.summary).toContain('1 failed')
+    expect(info?.requirements?.tone).toBe('danger')
+    expect(info?.requirements?.items).toHaveLength(6)
+    expect(info?.requirements?.hiddenItemCount).toBe(2)
+    expect(info?.requirements?.items[0]).toEqual(expect.objectContaining({
+      id: 'req-1',
+      title: 'Write the final Markdown report',
+      tone: 'success',
+    }))
+    expect(info?.requirements?.items[0].meta).toContain('Verify the formal output file.')
+    expect(info?.requirements?.items[0].meta).toContain('1 source')
+    expect(info?.requirements?.items[0].meta).toContain('1 evidence')
+    expect(info?.requirements?.items[1].meta).toContain('Required appendix is missing.')
+  })
+
   it('uses the entropy warning as the compact Goal badge hint', () => {
     const preview = getOrchestrationBadgePreview(t, goalState({
       orchestration: {
@@ -156,5 +223,27 @@ describe('orchestration view model', () => {
 
     expect(preview?.label).toBe('熵告警')
     expect(preview?.tone).toBe('warning')
+  })
+
+  it('shows a completed success badge for the done orchestration phase', () => {
+    const badge = getOrchestrationBadgePreview(t, goalState({
+      orchestration: {
+        version: 1,
+        phase: 'done',
+        createdAt: 1,
+        updatedAt: 2,
+        policy: {
+          selectedSourceSlugs: [],
+          forbidWorkingDirectoryDiscovery: false,
+          requireStructuredHandoff: false,
+          requireUserConfirmationPause: true,
+          maxAutomaticRepairPasses: 2,
+        },
+        taskBoard: { tasks: [] },
+        subAgents: [],
+      },
+    }))
+
+    expect(badge).toEqual({ label: 'Completed', tone: 'success' })
   })
 })

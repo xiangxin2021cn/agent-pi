@@ -57,6 +57,7 @@ interface SessionConfig {
   sessionId: string;
   workspaceRootPath: string;
   plansFolderPath: string;
+  workingDirectory?: string;
   callbackPort?: string;
 }
 
@@ -203,6 +204,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     get sourcesPath() { return join(workspaceRootPath, 'sources'); },
     get skillsPath() { return join(workspaceRootPath, 'skills'); },
     plansFolderPath,
+    workingDirectory: config.workingDirectory,
     sessionPath: sessionsDir,
     dataPath: sessionDataDir,
     callbacks,
@@ -498,6 +500,7 @@ async function main() {
     sessionId,
     workspaceRootPath,
     plansFolderPath,
+    workingDirectory: process.env.CRAFT_WORKING_DIRECTORY || undefined,
     // CLI arg takes priority, env var as fallback (Copilot CLI may not forward env to subprocesses)
     callbackPort: callbackPort || process.env.CRAFT_LLM_CALLBACK_PORT,
   };

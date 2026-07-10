@@ -226,7 +226,12 @@ describe('CliRpcClient', () => {
     server = createErrorServer()
     const client = new CliRpcClient(server.url)
     await client.connect()
-    await expect(client.invoke('system:versions')).rejects.toThrow('test error')
+    try {
+      await client.invoke('system:versions')
+      throw new Error('expected rejection')
+    } catch (error) {
+      expect((error as Error).message).toContain('test error')
+    }
     client.destroy()
   })
 

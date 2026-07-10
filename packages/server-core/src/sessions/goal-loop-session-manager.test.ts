@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import type { Message } from '@craft-agent/core/types'
 import { FORMAL_OUTPUTS_DIR_NAME, getProjectBrainPath, type SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
 import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import xlsx from 'xlsx'
@@ -131,6 +132,216 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_audit_result')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
     expect(events.some(event => event.type === 'complete')).toBe(false)
+  })
+
+  it('does not complete a professional Markdown goal without a validated transactional artifact', async () => {
+    const sessionId = 'goal-professional-artifact-gate'
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [],
+        taskContract: {
+          originalRequest: 'Create a professional Markdown report.',
+          taskType: 'document',
+          documentQualityMode: 'professional_document',
+          deliverables: ['Professional report'],
+          mustPreserve: [],
+          evidenceRequirements: [],
+          outputFormats: ['MD'],
+          acceptanceCriteria: [],
+          forbiddenShortcuts: [],
+        },
+      }),
+    })
+    const events = captureEvents()
+    ;(sm as unknown as { goalController: { onTurnStopped: (state: SessionGoalState) => Promise<unknown> } }).goalController = {
+      onTurnStopped: async (state) => {
+        const result = {
+          iteration: 1,
+          status: 'pass' as const,
+          summary: 'Goal audit passed.',
+          missingCriteria: [],
+          evidence: [],
+          createdAt: Date.now(),
+        }
+        return {
+          action: 'complete' as const,
+          goalState: { ...state, status: 'passed' as const, auditHistory: [...state.auditHistory, result] },
+          result,
+        }
+      },
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('needs_review')
+    expect(managed.goalState?.auditHistory.at(-1)?.missingCriteria).toContain(
+      'A validated document artifact is required before merge and completion.',
+    )
+    expect(events.some(event => event.type === 'goal_completed')).toBe(false)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(true)
+  })
+
+  it('completes a professional Markdown goal with a current-turn validated transactional artifact', async () => {
+    const sessionId = 'goal-professional-artifact-current-turn'
+    const sessionPath = join(tmpRoot, 'sessions', sessionId)
+    const outputDirectory = join(sessionPath, 'outputs')
+    const finalPath = join(outputDirectory, 'current-report.md')
+    const artifactDirectory = join(sessionPath, 'data', 'document-artifacts', 'current-report')
+    const content = '# Current report\n\nVerified in this turn.\n'
+    mkdirSync(outputDirectory, { recursive: true })
+    mkdirSync(artifactDirectory, { recursive: true })
+    writeFileSync(finalPath, content, 'utf-8')
+    writeFileSync(join(artifactDirectory, 'manifest.json'), JSON.stringify({
+      version: 1,
+      artifactId: 'current-report',
+      outputFile: 'current-report.md',
+      phase: 'validated',
+      sections: [],
+      finalPath,
+      assembledSha256: createHash('sha256').update(content, 'utf-8').digest('hex'),
+      createdAt: 1,
+      updatedAt: 2,
+    }), 'utf-8')
+
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [],
+        taskContract: {
+          originalRequest: 'Create a professional Markdown report.',
+          taskType: 'document',
+          documentQualityMode: 'professional_document',
+          deliverables: ['Professional report'],
+          mustPreserve: [],
+          evidenceRequirements: [],
+          outputFormats: ['MD'],
+          acceptanceCriteria: [],
+          forbiddenShortcuts: [],
+        },
+      }),
+    })
+    const events = captureEvents()
+    ;(sm as unknown as { goalController: { onTurnStopped: (state: SessionGoalState) => Promise<unknown> } }).goalController = {
+      onTurnStopped: async (state) => {
+        const result = {
+          iteration: 1,
+          status: 'pass' as const,
+          summary: 'Current-turn artifact passed deterministic verification.',
+          missingCriteria: [],
+          evidence: [],
+          createdAt: Date.now(),
+        }
+        return {
+          action: 'complete' as const,
+          goalState: { ...state, status: 'passed' as const, auditHistory: [...state.auditHistory, result] },
+          result,
+          verifiedOutputPaths: [finalPath],
+        }
+      },
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    expect(managed.goalState?.status).toBe('passed')
+    expect(events.some(event => event.type === 'goal_completed')).toBe(true)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
+  })
+
+  it('finalizes the evidence package after reviewer and completion gates resolve', async () => {
+    const sessionId = 'goal-final-evidence-package'
+    const orchestrationRoot = join(tmpRoot, 'sessions', sessionId, 'orchestration')
+    const packagePath = join(orchestrationRoot, 'evidence-packages', 'audit-1.json')
+    const requirementLedger = {
+      version: 1 as const,
+      entries: [{
+        id: 'req-del-report',
+        kind: 'deliverable' as const,
+        text: 'Final report',
+        verification: 'Verify final output.',
+        sourceRefs: [],
+        status: 'satisfied' as const,
+        evidenceRefs: [{ type: 'file' as const, label: 'file_verified_output', detail: 'C:/outputs/final.md' }],
+        verifiedAt: 10,
+      }],
+    }
+    const managed = buildSession(sessionId, {
+      goalState: goal({
+        mode: 'check_only',
+        criteria: [],
+        taskContract: {
+          originalRequest: 'Create a report.',
+          taskType: 'document',
+          documentQualityMode: 'quick',
+          deliverables: ['Final report'],
+          mustPreserve: [],
+          evidenceRequirements: [],
+          outputFormats: ['MD'],
+          acceptanceCriteria: [],
+          forbiddenShortcuts: [],
+          requirementLedger,
+        },
+        orchestration: {
+          version: 1,
+          phase: 'plan',
+          createdAt: 1,
+          updatedAt: 1,
+          policy: {
+            selectedSourceSlugs: [],
+            forbidWorkingDirectoryDiscovery: false,
+            requireStructuredHandoff: false,
+            requireUserConfirmationPause: true,
+            maxAutomaticRepairPasses: 2,
+          },
+          taskBoard: { tasks: [] },
+          subAgents: [],
+          artifacts: {
+            rootPath: orchestrationRoot,
+            briefsPath: join(orchestrationRoot, 'briefs'),
+            reportsPath: join(orchestrationRoot, 'reports'),
+            evidencePackagesPath: join(orchestrationRoot, 'evidence-packages'),
+            progressLedgerPath: join(orchestrationRoot, 'progress-ledger.json'),
+          },
+        },
+      }),
+    })
+    const result = {
+      iteration: 1,
+      status: 'pass' as const,
+      summary: 'Reviewer and completion gates passed.',
+      missingCriteria: [],
+      evidence: [{ type: 'file' as const, label: 'orchestration_evidence_package', detail: packagePath }],
+      createdAt: 10,
+    }
+    ;(sm as unknown as { goalController: { onTurnStopped: (state: SessionGoalState) => Promise<unknown> } }).goalController = {
+      onTurnStopped: async state => ({
+        action: 'complete' as const,
+        goalState: {
+          ...state,
+          status: 'passed' as const,
+          taskContract: { ...state.taskContract!, requirementLedger },
+          auditHistory: [...state.auditHistory, result],
+        },
+        result,
+      }),
+    }
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+
+    const payload = JSON.parse(readFileSync(packagePath, 'utf-8'))
+    expect(payload.audit.status).toBe('pass')
+    expect(payload.requirementLedger.entries[0]).toEqual(expect.objectContaining({
+      id: 'req-del-report',
+      status: 'satisfied',
+      evidenceRefs: [expect.objectContaining({ label: 'file_verified_output' })],
+    }))
+    expect(managed.goalState?.status).toBe('passed')
   })
 
   it('does not block goal continuation on project memory recording', async () => {

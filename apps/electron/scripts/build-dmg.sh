@@ -129,7 +129,7 @@ rm -rf "$ELECTRON_DIR/release"
 # 2. Install dependencies
 echo "Installing dependencies..."
 cd "$ROOT_DIR"
-bun install
+bun install --frozen-lockfile
 
 # 3. Download Bun binary with checksum verification
 echo "Downloading Bun ${BUN_VERSION} for darwin-${ARCH}..."

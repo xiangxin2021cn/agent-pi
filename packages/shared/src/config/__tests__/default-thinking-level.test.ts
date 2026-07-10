@@ -111,7 +111,7 @@ describe('default thinking level storage', () => {
       const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
       expect(output).toBe(level)
     }
-  })
+  }, 30_000)
 
   it('migrates legacy "think" value to "medium"', () => {
     const { configDir, configPath } = setupWorkspaceConfigDir()

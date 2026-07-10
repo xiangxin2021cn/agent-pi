@@ -192,6 +192,54 @@ describe('attachSessionSelfManagementBindings', () => {
     expect(receivedId).toBe('other-session');
   });
 
+  it('getSpawnStatus defaults to current session ID and exposes report readiness', async () => {
+    const ctx = createBaseContext(sessionId);
+    attachSessionSelfManagementBindings(ctx, sessionId);
+
+    let receivedId: string | undefined;
+    registerSessionScopedToolCallbacks(sessionId, {
+      getSpawnStatusFn: (sid) => {
+        receivedId = sid;
+        return {
+          sessionId: sid ?? sessionId,
+          lifecycleStatus: 'handoff_ready',
+          isActive: true,
+          isProcessing: false,
+          queueLength: 0,
+          userStatus: 'todo',
+          reportPath: 'C:/session/orchestration/reports/task-1.md',
+          reportPathExists: true,
+          reportSize: 1024,
+          handoffStatus: 'ready',
+          lastActivityAt: 300,
+        };
+      },
+    });
+
+    expect(ctx.getSpawnStatus).toBeDefined();
+    const current = ctx.getSpawnStatus!();
+    expect(receivedId).toBe(sessionId);
+    expect(current?.handoffStatus).toBe('ready');
+    expect(current?.userStatus).toBe('todo');
+
+    const handler = SESSION_TOOL_REGISTRY.get('get_spawn_status')!.handler!;
+    const result = await handler(ctx, { sessionId: 'child-1' });
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]!.text).toContain('"sessionId": "child-1"');
+    expect(result.content[0]!.text).toContain('"reportPathExists": true');
+  });
+
+  it('get_spawn_status returns not available when no backend callback exists', async () => {
+    const ctx = createBaseContext(sessionId);
+    attachSessionSelfManagementBindings(ctx, sessionId);
+
+    const handler = SESSION_TOOL_REGISTRY.get('get_spawn_status')!.handler!;
+    const result = await handler(ctx, {});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('get_spawn_status is not available');
+  });
+
   it('setters pass through explicit session IDs unchanged', async () => {
     const ctx = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(ctx, sessionId);

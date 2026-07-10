@@ -133,6 +133,7 @@ export async function writeGoalEvidencePackage(input: {
     selectedSourceSlugs: input.goalState.orchestration?.policy.selectedSourceSlugs ?? [],
     taskBoard: input.goalState.orchestration?.taskBoard,
     ledger: input.goalState.orchestration?.ledger,
+    requirementLedger: input.goalState.taskContract?.requirementLedger,
     audit: {
       status: input.result.status,
       summary: input.result.summary,

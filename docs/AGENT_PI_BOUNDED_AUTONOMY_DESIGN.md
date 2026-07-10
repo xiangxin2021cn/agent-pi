@@ -1,6 +1,6 @@
 # Agent Pi Bounded Autonomy Design
 
-Status: V2.0.1 MVP implemented, V2.1 design target.
+Status: V2.0.1 bounded-dispatch MVP released. V2.1 Document Delivery Kernel implemented and regression-verified for the release candidate.
 
 ## 1. Problem
 
@@ -38,7 +38,7 @@ Goal Audit writes an `orchestration_evidence_package` before model review and in
 ```ts
 interface SessionOrchestrationState {
   version: 1
-  phase: 'plan' | 'audit' | 'merge' | 'paused'
+  phase: 'plan' | 'audit' | 'merge' | 'paused' | 'done'
   policy: SessionOrchestrationPolicy
   taskBoard: { tasks: SessionOrchestrationTask[] }
   subAgents: SessionSubAgentLifecycleEntry[]
@@ -152,8 +152,22 @@ Rules:
 - A spawned session cannot spawn another session.
 - If a brief is too large or ambiguous, the sub-agent writes gaps and recommendations to `report_path` instead of branching.
 - Audit uses evidence packages and report paths first; conversation/workspace reconstruction is fallback only.
+- Phase changes use `transitionOrchestrationPhase`; incomplete dependencies or an unready artifact block merge and completion.
 
-## 5. UI
+## 5. V2.1 Document Delivery Kernel
+
+The first V2.1 kernel slice replaces four prompt-only behaviors with application-owned controls:
+
+1. `SessionTaskContract.requirementLedger` assigns stable IDs and verification rules to deliverables, constraints, evidence, formats, and acceptance criteria. Follow-up requests append entries without renumbering existing requirements.
+2. The `document_artifact` session tool owns long Markdown writing through `init -> write_section -> status -> prepare_merge -> assemble -> validate`. Section files and the manifest live in session data; only the hash-frozen assembly is written atomically to the formal output folder.
+3. Orchestration exposes dependency-aware runnable tasks and validated Plan/Audit/Merge/Done transitions. `SessionManager` uses those transitions instead of directly assigning phase labels.
+4. Goal file verification separates bounded `preview` evidence from `auditContent`. Text artifacts up to 5 MiB are audited in full; larger required full-text audits fail closed to user review.
+5. Professional Markdown completion is gated by a validated `document_artifact` manifest, a non-empty formal output file, and a matching assembly hash. A passing language-model audit cannot bypass an incomplete orchestration phase or an unverified artifact.
+6. Follow-up instructions rebuild the static task contract while preserving active task statuses, sub-agent lifecycle, artifact paths, evidence package, entropy signal, and progress ledger. A paused or completed cycle explicitly resumes at Plan, with Audit/Merge gates reset instead of discarding reusable reports.
+
+The kernel intentionally leaves PDF, Office, and spreadsheet deep structural audit to their format-specific pipelines. Their existing previews remain useful evidence but do not become proof of strict full-document compliance merely because conversion succeeded.
+
+## 6. UI
 
 V2.0.1 adds a compact ledger row in the Info popover:
 
@@ -166,12 +180,13 @@ V2.0.1 adds a compact ledger row in the Info popover:
 
 V2.1 UI should add:
 
-- task-board table with filter by status;
-- click-to-open brief/report/evidence package;
-- user-confirmation queue with explicit approve/reject/adjust actions;
-- entropy timeline showing why orchestration was narrowed or paused.
+- requirement-ledger summary with satisfied, pending, blocked, and failed counts;
+- bounded requirement details with verification method, evidence count, and failure reason;
+- a completed orchestration phase state in the compact Goal badge and Info popover.
 
-## 6. Tests
+Detailed task-board filtering, artifact links, confirmation actions, and entropy history remain post-V2.1 UI work.
+
+## 7. Tests
 
 MVP tests added:
 
@@ -190,39 +205,60 @@ V2.1 regression set:
 - paused user-confirmation block must stop Goal Loop continuation;
 - entropy threshold must pause or narrow instead of adding more sub-agents;
 - final merge must cite report paths and selected evidence packages.
+- requirement IDs remain stable after follow-up requests;
+- follow-up requests preserve active orchestration runtime state instead of resetting running work;
+- missing, blank, externally changed, or post-prepare modified sections cannot be assembled;
+- a final file changed after assembly cannot pass validation or the completion gate;
+- an incomplete Plan-to-Audit transition cannot be hidden by a passing Goal Audit;
+- formal output from `document_artifact assemble/validate` is recognized by Goal Audit, while internal manifests are not;
+- requirements beyond the first 12 KB are evaluated from full audit content;
+- text artifacts above the 5 MiB audit limit require manual review.
 
-## 7. Phased Implementation
+## 8. V2.1 Release Boundary and Post-V2.1 Roadmap
 
-### Phase 1: Harden MVP
+### Completed Kernel
 
-- Persist ledger updates on every task status transition.
-- Mark sub-agent reports as `handoff_ready` only after the file exists.
-- Add a repair pass that targets only failed task IDs.
+- Stable requirement ledger and bounded prompt context.
+- Requirement entries advance to satisfied or failed from the final audit result instead of remaining permanently pending.
+- Spawned report readiness based on file existence and size.
+- Dependency-aware phase transition helpers and SessionManager integration.
+- Follow-up-safe orchestration merge that preserves runtime state and child-agent lifecycle, then explicitly resumes paused/completed cycles at Plan.
+- Transactional Markdown section writing and atomic assembly.
+- Validated-artifact completion gate based on formal output location, non-empty content, and assembly hash.
+- Full-text deterministic audit for bounded text artifacts.
+- Requirement-level evidence references, failure reasons, and verification timestamps.
+- Final evidence-package rewrite after reviewer and completion gates resolve.
+- Requirement-ledger status and provenance summary in the session Info popover.
 
-### Phase 2: Evidence-First Audit
+### Post-V2.1: Exact Claim-Level Provenance
 
-- Add a report/evidence package reader for Goal Audit.
-- Limit audit context to package summaries plus selected file previews.
-- Make conversation/workspace scan an explicit fallback with an audit warning.
+- Replace source-level citation heuristics with claim-to-source/locator links.
+- Make evidence packages the default reviewer input and record every fallback to broader context.
 
-### Phase 3: UI Control Surface
+### Post-V2.1: Template and Data Lineage
+
+- Connect existing template profile extraction to the production document pipeline.
+- Audit generated DOCX/PDF against extracted page, style, heading, table, and pagination constraints.
+- Track spreadsheet/table transformations from source cells through calculations to report claims and visuals.
+
+### Post-V2.1: UI Control Surface
 
 - Add task-board detail drawer.
 - Add brief/report/evidence preview links.
 - Add explicit user-confirmation actions.
 
-### Phase 4: Bounded Multi-Agent Policy
+### Post-V2.1: Bounded Multi-Agent Policy
 
 - Add per-mode limits for sub-agent count, source count, context pressure, and repair passes.
 - Add entropy-triggered pause and user confirmation.
 - Add strict handoff schema validation before final merge.
 
-### Phase 5: Domain Regression Packs
+### Post-V2.1: Domain Regression Packs
 
 - Build IWG-style regression tasks for engineering tender, BOQ pricing, investment analysis, knowledge-base-only analysis, and long Markdown generation.
 - Each pack should include selected sources, forbidden scope, expected reports, and failure cases.
 
-## 8. Non-Goals
+## 9. Non-Goals
 
 - Do not add a general autonomous planner that can recursively create agents.
 - Do not make working-directory scan a default source.

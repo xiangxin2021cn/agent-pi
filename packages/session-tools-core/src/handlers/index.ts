@@ -55,6 +55,10 @@ export type { UpdatePreferencesArgs } from './update-preferences.ts';
 export { handleTransformData } from './transform-data.ts';
 export type { TransformDataArgs } from './transform-data.ts';
 
+// Transactional Document Artifact
+export { handleDocumentArtifact } from './document-artifact.ts';
+export type { DocumentArtifactArgs, DocumentArtifactSectionInput } from './document-artifact.ts';
+
 // Script Sandbox
 export { handleScriptSandbox } from './script-sandbox.ts';
 export type { ScriptSandboxArgs } from './script-sandbox.ts';
@@ -74,5 +78,7 @@ export { handleSetSessionStatus } from './set-session-status.ts';
 export type { SetSessionStatusArgs } from './set-session-status.ts';
 export { handleGetSessionInfo } from './get-session-info.ts';
 export type { GetSessionInfoArgs } from './get-session-info.ts';
+export { handleGetSpawnStatus } from './get-spawn-status.ts';
+export type { GetSpawnStatusArgs } from './get-spawn-status.ts';
 export { handleListSessions } from './list-sessions.ts';
 export type { ListSessionsArgs } from './list-sessions.ts';

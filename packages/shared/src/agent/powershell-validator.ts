@@ -322,11 +322,20 @@ function parseCommand(command: string): ParseResult {
   }
 
   const scriptPath = getParserScriptPath();
+  const parserArgs = [
+    '-NoProfile',
+    '-NonInteractive',
+    ...(process.platform === 'win32' ? ['-ExecutionPolicy', 'Bypass'] : []),
+    '-File',
+    scriptPath,
+    '-Command',
+    command,
+  ];
 
   try {
     const result = spawnSync(
       powershellPath,
-      ['-NoProfile', '-NonInteractive', '-File', scriptPath, '-Command', command],
+      parserArgs,
       {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 10000,

@@ -2,6 +2,7 @@ import type {
   SessionOrchestrationArtifactPaths,
   SessionOrchestrationEntropySignal,
   SessionOrchestrationProgressLedger,
+  SessionOrchestrationPhase,
   SessionOrchestrationState,
   SessionOrchestrationTask,
   SessionOrchestrationTaskStatus,
@@ -34,6 +35,32 @@ export interface UpdateOrchestrationTaskStatusOptions {
   artifactPaths?: string[];
   now?: number;
 }
+
+export interface MarkSubAgentHandoffReadyInput {
+  sessionId: string;
+  reportPath?: string;
+  reportSize?: number;
+  now?: number;
+}
+
+export interface MarkSubAgentHandoffNeedsReviewInput {
+  sessionId: string;
+  now?: number;
+}
+
+export interface TransitionOrchestrationPhaseOptions {
+  artifactReady?: boolean;
+  now?: number;
+}
+
+export type OrchestrationPhaseTransitionResult =
+  | { ok: true; orchestration: SessionOrchestrationState }
+  | {
+      ok: false;
+      orchestration: SessionOrchestrationState | undefined;
+      reason: 'orchestration_not_initialized' | 'invalid_transition' | 'phase_tasks_incomplete' | 'artifact_not_ready';
+      blockingTaskIds: string[];
+    };
 
 const HANDOFF_FIELDS = [
   'task_id',
@@ -105,6 +132,91 @@ export function appendSubAgentLifecycleEntry(
   };
 }
 
+export function markSubAgentHandoffReady(
+  orchestration: SessionOrchestrationState | undefined,
+  input: MarkSubAgentHandoffReadyInput,
+): SessionOrchestrationState | undefined {
+  if (!orchestration) return orchestration;
+
+  const child = orchestration.subAgents.find(item => item.sessionId === input.sessionId);
+  if (!child) return orchestration;
+
+  const reportPath = input.reportPath ?? child.reportPath;
+  const reportSize = input.reportSize ?? child.reportSize ?? 0;
+  if (!reportPath || reportSize <= 0) return orchestration;
+
+  const now = input.now ?? Date.now();
+  const subAgents = orchestration.subAgents.map(item => {
+    if (item.sessionId !== input.sessionId) return item;
+    return {
+      ...item,
+      status: item.status === 'completed' ? item.status : 'handoff_received',
+      reportPath,
+      reportSize,
+      lastActivityAt: now,
+      updatedAt: now,
+    } satisfies SessionSubAgentLifecycleEntry;
+  });
+  const tasks = orchestration.taskBoard.tasks.map(task => {
+    if (task.id !== child.taskId) return task;
+    return {
+      ...task,
+      status: task.status === 'completed' ? task.status : 'handoff_ready',
+      artifactPaths: unique([...(task.artifactPaths ?? []), reportPath]),
+    } satisfies SessionOrchestrationTask;
+  });
+
+  return refreshOrchestrationLedger({
+    ...orchestration,
+    updatedAt: now,
+    taskBoard: { tasks },
+    subAgents,
+  }, {
+    currentTaskId: child.taskId,
+    now,
+  });
+}
+
+export function markSubAgentHandoffNeedsReview(
+  orchestration: SessionOrchestrationState | undefined,
+  input: MarkSubAgentHandoffNeedsReviewInput,
+): SessionOrchestrationState | undefined {
+  if (!orchestration) return orchestration;
+
+  const child = orchestration.subAgents.find(item => item.sessionId === input.sessionId);
+  if (!child) return orchestration;
+
+  const now = input.now ?? Date.now();
+  const subAgents = orchestration.subAgents.map(item => {
+    if (item.sessionId !== input.sessionId) return item;
+    return {
+      ...item,
+      status: item.status === 'completed' ? item.status : 'needs_review',
+      lastActivityAt: now,
+      updatedAt: now,
+    } satisfies SessionSubAgentLifecycleEntry;
+  });
+  const tasks = orchestration.taskBoard.tasks.map(task => {
+    if (task.id !== child.taskId) return task;
+    return {
+      ...task,
+      status: task.status === 'completed' ? task.status : 'needs_review',
+    } satisfies SessionOrchestrationTask;
+  });
+
+  return refreshOrchestrationLedger({
+    ...orchestration,
+    phase: 'paused',
+    updatedAt: now,
+    taskBoard: { tasks },
+    subAgents,
+  }, {
+    currentTaskId: child.taskId,
+    needsUserConfirmation: true,
+    now,
+  });
+}
+
 export function attachOrchestrationArtifacts(
   orchestration: SessionOrchestrationState | undefined,
   artifacts: SessionOrchestrationArtifactPaths,
@@ -116,6 +228,77 @@ export function attachOrchestrationArtifacts(
     artifacts,
     updatedAt: now,
   }, { now });
+}
+
+export function mergeSessionOrchestrationState(
+  existing: SessionOrchestrationState | undefined,
+  rebuilt: SessionOrchestrationState | undefined,
+  now = Date.now(),
+): SessionOrchestrationState | undefined {
+  if (!existing) return rebuilt ? refreshOrchestrationLedger(rebuilt, { now }) : undefined;
+  if (!rebuilt) return refreshOrchestrationLedger(existing, { now });
+
+  const rebuiltById = new Map(rebuilt.taskBoard.tasks.map(task => [task.id, task]));
+  const tasks = existing.taskBoard.tasks.map(task => {
+    const refreshed = rebuiltById.get(task.id);
+    if (!refreshed) return task;
+    rebuiltById.delete(task.id);
+    return {
+      ...refreshed,
+      status: task.status,
+      ownerSessionId: task.ownerSessionId,
+      artifactPaths: task.artifactPaths,
+    } satisfies SessionOrchestrationTask;
+  });
+  tasks.push(...rebuiltById.values());
+
+  return refreshOrchestrationLedger({
+    ...rebuilt,
+    phase: existing.phase,
+    createdAt: existing.createdAt,
+    updatedAt: now,
+    taskBoard: { tasks },
+    subAgents: existing.subAgents,
+    artifacts: existing.artifacts ?? rebuilt.artifacts,
+    ledger: existing.ledger,
+    entropy: existing.entropy,
+  }, { now });
+}
+
+export function resumeSessionOrchestrationForFollowUp(
+  orchestration: SessionOrchestrationState | undefined,
+  now = Date.now(),
+): SessionOrchestrationState | undefined {
+  if (!orchestration || orchestration.phase === 'plan') return orchestration;
+
+  const tasks = orchestration.taskBoard.tasks.map(task => {
+    const resetPhaseGate = task.phase === 'audit' || task.phase === 'merge';
+    const resetBlockedWork = task.status === 'blocked' || task.status === 'needs_review';
+    return resetPhaseGate || resetBlockedWork
+      ? { ...task, status: 'pending' as const }
+      : task;
+  });
+  const currentTaskId = tasks.some(task => (
+    task.id === orchestration.ledger?.currentTaskId
+    && task.phase === 'plan'
+    && task.status === 'running'
+  ))
+    ? orchestration.ledger?.currentTaskId
+    : undefined;
+
+  return refreshOrchestrationLedger({
+    ...orchestration,
+    phase: 'plan',
+    updatedAt: now,
+    taskBoard: { tasks },
+    ledger: orchestration.ledger
+      ? { ...orchestration.ledger, currentTaskId }
+      : orchestration.ledger,
+  }, {
+    currentTaskId,
+    needsUserConfirmation: false,
+    now,
+  });
 }
 
 export function updateOrchestrationTaskStatus(
@@ -141,6 +324,83 @@ export function updateOrchestrationTaskStatus(
     updatedAt: now,
     taskBoard: { tasks },
   }, options);
+}
+
+export function getRunnableOrchestrationTasks(
+  orchestration: SessionOrchestrationState | undefined,
+): SessionOrchestrationTask[] {
+  if (!orchestration || orchestration.phase === 'paused' || orchestration.phase === 'done') return [];
+
+  const statuses = new Map(orchestration.taskBoard.tasks.map(task => [task.id, task.status]));
+  return orchestration.taskBoard.tasks.filter(task => (
+    task.phase === orchestration.phase
+    && task.status === 'pending'
+    && task.dependencies.every(dependency => isDependencySatisfied(statuses.get(dependency)))
+  ));
+}
+
+export function transitionOrchestrationPhase(
+  orchestration: SessionOrchestrationState | undefined,
+  target: SessionOrchestrationPhase,
+  options: TransitionOrchestrationPhaseOptions = {},
+): OrchestrationPhaseTransitionResult {
+  if (!orchestration) {
+    return {
+      ok: false,
+      orchestration,
+      reason: 'orchestration_not_initialized',
+      blockingTaskIds: [],
+    };
+  }
+
+  if (orchestration.phase === target) return { ok: true, orchestration };
+
+  if (target === 'paused' && orchestration.phase !== 'done') {
+    return transitionTo(orchestration, target, options);
+  }
+  if (orchestration.phase === 'paused' && target === 'plan') {
+    return transitionTo(orchestration, target, options);
+  }
+  if (orchestration.phase === 'audit' && target === 'plan') {
+    return transitionTo(orchestration, target, options);
+  }
+
+  const expectedTarget: Partial<Record<SessionOrchestrationPhase, SessionOrchestrationPhase>> = {
+    plan: 'audit',
+    audit: 'merge',
+    merge: 'done',
+  };
+  if (expectedTarget[orchestration.phase] !== target) {
+    return {
+      ok: false,
+      orchestration,
+      reason: 'invalid_transition',
+      blockingTaskIds: [],
+    };
+  }
+
+  const blockingTaskIds = orchestration.taskBoard.tasks
+    .filter(task => task.phase === orchestration.phase && !isPhaseTaskSatisfied(task))
+    .map(task => task.id);
+  if (blockingTaskIds.length > 0) {
+    return {
+      ok: false,
+      orchestration,
+      reason: 'phase_tasks_incomplete',
+      blockingTaskIds,
+    };
+  }
+
+  if ((target === 'merge' || target === 'done') && !options.artifactReady) {
+    return {
+      ok: false,
+      orchestration,
+      reason: 'artifact_not_ready',
+      blockingTaskIds: [],
+    };
+  }
+
+  return transitionTo(orchestration, target, options);
 }
 
 export function refreshOrchestrationLedger(
@@ -397,6 +657,32 @@ function buildProgressLedger(
     evidencePackagePath: options.evidencePackagePath ?? orchestration.ledger?.evidencePackagePath,
     updatedAt: now,
   };
+}
+
+function isDependencySatisfied(status: SessionOrchestrationTaskStatus | undefined): boolean {
+  return status === 'completed' || status === 'handoff_ready';
+}
+
+function isPhaseTaskSatisfied(task: SessionOrchestrationTask): boolean {
+  if (task.phase === 'plan') return isDependencySatisfied(task.status);
+  return task.status === 'completed';
+}
+
+function transitionTo(
+  orchestration: SessionOrchestrationState,
+  phase: SessionOrchestrationPhase,
+  options: TransitionOrchestrationPhaseOptions,
+): OrchestrationPhaseTransitionResult {
+  const now = options.now ?? Date.now();
+  const transitioned = refreshOrchestrationLedger({
+    ...orchestration,
+    phase,
+    updatedAt: now,
+  }, {
+    needsUserConfirmation: phase === 'paused',
+    now,
+  });
+  return { ok: true, orchestration: transitioned! };
 }
 
 function unique(values: string[]): string[] {

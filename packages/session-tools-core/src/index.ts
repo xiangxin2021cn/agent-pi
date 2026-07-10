@@ -127,6 +127,7 @@ export type {
   ApiTestResult,
   // Session self-management types
   SessionInfo,
+  SessionSpawnStatus,
   SessionListItem,
   ListSessionsOptions,
   ListSessionsResult,
@@ -160,12 +161,15 @@ export {
   handleUpdatePreferences,
   // Transform Data
   handleTransformData,
+  handleDocumentArtifact,
   // Script Sandbox
   handleScriptSandbox,
   // Render Template
   handleRenderTemplate,
   // Send Developer Feedback
   handleSendDeveloperFeedback,
+  // Spawn handoff status
+  handleGetSpawnStatus,
 } from './handlers/index.ts';
 
 export type {
@@ -182,9 +186,12 @@ export type {
   CredentialPromptArgs,
   UpdatePreferencesArgs,
   TransformDataArgs,
+  DocumentArtifactArgs,
+  DocumentArtifactSectionInput,
   ScriptSandboxArgs,
   RenderTemplateArgs,
   SendDeveloperFeedbackArgs,
+  GetSpawnStatusArgs,
 } from './handlers/index.ts';
 
 // Tool definitions — single source of truth
@@ -201,8 +208,10 @@ export {
   CallLlmSchema,
   UpdatePreferencesSchema,
   TransformDataSchema,
+  DocumentArtifactSchema,
   ScriptSandboxSchema,
   RenderTemplateSchema,
+  GetSpawnStatusSchema,
   // Browser tool schema
   BrowserToolSchema,
   // Developer feedback schema

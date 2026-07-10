@@ -4,7 +4,13 @@ import {
   attachOrchestrationArtifacts,
   buildSessionOrchestrationState,
   formatOrchestrationContext,
+  getRunnableOrchestrationTasks,
   getOrchestrationEntropySignal,
+  markSubAgentHandoffReady,
+  markSubAgentHandoffNeedsReview,
+  mergeSessionOrchestrationState,
+  resumeSessionOrchestrationForFollowUp,
+  transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
 } from './orchestration.ts';
 import type { SessionTaskContract } from './types.ts';
@@ -170,6 +176,230 @@ describe('session orchestration state', () => {
     expect(updated?.ledger?.completed).toBe(0);
     expect(updated?.ledger?.needsUserConfirmation).toBe(false);
     expect(updated?.ledger?.evidencePackagePath).toBe('C:/project/session/orchestration/evidence-packages/audit-1.json');
+  });
+
+  it('marks a running spawned assignment as handoff-ready when its report exists', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+
+    const withChild = appendSubAgentLifecycleEntry(
+      updateOrchestrationTaskStatus(orchestration, 'chapter-1-agent', 'running', {
+        artifactPaths: ['C:/project/session/orchestration/reports/chapter-1-agent.md'],
+        now: 200,
+      }),
+      {
+        sessionId: 'child-1',
+        name: 'Chapter 1 worker',
+        taskId: 'chapter-1-agent',
+        status: 'started',
+        reportPath: 'C:/project/session/orchestration/reports/chapter-1-agent.md',
+      },
+      200,
+    );
+
+    const updated = markSubAgentHandoffReady(withChild, {
+      sessionId: 'child-1',
+      reportPath: 'C:/project/session/orchestration/reports/chapter-1-agent.md',
+      reportSize: 2048,
+      now: 300,
+    });
+
+    expect(updated?.taskBoard.tasks).toContainEqual(expect.objectContaining({
+      id: 'chapter-1-agent',
+      status: 'handoff_ready',
+    }));
+    expect(updated?.subAgents).toContainEqual(expect.objectContaining({
+      sessionId: 'child-1',
+      taskId: 'chapter-1-agent',
+      status: 'handoff_received',
+      reportPath: 'C:/project/session/orchestration/reports/chapter-1-agent.md',
+      reportSize: 2048,
+    }));
+    expect(updated?.ledger?.handoffReady).toBe(1);
+    expect(updated?.ledger?.running).toBe(0);
+  });
+
+  it('marks a spawned assignment as needs-review when the child cannot produce a report', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+
+    const withChild = appendSubAgentLifecycleEntry(
+      updateOrchestrationTaskStatus(orchestration, 'chapter-1-agent', 'running', {
+        artifactPaths: ['C:/project/session/orchestration/reports/chapter-1-agent.md'],
+        now: 200,
+      }),
+      {
+        sessionId: 'child-1',
+        name: 'Chapter 1 worker',
+        taskId: 'chapter-1-agent',
+        status: 'started',
+        reportPath: 'C:/project/session/orchestration/reports/chapter-1-agent.md',
+      },
+      200,
+    );
+
+    const updated = markSubAgentHandoffNeedsReview(withChild, {
+      sessionId: 'child-1',
+      now: 300,
+    });
+
+    expect(updated?.taskBoard.tasks).toContainEqual(expect.objectContaining({
+      id: 'chapter-1-agent',
+      status: 'needs_review',
+    }));
+    expect(updated?.subAgents).toContainEqual(expect.objectContaining({
+      sessionId: 'child-1',
+      status: 'needs_review',
+    }));
+    expect(updated?.ledger?.needsReview).toBe(1);
+    expect(updated?.ledger?.needsUserConfirmation).toBe(true);
+  });
+
+  it('returns only current-phase tasks whose dependencies are satisfied', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+
+    expect(getRunnableOrchestrationTasks(orchestration).map(task => task.id)).toEqual(['chapter-1-agent']);
+
+    const handoffReady = updateOrchestrationTaskStatus(orchestration, 'chapter-1-agent', 'handoff_ready', { now: 200 });
+    expect(getRunnableOrchestrationTasks(handoffReady)).toEqual([]);
+
+    const auditTransition = transitionOrchestrationPhase(handoffReady, 'audit', { now: 300 });
+    expect(auditTransition.ok).toBe(true);
+    expect(getRunnableOrchestrationTasks(auditTransition.orchestration).map(task => task.id)).toEqual(['main-session-audit']);
+  });
+
+  it('blocks merge until audit completes and the artifact is ready', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+    const handoffReady = updateOrchestrationTaskStatus(orchestration, 'chapter-1-agent', 'handoff_ready', { now: 200 });
+    const auditTransition = transitionOrchestrationPhase(handoffReady, 'audit', { now: 300 });
+
+    const blockedByTask = transitionOrchestrationPhase(auditTransition.orchestration, 'merge', {
+      artifactReady: true,
+      now: 400,
+    });
+    expect(blockedByTask).toEqual(expect.objectContaining({
+      ok: false,
+      blockingTaskIds: ['main-session-audit'],
+    }));
+
+    const auditComplete = updateOrchestrationTaskStatus(
+      auditTransition.orchestration,
+      'main-session-audit',
+      'completed',
+      { now: 500 },
+    );
+    const blockedByArtifact = transitionOrchestrationPhase(auditComplete, 'merge', { now: 600 });
+    expect(blockedByArtifact).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'artifact_not_ready',
+    }));
+
+    const mergeTransition = transitionOrchestrationPhase(auditComplete, 'merge', {
+      artifactReady: true,
+      now: 700,
+    });
+    expect(mergeTransition.ok).toBe(true);
+    if (!mergeTransition.ok) throw new Error(mergeTransition.reason);
+    expect(mergeTransition.orchestration.phase).toBe('merge');
+    expect(getRunnableOrchestrationTasks(mergeTransition.orchestration).map(task => task.id)).toEqual(['main-session-merge']);
+  });
+
+  it('allows completion only after the merge task and final artifact are complete', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+    const planComplete = updateOrchestrationTaskStatus(orchestration, 'chapter-1-agent', 'completed', { now: 200 });
+    const audit = transitionOrchestrationPhase(planComplete, 'audit', { now: 300 });
+    const auditComplete = updateOrchestrationTaskStatus(audit.orchestration, 'main-session-audit', 'completed', { now: 400 });
+    const merge = transitionOrchestrationPhase(auditComplete, 'merge', { artifactReady: true, now: 500 });
+    const mergeComplete = updateOrchestrationTaskStatus(merge.orchestration, 'main-session-merge', 'completed', { now: 600 });
+
+    const done = transitionOrchestrationPhase(mergeComplete, 'done', { artifactReady: true, now: 700 });
+    expect(done.ok).toBe(true);
+    if (!done.ok) throw new Error(done.reason);
+    expect(done.orchestration.phase).toBe('done');
+    expect(getRunnableOrchestrationTasks(done.orchestration)).toEqual([]);
+  });
+
+  it('preserves active orchestration runtime state when follow-up instructions rebuild the plan', () => {
+    const existing = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+    const running = appendSubAgentLifecycleEntry(
+      updateOrchestrationTaskStatus(existing, 'chapter-1-agent', 'running', {
+        currentTaskId: 'chapter-1-agent',
+        artifactPaths: ['C:/reports/chapter-1.md'],
+        now: 200,
+      }),
+      {
+        sessionId: 'child-1',
+        taskId: 'chapter-1-agent',
+        status: 'started',
+        reportPath: 'C:/reports/chapter-1.md',
+      },
+      200,
+    );
+    const paused = transitionOrchestrationPhase(running, 'paused', { now: 250 });
+    expect(paused.ok).toBe(true);
+
+    const rebuilt = buildSessionOrchestrationState({
+      objective: `${contract.originalRequest}\n补充要求：保留中文输出。`,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 300,
+    });
+    const merged = mergeSessionOrchestrationState(paused.orchestration, rebuilt, 300);
+
+    expect(merged?.phase).toBe('paused');
+    expect(merged?.createdAt).toBe(100);
+    expect(merged?.subAgents).toContainEqual(expect.objectContaining({
+      sessionId: 'child-1',
+      status: 'started',
+      reportPath: 'C:/reports/chapter-1.md',
+    }));
+    expect(merged?.taskBoard.tasks).toContainEqual(expect.objectContaining({
+      id: 'chapter-1-agent',
+      status: 'running',
+      artifactPaths: ['C:/reports/chapter-1.md'],
+    }));
+    expect(merged?.ledger?.currentTaskId).toBe('chapter-1-agent');
+
+    const resumed = resumeSessionOrchestrationForFollowUp(merged, 400);
+    expect(resumed?.phase).toBe('plan');
+    expect(resumed?.subAgents).toEqual(merged?.subAgents);
+    expect(resumed?.taskBoard.tasks).toContainEqual(expect.objectContaining({
+      id: 'chapter-1-agent',
+      status: 'running',
+    }));
+    expect(resumed?.taskBoard.tasks).toContainEqual(expect.objectContaining({
+      id: 'main-session-audit',
+      status: 'pending',
+    }));
+    expect(resumed?.ledger?.needsUserConfirmation).toBe(false);
   });
 
   describe('IWG-style regression checkpoints', () => {

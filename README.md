@@ -14,15 +14,32 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V2.0.1.**
+**Current release: V2.1.0.**
 
-**当前发布版：V2.0.1。**
+**当前发布版：V2.1.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.1.0 Verifiable Document Delivery / V2.1.0 可验证文档交付
+
+V2.1.0 turns enterprise long-document execution into an application-owned delivery protocol. Stable requirements, recoverable section artifacts, executable Plan/Audit/Merge transitions, complete-text checks, and final evidence packages make delivery state inspectable instead of relying on model self-reporting.
+
+V2.1.0 将企业长文档执行升级为应用负责的交付协议。稳定需求账本、可恢复章节产物、可执行 Plan/Audit/Merge、全文校验和最终证据包让交付状态可检查，不再只依赖模型自述。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Stable requirement ledger | Assigns stable IDs and verification rules to deliverables, constraints, evidence, formats, and acceptance criteria; follow-ups extend rather than reset the ledger. | 为交付物、约束、证据、格式和验收项分配稳定 ID 与验证规则；后续要求只扩展、不重置账本。 |
+| Requirement provenance | Final audits persist status, evidence references, verification time, and failure reason per requirement; the session Info popover shows a bounded summary. | 最终审查按需求记录状态、证据引用、验证时间和失败原因；会话“信息”弹窗展示受控摘要。 |
+| Transactional Markdown | `document_artifact` writes section chunks, freezes hashes, assembles atomically, and validates the final file so failed sections resume without rewriting completed work. | `document_artifact` 分章节写入、冻结哈希、原子组装并校验最终文件，失败后可从章节续跑。 |
+| Executable orchestration | Dependency-aware Plan/Audit/Merge/Done transitions block premature review, merge, or completion when tasks, handoffs, sections, or artifacts are incomplete. | 依赖感知的 Plan/Audit/Merge/Done 状态机会在任务、交接、章节或产物未完成时阻止过早审查、合并或结束。 |
+| Complete-text audit | Markdown, text, and JSON outputs up to 5 MiB are audited in full while previews stay bounded; oversized mandatory audits fail closed to manual review. | 5 MiB 以内 Markdown、文本和 JSON 输出执行全文审查，预览仍保持受控；超限的强制审查转入人工复核。 |
+| Current-turn completion proof | Completion requires a transactionally validated artifact that the deterministic verifier identifies as output of the current turn; old files, read-only access, and reviewer claims cannot pass the gate. | 完成必须同时具备事务校验产物和确定性“本轮输出”证明；旧文件、只读访问和审查模型自述不能通过门槛。 |
+| Final evidence package | Goal Audit uses a compact evidence package first and rewrites it after reviewer and completion gates resolve. | Goal Audit 优先使用紧凑证据包，并在审查与完成门槛结束后写回最终状态。 |
+| Core runtime | Claude Agent SDK 0.3.206 adds lifecycle/terminal-state signals; Pi 0.80.6 improves Windows discovery, long-run retries, compaction accounting, truncated tool calls, and DeepSeek DS4 overflow detection. | Claude Agent SDK 0.3.206 增加生命周期与终态信号；Pi 0.80.6 改进 Windows 发现、长任务重试、压缩预算、截断工具调用和 DeepSeek DS4 溢出识别。 |
 
 ### V2.0.1 Orchestration Control Patch / V2.0.1 编排控制小修
 
@@ -55,20 +72,6 @@ V2.0.0 将 Agent π 的长任务执行升级为结构化编排系统：任务板
 | Entropy and lifecycle | The audit layer tracks many-source/many-agent/tool-failure/write-failure/workspace-scan pressure and records spawned-agent lifecycle state. | 审查层记录多来源、多智能体、工具失败、写入失败、工作目录扫描压力，并记录分智能体生命周期。 |
 | Regression suite | Adds IWG-style regression tests for source scope, task board prompts, tool preflight blocking, structured pauses, and entropy signals. | 新增 IWG 风格回归测试，覆盖来源边界、任务板提示、工具前置拦截、结构化暂停和熵信号。 |
 
-### V1.3.2 Hotfix / V1.3.2 紧急修复
-
-V1.3.2 is an emergency reliability release for long Markdown and document deliverables. Agent Pi now uses a manifest-first, section-chunk artifact workflow for professional long documents, avoids one-shot oversized Write/heredoc/Python payloads, and lets Goal Loop resume from completed chunks instead of rewriting the whole document after a failed section.
-
-V1.3.2 是面向长 Markdown 和长文档交付物的紧急可靠性修复：专业长文档会先建立产物清单，再按章节分块写入和组装；智能体不再把完整长文档一次性塞进 Write、heredoc 或超长 Python/Bash 命令；某一章节失败时，Goal Loop 会从已完成分块继续，而不是整篇推倒重来。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Long-document writer | Professional Document, Strict Delivery, and Multi-Agent Deep modes now require manifest-first section writing for large deliverables. | 专业文档、严格交付、多智能体深度模式要求长交付物先建清单，再按章节分块写入。 |
-| Guide-first tools and skills | External MCP/API/Knowledge Base tools stay blocked until their `guide.md` is read; mentioned skills stay blocked until `SKILL.md` is read and followed. | 外挂 MCP/API/知识库工具读取 `guide.md` 前保持拦截；被调用的技能读取并遵循 `SKILL.md` 前也保持拦截。 |
-| Explicit write targets | Long-document Write/Edit retries must include the exact target path/file_path, avoiding failed calls that send only content. | 长文档 Write/Edit 重试必须带精确目标 path/file_path，避免只发送 content 导致工具校验失败。 |
-| Section-level recovery | Failed long-document writes resume from completed chunks and retry only the failed section before reassembling the final Markdown. | 长文档写入失败时从已完成分块继续，只重试失败章节，再组装最终 Markdown。 |
-| Artifact verification | Goal Loop checks the final path, section count, required headings, and non-empty content before accepting completion. | Goal Loop 会检查最终路径、章节数量、必需标题和非空内容后再接受完成。 |
-
 Older release details are available on GitHub Releases.
 
 更早版本说明请查看 GitHub Releases。
@@ -79,6 +82,8 @@ Older release details are available on GitHub Releases.
 | --- | --- | --- |
 | Goal Loop | Reviews long-running tasks against the user's stated goal, required files, formats, evidence, and verification signals before accepting completion. | 按用户目标、必需文件、格式、证据和验证信号审查长任务结果，避免过早完成。 |
 | Task Contract | Converts user instructions into a durable task contract with hard constraints, acceptance checks, evidence requirements, and forbidden shortcuts. | 将用户要求转成可持久化任务契约，记录硬约束、验收标准、证据要求和禁止偷懒项。 |
+| Requirement Ledger | Tracks each material requirement with a stable ID, verification rule, status, evidence references, and failure reason across follow-up turns. | 跨后续轮次以稳定 ID、验证规则、状态、证据引用和失败原因追踪每项关键要求。 |
+| Transactional Document Artifact | Writes long Markdown as recoverable sections and accepts completion only after hash-frozen atomic assembly and validation. | 将长 Markdown 写成可恢复章节，仅在冻结哈希、原子组装并校验后接受完成。 |
 | Document Plan | Adds structure, audience, tone, section, table, chart, citation, and delivery-format expectations for document tasks. | 为文档任务提取标题、受众、语气、章节、表格、图表、引用和交付格式约束。 |
 | Project Memory Lite | Stores local project facts, sources, citations, decisions, formal outputs, reviews, and quality telemetry under `.agent-pi/brain`. | 在 `.agent-pi/brain` 中沉淀来源、引用、决策、正式成果、审稿和质量经验。 |
 | Enterprise Knowledge Base | Promotes local files into stable file-memory MCP knowledge sources with category/folder metadata and explicit user activation. | 将本地文件提升为稳定 file-memory MCP 知识源，带分类/文件夹元数据，并要求用户显式启用。 |
@@ -99,7 +104,7 @@ Release assets / 发布资产:
 
 - Windows x64: `Agent-Pi-x64.exe`, `Agent-Pi-x64.exe.blockmap`, `latest.yml`
 - macOS Apple Silicon: `Agent-Pi-arm64.dmg`, `Agent-Pi-arm64.zip`
-- macOS Intel: `Agent-Pi-x64.dmg`, `Agent-Pi-x64.zip`
+- macOS Intel: `Agent-Pi-x64.dmg`, `Agent-Pi-x64.zip`, shared `latest-mac.yml`
 - Linux x64: `Agent-Pi-x64.AppImage`, `latest-linux.yml`
 
 ## User Manual / 用户手册

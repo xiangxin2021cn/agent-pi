@@ -227,7 +227,7 @@ Ensure-BundledBun
 Write-Host "Installing dependencies..."
 Push-Location $RootDir
 try {
-    bun install
+    bun install --frozen-lockfile
 } finally {
     Pop-Location
 }

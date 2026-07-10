@@ -5,7 +5,7 @@ import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, extname, join } from 'path'
-import { constants as FS_CONSTANTS, existsSync } from 'fs'
+import { constants as FS_CONSTANTS, existsSync, statSync } from 'fs'
 import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
@@ -83,6 +83,11 @@ import {
   buildSessionOrchestrationState,
   appendSubAgentLifecycleEntry,
   attachOrchestrationArtifacts,
+  markSubAgentHandoffNeedsReview,
+  markSubAgentHandoffReady,
+  mergeSessionOrchestrationState,
+  resumeSessionOrchestrationForFollowUp,
+  transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
@@ -113,7 +118,10 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
-import { GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
+import type { SessionSpawnStatus } from '@craft-agent/session-tools-core'
+import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
+import { enforceGoalCompletionGates } from './goal-completion-gates'
+import { verifyDocumentArtifactReadiness } from './document-artifact-readiness'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
@@ -1301,6 +1309,9 @@ const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
   'safety',
 ])
 
+const SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT = 4
+const SPAWN_SESSION_HANDOFF_TIMEOUT_MS = 30 * 60 * 1000
+
 function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriterionKind {
   return typeof value === 'string' && SESSION_GOAL_CRITERION_KINDS.has(value as SessionGoalCriterionKind)
 }
@@ -1496,7 +1507,12 @@ function extractGoalPdfUtf16Text(buffer: Buffer): string {
     .join('\n')
 }
 
-async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{ content: string; truncated: boolean } | undefined> {
+async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise<{
+  content: string
+  truncated: boolean
+  auditContent?: string
+  auditContentOversized?: boolean
+} | undefined> {
   const extension = extname(filePath).toLowerCase()
 
   if (extension === '.pdf') {
@@ -1555,6 +1571,20 @@ async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise
     return undefined
   }
 
+  if (sizeBytes <= GOAL_FULL_TEXT_AUDIT_MAX_BYTES) {
+    try {
+      const auditContent = (await readFile(filePath, 'utf-8')).replace(/\0/g, '').trim()
+      if (!auditContent) return undefined
+      return {
+        content: auditContent.slice(0, GOAL_FILE_PREVIEW_MAX_BYTES),
+        truncated: auditContent.length > GOAL_FILE_PREVIEW_MAX_BYTES,
+        auditContent,
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
     handle = await open(filePath, 'r')
@@ -1570,7 +1600,7 @@ async function readGoalFilePreview(filePath: string, sizeBytes: number): Promise
       .replace(/\0/g, '')
       .trim()
 
-    return content ? { content, truncated } : undefined
+    return content ? { content, truncated, auditContentOversized: true } : undefined
   } catch {
     return undefined
   } finally {
@@ -4298,6 +4328,7 @@ export class SessionManager implements ISessionManager {
       const miniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
       const envOverrides: Record<string, string> = {
         CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
+        ...(managed.workingDirectory ? { CRAFT_WORKING_DIRECTORY: managed.workingDirectory } : {}),
         // Pass mini model to SDK subprocess so built-in tools like WebFetch
         // use the correct model for summarization (instead of hardcoded Haiku)
         ...(miniModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: miniModel } : {}),
@@ -5110,6 +5141,11 @@ export class SessionManager implements ISessionManager {
           throw new Error('Nested spawn_session is disabled for spawned sub-agents. Return a structured handoff with gaps and recommendations to the parent session instead.')
         }
 
+        const activeSpawnCount = this.getActiveSpawnHandoffCount(managed.id)
+        if (activeSpawnCount >= SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT) {
+          throw new Error(`spawn_session active handoff limit reached (${activeSpawnCount}/${SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT}). Wait for existing spawned sessions to finish and use get_spawn_status to collect ready report_path handoffs before spawning more.`)
+        }
+
         const spawnedWorkingDirectory = resolveSpawnedSessionWorkingDirectory(request.workingDirectory, managed.workingDirectory)
         const parentOrchestration = managed.goalState?.orchestration
         const artifacts = parentOrchestration
@@ -5200,6 +5236,8 @@ export class SessionManager implements ISessionManager {
               taskId: spawnTask?.id,
               status: 'started',
               workingDirectory: session.workingDirectory,
+              briefPath: taskBriefPath,
+              reportPath,
               sourceSlugs: allowedSourceSlugs,
             }, lifecycleUpdatedAt),
             updatedAt: lifecycleUpdatedAt,
@@ -5225,6 +5263,11 @@ export class SessionManager implements ISessionManager {
           status: 'started' as const,
           connection: session.llmConnection,
           model: session.model,
+          taskId: spawnTask?.id,
+          briefPath: taskBriefPath,
+          reportPath,
+          pollAfterMs: 5000,
+          handoffRequired: Boolean(reportPath),
         }
       }
 
@@ -5251,7 +5294,17 @@ export class SessionManager implements ISessionManager {
             llmConnection: session.llmConnection,
             model: session.model,
             isActive: session.agent != null,
+            parentSessionId: session.parentSessionId,
+            parentSessionKind: session.parentSessionKind,
+            isProcessing: session.isProcessing,
+            queueLength: session.messageQueue.length,
+            lastMessageAt: session.lastMessageAt,
+            spawnStatus: this.getSpawnStatus(targetId) ?? undefined,
           }
+        },
+        getSpawnStatusFn: (sessionId?: string) => {
+          const targetId = sessionId ?? managed.id
+          return this.getSpawnStatus(targetId)
         },
         listSessionsFn: (options) => {
           const DEFAULT_LIMIT = 20
@@ -5963,12 +6016,14 @@ export class SessionManager implements ISessionManager {
     return [...this.sessions.values()]
       .filter(session => session.parentSessionId === parentSessionId && session.parentSessionKind === 'spawn')
       .map(session => {
+        this.refreshParentSpawnHandoffFromChild(session)
         const firstUserMessage = session.messages.find(message => message.role === 'user' && !message.isIntermediate)
         const finalAssistantMessage = [...session.messages].reverse().find(message =>
           message.role === 'assistant'
           && !message.isIntermediate
           && message.content.trim().length > 0
         )
+        const spawnStatus = this.getSpawnStatus(session.id)
 
         return {
           id: session.id,
@@ -5977,8 +6032,155 @@ export class SessionManager implements ISessionManager {
           hasFinalAssistant: Boolean(finalAssistantMessage),
           firstUserMessagePreview: firstUserMessage ? compactGoalSpawnPreview(firstUserMessage.content) : undefined,
           finalAssistantPreview: finalAssistantMessage ? compactGoalSpawnPreview(finalAssistantMessage.content) : undefined,
+          taskId: spawnStatus?.taskId,
+          reportPath: spawnStatus?.reportPath,
+          reportPathExists: spawnStatus?.reportPathExists,
+          reportSize: spawnStatus?.reportSize,
+          handoffStatus: spawnStatus?.handoffStatus,
         }
       })
+  }
+
+  private getSpawnStatus(sessionId: string): SessionSpawnStatus | null {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+
+    this.refreshParentSpawnHandoffFromChild(session)
+
+    const parent = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined
+    const lifecycle = parent?.goalState?.orchestration?.subAgents.find(item => item.sessionId === session.id)
+    const report = this.getReportFileState(lifecycle?.reportPath)
+    const ready = report.exists && (report.size ?? 0) > 0
+    const failedHandoff = lifecycle?.status === 'needs_review' || lifecycle?.status === 'failed'
+    const pendingHandoff = session.isProcessing
+      || session.messageQueue.length > 0
+      || lifecycle?.status === 'started'
+    const lifecycleStatus = ready
+      ? 'handoff_ready'
+      : session.isProcessing
+        ? 'running'
+        : lifecycle?.status ?? (session.parentSessionKind === 'spawn' ? 'started' : 'unknown')
+
+    return {
+      sessionId: session.id,
+      parentSessionId: session.parentSessionId,
+      taskId: lifecycle?.taskId,
+      lifecycleStatus,
+      isActive: session.agent != null,
+      isProcessing: session.isProcessing,
+      queueLength: session.messageQueue.length,
+      userStatus: session.sessionStatus ?? 'todo',
+      reportPath: lifecycle?.reportPath,
+      reportPathExists: report.exists,
+      reportSize: report.size,
+      handoffStatus: session.parentSessionKind !== 'spawn'
+        ? 'not_applicable'
+        : ready
+          ? 'ready'
+          : failedHandoff
+            ? 'failed'
+          : pendingHandoff
+            ? 'pending'
+            : lifecycle?.reportPath
+              ? 'missing'
+              : 'pending',
+      lastActivityAt: session.lastMessageAt ?? lifecycle?.lastActivityAt ?? lifecycle?.updatedAt,
+      briefPath: lifecycle?.briefPath,
+    }
+  }
+
+  private getActiveSpawnHandoffCount(parentSessionId: string): number {
+    return [...this.sessions.values()]
+      .filter(session => session.parentSessionId === parentSessionId && session.parentSessionKind === 'spawn')
+      .filter(session => {
+        const status = this.getSpawnStatus(session.id)
+        return Boolean(status && (
+          status.isProcessing
+          || status.queueLength > 0
+          || status.handoffStatus === 'pending'
+        ))
+      }).length
+  }
+
+  private refreshParentSpawnHandoffFromChild(child: ManagedSession): void {
+    if (child.parentSessionKind !== 'spawn' || !child.parentSessionId) return
+
+    const parent = this.sessions.get(child.parentSessionId)
+    const orchestration = parent?.goalState?.orchestration
+    if (!parent || !orchestration) return
+
+    const lifecycle = orchestration.subAgents.find(item => item.sessionId === child.id)
+    if (!lifecycle?.reportPath) return
+
+    const now = Date.now()
+    const report = this.getReportFileState(lifecycle.reportPath)
+    const reportReady = report.exists && Boolean(report.size && report.size > 0)
+    if (!reportReady) {
+      const hasFinalAssistant = child.messages.some(message =>
+        message.role === 'assistant'
+        && !message.isIntermediate
+        && message.content.trim().length > 0
+      )
+      const hasError = child.messages.some(message => message.role === 'error')
+      const timedOut = now - lifecycle.createdAt >= SPAWN_SESSION_HANDOFF_TIMEOUT_MS
+      const alreadyNeedsReview = lifecycle.status === 'needs_review' || lifecycle.status === 'failed'
+
+      if (!alreadyNeedsReview && (hasFinalAssistant || hasError || timedOut)) {
+        const updatedOrchestration = markSubAgentHandoffNeedsReview(orchestration, {
+          sessionId: child.id,
+          now,
+        })
+        if (!updatedOrchestration || updatedOrchestration === orchestration) return
+
+        parent.goalState = {
+          ...parent.goalState!,
+          orchestration: updatedOrchestration,
+          updatedAt: updatedOrchestration.updatedAt,
+        }
+        parent.agent?.updateSessionGoalState?.(parent.goalState)
+        this.persistSession(parent)
+        this.persistOrchestrationLedgerInBackground(parent)
+        this.sendEvent({
+          type: 'goal_state_changed',
+          sessionId: parent.id,
+          goalState: parent.goalState,
+        }, parent.workspace.id)
+      }
+      return
+    }
+
+    const updatedOrchestration = markSubAgentHandoffReady(orchestration, {
+      sessionId: child.id,
+      reportPath: lifecycle.reportPath,
+      reportSize: report.size,
+      now,
+    })
+    if (!updatedOrchestration || updatedOrchestration === orchestration) return
+
+    parent.goalState = {
+      ...parent.goalState!,
+      orchestration: updatedOrchestration,
+      updatedAt: updatedOrchestration.updatedAt,
+    }
+    parent.agent?.updateSessionGoalState?.(parent.goalState)
+    this.persistSession(parent)
+    this.persistOrchestrationLedgerInBackground(parent)
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: parent.id,
+      goalState: parent.goalState,
+    }, parent.workspace.id)
+  }
+
+  private getReportFileState(reportPath: string | undefined): { exists: boolean; size?: number } {
+    if (!reportPath) return { exists: false }
+    try {
+      if (!existsSync(reportPath)) return { exists: false }
+      const info = statSync(reportPath)
+      return { exists: info.isFile(), size: info.size }
+    } catch {
+      return { exists: false }
+    }
   }
 
   /**
@@ -7694,6 +7896,7 @@ export class SessionManager implements ISessionManager {
     // 1. Cleanup state
     this.setProcessing(managed, false)
     managed.stopRequested = false  // Reset for next turn
+    this.refreshParentSpawnHandoffFromChild(managed)
 
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
     managed.turnStartFinalMessageId = undefined
@@ -7760,22 +7963,34 @@ export class SessionManager implements ISessionManager {
       }
 
       const goalStateBeforeAudit = managed.goalState
+      let goalStateForAudit = goalStateBeforeAudit
+      let auditTransitionBlockReason: string | undefined
       if (goalStateBeforeAudit && goalStateBeforeAudit.mode !== 'off') {
         const auditStartedAt = Date.now()
-        const auditingOrchestration = goalStateBeforeAudit.orchestration
-          ? updateOrchestrationTaskStatus({
-              ...goalStateBeforeAudit.orchestration,
-              phase: 'audit',
-            }, 'main-session-audit', 'running', {
+        const auditTransition = goalStateBeforeAudit.orchestration
+          ? transitionOrchestrationPhase(goalStateBeforeAudit.orchestration, 'audit', { now: auditStartedAt })
+          : undefined
+        if (auditTransition && !auditTransition.ok) {
+          const blockers = auditTransition.blockingTaskIds.length > 0
+            ? ` (${auditTransition.blockingTaskIds.join(', ')})`
+            : ''
+          auditTransitionBlockReason = `Orchestration audit transition blocked: ${auditTransition.reason}${blockers}.`
+        }
+        const auditPhaseOrchestration = auditTransition?.ok ? auditTransition.orchestration : goalStateBeforeAudit.orchestration
+        const auditingOrchestration = auditTransition?.ok
+          ? updateOrchestrationTaskStatus(auditPhaseOrchestration, 'main-session-audit', 'running', {
               currentTaskId: 'main-session-audit',
               now: auditStartedAt,
             })
-          : undefined
-        const auditingGoalState: SessionGoalState = {
+          : auditPhaseOrchestration
+        goalStateForAudit = {
           ...goalStateBeforeAudit,
+          orchestration: auditingOrchestration,
+        }
+        const auditingGoalState: SessionGoalState = {
+          ...goalStateForAudit,
           status: 'auditing',
           iteration: goalStateBeforeAudit.iteration + 1,
-          orchestration: auditingOrchestration ?? goalStateBeforeAudit.orchestration,
           updatedAt: auditStartedAt,
         }
         managed.goalState = auditingGoalState
@@ -7791,14 +8006,15 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      const goalDecision = await this.goalController.onTurnStopped(goalStateBeforeAudit, {
+      const expectedOutputDirectory = getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory)
+      let goalDecision = await this.goalController.onTurnStopped(goalStateForAudit, {
         messages: managed.messages,
         turnStartFinalMessageId,
         stoppedReason: reason,
         reviewer: this.buildGoalReviewer(managed),
         evidencePackageWriter: this.buildGoalEvidencePackageWriter(managed),
         fileVerifier: this.buildGoalFileVerifier(),
-        expectedOutputDirectory: getSessionOutputPath(managed.workspace.rootPath, sessionId, managed.workingDirectory),
+        expectedOutputDirectory,
         spawnedSessions: this.getSpawnedSessionSummaries(sessionId),
         contextPressure: {
           enabledSourceCount: managed.enabledSourceSlugs?.length ?? 0,
@@ -7806,20 +8022,101 @@ export class SessionManager implements ISessionManager {
           inputTokens: managed.tokenUsage?.inputTokens,
         },
       })
+      let completionArtifactReady = goalDecision.action === 'complete'
+      let completionArtifactPath: string | undefined
+      if (goalDecision.action === 'complete') {
+        const artifactReadiness = verifyDocumentArtifactReadiness({
+          goalState: goalDecision.goalState,
+          sessionPath: getSessionStoragePath(managed.workspace.rootPath, sessionId),
+          expectedOutputDirectory,
+          currentOutputPaths: goalDecision.verifiedOutputPaths ?? [],
+        })
+        completionArtifactReady = artifactReadiness.ready
+        completionArtifactPath = artifactReadiness.finalPath
+        goalDecision = enforceGoalCompletionGates(goalDecision, [
+          auditTransitionBlockReason,
+          artifactReadiness.ready ? undefined : artifactReadiness.reason,
+        ].filter((reason): reason is string => Boolean(reason)), Date.now())
+      }
+      if (goalDecision.action !== 'skip' && goalDecision.goalState.orchestration) {
+        const artifacts = goalDecision.goalState.orchestration.artifacts
+          ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
+        const finalAssistant = [...managed.messages].reverse().find(message => (
+          message.role === 'assistant'
+          && !message.isIntermediate
+          && message.content.trim().length > 0
+        ))
+        try {
+          const packageEvidence = await writeGoalEvidencePackage({
+            artifacts,
+            goalState: goalDecision.goalState,
+            result: goalDecision.result,
+            messages: managed.messages,
+            finalAssistant,
+          })
+          if (!goalDecision.result.evidence.some(item => (
+            item.label === packageEvidence.label && item.detail === packageEvidence.detail
+          ))) {
+            goalDecision.result.evidence.push(packageEvidence)
+            const latestAudit = goalDecision.goalState.auditHistory.at(-1)
+            if (latestAudit && latestAudit !== goalDecision.result) latestAudit.evidence.push(packageEvidence)
+          }
+        } catch (error) {
+          const reason = `Final orchestration evidence package could not be written: ${error instanceof Error ? error.message : String(error)}`
+          if (goalDecision.action === 'complete') {
+            goalDecision = enforceGoalCompletionGates(goalDecision, [reason], Date.now())
+          } else {
+            sessionLog.warn(reason)
+          }
+        }
+      }
       if (goalDecision.action !== 'skip') {
         const evidencePackagePath = goalDecision.result.evidence.find(item => item.label === 'orchestration_evidence_package')?.detail
         const auditFinishedAt = Date.now()
-        const nextOrchestration = goalDecision.goalState.orchestration
-          ? updateOrchestrationTaskStatus({
-              ...goalDecision.goalState.orchestration,
-              phase: goalDecision.action === 'complete' ? 'merge' : goalDecision.action === 'needs_review' ? 'paused' : 'audit',
-            }, 'main-session-audit', goalDecision.action === 'complete' ? 'completed' : goalDecision.action === 'needs_review' ? 'blocked' : 'needs_review', {
+        const auditTaskUpdated = goalDecision.goalState.orchestration
+          ? updateOrchestrationTaskStatus(
+            goalDecision.goalState.orchestration,
+            'main-session-audit',
+            goalDecision.action === 'complete' ? 'completed' : goalDecision.action === 'needs_review' ? 'blocked' : 'needs_review', {
               currentTaskId: 'main-session-audit',
               evidencePackagePath,
               needsUserConfirmation: goalDecision.action === 'needs_review',
               now: auditFinishedAt,
-            })
+            },
+          )
           : undefined
+        let nextOrchestration = auditTaskUpdated
+        if (auditTaskUpdated) {
+          if (goalDecision.action === 'complete') {
+            const mergeTransition = transitionOrchestrationPhase(auditTaskUpdated, 'merge', {
+              artifactReady: completionArtifactReady,
+              now: auditFinishedAt,
+            })
+            if (mergeTransition.ok) {
+              const mergeCompleted = updateOrchestrationTaskStatus(
+                mergeTransition.orchestration,
+                'main-session-merge',
+                'completed',
+                {
+                  currentTaskId: 'main-session-merge',
+                  artifactPaths: completionArtifactPath ? [completionArtifactPath] : undefined,
+                  now: auditFinishedAt,
+                },
+              )
+              const doneTransition = transitionOrchestrationPhase(mergeCompleted, 'done', {
+                artifactReady: completionArtifactReady,
+                now: auditFinishedAt,
+              })
+              nextOrchestration = doneTransition.ok ? doneTransition.orchestration : mergeCompleted
+            }
+          } else if (goalDecision.action === 'needs_review') {
+            const pauseTransition = transitionOrchestrationPhase(auditTaskUpdated, 'paused', { now: auditFinishedAt })
+            nextOrchestration = pauseTransition.ok ? pauseTransition.orchestration : auditTaskUpdated
+          } else {
+            const repairTransition = transitionOrchestrationPhase(auditTaskUpdated, 'plan', { now: auditFinishedAt })
+            nextOrchestration = repairTransition.ok ? repairTransition.orchestration : auditTaskUpdated
+          }
+        }
         const goalStateAfterAudit: SessionGoalState = {
           ...goalDecision.goalState,
           orchestration: nextOrchestration ?? goalDecision.goalState.orchestration,
@@ -7955,6 +8252,8 @@ export class SessionManager implements ISessionManager {
           sizeBytes: info.size,
           preview: preview?.content,
           previewTruncated: preview?.truncated,
+          auditContent: preview?.auditContent,
+          auditContentOversized: preview?.auditContentOversized,
         }
       } catch (error) {
         const code = getErrorCode(error)
@@ -7984,12 +8283,13 @@ export class SessionManager implements ISessionManager {
       existing?: SessionOrchestrationState
     },
   ): SessionOrchestrationState | undefined {
-    const orchestration = buildSessionOrchestrationState({
+    const rebuilt = buildSessionOrchestrationState({
       objective: input.objective,
       taskContract: input.taskContract,
       enabledSourceSlugs: input.enabledSourceSlugs,
       now: input.now,
-    }) ?? input.existing
+    })
+    const orchestration = mergeSessionOrchestrationState(input.existing, rebuilt, input.now)
     if (!orchestration) return undefined
 
     const artifacts = input.existing?.artifacts ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
@@ -8160,6 +8460,13 @@ export class SessionManager implements ISessionManager {
     const elapsedWallClockMs = Math.max(0, now - current.createdAt)
     const nextObjective = appendGoalObjectiveFollowUp(current.objective, message)
     const mergedTaskContract = mergeTaskContracts(existingTaskContract, taskContract)
+    const resumedOrchestration = resumeSessionOrchestrationForFollowUp(this.buildOrchestrationStateForGoal(managed, {
+      objective: nextObjective,
+      taskContract: mergedTaskContract,
+      enabledSourceSlugs: managed.enabledSourceSlugs,
+      now,
+      existing: current.orchestration,
+    }), now) ?? current.orchestration
     const goalState: SessionGoalState = {
       ...current,
       objective: nextObjective,
@@ -8168,13 +8475,7 @@ export class SessionManager implements ISessionManager {
       maxIterations: Math.max(current.maxIterations, current.iteration + policy.maxIterations),
       criteria: [...current.criteria, ...newCriteria],
       taskContract: mergedTaskContract,
-      orchestration: this.buildOrchestrationStateForGoal(managed, {
-        objective: nextObjective,
-        taskContract: mergedTaskContract,
-        enabledSourceSlugs: managed.enabledSourceSlugs,
-        now,
-        existing: current.orchestration,
-      }) ?? current.orchestration,
+      orchestration: resumedOrchestration,
       budgets: {
         ...current.budgets,
         maxWallClockMs: Math.max(current.budgets?.maxWallClockMs ?? 0, elapsedWallClockMs + policy.maxWallClockMs),

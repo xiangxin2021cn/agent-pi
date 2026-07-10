@@ -120,6 +120,32 @@ export type SessionDocumentQualityMode =
   | 'strict_delivery'
   | 'multi_agent_deep';
 
+export type SessionRequirementKind =
+  | 'deliverable'
+  | 'constraint'
+  | 'evidence'
+  | 'format'
+  | 'verification';
+
+export type SessionRequirementStatus = 'pending' | 'satisfied' | 'blocked' | 'failed';
+
+export interface SessionRequirementLedgerEntry {
+  id: string;
+  kind: SessionRequirementKind;
+  text: string;
+  verification: string;
+  sourceRefs: string[];
+  status: SessionRequirementStatus;
+  evidenceRefs?: SessionGoalAuditEvidence[];
+  failureReason?: string;
+  verifiedAt?: number;
+}
+
+export interface SessionRequirementLedger {
+  version: 1;
+  entries: SessionRequirementLedgerEntry[];
+}
+
 export interface SessionTaskContract {
   originalRequest: string;
   followUpRequests?: string[];
@@ -132,6 +158,7 @@ export interface SessionTaskContract {
   outputFormats: string[];
   acceptanceCriteria: string[];
   forbiddenShortcuts: string[];
+  requirementLedger?: SessionRequirementLedger;
   workingDirectory?: string;
 }
 
@@ -244,7 +271,9 @@ export interface SessionGoalState {
   };
 }
 
-export type SessionOrchestrationPhase = 'plan' | 'audit' | 'merge' | 'paused';
+export type SessionOrchestrationPhase = 'plan' | 'audit' | 'merge' | 'paused' | 'done';
+
+export type SessionOrchestrationTaskPhase = 'plan' | 'audit' | 'merge';
 
 export type SessionOrchestrationTaskStatus =
   | 'pending'
@@ -258,7 +287,7 @@ export type SessionOrchestrationTaskStatus =
 export interface SessionOrchestrationTask {
   id: string;
   title: string;
-  phase: Exclude<SessionOrchestrationPhase, 'paused'>;
+  phase: SessionOrchestrationTaskPhase;
   role: string;
   status: SessionOrchestrationTaskStatus;
   scope: string;
@@ -277,6 +306,10 @@ export interface SessionSubAgentLifecycleEntry {
   status: 'started' | 'handoff_received' | 'completed' | 'needs_review' | 'failed';
   sourceSlugs: string[];
   workingDirectory?: string;
+  briefPath?: string;
+  reportPath?: string;
+  reportSize?: number;
+  lastActivityAt?: number;
   createdAt: number;
   updatedAt: number;
   expectedHandoff: string[];

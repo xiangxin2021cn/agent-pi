@@ -52,6 +52,8 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Build or update the evidence matrix before drafting source-backed claims.');
     expect(formatted).toContain('Plan sections, tables, visuals, and citations before writing final prose.');
     expect(formatted).toContain('Run a document-quality pass before claiming completion.');
+    expect(formatted).toContain('Use document_artifact for long Markdown deliverables');
+    expect(formatted).toContain('init -> write_section -> status -> prepare_merge -> assemble -> validate');
     expect(formatted).toContain('Critical reasoning protocol:');
     expect(formatted).toContain('Break the problem into three material dimensions and state why each dimension matters.');
     expect(formatted).toContain('Compare optimistic and pessimistic interpretations for each material dimension.');
@@ -60,6 +62,27 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Use this as private reasoning scaffolding unless the requested deliverable explicitly asks for visible step headings.');
     expect(formatted).toContain('</goal_contract>');
     expect(formatted).not.toContain('4. List implementation recommendations.');
+  });
+
+  it('formats the complete bounded requirement ledger instead of truncating it to three items', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      requirementLedger: {
+        version: 1,
+        entries: Array.from({ length: 5 }, (_, index) => ({
+          id: `req-${index + 1}`,
+          kind: 'constraint' as const,
+          text: `Required item ${index + 1}`,
+          verification: `Verify item ${index + 1} in the final artifact.`,
+          sourceRefs: [],
+          status: 'pending' as const,
+        })),
+      },
+    });
+
+    expect(formatted).toContain('Requirement ledger:');
+    expect(formatted).toContain('req-1 [constraint/pending] Required item 1');
+    expect(formatted).toContain('req-5 [constraint/pending] Required item 5');
   });
 
   it('does not add critical reasoning scaffolding to quick document mode', () => {
@@ -125,6 +148,9 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
     expect(formatted).toContain('If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.');
     expect(formatted).toContain('Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.');
+    expect(formatted).toContain('use get_spawn_status to check handoffStatus/reportPathExists/reportSize');
+    expect(formatted).toContain('never treat session status "todo" as child failure');
+    expect(formatted).toContain('Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
     expect(formatted).toContain('Record chapter-agent handoff notes with source gaps and unresolved assumptions.');
@@ -202,6 +228,7 @@ describe('formatTaskContractContext', () => {
 
     expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
     expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
+    expect(formatted).toContain('After spawning, use get_spawn_status and report_path readiness for helper progress');
     expect(formatted).toContain('The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.');
   });
 
@@ -280,10 +307,10 @@ describe('formatTaskContractContext', () => {
     });
 
     expect(formatted).toContain('Document artifact writing protocol:');
-    expect(formatted).toContain('Create or update an artifact manifest before writing a long final Markdown deliverable.');
-    expect(formatted).toContain('Write long deliverables by section chunks, not by one large Write/Bash/Python/heredoc payload.');
-    expect(formatted).toContain('If one section write fails, rewrite only that section chunk and keep the original scope manifest.');
-    expect(formatted).toContain('Before final response, verify the final artifact path, section count, required headings, and non-empty content.');
+    expect(formatted).toContain('Use document_artifact for long Markdown deliverables');
+    expect(formatted).toContain('init -> write_section -> status -> prepare_merge -> assemble -> validate');
+    expect(formatted).toContain('If one section write fails, rewrite only that section');
+    expect(formatted).toContain('call validate with exact required headings or constraint markers from the task contract');
   });
 
   it('includes strict delivery review gates when available', () => {

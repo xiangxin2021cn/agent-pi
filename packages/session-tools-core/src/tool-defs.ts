@@ -32,12 +32,14 @@ import {
 import { handleCredentialPrompt } from './handlers/credential-prompt.ts';
 import { handleUpdatePreferences } from './handlers/update-preferences.ts';
 import { handleTransformData } from './handlers/transform-data.ts';
+import { handleDocumentArtifact } from './handlers/document-artifact.ts';
 import { handleScriptSandbox } from './handlers/script-sandbox.ts';
 import { handleRenderTemplate } from './handlers/render-template.ts';
 import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
 import { handleSetSessionLabels } from './handlers/set-session-labels.ts';
 import { handleSetSessionStatus } from './handlers/set-session-status.ts';
 import { handleGetSessionInfo } from './handlers/get-session-info.ts';
+import { handleGetSpawnStatus } from './handlers/get-spawn-status.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
 import { handleSendAgentMessage } from './handlers/send-agent-message.ts';
 import { handleListMessagingChannels, handleUnbindMessagingChannel } from './handlers/messaging.ts';
@@ -207,6 +209,27 @@ export const GetSessionInfoSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
 });
 
+export const DocumentArtifactSchema = z.object({
+  action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
+    .describe('Transactional artifact operation.'),
+  artifactId: z.string().describe('Stable artifact ID using letters, numbers, dot, underscore, or hyphen.'),
+  outputFile: z.string().optional().describe('Final Markdown file name. Required for init.'),
+  sections: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    order: z.number().int().min(0),
+    required: z.boolean().optional(),
+  })).optional().describe('Ordered section manifest. Required for init.'),
+  overwrite: z.boolean().optional().describe('Replace an existing artifact manifest during init.'),
+  sectionId: z.string().optional().describe('Declared section ID. Required for write_section.'),
+  content: z.string().optional().describe('Complete content for one declared section. Required for write_section.'),
+  requiredStrings: z.array(z.string()).optional().describe('Exact text fragments that must exist in the assembled file during validate.'),
+});
+
+export const GetSpawnStatusSchema = z.object({
+  sessionId: z.string().optional().describe('Spawned session ID to query. Omit to query the current session.'),
+});
+
 export const ListSessionsSchema = z.object({
   status: z.string().optional().describe('Filter by status'),
   label: z.string().optional().describe('Filter by label'),
@@ -373,6 +396,18 @@ Use this tool when you need to transform large datasets (20+ rows) into structur
 
 **Security:** Runs in an isolated subprocess with no access to API keys or credentials. 30-second timeout.`,
 
+  document_artifact: `Write long Markdown deliverables through an application-managed transactional workflow.
+
+Use this instead of one oversized Write call or ad-hoc Bash/Python file construction:
+1. init — declare the final file and ordered required sections
+2. write_section — atomically replace one bounded section
+3. status — inspect missing sections
+4. prepare_merge — reject missing, empty, or externally changed sections and freeze hashes
+5. assemble — atomically create the formal output only from the frozen section set
+6. validate — verify exact required text in the assembled artifact
+
+After prepare_merge, any section change invalidates assembly until prepare_merge runs again.`,
+
   script_sandbox: `Run quick inline diagnostics in a sandboxed subprocess with network isolation.
 
 Use this for short Python/Node/Bun snippets when strict Explore-mode Bash parsing blocks inline diagnostics.
@@ -470,7 +505,7 @@ For document multi-agent deep mode, omit \`workingDirectory\` unless the user ex
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
-The spawned session appears in the session list and runs fire-and-forget.
+The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, wait at least pollAfterMs and call get_spawn_status for the session; do not treat user status values such as "todo" as failure.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
 
   send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
@@ -490,7 +525,13 @@ Omit sessionId to target the current session.`,
   get_session_info: `Get metadata about the current session or a specific session by ID.
 
 Returns labels, status, name, permission mode, and other details.
-Call with no arguments to introspect your own session state.`,
+Call with no arguments to introspect your own session state.
+For spawned sessions, do not interpret user status values such as "todo" as runtime state; call get_spawn_status for handoff progress.`,
+
+  get_spawn_status: `Get runtime handoff status for a spawned session.
+
+Use this after spawn_session to check whether the child is still processing, whether its structured report exists, and whether the handoff is ready.
+Do not treat get_session_info.status="todo" as failure; use handoffStatus, isProcessing, reportPathExists, and reportSize from this tool instead.`,
 
   list_sessions: `List sessions in the workspace. Returns total count + paginated results.
 
@@ -567,6 +608,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'source_credential_prompt', description: TOOL_DESCRIPTIONS.source_credential_prompt, inputSchema: CredentialPromptSchema, executionMode: 'registry', safeMode: 'block', handler: handleCredentialPrompt },
   { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', safeMode: 'block', handler: handleUpdatePreferences },
   { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', safeMode: 'allow', handler: handleTransformData },
+  { name: 'document_artifact', description: TOOL_DESCRIPTIONS.document_artifact, inputSchema: DocumentArtifactSchema, executionMode: 'registry', safeMode: 'allow', handler: handleDocumentArtifact },
   { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
   { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleRenderTemplate },
   { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
@@ -579,6 +621,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
   { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
   { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
+  { name: 'get_spawn_status', description: TOOL_DESCRIPTIONS.get_spawn_status, inputSchema: GetSpawnStatusSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSpawnStatus },
   { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
   // Inter-session messaging
   { name: 'send_agent_message', description: TOOL_DESCRIPTIONS.send_agent_message, inputSchema: SendAgentMessageSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendAgentMessage },
