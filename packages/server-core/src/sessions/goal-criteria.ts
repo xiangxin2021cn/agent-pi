@@ -1,7 +1,8 @@
 import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
+import { deriveOutputFormats, getArtifactFormatCapability, normalizeArtifactFormat } from '@craft-agent/shared/artifacts'
 import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
 import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
-import type { SessionDocumentAgentPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
+import type { SessionArtifactDeliverable, SessionDocumentAgentPlan, SessionDocumentArtifactVisibilityPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentInternalArtifactKind, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
 
@@ -49,9 +50,13 @@ const UNTIL_DONE_PATTERN = /直到|直至|不达标不|满足要求再|反复|�
 const SOURCE_SENSITIVE_PATTERN = /招标|投标|合同|规范|条款|清单|工程量|图纸|报价|标书|附件|源文件|依据|boq|pdf|excel|xlsx?|csv|tender|contract|specification|clause|source|citation|cite|spreadsheet|workbook/i
 const CODE_CHANGE_ACTION_PATTERN = /实现|修复|改造|开发|重构|升级|集成|接入|调试|debug|implement|fix|refactor|upgrade|integrate|debug/i
 const CODE_CHANGE_SURFACE_PATTERN = /代码|源码|应用|程序|前端|后端|界面|按钮|组件|接口|路由|状态|构建|打包|脚本|测试|仓库|分支|提交|bug|崩溃|报错|typecheck|lint|build|electron|react|typescript|javascript|api|sdk|ui|button|component|frontend|backend|server|client|app|code|repo|branch|commit|crash|error/i
-const OUTPUT_FILE_REQUEST_PATTERN = /(?:生成|输出|导出|保存|写入|创建|另存|转换|generate|create|write|save|export|convert).{0,80}(?:文件|file|pdf|word|excel|markdown|md|docx?|xlsx?|pptx?|csv|html?|json|txt|\.pdf|\.md|\.docx?|\.xlsx?|\.pptx?|\.csv|\.html?|\.json|\.txt)/i
+const OUTPUT_FILE_REQUEST_PATTERN = /(?:生成|输出|导出|保存|写入|创建|另存|转换|generate|create|write|save|export|convert).{0,80}(?:文件|file|pdf|word|excel|markdown|md|docx?|xlsx?|pptx?|csv|html?|json|txt|\.[a-z][a-z0-9]{1,9}\b)/i
 const TOOL_VERIFICATION_REQUEST_PATTERN = /(?:运行|执行|跑|\b(?:run|execute)\b).{0,60}(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b)|(?:测试|单测|验证|检查|构建|类型检查|\b(?:test|tests|verify|validate|check|typecheck|lint|build)\b).{0,40}(?:通过|成功|\b(?:pass|green|clean)\b)/i
 const OUTPUT_TARGET_SEGMENT_PATTERN = /(?:转换为|转换成|转为|转成|导出为|保存为|另存为|\bconvert\b.{0,60}\b(?:to|into|as)\b|\bexport\b.{0,60}\b(?:to|as)\b|\bsave\b.{0,60}\bas\b)(.{0,80})/i
+const OUTPUT_INTENT_SEGMENT_PATTERN = /(?:生成|输出|导出|保存|写入|创建|另存|generate|create|write|save|export)([^。！？!?；;\n]{0,120})/gi
+const EXPLICIT_OUTPUT_EXTENSION_PATTERN = /\.([a-z][a-z0-9]{1,9})\b/gi
+const SOURCE_REFERENCE_IN_OUTPUT_SEGMENT_PATTERN = /(?:基于|根据|参考|引用|使用|读取|来自|based\s+on|using|from|referencing)\s*(?:[^，。；;\n]{0,50}?\.[a-z][a-z0-9]{1,9}\b)(?:(?:\s*(?:、|,|，|和|及|以及|and)\s*)[^，。；;\n]{0,50}?\.[a-z][a-z0-9]{1,9}\b)*/gi
+const APP_DRAFT_DOCUMENT_PATTERN = /(?:编写|撰写|起草|制作|形成|生成|write|draft|author|produce|create).{0,80}(?:报告|方案|文档|手册|说明|简报|report|proposal|document|manual|brief)/i
 const EXPLICIT_REQUIREMENT_INTRO_PATTERN = /(?:必须包含|需要包含|应包含|至少包含|包含以下|包括以下|输出要求|验收标准|要求(?:如下)?|requirements?|acceptance criteria|must include|should include|include the following)\s*[:：]?\s*([\s\S]*)/i
 const EXPLICIT_REQUIREMENT_ITEM_PATTERN = /^\s*(?:[-*•]|\d+[.)、]|[一二三四五六七八九十]+[、.．]|[a-z][.)])\s*(.+)$/i
 const DOCUMENT_AUDIENCE_PATTERN = /(?:面向|给|for)\s*([^，。,.；;\n]{2,40})(?:使用|阅读|汇报|生成|输出|制作|看的|$)/i
@@ -195,10 +200,11 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
   const message = input.message.trim()
   const referencedNames = getReferencedNames(input)
   const explicitRequirements = extractExplicitUserRequirements(message)
-  const outputFormats = getRequestedOutputFormats(message)
   const detectedTaskType = getTaskContractType(message)
   const taskType = getTaskContractTypeWithDocumentMode(detectedTaskType, input.documentQualityMode)
   const documentQualityMode = resolveDocumentQualityMode(message, input, taskType)
+  const artifactDeliverables = buildArtifactDeliverables(input, taskType, documentQualityMode)
+  const outputFormats = deriveOutputFormats(artifactDeliverables)
   const deliverables = buildTaskContractDeliverables(message, taskType)
   const documentPlan = buildDocumentPlan({
     message,
@@ -234,6 +240,7 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
     documentQualityMode,
     documentPlan,
     deliverables,
+    artifactDeliverables,
     mustPreserve,
     evidenceRequirements,
     outputFormats,
@@ -247,6 +254,14 @@ export function buildTaskContractFromMessage(input: BuildGoalCriteriaInput): Ses
 export function mergeTaskContracts(current: SessionTaskContract | undefined, next: SessionTaskContract): SessionTaskContract {
   if (!current) return next
 
+  const artifactDeliverables = mergeArtifactDeliverables(
+    current.artifactDeliverables ?? [],
+    next.artifactDeliverables ?? [],
+  )
+  const legacyOutputFormats = artifactDeliverables.length === 0
+    ? [...current.outputFormats, ...next.outputFormats]
+    : []
+
   return {
     ...current,
     followUpRequests: uniqueBounded([
@@ -258,9 +273,10 @@ export function mergeTaskContracts(current: SessionTaskContract | undefined, nex
     documentQualityMode: mergeDocumentQualityModes(current.documentQualityMode, next.documentQualityMode),
     documentPlan: mergeDocumentPlans(current.documentPlan, next.documentPlan),
     deliverables: uniqueBounded([...current.deliverables, ...next.deliverables], 12),
+    artifactDeliverables,
     mustPreserve: uniqueBounded([...current.mustPreserve, ...next.mustPreserve], 24),
     evidenceRequirements: uniqueBounded([...current.evidenceRequirements, ...next.evidenceRequirements], 12),
-    outputFormats: uniqueBounded([...current.outputFormats, ...next.outputFormats], 8),
+    outputFormats: uniqueBounded([...deriveOutputFormats(artifactDeliverables), ...legacyOutputFormats], 8),
     acceptanceCriteria: uniqueBounded([...current.acceptanceCriteria, ...next.acceptanceCriteria], 24),
     forbiddenShortcuts: uniqueBounded([...current.forbiddenShortcuts, ...next.forbiddenShortcuts], 12),
     requirementLedger: mergeRequirementLedgers(current.requirementLedger, next.requirementLedger),
@@ -312,6 +328,7 @@ function getTaskContractType(message: string): SessionTaskContractType {
   if (isCodeChangeRequest(message)) return 'code'
   if (/自动化|定时任务|事件触发|workflow|automation|scheduled|trigger/i.test(message)) return 'automation'
   if (/调研|搜索|尽调|研究|资料|research|investigate|survey/i.test(message)) return 'research'
+  if (isNarrowSourceAnalysisScope(message)) return 'data'
   if (DOCUMENT_WORK_PATTERN.test(message)) return 'document'
   if (/数据|表格|清单|统计|测算|分析表|excel|xlsx?|csv|database|sql|data|spreadsheet/i.test(message)) return 'data'
   if (OUTPUT_FILE_REQUEST_PATTERN.test(message) || /文件|目录|附件|上传|转换|file|folder|attachment|convert/i.test(message)) return 'file'
@@ -358,7 +375,11 @@ function buildRequirementLedger(input: {
 
   append('deliverable', input.deliverables, value => `Verify the final artifact or output evidence satisfies: ${value}`)
   append('constraint', [`User request: ${input.originalRequest}`], value => `Verify the completed work follows: ${value}`)
-  append('constraint', input.mustPreserve, value => `Verify the final artifact preserves: ${value}`)
+  append(
+    'constraint',
+    input.mustPreserve.filter(value => !/^Requested output format:/i.test(value.trim())),
+    value => `Verify the final artifact preserves: ${value}`,
+  )
   append('evidence', input.evidenceRequirements, value => `Verify source locators or explicit gap markers support: ${value}`)
   append('format', input.outputFormats.map(value => `Requested output format: ${value}`), value => `Verify a readable output file exists for: ${value}`)
   append('verification', input.acceptanceCriteria, value => `Verify the acceptance check passes: ${value}`)
@@ -417,6 +438,7 @@ function getDocumentQualityMode(
   taskType: SessionTaskContractType,
 ): SessionDocumentQualityMode {
   if (taskType === 'code' || taskType === 'automation' || taskType === 'file') return 'quick'
+  if (isNarrowSourceAnalysisScope(message)) return 'quick'
 
   const referencedCount = getReferencedNames(input).length
   const documentLike = shouldCreateDocumentPlan(message, taskType)
@@ -444,7 +466,9 @@ function getDocumentQualityMode(
 function buildTaskContractDeliverables(message: string, taskType: SessionTaskContractType): string[] {
   const deliverables: string[] = []
 
-  if (DOCUMENT_WORK_PATTERN.test(message)) {
+  if (isNarrowSourceAnalysisScope(message)) {
+    deliverables.push('Answer the narrow source-analysis request with one result table, one concise interpretation paragraph, and one confirmation-needed note for any unresolved mapping or source gap.')
+  } else if (DOCUMENT_WORK_PATTERN.test(message)) {
     deliverables.push('Produce a structured, readable work product with clear sections and enough detail for the requested audience.')
   }
   if (OUTPUT_FILE_REQUEST_PATTERN.test(message)) {
@@ -548,6 +572,7 @@ function buildDocumentPlan(input: {
     visualPlan,
     charts,
   })
+  const artifactVisibility = buildDocumentArtifactVisibilityPlan(input.message)
   const citations = input.referencedNames.length > 0
     ? input.referencedNames.map(name => `Cite or reference ${name} where it supports key facts.`)
     : SOURCE_SENSITIVE_PATTERN.test(input.message)
@@ -564,6 +589,7 @@ function buildDocumentPlan(input: {
     agentPlan,
     evidenceMatrix,
     deliveryReviewPlan,
+    artifactVisibility,
     templateProfileId: strictTemplate ? 'pending-template-profile' : undefined,
     strictTemplate: strictTemplate || undefined,
     sections,
@@ -582,7 +608,29 @@ function shouldCreateDocumentPlan(message: string, taskType: SessionTaskContract
     || /报告|方案|简报|手册|清单|章节|表格|图表|引用|交付|PPT|幻灯片|word|docx|pptx|pdf|report|proposal|brief|manual|slides?|section|table|chart|citation|deliverable/i.test(message)
 }
 
+function buildDocumentArtifactVisibilityPlan(message: string): SessionDocumentArtifactVisibilityPlan {
+  const visibleInternal: SessionDocumentInternalArtifactKind[] = []
+  const visibleContext = /(?:正文|附录|交付物|reader-facing|appendix|deliverable).{0,30}(?:证据矩阵|目标审计|假设登记|视觉清单|evidence matrix|goal audit|assumption register|visual manifest)|(?:证据矩阵|目标审计|假设登记|视觉清单|evidence matrix|goal audit|assumption register|visual manifest).{0,30}(?:正文|附录|交付物|reader-facing|appendix|deliverable)/i
+  if (visibleContext.test(message)) {
+    if (/证据矩阵|evidence matrix/i.test(message)) visibleInternal.push('evidence_matrix')
+    if (/目标审计|goal audit/i.test(message)) visibleInternal.push('goal_audit')
+    if (/假设登记|assumption register/i.test(message)) visibleInternal.push('assumption_register')
+    if (/视觉清单|visual manifest/i.test(message)) visibleInternal.push('visual_manifest')
+  }
+
+  return {
+    readerFacing: ['narrative', 'citations', 'source_notes', 'requested_tables', 'requested_visuals'],
+    internal: ['evidence_matrix', 'goal_audit', 'assumption_register', 'visual_manifest'],
+    visibleInternal,
+    tableLed: isNarrowSourceAnalysisScope(message) || /以表格为主|表格型交付|台账|登记簿|register(?:-led)?|table-led/i.test(message),
+  }
+}
+
 function buildDocumentPlanSections(message: string, explicitRequirements: string[], taskType: SessionTaskContractType): string[] {
+  if (isNarrowSourceAnalysisScope(message)) {
+    return ['Result table', 'Interpretation', 'Confirmation needed']
+  }
+
   const sections = explicitRequirements.length > 0
     ? explicitRequirements
     : taskType === 'research'
@@ -606,6 +654,9 @@ function buildDocumentPlanSections(message: string, explicitRequirements: string
 
 function buildDocumentPlanTables(message: string, explicitRequirements: string[], taskType: SessionTaskContractType): string[] {
   const tables: string[] = []
+  if (isNarrowSourceAnalysisScope(message)) {
+    return ['Use one source-grounded result table limited to the requested page, table, range, or rows.']
+  }
   const hasTableRequest = /表格|清单|矩阵|对比表|统计表|table|matrix|schedule|boq|excel|xlsx|csv/i.test(message)
 
   if (hasTableRequest || taskType === 'data') {
@@ -642,6 +693,10 @@ function buildDocumentPlanEnhancements(
   documentQualityMode: SessionDocumentQualityMode,
 ): string[] {
   const enhancements: string[] = []
+
+  if (isNarrowSourceAnalysisScope(message)) {
+    enhancements.push('For this narrow source analysis, provide one result table, one concise interpretation paragraph, and one confirmation-needed note; omit risk matrices, commercial extrapolation, and decorative diagrams unless requested.')
+  }
 
   if (documentQualityMode !== 'quick') {
     enhancements.push(`Use document workflow mode ${documentQualityMode} to drive the contract, evidence matrix, chapter plan, and quality audit depth.`)
@@ -847,6 +902,20 @@ function isNarrowBoqPricingScope(message: string): boolean {
     && !BROAD_BOQ_WORKBOOK_SCOPE_PATTERN.test(message)
 }
 
+function isNarrowSourceAnalysisScope(message: string): boolean {
+  const asksForAnalysis = /分析|提取|读取|识别|查看|核对|analy[sz]e|extract|identify|read|inspect/i.test(message)
+  const namesTabularSource = /图纸|图中|这张图|表格|排程|清单|schedule|drawing|table|sheet|pdf/i.test(message)
+  const hasNarrowBoundary = /(?:CH|桩号)\s*\d+(?:\+|\.)\d+.{0,30}(?:至|到|~|—|–|-)\s*(?:CH|桩号)?\s*\d+(?:\+|\.)\d+|单页|这一页|这张图|此表|这个表|局部|某段|指定范围|single[-\s]?(?:page|table|sheet)|this (?:page|table|sheet)|specified range/i.test(message)
+  const requestsBroadDeliverable = /完整报告|综合报告|全面分析|全量|全部文件|全套|多章节|多智能体|深度模式|正式报告|专业文档|comprehensive|full report|all files|multi[-\s]?agent|deep mode/i.test(message)
+  const explicitlyAuthorsReport = /(?:生成|编写|撰写|起草|制作|输出|形成|write|draft|author|produce|create).{0,40}(?:报告|方案|文档|report|proposal|document)/i.test(message)
+
+  return asksForAnalysis
+    && namesTabularSource
+    && hasNarrowBoundary
+    && !requestsBroadDeliverable
+    && !explicitlyAuthorsReport
+}
+
 function buildBoqPricingAgentPlan(): SessionDocumentAgentPlan {
   return {
     mode: 'chapter_agents',
@@ -927,6 +996,7 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     agentPlan: mergeDocumentAgentPlans(current.agentPlan, next.agentPlan),
     evidenceMatrix: mergeDocumentEvidenceMatrix(current.evidenceMatrix, next.evidenceMatrix),
     deliveryReviewPlan: mergeDocumentDeliveryReviewPlans(current.deliveryReviewPlan, next.deliveryReviewPlan),
+    artifactVisibility: mergeDocumentArtifactVisibilityPlans(current.artifactVisibility, next.artifactVisibility),
     templateProfileId: current.templateProfileId ?? next.templateProfileId,
     strictTemplate: current.strictTemplate || next.strictTemplate || undefined,
     sections: uniqueBounded([...current.sections, ...next.sections], 24),
@@ -935,6 +1005,20 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     enhancements: uniqueBounded([...(current.enhancements ?? []), ...(next.enhancements ?? [])], 12),
     citations: uniqueBounded([...current.citations, ...next.citations], 12),
     deliveryFormats: uniqueBounded([...current.deliveryFormats, ...next.deliveryFormats], 8),
+  }
+}
+
+function mergeDocumentArtifactVisibilityPlans(
+  current: SessionDocumentArtifactVisibilityPlan | undefined,
+  next: SessionDocumentArtifactVisibilityPlan | undefined,
+): SessionDocumentArtifactVisibilityPlan | undefined {
+  if (!current) return next
+  if (!next) return current
+  return {
+    readerFacing: [...new Set([...current.readerFacing, ...next.readerFacing])],
+    internal: [...new Set([...current.internal, ...next.internal])],
+    visibleInternal: [...new Set([...current.visibleInternal, ...next.visibleInternal])],
+    tableLed: current.tableLed || next.tableLed,
   }
 }
 
@@ -1031,12 +1115,23 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Document agent plan:\n${formatDocumentAgentPlan(plan.agentPlan)}`,
     `Evidence matrix:\n${formatDocumentEvidenceMatrix(plan.evidenceMatrix)}`,
     `Delivery review plan:\n${formatDocumentDeliveryReviewPlan(plan.deliveryReviewPlan)}`,
+    `Artifact visibility:\n${formatDocumentArtifactVisibilityPlan(plan.artifactVisibility)}`,
     `Sections:\n${formatContractList(plan.sections)}`,
     `Tables:\n${formatContractList(plan.tables)}`,
     `Charts:\n${formatContractList(plan.charts)}`,
     `Enhancements:\n${formatContractList(plan.enhancements ?? [])}`,
     `Citations:\n${formatContractList(plan.citations)}`,
     `Delivery formats:\n${formatContractList(plan.deliveryFormats)}`,
+  ].join('\n')
+}
+
+function formatDocumentArtifactVisibilityPlan(plan: SessionDocumentArtifactVisibilityPlan | undefined): string {
+  if (!plan) return '(none)'
+  return [
+    `Reader-facing: ${plan.readerFacing.join(', ')}`,
+    `Internal: ${plan.internal.join(', ')}`,
+    `Explicitly visible internal: ${plan.visibleInternal.join(', ') || '(none)'}`,
+    `Table-led: ${plan.tableLed ? 'yes' : 'no'}`,
   ].join('\n')
 }
 
@@ -1282,10 +1377,116 @@ function getReferencedNames(input: BuildGoalCriteriaInput): string[] {
 }
 
 function getRequestedOutputFormats(message: string): string[] {
-  const targetSegment = message.match(OUTPUT_TARGET_SEGMENT_PATTERN)?.[1] ?? message
-  return OUTPUT_FORMAT_PATTERNS
-    .filter(({ pattern }) => pattern.test(targetSegment))
-    .map(({ label }) => label)
+  const targetSegments = getOutputIntentSegments(message)
+  const formats: string[] = []
+
+  for (const rawSegment of targetSegments) {
+    const segment = rawSegment.replace(SOURCE_REFERENCE_IN_OUTPUT_SEGMENT_PATTERN, ' ')
+    for (const { label, pattern } of OUTPUT_FORMAT_PATTERNS) {
+      if (pattern.test(segment)) formats.push(label)
+    }
+
+    for (const match of segment.matchAll(EXPLICIT_OUTPUT_EXTENSION_PATTERN)) {
+      const format = normalizeArtifactFormat(match[1])
+      if (format) formats.push(format)
+    }
+  }
+
+  return [...new Set(formats)]
+}
+
+function getOutputIntentSegments(message: string): string[] {
+  const targetSegment = message.match(OUTPUT_TARGET_SEGMENT_PATTERN)?.[1]?.trim()
+  if (targetSegment) return [targetSegment]
+
+  return [...message.matchAll(OUTPUT_INTENT_SEGMENT_PATTERN)]
+    .map(match => match[1]?.trim())
+    .filter((segment): segment is string => Boolean(segment))
+}
+
+function buildArtifactDeliverables(
+  input: BuildGoalCriteriaInput,
+  taskType: SessionTaskContractType,
+  documentQualityMode: SessionDocumentQualityMode,
+): SessionArtifactDeliverable[] {
+  const explicitFormats = getRequestedOutputFormats(input.message)
+  const deliverables = explicitFormats.map((format, index) => buildArtifactDeliverable({
+    format,
+    index,
+    origin: 'explicit',
+  }))
+
+  if (deliverables.length > 0) return deliverables
+
+  if (requiresTemplateFidelityAudit(input.message, input.storedAttachments)) {
+    const wordTemplate = (input.storedAttachments ?? []).find(attachment => /\.docx?$/i.test(attachment.name))
+    if (wordTemplate) {
+      return [buildArtifactDeliverable({
+        format: 'DOCX',
+        index: 0,
+        origin: 'template_inferred',
+        templatePath: wordTemplate.storedPath,
+      })]
+    }
+  }
+
+  const needsAppDraft = documentQualityMode !== 'quick'
+    && (taskType === 'document' || taskType === 'research' || taskType === 'data')
+    && APP_DRAFT_DOCUMENT_PATTERN.test(input.message)
+  if (!needsAppDraft) return deliverables
+
+  return [buildArtifactDeliverable({
+    format: 'MD',
+    index: 0,
+    origin: 'app_draft',
+  })]
+}
+
+function buildArtifactDeliverable(input: {
+  format: string
+  index: number
+  origin: SessionArtifactDeliverable['origin']
+  templatePath?: string
+}): SessionArtifactDeliverable {
+  const capability = getArtifactFormatCapability(input.format)
+  return {
+    id: `artifact-${capability.format.toLowerCase()}-${input.index + 1}`,
+    kind: capability.kinds[0] ?? 'other',
+    format: capability.format,
+    required: true,
+    origin: input.origin,
+    validationLevel: capability.validationLevel,
+    ...(input.templatePath ? { templatePath: input.templatePath } : {}),
+    capabilityId: capability.id,
+  }
+}
+
+function mergeArtifactDeliverables(
+  current: SessionArtifactDeliverable[],
+  next: SessionArtifactDeliverable[],
+): SessionArtifactDeliverable[] {
+  const merged = new Map<string, SessionArtifactDeliverable>()
+  for (const deliverable of [...current, ...next]) {
+    const format = normalizeArtifactFormat(deliverable.format) ?? deliverable.format
+    const existing = merged.get(format)
+    if (!existing) {
+      merged.set(format, { ...deliverable, format })
+      continue
+    }
+
+    merged.set(format, {
+      ...existing,
+      required: existing.required || deliverable.required,
+      origin: existing.origin === 'explicit' || deliverable.origin !== 'explicit'
+        ? existing.origin
+        : deliverable.origin,
+      templatePath: existing.templatePath ?? deliverable.templatePath,
+      validationLevel: deliverable.validationLevel === 'round_trip'
+        ? 'round_trip'
+        : existing.validationLevel,
+    })
+  }
+  return [...merged.values()]
 }
 
 function isCodeChangeRequest(message: string): boolean {

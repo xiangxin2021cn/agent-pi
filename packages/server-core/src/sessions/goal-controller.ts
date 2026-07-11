@@ -17,6 +17,8 @@ import { COMPREHENSIVE_QUALITY_CRITERION_TEXT, DOCUMENT_QUALITY_REQUIRED_CRITERI
 import { analyzeDocumentQuality, formatDocumentQualityReport } from './document-quality'
 import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
 import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
+import { auditExportedArtifact } from '../documents/export-quality'
+import { validateEvidenceMatrixArtifact } from './evidence-matrix-artifact'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
 import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
@@ -83,6 +85,7 @@ export interface GoalSpawnedSessionSummary {
   reportPathExists?: boolean
   reportSize?: number
   handoffStatus?: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed'
+  handoffContent?: string
 }
 
 export interface GoalTurnSnapshot {
@@ -240,7 +243,7 @@ export class GoalController {
         })
       }
     }
-    if (requiredOutputFormats.length > 0 && outputFileEvidencePaths.size > 0) {
+    if (requiredOutputFormats.length > 0) {
       const producedFormats = new Set([...outputFileEvidencePaths].flatMap(getOutputFormatsForPath))
       for (const format of requiredOutputFormats) {
         if (producedFormats.has(format)) continue
@@ -253,10 +256,40 @@ export class GoalController {
       }
     }
     const outputAuditTexts: string[] = []
+    const verifiedFileContents = new Map<string, string>()
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
+        const isOutputFile = outputFileEvidencePaths.has(filePath)
+        const artifactDeliverable = isOutputFile
+          ? findArtifactDeliverableForPath(goalState.taskContract, filePath)
+          : undefined
         const issue = buildFileVerificationIssue(filePath, verification)
+        if (artifactDeliverable && verification.exists && verification.readable !== false && verification.isFile !== false) {
+          const visualPlan = goalState.taskContract?.documentPlan?.visualPlan
+          const exportReport = await auditExportedArtifact({
+            path: filePath,
+            deliverable: artifactDeliverable,
+            requireVisualEvidence: (visualPlan?.selectedKinds.length ?? 0) > 0,
+            pageIntent: visualPlan?.auditRequirements.some(item => /landscape/i.test(item))
+              ? { orientation: 'landscape' }
+              : undefined,
+          })
+          evidence.push({
+            type: 'file',
+            label: exportReport.passed ? 'artifact_export_quality_passed' : 'artifact_export_quality_failed',
+            detail: [
+              filePath,
+              `format=${exportReport.format}`,
+              `validation=${exportReport.achievedValidationLevel}/${exportReport.declaredValidationLevel}`,
+              ...exportReport.issues,
+              ...exportReport.limitations,
+            ].join('\n').slice(0, 3000),
+          })
+          if (!exportReport.passed) {
+            contentVerificationIssues.push(`Export quality audit did not pass for ${filePath}: ${exportReport.issues.join(' ')}`)
+          }
+        }
         if (issue) {
           fileVerificationIssues.push(issue)
           evidence.push({
@@ -272,7 +305,8 @@ export class GoalController {
             detail: `${filePath}${size}`.slice(0, 500),
           })
           const preview = verification.preview?.trim()
-          const isOutputFile = outputFileEvidencePaths.has(filePath)
+          const verifiedContent = verification.auditContent?.trim() || preview
+          if (verifiedContent) verifiedFileContents.set(filePath, verifiedContent)
           if (isOutputFile) {
             verifiedOutputPaths.add(filePath)
             evidence.push({
@@ -345,11 +379,34 @@ export class GoalController {
       })
     }
     const outputTexts = finalAssistant ? [finalAssistant.content, ...outputAuditTexts] : outputAuditTexts
+    const unverifiedMatrixClaims: string[] = []
+    if (requiresEvidenceMatrixAudit(goalState)) {
+      for (const filePath of fileEvidencePaths) {
+        if (basename(filePath).toLowerCase() !== 'evidence-matrix.json') continue
+        const matrixAudit = validateEvidenceMatrixArtifact(verifiedFileContents.get(filePath) ?? '')
+        unverifiedMatrixClaims.push(...matrixAudit.unverifiedClaims)
+        evidence.push({
+          type: 'system',
+          label: 'evidence_matrix_schema_audit',
+          detail: [
+            `status: ${matrixAudit.valid ? 'pass' : 'fail'}`,
+            `sourceCount: ${matrixAudit.sourceCount}`,
+            `verifiedClaimCount: ${matrixAudit.verifiedClaimCount}`,
+            `issues: ${matrixAudit.issues.join(' ') || '(none)'}`,
+          ].join('\n'),
+        })
+        if (!matrixAudit.valid) {
+          contentVerificationIssues.push(`Evidence matrix schema audit did not pass: ${matrixAudit.issues.join(' ')}`)
+        }
+      }
+    }
     if (finalAssistant && requiresDocumentQualityAudit(goalState)) {
       const report = analyzeDocumentQuality({
         contents: outputAuditTexts.length > 0 ? outputAuditTexts : [finalAssistant.content],
         sourceFilePaths: sourceFileEvidencePaths,
         strict: goalState.mode === 'strict_work' || isStrictDeliveryContract(goalState),
+        allowVisibleInternalArtifacts: goalState.taskContract?.documentPlan?.artifactVisibility?.visibleInternal,
+        tableLed: goalState.taskContract?.documentPlan?.artifactVisibility?.tableLed,
       })
       evidence.push({
         type: 'system',
@@ -477,6 +534,17 @@ export class GoalController {
         label: message.toolName ?? 'tool_error',
         detail: message.toolResult?.slice(0, 500),
       })
+    }
+    if (finalAssistant) {
+      const assumptionIssues = auditUnverifiedAssumptionsInCoreConclusions(outputTexts, unverifiedMatrixClaims)
+      if (assumptionIssues.length > 0) {
+        contentVerificationIssues.push(...assumptionIssues)
+        evidence.push({
+          type: 'system',
+          label: 'unverified_assumption_conclusion_audit',
+          detail: assumptionIssues.join('\n'),
+        })
+      }
     }
     for (const message of artifactWriteFailures) {
       evidence.push({
@@ -892,6 +960,7 @@ function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
     && criterion.kind === 'deliverable'
     && criterion.text === FILE_OUTPUT_REQUIRED_CRITERION_TEXT
   )
+    || (goalState.taskContract?.artifactDeliverables?.some(deliverable => deliverable.required) ?? false)
     || (isStrictDeliveryContract(goalState) && getContractOutputFormats(goalState).length > 0)
 }
 
@@ -1026,6 +1095,7 @@ interface DocumentAgentPlanAudit {
   missingChapterHandoff: boolean
   missingSourceGapReview: boolean
   missingCrossChapterReview: boolean
+  conflictingHandoffClaims: string[]
 }
 
 interface DeliveryReviewGateAuditInput {
@@ -1051,10 +1121,10 @@ function auditEvidenceMatrixUsage(contents: string[], goalState: SessionGoalStat
     .map(entry => basename(entry.source) || entry.source || entry.id)
   const issues: string[] = []
 
-  if (evidenceMatrix.length > 0 && referencedSourceCount === 0 && !hasPendingEvidenceMarker(markdown)) {
+  if (evidenceMatrix.length > 0 && referencedSourceCount === 0) {
     issues.push(mentionedSourceCount > 0
-      ? 'Missing claim-level evidence matrix citation with source, locator, or claim fields.'
-      : 'Missing reference to evidence matrix sources, citations, or pending evidence gaps.')
+      ? 'Missing claim-level evidence matrix citation with source, locator, or claim fields; zero required sources have claim-level coverage.'
+      : 'Missing reference to evidence matrix sources or citations; zero required sources have claim-level coverage.')
   } else if (missingSourceNames.length > 0 && missingSourceNames.length < evidenceMatrix.length) {
     issues.push(`Missing evidence matrix coverage for sources: ${missingSourceNames.join(', ')}.`)
   }
@@ -1326,6 +1396,7 @@ function auditDocumentAgentPlan(
       session.handoffStatus === 'ready' ? 'structured handoff report ready' : undefined,
       session.firstUserMessagePreview,
       session.finalAssistantPreview,
+      session.handoffContent,
     ])
     .map(value => value?.trim())
     .filter((value): value is string => Boolean(value))
@@ -1343,6 +1414,9 @@ function auditDocumentAgentPlan(
   const missingChapterHandoff = missingCompletedSpawnHandoffs || !/(chapter[-\s]?agent|章节智能体|chapter handoff|handoff|移交|交接|分工)/i.test(allAgentEvidence)
   const missingSourceGapReview = !/(source gaps?|unresolved assumptions?|evidence gaps?|来源缺口|证据缺口|未解决假设|待核实|待补充)/i.test(allAgentEvidence)
   const missingCrossChapterReview = !/(cross[-\s]?chapter|consistency review|cross-discipline|跨章节|一致性审查|交叉审查|冲突解决)/i.test(allAgentEvidence)
+  const conflictingHandoffClaims = findDirectionalMappingContradictions(
+    spawnedSessions.map(session => session.handoffContent).filter((value): value is string => Boolean(value)),
+  )
   const issues: string[] = []
 
   if (missingRealSpawnedSessions) {
@@ -1366,6 +1440,9 @@ function auditDocumentAgentPlan(
   if (missingFinalSynthesisOwner) {
     issues.push(`Missing final synthesis owner evidence: ${agentPlan?.finalSynthesisOwner ?? 'final_synthesis_owner'}.`)
   }
+  if (conflictingHandoffClaims.length > 0) {
+    issues.push(`Contradictory handoff claims must be resolved before merge: ${conflictingHandoffClaims.join(' ')}`)
+  }
 
   return {
     passed: issues.length === 0,
@@ -1380,7 +1457,101 @@ function auditDocumentAgentPlan(
     missingChapterHandoff,
     missingSourceGapReview,
     missingCrossChapterReview,
+    conflictingHandoffClaims,
   }
+}
+
+function findDirectionalMappingContradictions(handoffContents: string[]): string[] {
+  const mappings = new Map<'eastbound' | 'westbound', Set<'L' | 'R'>>()
+  for (const content of handoffContents) {
+    for (const line of content.split(/\r?\n/)) {
+      const normalized = line.replace(/\*\*/g, '').trim()
+      const direct = normalized.match(/(?:position\s*)?([lr])\s*(?:\([^)]*\))?\s*(?:=|:|is|对应|为)\s*(eastbound|westbound|东行(?:侧|线)?|西行(?:侧|线)?)/i)
+      const reverse = normalized.match(/(eastbound|westbound|东行(?:侧|线)?|西行(?:侧|线)?)\s*(?:=|:|is|对应|为)\s*(?:position\s*)?([lr])/i)
+      const side = direct?.[1]?.toUpperCase() ?? reverse?.[2]?.toUpperCase()
+      const directionValue = direct?.[2] ?? reverse?.[1]
+      if ((side !== 'L' && side !== 'R') || !directionValue) continue
+      const direction = /eastbound|东行/i.test(directionValue) ? 'eastbound' : 'westbound'
+      const sides = mappings.get(direction) ?? new Set<'L' | 'R'>()
+      sides.add(side)
+      mappings.set(direction, sides)
+    }
+  }
+
+  return [...mappings.entries()]
+    .filter(([, sides]) => sides.size > 1)
+    .map(([direction, sides]) => `${direction} is mapped to both ${[...sides].join(' and ')}.`)
+}
+
+function auditUnverifiedAssumptionsInCoreConclusions(contents: string[], unverifiedClaims: string[] = []): string[] {
+  const markdown = contents.join('\n\n')
+  const conclusionLines = getCoreConclusionLines(markdown)
+  const issues: string[] = []
+  const hasUnverifiedSideMapping = markdown.split(/\r?\n/).some(line =>
+    /(?:position\s*)?[lr].{0,50}(?:eastbound|westbound)|(?:eastbound|westbound).{0,50}(?:position\s*)?[lr]/i.test(line)
+    && /unverified|not verified|未经验证|未验证|待确认|需确认|需验证|待核实/i.test(line)
+  )
+  if (hasUnverifiedSideMapping) {
+    const promotedClaim = conclusionLines.find(line =>
+      /eastbound|westbound|东行|西行/i.test(line)
+      && /覆盖|coverage|排水|drain|不足|insufficient|缺口|gap/i.test(line)
+      && !hasConditionalLanguage(line)
+    )
+    if (promotedClaim) {
+      issues.push('Unverified side mapping was promoted to a definitive core conclusion; present conditional branches until the mapping is verified.')
+    }
+  }
+
+  for (const claim of unverifiedClaims) {
+    const promotedClaim = conclusionLines.find(line => claimsOverlap(claim, line) && !hasConditionalLanguage(line))
+    if (promotedClaim) {
+      issues.push(`Unverified evidence-matrix claim was promoted to a definitive core conclusion; keep it conditional until verified: ${claim}`)
+    }
+  }
+
+  return [...new Set(issues)]
+}
+
+function hasConditionalLanguage(value: string): boolean {
+  return /如果|若|假设|条件|可能|待确认|需确认|未验证|待核实|cannot determine|if\b|assuming|conditional|unverified|subject to|pending verification/i.test(value)
+}
+
+function claimsOverlap(claim: string, conclusion: string): boolean {
+  const normalizedClaim = normalizeClaimText(claim)
+  const normalizedConclusion = normalizeClaimText(conclusion)
+  if (!normalizedClaim || !normalizedConclusion) return false
+  if (normalizedConclusion.includes(normalizedClaim) || normalizedClaim.includes(normalizedConclusion)) return true
+
+  const claimTokens = [...new Set(normalizedClaim.match(/[a-z0-9]+/g) ?? [])]
+    .filter(token => token.length >= 2)
+  if (claimTokens.length < 3) return false
+  const matched = claimTokens.filter(token => normalizedConclusion.includes(token)).length
+  return matched >= Math.max(3, Math.ceil(claimTokens.length * 0.6))
+}
+
+function normalizeClaimText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').trim().replace(/\s+/g, ' ')
+}
+
+function getCoreConclusionLines(markdown: string): string[] {
+  const lines = markdown.split(/\r?\n/)
+  const output: string[] = []
+  let inConclusion = false
+  let conclusionLevel = 0
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,6})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1].length
+      if (/核心结论|主要结论|综合结论|core conclusion|key conclusion|conclusions?\b/i.test(heading[2])) {
+        inConclusion = true
+        conclusionLevel = level
+        continue
+      }
+      if (inConclusion && level <= conclusionLevel) break
+    }
+    if (inConclusion && line.trim()) output.push(line.trim())
+  }
+  return output
 }
 
 function requiresFullTextArtifactAudit(goalState: SessionGoalState): boolean {
@@ -1421,6 +1592,7 @@ function formatDocumentAgentPlanAudit(report: DocumentAgentPlanAudit): string {
     `missingSourceGapReview: ${report.missingSourceGapReview ? 'yes' : 'no'}`,
     `missingCrossChapterReview: ${report.missingCrossChapterReview ? 'yes' : 'no'}`,
     `missingFinalSynthesisOwner: ${report.missingFinalSynthesisOwner ? 'yes' : 'no'}`,
+    `conflictingHandoffClaims: ${report.conflictingHandoffClaims.join(' ') || '(none)'}`,
     `issues: ${report.issues.length > 0 ? report.issues.join(' ') : '(none)'}`,
   ].join('\n')
 }
@@ -1599,9 +1771,14 @@ function getRequiredOutputFormats(goalState: SessionGoalState): string[] {
       .split(',')
       .map(format => normalizeOutputFormatLabel(format))
       .filter((format): format is string => format !== undefined))
+  const artifactFormats = (goalState.taskContract?.artifactDeliverables ?? [])
+    .filter(deliverable => deliverable.required)
+    .map(deliverable => normalizeOutputFormatLabel(deliverable.format))
+    .filter((format): format is string => format !== undefined)
 
   return [...new Set([
     ...criteriaFormats,
+    ...artifactFormats,
     ...(isStrictDeliveryContract(goalState) ? getContractOutputFormats(goalState) : []),
   ])]
 }
@@ -1629,7 +1806,18 @@ function getOutputFormatsForPath(filePath: string): string[] {
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return ['HTML']
   if (lower.endsWith('.json')) return ['JSON']
   if (lower.endsWith('.txt')) return ['TXT']
-  return []
+  const extension = extname(filePath).replace(/^\./, '').trim().toUpperCase()
+  return extension ? [extension] : []
+}
+
+function findArtifactDeliverableForPath(
+  contract: SessionTaskContract | undefined,
+  filePath: string,
+): NonNullable<SessionTaskContract['artifactDeliverables']>[number] | undefined {
+  const pathFormats = new Set(getOutputFormatsForPath(filePath))
+  return contract?.artifactDeliverables?.find(deliverable =>
+    deliverable.required && pathFormats.has(normalizeOutputFormatLabel(deliverable.format) ?? '')
+  )
 }
 
 const TOOL_VERIFICATION_EVIDENCE_PATTERN = /测试|单测|验证|检查|构建|类型检查|source_test|skill_validate|\b(?:test|tests|verify|validate|check|typecheck|lint|build|tsc|pytest|vitest|jest|playwright|eslint)\b/i

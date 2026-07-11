@@ -453,7 +453,7 @@ export interface SessionSpawnStatus {
   sessionId: string;
   parentSessionId?: string;
   taskId?: string;
-  lifecycleStatus?: 'started' | 'running' | 'handoff_received' | 'handoff_ready' | 'completed' | 'needs_review' | 'failed' | 'unknown';
+  lifecycleStatus?: 'started' | 'running' | 'handoff_received' | 'handoff_ready' | 'completed' | 'needs_review' | 'failed' | 'stale' | 'unknown';
   isActive: boolean;
   isProcessing: boolean;
   queueLength: number;
@@ -463,6 +463,9 @@ export interface SessionSpawnStatus {
   reportSize?: number;
   handoffStatus: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed';
   lastActivityAt?: number;
+  idleMs?: number;
+  staleAfterMs?: number;
+  isStale?: boolean;
   briefPath?: string;
 }
 

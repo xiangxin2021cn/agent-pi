@@ -16,7 +16,9 @@ describe('visual markdown block renderer', () => {
     expect(result.markdown).toContain('flowchart TD');
     expect(result.markdown).toContain('Figure 1. Approval workflow.');
     expect(result.markdown).toContain('Source: Project procedure section 3.');
+    expect(result.markdown).not.toContain('Evidence:');
     expect(result.manifest[0]).toMatchObject({ kind: 'mermaid', title: 'Approval Flow' });
+    expect(result.manifest[0]?.auditReason).toBe('Generated from explicit process steps.');
   });
 
   test('renders professional SVG assets as relative Markdown image blocks', () => {

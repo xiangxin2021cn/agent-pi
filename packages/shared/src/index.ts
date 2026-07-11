@@ -31,3 +31,4 @@
 // Export branding (standalone, no dependencies)
 export * from './branding.ts';
 export * from './app-defaults.ts';
+export * from './artifacts/index.ts';

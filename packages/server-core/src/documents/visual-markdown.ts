@@ -61,7 +61,7 @@ export function renderVisualMarkdownBlock(input: VisualMarkdownInput): VisualMar
         input.mermaid.trim(),
         '```',
         '',
-        formatNotes(input.caption, input.source, input.auditReason),
+        formatNotes(input.caption, input.source),
       ].join('\n'),
       manifest: [manifestEntry],
     };
@@ -76,7 +76,7 @@ export function renderVisualMarkdownBlock(input: VisualMarkdownInput): VisualMar
         '',
         `![${input.caption}](${relativePath})`,
         '',
-        formatNotes(input.caption, input.source, input.auditReason),
+        formatNotes(input.caption, input.source),
       ].join('\n'),
       manifest: [manifestEntry],
     };
@@ -89,17 +89,16 @@ export function renderVisualMarkdownBlock(input: VisualMarkdownInput): VisualMar
       '',
       input.tableMarkdown.trim(),
       '',
-      formatNotes(input.caption, input.source, input.auditReason, input.rawSidecarPath),
+      formatNotes(input.caption, input.source, input.rawSidecarPath),
     ].join('\n'),
     manifest: [manifestEntry],
   };
 }
 
-function formatNotes(caption: string, source: string, auditReason: string, rawSidecarPath?: string): string {
+function formatNotes(caption: string, source: string, rawSidecarPath?: string): string {
   return [
     `> ${caption}`,
     `> Source: ${source}.`,
-    `> Evidence: ${auditReason}`,
     ...(rawSidecarPath ? [`> Raw table: \`${rawSidecarPath}\`.`] : []),
   ].join('\n');
 }

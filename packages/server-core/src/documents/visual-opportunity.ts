@@ -10,6 +10,7 @@ export interface VisualOpportunityAnalysis {
 export interface VisualOpportunityOptions {
   mode?: 'standard' | 'professional';
   maxVisuals?: number;
+  genre?: 'narrative_report' | 'executive_brief' | 'technical_report' | 'register';
 }
 
 interface MarkdownSection {
@@ -27,7 +28,7 @@ export function detectVisualOpportunities(markdown: string, options: VisualOppor
 }
 
 export function analyzeVisualOpportunities(markdown: string, options: VisualOpportunityOptions = {}): VisualOpportunityAnalysis {
-  const maxVisuals = options.maxVisuals ?? (options.mode === 'professional' ? 12 : 5);
+  const maxVisuals = options.maxVisuals ?? getDefaultVisualBudget(options);
   const sections = parseMarkdownSections(markdown);
   const opportunities: VisualOpportunity[] = [];
   let existingVisualCount = 0;
@@ -70,6 +71,14 @@ export function analyzeVisualOpportunities(markdown: string, options: VisualOppo
     existingVisualCount,
     capped: false,
   };
+}
+
+function getDefaultVisualBudget(options: VisualOpportunityOptions): number {
+  if (options.mode !== 'professional') return 5;
+  if (options.genre === 'executive_brief') return 4;
+  if (options.genre === 'technical_report') return 10;
+  if (options.genre === 'register') return 3;
+  return 12;
 }
 
 function parseMarkdownSections(markdown: string): MarkdownSection[] {

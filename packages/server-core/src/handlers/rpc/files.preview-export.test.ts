@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import xlsx from 'xlsx'
 import { strFromU8, unzipSync } from 'fflate'
+import { auditExportedArtifact } from '../../documents/export-quality'
 import {
   buildMarkdownExport,
   createSpreadsheetTablePreviewFromWorkbook,
@@ -139,6 +140,20 @@ describe('buildMarkdownExport', () => {
       expect(docxFiles['word/media/image1.svg']).toBeDefined()
       expect(strFromU8(docxFiles['word/document.xml']!)).toContain('Professional construction Gantt')
       expect(strFromU8(docxFiles['word/_rels/document.xml.rels']!)).toContain('media/image1.svg')
+      const audit = await auditExportedArtifact({
+        path: docx.path,
+        deliverable: {
+          id: 'artifact-docx-1',
+          kind: 'document',
+          format: 'DOCX',
+          required: true,
+          origin: 'explicit',
+          validationLevel: 'schema',
+        },
+        requireVisualEvidence: true,
+        pageIntent: { orientation: 'landscape' },
+      })
+      expect(audit.passed).toBe(true)
     })
   })
 

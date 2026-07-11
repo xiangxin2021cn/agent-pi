@@ -120,6 +120,30 @@ export type SessionDocumentQualityMode =
   | 'strict_delivery'
   | 'multi_agent_deep';
 
+export type SessionArtifactKind =
+  | 'document'
+  | 'workbook'
+  | 'presentation'
+  | 'schedule'
+  | 'model'
+  | 'data'
+  | 'other';
+
+export type SessionArtifactOrigin = 'explicit' | 'template_inferred' | 'app_draft';
+
+export type SessionArtifactValidationLevel = 'existence' | 'syntax' | 'schema' | 'round_trip';
+
+export interface SessionArtifactDeliverable {
+  id: string;
+  kind: SessionArtifactKind;
+  format: string;
+  required: boolean;
+  origin: SessionArtifactOrigin;
+  validationLevel: SessionArtifactValidationLevel;
+  templatePath?: string;
+  capabilityId?: string;
+}
+
 export type SessionRequirementKind =
   | 'deliverable'
   | 'constraint'
@@ -155,6 +179,7 @@ export interface SessionTaskContract {
   deliverables: string[];
   mustPreserve: string[];
   evidenceRequirements: string[];
+  artifactDeliverables?: SessionArtifactDeliverable[];
   outputFormats: string[];
   acceptanceCriteria: string[];
   forbiddenShortcuts: string[];
@@ -172,6 +197,7 @@ export interface SessionDocumentPlan {
   agentPlan?: SessionDocumentAgentPlan;
   evidenceMatrix?: SessionDocumentEvidenceMatrixEntry[];
   deliveryReviewPlan?: SessionDocumentDeliveryReviewPlan;
+  artifactVisibility?: SessionDocumentArtifactVisibilityPlan;
   templateProfileId?: string;
   strictTemplate?: boolean;
   sections: string[];
@@ -180,6 +206,19 @@ export interface SessionDocumentPlan {
   enhancements: string[];
   citations: string[];
   deliveryFormats: string[];
+}
+
+export type SessionDocumentInternalArtifactKind =
+  | 'evidence_matrix'
+  | 'goal_audit'
+  | 'assumption_register'
+  | 'visual_manifest';
+
+export interface SessionDocumentArtifactVisibilityPlan {
+  readerFacing: Array<'narrative' | 'citations' | 'source_notes' | 'requested_tables' | 'requested_visuals'>;
+  internal: SessionDocumentInternalArtifactKind[];
+  visibleInternal: SessionDocumentInternalArtifactKind[];
+  tableLed: boolean;
 }
 
 export interface SessionDocumentAgentPlan {

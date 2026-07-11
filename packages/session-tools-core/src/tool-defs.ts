@@ -505,7 +505,7 @@ For document multi-agent deep mode, omit \`workingDirectory\` unless the user ex
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
-The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, wait at least pollAfterMs and call get_spawn_status for the session; do not treat user status values such as "todo" as failure.
+The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, wait at least pollAfterMs and call get_spawn_status for the session. Continue polling while handoffStatus is pending and lastActivityAt is advancing. Do not impose an arbitrary fixed timeout or treat user status values such as "todo" as failure. Only bypass a child when handoffStatus is failed/isStale is true, or pause for user review when the parent budget expires.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
 
   send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
@@ -531,7 +531,7 @@ For spawned sessions, do not interpret user status values such as "todo" as runt
   get_spawn_status: `Get runtime handoff status for a spawned session.
 
 Use this after spawn_session to check whether the child is still processing, whether its structured report exists, and whether the handoff is ready.
-Do not treat get_session_info.status="todo" as failure; use handoffStatus, isProcessing, reportPathExists, and reportSize from this tool instead.`,
+Do not treat get_session_info.status="todo" as failure; use handoffStatus, isProcessing, reportPathExists, reportSize, lastActivityAt, and isStale from this tool instead. A running child is stale only when isStale is true; never merge around a pending child without an audited handoff.`,
 
   list_sessions: `List sessions in the workspace. Returns total count + paginated results.
 

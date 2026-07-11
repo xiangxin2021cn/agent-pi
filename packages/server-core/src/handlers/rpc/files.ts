@@ -1001,7 +1001,7 @@ interface DocxImageMedia {
   alt: string
 }
 
-function createDocxBuffer(markdown: string): Buffer {
+function createDocxBuffer(markdown: string, pageLayout?: MarkdownExportPageLayout): Buffer {
   const blocks = renderMarkdownBlocksForExport(markdown)
   const media: DocxImageMedia[] = []
   const documentContent = blocks.map(block => {
@@ -1059,13 +1059,24 @@ function createDocxBuffer(markdown: string): Buffer {
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
       '<w:body>',
       documentContent || '<w:p/>',
-      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
+      createDocxSectionProperties(pageLayout),
       '</w:body>',
       '</w:document>',
     ].join('')),
   }
 
   return Buffer.from(zipSync(files))
+}
+
+function createDocxSectionProperties(pageLayout?: MarkdownExportPageLayout): string {
+  const portrait = pageLayout?.pageSize === 'A3'
+    ? { width: 16838, height: 23811 }
+    : { width: 11906, height: 16838 }
+  const landscape = pageLayout?.orientation === 'landscape'
+  const width = landscape ? portrait.height : portrait.width
+  const height = landscape ? portrait.width : portrait.height
+  const orientation = landscape ? ' w:orient="landscape"' : ''
+  return `<w:sectPr><w:pgSz w:w="${width}" w:h="${height}"${orientation}/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>`
 }
 
 function docxImageParagraph(block: Extract<MarkdownExportBlock, { type: 'image' }>, media: DocxImageMedia[]): string {
@@ -1314,7 +1325,7 @@ export async function buildMarkdownExport(args: {
   if (args.format === 'html') {
     output = await createMarkdownHtml(prepared.content, title, prepared.pageLayout)
   } else if (args.format === 'docx') {
-    output = createDocxBuffer(prepared.content)
+    output = createDocxBuffer(prepared.content, prepared.pageLayout)
   } else {
     const html = await createMarkdownHtml(prepared.content, title, prepared.pageLayout)
     output = args.renderHtmlToPdf

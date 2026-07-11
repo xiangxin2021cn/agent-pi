@@ -357,6 +357,164 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
 })
 
 describe('buildTaskContractFromMessage', () => {
+  it('keeps a single attached drawing table range analysis in quick source-analysis mode', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '分析这张图的表格信息，我想知道N3在CH10+550至CH12+050在eastbound侧排水沟的详细信息。',
+      storedAttachments: [attachment('207-RW-SW-W16 V2.2 DRAIN SCHEDULE.pdf')],
+    })
+
+    expect(contract.taskType).toBe('data')
+    expect(contract.documentQualityMode).toBe('quick')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.documentPlan?.sections).toEqual([
+      'Result table',
+      'Interpretation',
+      'Confirmation needed',
+    ])
+    expect(contract.documentPlan?.charts).toEqual([])
+    expect(contract.documentPlan?.artifactVisibility?.tableLed).toBe(true)
+    expect(contract.documentPlan?.enhancements).toContain(
+      'For this narrow source analysis, provide one result table, one concise interpretation paragraph, and one confirmation-needed note; omit risk matrices, commercial extrapolation, and decorative diagrams unless requested.',
+    )
+  })
+
+  it('keeps explicit narrow-analysis requirements inside the three-part quick result shape', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '分析这张图的单页表格，指定范围CH10+550至CH12+050，必须包含桩号、Position和长度。',
+      storedAttachments: [attachment('drain-schedule.pdf')],
+    })
+
+    expect(contract.documentQualityMode).toBe('quick')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.documentPlan?.sections).toEqual([
+      'Result table',
+      'Interpretation',
+      'Confirmation needed',
+    ])
+  })
+
+  it('does not treat a source PDF as a requested output format', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请读取 tender.pdf 并编写施工方案。',
+    })
+
+    expect(contract.outputFormats).toEqual(['MD'])
+    expect(contract.outputFormats).not.toContain('PDF')
+    expect(contract.artifactDeliverables?.[0]).toMatchObject({
+      format: 'MD',
+      origin: 'app_draft',
+    })
+  })
+
+  it('does not treat a source filename after the output verb as an output format', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请生成一份基于 tender.pdf 的施工方案报告。',
+    })
+
+    expect(contract.outputFormats).toEqual(['MD'])
+    expect(contract.outputFormats).not.toContain('PDF')
+    expect(contract.artifactDeliverables?.[0]).toMatchObject({
+      format: 'MD',
+      origin: 'app_draft',
+    })
+
+    const explicitOutput = buildTaskContractFromMessage({
+      message: '请生成一份基于 tender.pdf 的 DOCX 施工方案报告。',
+    })
+    expect(explicitOutput.outputFormats).toEqual(['DOCX'])
+  })
+
+  it('adds output-file evidence criteria for an explicitly named professional extension', () => {
+    const criteria = buildGoalCriteriaFromMessage({ message: '生成可导入的 schedule.xer。' })
+
+    expect(criteria).toContainEqual({
+      text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+      kind: 'deliverable',
+      required: true,
+    })
+    expect(criteria).toContainEqual({
+      text: 'Create output file(s) in the requested format(s): XER.',
+      kind: 'format',
+      required: true,
+    })
+  })
+
+  it('derives explicit output artifacts only from the output-intent segment', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '读取 tender.pdf，输出 report.md。',
+    })
+
+    expect(contract.outputFormats).toEqual(['MD'])
+    expect(contract.artifactDeliverables).toEqual([
+      {
+        id: 'artifact-md-1',
+        kind: 'document',
+        format: 'MD',
+        required: true,
+        origin: 'explicit',
+        validationLevel: 'syntax',
+        capabilityId: 'md-transactional',
+      },
+    ])
+  })
+
+  it('normalizes output filename aliases to one registered format', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '输出 final-report.markdown。',
+    })
+
+    expect(contract.outputFormats).toEqual(['MD'])
+    expect(contract.artifactDeliverables?.map(item => item.format)).toEqual(['MD'])
+  })
+
+  it('keeps PDF optional unless the user explicitly requests a PDF export', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '将分析报告导出为 PDF。',
+    })
+
+    expect(contract.outputFormats).toEqual(['PDF'])
+    expect(contract.artifactDeliverables?.[0]).toMatchObject({
+      format: 'PDF',
+      required: true,
+      origin: 'explicit',
+      validationLevel: 'syntax',
+      capabilityId: 'pdf-native-export',
+    })
+  })
+
+  it('records an explicitly requested unregistered professional format without pretending to validate it deeply', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '生成可导入的 schedule.xer 文件。',
+    })
+
+    expect(contract.outputFormats).toEqual(['XER'])
+    expect(contract.artifactDeliverables?.[0]).toMatchObject({
+      format: 'XER',
+      kind: 'other',
+      origin: 'explicit',
+      validationLevel: 'existence',
+      capabilityId: 'unregistered-xer',
+    })
+  })
+
+  it('infers DOCX delivery from a strict attached Word template', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请严格按照上传的 Word 模板版式生成新的报告。',
+      storedAttachments: [attachment('reference-template.docx')],
+    })
+
+    expect(contract.outputFormats).toEqual(['DOCX'])
+    expect(contract.artifactDeliverables?.[0]).toMatchObject({
+      format: 'DOCX',
+      kind: 'document',
+      origin: 'template_inferred',
+      required: true,
+      templatePath: '/tmp/reference-template.docx',
+      validationLevel: 'schema',
+      capabilityId: 'docx-native-export',
+    })
+  })
+
   it('uses quick document workflow mode for ordinary small work', () => {
     const contract = buildTaskContractFromMessage({
       message: '修复上传附件按钮',
@@ -374,6 +532,40 @@ describe('buildTaskContractFromMessage', () => {
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
     expect(contract.evidenceRequirements).toContain('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
     expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+  })
+
+  it('creates only an app-native Markdown draft when professional document work has no formal format request', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请根据招标文件编写专业施工方案报告。',
+      storedAttachments: [attachment('tender.pdf')],
+      documentQualityMode: 'professional_document',
+    })
+
+    expect(contract.outputFormats).toEqual(['MD'])
+    expect(contract.artifactDeliverables).toEqual([{
+      id: 'artifact-md-1',
+      kind: 'document',
+      format: 'MD',
+      required: true,
+      origin: 'app_draft',
+      validationLevel: 'syntax',
+      capabilityId: 'md-transactional',
+    }])
+  })
+
+  it('keeps workflow control artifacts internal by default', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请根据招标文件生成一份专业施工方案报告。',
+      storedAttachments: [attachment('tender.pdf')],
+      documentQualityMode: 'professional_document',
+    })
+
+    expect(contract.documentPlan?.artifactVisibility).toEqual({
+      readerFacing: ['narrative', 'citations', 'source_notes', 'requested_tables', 'requested_visuals'],
+      internal: ['evidence_matrix', 'goal_audit', 'assumption_register', 'visual_manifest'],
+      visibleInternal: [],
+      tableLed: false,
+    })
   })
 
   it('creates a reusable evidence matrix for professional document contracts', () => {

@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message } from '@craft-agent/core/types'
-import type { SessionGoalAuditResult, SessionGoalState, SessionOrchestrationArtifactPaths } from '@craft-agent/shared/sessions'
-import { writeGoalEvidencePackage } from './orchestration-artifacts'
+import type { SessionGoalAuditResult, SessionGoalState, SessionOrchestrationArtifactPaths, SessionOrchestrationTask } from '@craft-agent/shared/sessions'
+import { writeGoalEvidencePackage, writeOrchestrationTaskBrief } from './orchestration-artifacts'
 
 const tempPaths: string[] = []
 
@@ -52,6 +52,52 @@ describe('orchestration evidence package', () => {
       evidenceRefs: [expect.objectContaining({ label: 'file_verified_output' })],
     }))
     expect(payload.finalAssistant.content).toBe('Done.')
+  })
+})
+
+describe('orchestration task brief', () => {
+  it('keeps the brief evidence-neutral and lists exact allowed files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-brief-'))
+    tempPaths.push(root)
+    const artifacts: SessionOrchestrationArtifactPaths = {
+      rootPath: root,
+      briefsPath: join(root, 'briefs'),
+      reportsPath: join(root, 'reports'),
+      evidencePackagesPath: join(root, 'evidence-packages'),
+      progressLedgerPath: join(root, 'progress-ledger.json'),
+    }
+    const task: SessionOrchestrationTask = {
+      id: 'table-analysis',
+      title: 'Drain schedule table analysis',
+      phase: 'plan',
+      role: 'source_evidence_agent',
+      status: 'pending',
+      scope: 'Analyze only N3 CH10+550 to CH12+050 rows and report unresolved side mapping.',
+      dependencies: [],
+      allowedSourceSlugs: ['drawing-source'],
+      forbiddenActions: ['Do not broaden the requested range.'],
+      expectedHandoff: ['task_id', 'evidence', 'gaps'],
+    }
+
+    const briefPath = await writeOrchestrationTaskBrief({
+      artifacts,
+      task,
+      parentObjective: 'Which listed drains serve the N3 eastbound side between CH10+550 and CH12+050?',
+      prompt: 'Assume Position L = Eastbound and prove coverage is 27.9%.',
+      reportPath: join(root, 'reports', 'table-analysis.md'),
+      workingDirectory: 'C:\\project',
+      allowedSourceSlugs: ['drawing-source'],
+      allowedFilePaths: ['C:\\session\\attachments\\drain-schedule.pdf'],
+    })
+    const brief = readFileSync(briefPath, 'utf-8')
+
+    expect(brief).toContain('Which listed drains serve the N3 eastbound side')
+    expect(brief).toContain('Analyze only N3 CH10+550 to CH12+050 rows')
+    expect(brief).toContain('allowed_sources: drawing-source')
+    expect(brief).toContain('allowed_files: C:\\session\\attachments\\drain-schedule.pdf')
+    expect(brief).not.toContain('## Parent Prompt')
+    expect(brief).not.toContain('27.9%')
+    expect(brief).not.toContain('Assume Position L = Eastbound')
   })
 })
 

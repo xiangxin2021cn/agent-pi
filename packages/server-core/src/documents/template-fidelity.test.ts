@@ -114,6 +114,8 @@ describe('template fidelity audit', () => {
         numericClaimCount: 5,
         tableMarkerCount: 2,
         placeholderCount: 0,
+        internalControlMarkerCount: 0,
+        tableLineRatio: 0.1,
       },
     };
 

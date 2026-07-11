@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Message } from '@craft-agent/core/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
 import { GoalController } from './goal-controller'
@@ -665,7 +668,7 @@ describe('GoalController', () => {
 
     expect(decision.action).toBe('continue')
     if (decision.action === 'continue') {
-      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing reference to evidence matrix sources, citations, or pending evidence gaps.')
+      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing reference to evidence matrix sources or citations; zero required sources have claim-level coverage.')
       expect(decision.result.failureCategories).toContain('evidence_gap')
       expect(decision.prompt).toContain('Locate the source, artifact, or file evidence before finalizing')
       expect(decision.result.evidence.some(item =>
@@ -744,7 +747,7 @@ describe('GoalController', () => {
 
     expect(decision.action).toBe('continue')
     if (decision.action === 'continue') {
-      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing claim-level evidence matrix citation with source, locator, or claim fields.')
+      expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing claim-level evidence matrix citation with source, locator, or claim fields; zero required sources have claim-level coverage.')
     }
   })
 
@@ -817,6 +820,71 @@ describe('GoalController', () => {
     expect(decision.action).toBe('continue')
     if (decision.action === 'continue') {
       expect(decision.result.missingCriteria).toContain('Evidence matrix audit did not pass: Missing evidence matrix coverage for sources: cost-database.xlsx.')
+    }
+  })
+
+  test('rejects Markdown masquerading as a structured evidence matrix artifact', async () => {
+    const controller = new GoalController()
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      taskContract: {
+        originalRequest: 'Create a professional source-backed report and a structured evidence matrix.',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Result'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['MD'],
+          evidenceMatrix: [{
+            id: 'source-1',
+            source: 'drawing.pdf',
+            sourceType: 'file',
+            supports: 'Result claim.',
+            reliabilityNote: 'User-provided source.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Produce the report and evidence matrix.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use source-1 with a claim-level locator.'],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Create a professional source-backed report and a structured evidence matrix.'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/evidence-matrix.json' },
+        }),
+        message('a1', 'assistant', 'Source: drawing.pdf; Locator: p. 1; Claim: the result is verified.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 48,
+        preview: '# Evidence Matrix\n\n- drawing.pdf, p. 1',
+        auditContent: '# Evidence Matrix\n\n- drawing.pdf, p. 1',
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.startsWith('Evidence matrix schema audit did not pass:'))).toBe(true)
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'system',
+        label: 'evidence_matrix_schema_audit',
+      }))
     }
   })
 
@@ -1415,6 +1483,231 @@ describe('GoalController', () => {
         && item.label === 'document_agent_plan_audit'
         && (item.detail ?? '').includes('missingRealSpawnedSessions: yes')
       )).toBe(true)
+    }
+  })
+
+  test('does not pass evidence matrix audit with zero source coverage just because assumptions are marked pending', async () => {
+    const controller = new GoalController()
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Analyze the attached schedule using evidence.',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Analysis'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          evidenceMatrix: [{
+            id: 'evidence-source-1',
+            source: 'drain-schedule.pdf',
+            sourceType: 'file',
+            supports: 'Drain schedule rows.',
+            reliabilityNote: 'User-provided drawing.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Analyze the source.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Use the evidence matrix.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Analyze the attached schedule using evidence.'),
+        message('a1', 'assistant', '# Analysis\n\nEvidence remains an unresolved assumption pending verification.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.some(item => item.includes('zero required sources have claim-level coverage'))).toBe(true)
+    }
+  })
+
+  test('blocks definitive core conclusions that depend on an unverified side-mapping assumption', async () => {
+    const controller = new GoalController()
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Analyze eastbound drains from the attached schedule.',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        deliverables: ['Source-grounded analysis.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Analyze eastbound drains from the attached schedule.'),
+        message('a1', 'assistant', [
+          '# Assumptions',
+          'Position L = Eastbound is unverified and requires a plan drawing.',
+          '# Core conclusion',
+          'Eastbound drain coverage is only 27.9% and is severely insufficient.',
+        ].join('\n\n')),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.some(item => item.includes('Unverified side mapping was promoted to a definitive core conclusion'))).toBe(true)
+    }
+  })
+
+  test('blocks any unverified evidence-matrix claim promoted to a definitive core conclusion', async () => {
+    const controller = new GoalController()
+    const matrixContent = JSON.stringify({
+      schemaVersion: 1,
+      sources: [{ id: 'source-1', name: 'supplier-note.txt', type: 'file' }],
+      claims: [{
+        id: 'claim-1',
+        claim: 'The supplier lead time is 14 days.',
+        sourceId: 'source-1',
+        locator: 'No verified locator',
+        status: 'unverified',
+      }],
+    })
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Prepare a source-backed supplier summary.',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        documentPlan: {
+          sections: ['Core conclusion'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          evidenceMatrix: [{
+            id: 'source-1',
+            source: 'supplier-note.txt',
+            sourceType: 'file',
+            supports: 'Supplier lead time.',
+            reliabilityNote: 'Unverified supplier statement.',
+            citationFields: ['source', 'locator', 'claim'],
+            reuseStatus: 'candidate',
+          }],
+        },
+        deliverables: ['Source-grounded summary.'],
+        mustPreserve: [],
+        evidenceRequirements: ['Keep unverified claims conditional.'],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Prepare a source-backed supplier summary.'),
+        message('t1', 'tool', 'created', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/evidence-matrix.json' },
+        }),
+        message('a1', 'assistant', '# Core conclusion\n\nThe supplier lead time is 14 days.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: matrixContent.length,
+        preview: matrixContent,
+        auditContent: matrixContent,
+      }),
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.some(item => item.includes('Unverified evidence-matrix claim was promoted to a definitive core conclusion'))).toBe(true)
+    }
+  })
+
+  test('blocks merge when ready handoff reports contradict each other on L/R direction mapping', async () => {
+    const controller = new GoalController()
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Use two agents and merge the drawing analysis.',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        documentPlan: {
+          sections: ['Source review', 'Analysis'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          agentPlan: {
+            mode: 'chapter_agents',
+            finalSynthesisOwner: 'final_synthesis_owner',
+            assignments: [
+              { id: 'chapter-agent-1', title: 'Source review', role: 'source_evidence_agent', reviewFocus: 'source mapping' },
+              { id: 'chapter-agent-2', title: 'Analysis', role: 'document_chapter_agent', reviewFocus: 'drain analysis' },
+            ],
+            reviewStages: ['Cross-chapter consistency review before final synthesis.'],
+            guardrails: ['Resolve conflicting claims before final synthesis.'],
+          },
+        },
+        deliverables: ['Merged report.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Use two agents and merge the drawing analysis.'),
+        message('a1', 'assistant', 'Source review and Analysis handoffs received. Source gaps reviewed. Cross-chapter consistency review complete. final_synthesis_owner merged the report.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      spawnedSessions: [
+        {
+          id: 'child-1',
+          taskId: 'chapter-agent-1',
+          name: 'Source review',
+          messageCount: 2,
+          hasFinalAssistant: true,
+          reportPathExists: true,
+          reportSize: 100,
+          handoffStatus: 'ready',
+          handoffContent: 'Position L = Eastbound. Unresolved assumptions: none.',
+        },
+        {
+          id: 'child-2',
+          taskId: 'chapter-agent-2',
+          name: 'Analysis',
+          messageCount: 2,
+          hasFinalAssistant: true,
+          reportPathExists: true,
+          reportSize: 100,
+          handoffStatus: 'ready',
+          handoffContent: 'Position R = Eastbound. Unresolved assumptions: none.',
+        },
+      ],
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.some(item => item.includes('Contradictory handoff claims'))).toBe(true)
     }
   })
 
@@ -2517,6 +2810,106 @@ describe('GoalController', () => {
         label: 'file_wrong_output_format',
         detail: '/tmp/report.md',
       })
+    }
+  })
+
+  test('feeds structured artifact export audit failures into completion gating', async () => {
+    const controller = new GoalController()
+    const tempDir = await mkdtemp(join(tmpdir(), 'agent-pi-goal-export-'))
+    const outputPath = join(tempDir, 'report.md')
+    await writeFile(outputPath, '')
+
+    try {
+      const decision = await controller.onTurnStopped(goal({
+        taskContract: {
+          originalRequest: '输出 report.md。',
+          taskType: 'file',
+          documentQualityMode: 'quick',
+          deliverables: ['report.md'],
+          artifactDeliverables: [{
+            id: 'artifact-md-1',
+            kind: 'document',
+            format: 'MD',
+            required: true,
+            origin: 'explicit',
+            validationLevel: 'syntax',
+            capabilityId: 'md-transactional',
+          }],
+          mustPreserve: [],
+          evidenceRequirements: [],
+          outputFormats: ['MD'],
+          acceptanceCriteria: [],
+          forbiddenShortcuts: [],
+        },
+        criteria: [{
+          id: 'crit-file-output',
+          text: FILE_OUTPUT_REQUIRED_CRITERION_TEXT,
+          kind: 'deliverable',
+          required: true,
+        }],
+      }), {
+        messages: [
+          message('u1', 'user', '输出 report.md。'),
+          message('t1', 'tool', 'created', {
+            toolName: 'Write',
+            toolStatus: 'completed',
+            toolInput: { file_path: outputPath },
+          }),
+          message('a1', 'assistant', `已生成 ${outputPath}`),
+        ],
+        stoppedReason: 'complete',
+        now: 10,
+        fileVerifier: async () => ({ exists: true, readable: true, isFile: true, sizeBytes: 0 }),
+      })
+
+      expect(decision.action).toBe('needs_review')
+      if (decision.action === 'needs_review') {
+        expect(decision.result.missingCriteria.some(item => item.includes('Export quality audit did not pass'))).toBe(true)
+        expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+          label: 'artifact_export_quality_failed',
+        }))
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  test('enforces required structured artifact formats without a duplicate format criterion', async () => {
+    const controller = new GoalController()
+    const decision = await controller.onTurnStopped(goal({
+      taskContract: {
+        originalRequest: '编写专业施工方案报告。',
+        taskType: 'document',
+        documentQualityMode: 'professional_document',
+        deliverables: ['Professional report'],
+        artifactDeliverables: [{
+          id: 'artifact-md-1',
+          kind: 'document',
+          format: 'MD',
+          required: true,
+          origin: 'app_draft',
+          validationLevel: 'syntax',
+          capabilityId: 'md-transactional',
+        }],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['MD'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+      criteria: [],
+    }), {
+      messages: [
+        message('u1', 'user', '编写专业施工方案报告。'),
+        message('a1', 'assistant', '# 施工方案\n\n正文已完成，但尚未写入正式输出文件。'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria).toContain('Requested output format was not produced: MD.')
     }
   })
 

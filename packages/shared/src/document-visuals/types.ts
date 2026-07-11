@@ -64,6 +64,25 @@ export interface VisualPlan {
   auditRequirements: string[];
 }
 
+export type VisualEvidenceType = 'source_image' | 'data_derived' | 'source_derived_diagram' | 'illustrative';
+
+export interface VisualSpec {
+  id: string;
+  kind: VisualKind;
+  title: string;
+  caption: string;
+  altText: string;
+  evidenceType: VisualEvidenceType;
+  sourceRefs: string[];
+  assetPath?: string;
+  dataPath?: string;
+  target: {
+    formats: string[];
+    pageSize?: 'A4' | 'A3' | 'letter' | 'custom';
+    orientation?: 'portrait' | 'landscape';
+  };
+}
+
 export interface TemplateProfile {
   id: string;
   sourcePath: string;

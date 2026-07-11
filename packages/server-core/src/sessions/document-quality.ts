@@ -1,4 +1,5 @@
 import { basename, extname } from 'path'
+import type { SessionDocumentInternalArtifactKind } from '@craft-agent/shared/sessions'
 
 export interface DocumentQualityReport {
   passed: boolean
@@ -24,6 +25,8 @@ export interface DocumentQualityReport {
     numericClaimCount: number
     tableMarkerCount: number
     placeholderCount: number
+    internalControlMarkerCount: number
+    tableLineRatio: number
   }
 }
 
@@ -31,6 +34,8 @@ export interface AnalyzeDocumentQualityInput {
   contents: string[]
   sourceFilePaths?: string[]
   strict?: boolean
+  allowVisibleInternalArtifacts?: SessionDocumentInternalArtifactKind[]
+  tableLed?: boolean
 }
 
 const CITATION_MARKER_PATTERN = /来源|依据|引用|参考|条款|章节|第\s*\d+\s*页|source|according to|based on|citation|cite|clause|section|page|§|\[[^\]]+\]/gi
@@ -38,6 +43,13 @@ const NUMERIC_CLAIM_PATTERN = /(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s?%|\s?(?
 const PLACEHOLDER_PATTERN = /待补充|待确认|TODO|TBD|placeholder|lorem ipsum|xxx|\[填|【填|<insert/gi
 const SPECIFICATION_PATTERN = /规范|标准|条款|合同|招标|投标|清单|工程量|boq|specification|standard|clause|contract|tender|requirement/gi
 const RISK_PATTERN = /风险|问题|缺口|假设|建议|控制|复核|risk|gap|assumption|mitigation|recommendation|review/gi
+const INTERNAL_CONTROL_HEADING_PATTERNS: Array<{ kind: SessionDocumentInternalArtifactKind; pattern: RegExp }> = [
+  { kind: 'evidence_matrix', pattern: /(?:^|\n)\s*#{1,6}\s*(?:\d+[.、]\s*)?(?:证据矩阵|evidence matrix)\s*(?=\n|$|\/)/gi },
+  { kind: 'goal_audit', pattern: /(?:^|\n)\s*#{1,6}\s*(?:目标审计|goal audit|document expert review)\s*(?=\n|$|\/)/gi },
+  { kind: 'assumption_register', pattern: /(?:^|\n)\s*#{1,6}\s*(?:假设登记|假设台账|assumption register)\s*(?=\n|$|\/)/gi },
+  { kind: 'visual_manifest', pattern: /(?:^|\n)\s*#{1,6}\s*(?:视觉清单|图表清单|visual manifest)\s*(?=\n|$|\/)/gi },
+]
+const EDITORIAL_PROCESS_PATTERN = /(?:goal audit requested improvement|内部审计结果|编制过程记录|审计指出缺少|以下为审计过程|document expert review)/gi
 
 export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): DocumentQualityReport {
   const raw = input.contents.map(content => content.trim()).filter(Boolean).join('\n\n')
@@ -56,6 +68,9 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
   const placeholderCount = countMatches(raw, PLACEHOLDER_PATTERN)
   const specificationMarkerCount = countMatches(raw, SPECIFICATION_PATTERN)
   const riskMarkerCount = countMatches(raw, RISK_PATTERN)
+  const internalControlMarkerCount = countInternalControlMarkers(raw, input.allowVisibleInternalArtifacts ?? [])
+    + countMatches(raw, EDITORIAL_PROCESS_PATTERN)
+  const tableLineRatio = calculateTableLineRatio(raw)
 
   const issues: string[] = []
   const strengths: string[] = []
@@ -110,6 +125,17 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     issues.push('存在未清理的占位符或待补充内容。')
   }
 
+  if (internalControlMarkerCount > 0) {
+    score -= 25
+    issues.push('正文包含内部审计或编制过程内容。')
+  }
+
+  const tableBalanceFailed = !input.tableLed && tableLineRatio > 0.45
+  if (tableBalanceFailed) {
+    score -= 15
+    issues.push('表格占比过高，正文叙述不足。')
+  }
+
   const threshold = input.strict ? 75 : 70
   const clampedScore = Math.max(0, Math.min(100, score))
   const dimensions = {
@@ -121,7 +147,11 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
   }
 
   return {
-    passed: clampedScore >= threshold && placeholderCount === 0 && !(sourceFilePaths.length > 0 && groundingCount === 0),
+    passed: clampedScore >= threshold
+      && placeholderCount === 0
+      && internalControlMarkerCount === 0
+      && !tableBalanceFailed
+      && !(sourceFilePaths.length > 0 && groundingCount === 0),
     score: clampedScore,
     threshold,
     issues,
@@ -136,6 +166,8 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
       numericClaimCount,
       tableMarkerCount,
       placeholderCount,
+      internalControlMarkerCount,
+      tableLineRatio,
     },
   }
 }
@@ -158,7 +190,7 @@ export function formatDocumentQualityReport(report: DocumentQualityReport): stri
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `score: ${report.score}/${report.threshold}`,
     `dimensions: ${dimensionsText}`,
-    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, numericClaims=${report.metrics.numericClaimCount}, tables=${report.metrics.tableMarkerCount}, placeholders=${report.metrics.placeholderCount}`,
+    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, numericClaims=${report.metrics.numericClaimCount}, tables=${report.metrics.tableMarkerCount}, tableLineRatio=${report.metrics.tableLineRatio.toFixed(2)}, placeholders=${report.metrics.placeholderCount}, internalControlMarkers=${report.metrics.internalControlMarkerCount}`,
     report.issues.length > 0 ? `issues:\n${report.issues.map(issue => `- ${issue}`).join('\n')}` : 'issues: none',
     report.strengths.length > 0 ? `strengths:\n${report.strengths.map(strength => `- ${strength}`).join('\n')}` : 'strengths: none',
   ].join('\n')
@@ -175,6 +207,24 @@ function countTableMarkers(content: string): number {
   const markdownTableRows = content.match(/(?:^|\n)\s*\|.+\|\s*(?=\n|$)/g)?.length ?? 0
   const listRows = content.match(/(?:^|\n)\s*(?:[-*]|\d+[.)、])\s+\S.{10,}/g)?.length ?? 0
   return markdownTableRows + listRows
+}
+
+function calculateTableLineRatio(content: string): number {
+  const lines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  if (lines.length === 0) return 0
+  const tableLines = lines.filter(line => /^\|.*\|$/.test(line)).length
+  return tableLines / lines.length
+}
+
+function countInternalControlMarkers(
+  content: string,
+  allowed: SessionDocumentInternalArtifactKind[],
+): number {
+  const allowedSet = new Set(allowed)
+  return INTERNAL_CONTROL_HEADING_PATTERNS.reduce((count, marker) => {
+    if (allowedSet.has(marker.kind)) return count
+    return count + countMatches(content, marker.pattern)
+  }, 0)
 }
 
 function countSourceReferences(content: string, sourceFilePaths: string[]): number {

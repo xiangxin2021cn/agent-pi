@@ -5,7 +5,7 @@ import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, extname, join } from 'path'
-import { constants as FS_CONSTANTS, existsSync, statSync } from 'fs'
+import { closeSync, constants as FS_CONSTANTS, existsSync, openSync, readSync, statSync } from 'fs'
 import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
@@ -121,6 +121,8 @@ import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAtta
 import type { SessionSpawnStatus } from '@craft-agent/session-tools-core'
 import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
 import { enforceGoalCompletionGates } from './goal-completion-gates'
+import { getAgentSessionStatusGateError } from './goal-completion-gate'
+import { getSpawnActivityTimeoutMs, resolveSpawnActivityState } from './spawn-lifecycle'
 import { verifyDocumentArtifactReadiness } from './document-artifact-readiness'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
@@ -5156,6 +5158,17 @@ export class SessionManager implements ISessionManager {
           ? spawnTask.allowedSourceSlugs
           : request.enabledSourceSlugs ?? managed.enabledSourceSlugs ?? parentOrchestration?.policy.selectedSourceSlugs ?? []
         const reportPath = artifacts ? getOrchestrationReportPath(artifacts, spawnTask?.id ?? request.name) : undefined
+        const latestParentAttachments = [...managed.messages].reverse().find(message =>
+          message.role === 'user' && (message.attachments?.length ?? 0) > 0
+        )?.attachments ?? []
+        const spawnAttachmentRequests = new Map<string, { path: string; name?: string }>()
+        for (const attachment of latestParentAttachments) {
+          if (attachment.storedPath) spawnAttachmentRequests.set(attachment.storedPath, { path: attachment.storedPath, name: attachment.name })
+        }
+        for (const attachment of request.attachments ?? []) {
+          spawnAttachmentRequests.set(attachment.path, attachment)
+        }
+        const allowedFilePaths = [...spawnAttachmentRequests.keys()]
         const taskBriefPath = artifacts && reportPath
           ? await writeOrchestrationTaskBrief({
               artifacts,
@@ -5165,6 +5178,7 @@ export class SessionManager implements ISessionManager {
               reportPath,
               workingDirectory: spawnedWorkingDirectory,
               allowedSourceSlugs,
+              allowedFilePaths,
             })
           : undefined
         const spawnedPrompt = buildSpawnedSessionGovernancePrompt(request.prompt, {
@@ -5189,9 +5203,9 @@ export class SessionManager implements ISessionManager {
 
         // Build FileAttachment[] from paths (if any)
         let fileAttachments: FileAttachment[] | undefined
-        if (request.attachments?.length) {
+        if (spawnAttachmentRequests.size > 0) {
           const attachments: FileAttachment[] = []
-          for (const a of request.attachments) {
+          for (const a of spawnAttachmentRequests.values()) {
             try {
               const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
               if (spawnedWorkingDirectory && spawnedWorkingDirectory !== 'none') extraDirs.push(spawnedWorkingDirectory)
@@ -5277,7 +5291,11 @@ export class SessionManager implements ISessionManager {
           await this.setSessionLabels(sessionId ?? managed.id, labels)
         },
         setSessionStatusFn: async (sessionId: string | undefined, status: string) => {
-          await this.setSessionStatus(sessionId ?? managed.id, status as SessionStatus)
+          const targetId = sessionId ?? managed.id
+          const targetSession = this.sessions.get(targetId)
+          const gateError = getAgentSessionStatusGateError(targetSession?.goalState, status)
+          if (gateError) throw new Error(gateError)
+          await this.setSessionStatus(targetId, status as SessionStatus)
         },
         getSessionInfoFn: (sessionId?: string) => {
           const targetId = sessionId ?? managed.id
@@ -6037,6 +6055,9 @@ export class SessionManager implements ISessionManager {
           reportPathExists: spawnStatus?.reportPathExists,
           reportSize: spawnStatus?.reportSize,
           handoffStatus: spawnStatus?.handoffStatus,
+          handoffContent: spawnStatus?.handoffStatus === 'ready'
+            ? this.getReportFileContent(spawnStatus.reportPath)
+            : undefined,
         }
       })
   }
@@ -6052,20 +6073,27 @@ export class SessionManager implements ISessionManager {
     const report = this.getReportFileState(lifecycle?.reportPath)
     const ready = report.exists && (report.size ?? 0) > 0
     const failedHandoff = lifecycle?.status === 'needs_review' || lifecycle?.status === 'failed'
-    const pendingHandoff = session.isProcessing
-      || session.messageQueue.length > 0
-      || lifecycle?.status === 'started'
-    const lifecycleStatus = ready
-      ? 'handoff_ready'
-      : session.isProcessing
-        ? 'running'
-        : lifecycle?.status ?? (session.parentSessionKind === 'spawn' ? 'started' : 'unknown')
+    const activityTimestamps = [session.lastMessageAt, lifecycle?.lastActivityAt, lifecycle?.updatedAt]
+      .filter((value): value is number => typeof value === 'number')
+    const lastActivityAt = activityTimestamps.length > 0 ? Math.max(...activityTimestamps) : undefined
+    const staleAfterMs = getSpawnActivityTimeoutMs(process.env.CRAFT_SPAWN_ACTIVITY_TIMEOUT_MS)
+    const activityState = resolveSpawnActivityState({
+      now: Date.now(),
+      lastActivityAt,
+      staleAfterMs,
+      isProcessing: session.isProcessing,
+      queueLength: session.messageQueue.length,
+      reportReady: ready,
+      failedLifecycle: failedHandoff,
+      hasReportPath: Boolean(lifecycle?.reportPath),
+      fallbackLifecycleStatus: lifecycle?.status ?? (session.parentSessionKind === 'spawn' ? 'started' : 'unknown'),
+    })
 
     return {
       sessionId: session.id,
       parentSessionId: session.parentSessionId,
       taskId: lifecycle?.taskId,
-      lifecycleStatus,
+      lifecycleStatus: activityState.lifecycleStatus,
       isActive: session.agent != null,
       isProcessing: session.isProcessing,
       queueLength: session.messageQueue.length,
@@ -6073,18 +6101,11 @@ export class SessionManager implements ISessionManager {
       reportPath: lifecycle?.reportPath,
       reportPathExists: report.exists,
       reportSize: report.size,
-      handoffStatus: session.parentSessionKind !== 'spawn'
-        ? 'not_applicable'
-        : ready
-          ? 'ready'
-          : failedHandoff
-            ? 'failed'
-          : pendingHandoff
-            ? 'pending'
-            : lifecycle?.reportPath
-              ? 'missing'
-              : 'pending',
-      lastActivityAt: session.lastMessageAt ?? lifecycle?.lastActivityAt ?? lifecycle?.updatedAt,
+      handoffStatus: session.parentSessionKind !== 'spawn' ? 'not_applicable' : activityState.handoffStatus,
+      lastActivityAt,
+      idleMs: activityState.idleMs,
+      staleAfterMs,
+      isStale: activityState.isStale,
       briefPath: lifecycle?.briefPath,
     }
   }
@@ -6094,7 +6115,7 @@ export class SessionManager implements ISessionManager {
       .filter(session => session.parentSessionId === parentSessionId && session.parentSessionKind === 'spawn')
       .filter(session => {
         const status = this.getSpawnStatus(session.id)
-        return Boolean(status && (
+        return Boolean(status && !status.isStale && (
           status.isProcessing
           || status.queueLength > 0
           || status.handoffStatus === 'pending'
@@ -6180,6 +6201,21 @@ export class SessionManager implements ISessionManager {
       return { exists: info.isFile(), size: info.size }
     } catch {
       return { exists: false }
+    }
+  }
+
+  private getReportFileContent(reportPath: string | undefined): string | undefined {
+    if (!reportPath) return undefined
+    let descriptor: number | undefined
+    try {
+      descriptor = openSync(reportPath, 'r')
+      const buffer = Buffer.alloc(48 * 1024)
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0)
+      return buffer.toString('utf8', 0, bytesRead)
+    } catch {
+      return undefined
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor)
     }
   }
 

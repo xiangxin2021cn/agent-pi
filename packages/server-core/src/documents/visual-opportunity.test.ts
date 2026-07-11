@@ -69,6 +69,8 @@ describe('visual opportunity detector', () => {
 
     expect(detectVisualOpportunities(repeated)).toHaveLength(5);
     expect(detectVisualOpportunities(repeated, { mode: 'professional' })).toHaveLength(12);
+    expect(detectVisualOpportunities(repeated, { mode: 'professional', genre: 'executive_brief' })).toHaveLength(4);
+    expect(detectVisualOpportunities(repeated, { mode: 'professional', genre: 'technical_report' })).toHaveLength(10);
   });
 
   test('counts existing Mermaid or image blocks and does not duplicate them', () => {

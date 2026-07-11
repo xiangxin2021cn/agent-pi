@@ -57,11 +57,13 @@ export async function writeOrchestrationTaskBrief(input: {
   reportPath: string
   workingDirectory?: string
   allowedSourceSlugs: string[]
+  allowedFilePaths?: string[]
 }): Promise<string> {
   await ensureOrchestrationArtifactDirs(input.artifacts)
   const taskId = input.task?.id || 'spawn-task'
   const briefPath = join(input.artifacts.briefsPath, `${sanitizeFileName(taskId)}.md`)
   const allowedSources = input.allowedSourceSlugs.length > 0 ? input.allowedSourceSlugs.join(', ') : '(none)'
+  const allowedFiles = input.allowedFilePaths?.length ? input.allowedFilePaths.join(', ') : '(none)'
   const content = [
     '# Spawned Agent Brief',
     '',
@@ -70,6 +72,7 @@ export async function writeOrchestrationTaskBrief(input: {
     `parent_objective: ${input.parentObjective ?? '(none)'}`,
     `working_directory: ${input.workingDirectory ?? 'none'}`,
     `allowed_sources: ${allowedSources}`,
+    `allowed_files: ${allowedFiles}`,
     `report_path: ${input.reportPath}`,
     '',
     '## Scope',
@@ -87,9 +90,6 @@ export async function writeOrchestrationTaskBrief(input: {
     ...(input.task?.expectedHandoff?.length
       ? input.task.expectedHandoff.map(field => `- ${field}: ...`)
       : ['- task_id: ...', '- sources_used: ...', '- evidence: ...', '- artifacts: ...', '- gaps: ...', '- recommendation: ...']),
-    '',
-    '## Parent Prompt',
-    input.prompt,
     '',
     'Write the completed handoff report to report_path before replying.',
   ].join('\n')

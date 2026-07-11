@@ -33,6 +33,40 @@ const contract: SessionTaskContract = {
 };
 
 describe('formatTaskContractContext', () => {
+  it('formats structured artifact deliverables with origin and truthful validation level', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      outputFormats: ['DOCX', 'XER'],
+      artifactDeliverables: [
+        {
+          id: 'artifact-docx-1',
+          kind: 'document',
+          format: 'DOCX',
+          required: true,
+          origin: 'template_inferred',
+          validationLevel: 'schema',
+          templatePath: '/tmp/reference.docx',
+          capabilityId: 'docx-native-export',
+        },
+        {
+          id: 'artifact-xer-2',
+          kind: 'other',
+          format: 'XER',
+          required: true,
+          origin: 'explicit',
+          validationLevel: 'existence',
+          capabilityId: 'unregistered-xer',
+        },
+      ],
+    });
+
+    expect(formatted).toContain('Artifact deliverables:');
+    expect(formatted).toContain('DOCX [document] required; origin=template_inferred; validation=schema; template=/tmp/reference.docx');
+    expect(formatted).toContain('XER [other] required; origin=explicit; validation=existence');
+    expect(formatted).toContain('Use the registered capability for each requested artifact format');
+    expect(formatted).not.toContain('Use document_artifact for long Markdown deliverables');
+  });
+
   it('formats a bounded execution contract for prompt context', () => {
     const formatted = formatTaskContractContext(contract);
 
@@ -149,7 +183,8 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.');
     expect(formatted).toContain('Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.');
     expect(formatted).toContain('use get_spawn_status to check handoffStatus/reportPathExists/reportSize');
-    expect(formatted).toContain('never treat session status "todo" as child failure');
+    expect(formatted).toContain('never replace this with an arbitrary fixed timeout');
+    expect(formatted).toContain('lastActivityAt/isStale');
     expect(formatted).toContain('Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
@@ -228,8 +263,8 @@ describe('formatTaskContractContext', () => {
 
     expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
     expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
-    expect(formatted).toContain('After spawning, use get_spawn_status and report_path readiness for helper progress');
-    expect(formatted).toContain('The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.');
+    expect(formatted).toContain('After spawning, use get_spawn_status, lastActivityAt, isStale, and report_path readiness for helper progress');
+    expect(formatted).toContain('The main session remains the final synthesis owner and must read, compare, and resolve helper handoffs before writing the final deliverable.');
   });
 
   it('includes document evidence matrix entries when available', () => {

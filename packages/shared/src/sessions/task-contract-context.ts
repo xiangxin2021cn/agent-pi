@@ -1,4 +1,4 @@
-import type { SessionDocumentAgentPlan, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionRequirementLedger, SessionTaskContract } from './types.ts';
+import type { SessionDocumentAgentPlan, SessionDocumentArtifactVisibilityPlan, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentPlan, SessionRequirementLedger, SessionTaskContract } from './types.ts';
 
 const MAX_ITEMS_PER_SECTION = 3;
 const MAX_ITEM_LENGTH = 260;
@@ -16,6 +16,7 @@ export function formatTaskContractContext(contract: SessionTaskContract | undefi
     formatDocumentPlan(contract.documentPlan),
     formatLine('Original request', contract.originalRequest, 500),
     formatList('Deliverables', contract.deliverables),
+    formatArtifactDeliverables(contract),
     formatList('Must preserve', contract.mustPreserve),
     formatList('Evidence requirements', contract.evidenceRequirements),
     formatList('Output formats', contract.outputFormats),
@@ -55,6 +56,19 @@ function formatDocumentArtifactWritingProtocol(contract: SessionTaskContract): s
   const mode = contract.documentQualityMode;
   if (mode !== 'professional_document' && mode !== 'strict_delivery' && mode !== 'multi_agent_deep') return undefined;
 
+  const hasMarkdownDeliverable = (contract.artifactDeliverables?.length ?? 0) > 0
+    ? contract.artifactDeliverables?.some(deliverable => deliverable.required && deliverable.format.toUpperCase() === 'MD')
+    : contract.outputFormats.some(format => format.toUpperCase() === 'MD');
+
+  if (!hasMarkdownDeliverable) {
+    return [
+      'Document artifact production protocol:',
+      '1. Use the registered capability for each requested artifact format; do not create Markdown or PDF as an unrequested intermediate deliverable.',
+      '2. Validate each artifact only to its declared validation level and report stronger validation as unavailable rather than implied.',
+      '3. Keep source evidence and internal audit artifacts separate from the reader-facing deliverable unless the user explicitly requests them.',
+    ].join('\n');
+  }
+
   return [
     'Document artifact writing protocol:',
     '1. Use document_artifact for long Markdown deliverables; do not construct them with one large Write/Bash/Python/heredoc payload.',
@@ -64,6 +78,15 @@ function formatDocumentArtifactWritingProtocol(contract: SessionTaskContract): s
     '5. Do not bypass prepare_merge or assemble: they freeze section hashes and atomically write only the verified set to the formal output folder.',
     '6. Before final response, call validate with exact required headings or constraint markers from the task contract.',
   ].join('\n');
+}
+
+function formatArtifactDeliverables(contract: SessionTaskContract): string | undefined {
+  const items = contract.artifactDeliverables?.map(deliverable => {
+    const requirement = deliverable.required ? 'required' : 'optional';
+    const template = deliverable.templatePath ? `; template=${deliverable.templatePath}` : '';
+    return `${deliverable.format} [${deliverable.kind}] ${requirement}; origin=${deliverable.origin}; validation=${deliverable.validationLevel}${template}`;
+  });
+  return formatList('Artifact deliverables', items);
 }
 
 function formatCriticalReasoningProtocol(contract: SessionTaskContract): string | undefined {
@@ -78,14 +101,15 @@ function formatCriticalReasoningProtocol(contract: SessionTaskContract): string 
     '4. Reconcile the challenge by revising claims, structure, or assumptions before finalizing.',
     '5. End with a bounded conclusion that states conditions, risks, and what would change the answer.',
     '6. Use this as private reasoning scaffolding unless the requested deliverable explicitly asks for visible step headings.',
+    '7. Never promote an unverified assumption into a definitive core conclusion. Keep it conditional and show the alternative branch until source evidence resolves it.',
   ];
 
   if (mode === 'strict_delivery') {
-    lines.push('7. Do not invent cases, data, citations, or source locators; mark unavailable evidence as a gap.');
+    lines.push('8. Do not invent cases, data, citations, or source locators; mark unavailable evidence as a gap.');
   }
 
   if (mode === 'multi_agent_deep') {
-    lines.push('7. Use reviewer or chapter-agent handoffs to surface opposing views before final synthesis.');
+    lines.push('8. Use reviewer or chapter-agent handoffs to surface opposing views before final synthesis.');
   }
 
   return lines.join('\n');
@@ -95,12 +119,13 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
   if (contract.documentQualityMode === 'professional_document') {
     const lines = [
       'Document workflow execution protocol:',
-      '1. Build or update the evidence matrix before drafting source-backed claims.',
-      '2. Plan sections, tables, visuals, and citations before writing final prose.',
-      '3. Keep source notes for key claims, tables, and visual evidence.',
-      '4. Run a document-quality pass before claiming completion.',
+      '1. Build or update the evidence matrix before drafting source-backed claims. Keep it as an internal artifact and do not place it in reader-facing prose unless explicitly requested.',
+      '2. When writing evidence-matrix.json, use valid JSON with schemaVersion=1, non-empty sources[], and claims[] entries containing id, claim, sourceId, locator, and status (verified, assumption, or unverified). Markdown stored under a .json filename is invalid.',
+      '3. Plan sections, tables, visuals, and citations before writing final prose.',
+      '4. Keep source notes for key claims, tables, and visual evidence.',
+      '5. Run a document-quality pass before claiming completion.',
     ];
-    const nextIndex = appendComplexAgentOrchestrationProtocol(lines, contract, 5);
+    const nextIndex = appendComplexAgentOrchestrationProtocol(lines, contract, 6);
     appendBoqPricingWorkbookProtocol(lines, contract, nextIndex);
     return lines.join('\n');
   }
@@ -128,12 +153,12 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
     `3. Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
     `4. If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.`,
     `5. Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.`,
-    `6. After spawn_session returns, wait at least pollAfterMs when provided and use get_spawn_status to check handoffStatus/reportPathExists/reportSize; never treat session status "todo" as child failure.`,
+    `6. After spawn_session returns, wait at least pollAfterMs when provided and use get_spawn_status to check handoffStatus/reportPathExists/reportSize/lastActivityAt/isStale; continue polling while activity advances, and never replace this with an arbitrary fixed timeout.`,
     `7. Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.`,
     `8. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
     `9. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
     `10. Record chapter-agent handoff notes with source gaps and unresolved assumptions.`,
-    `11. Resolve cross-chapter consistency conflicts before final synthesis.`,
+    `11. Read the completed handoff reports and resolve contradictory claims before final synthesis; a statement that consistency review occurred is not sufficient evidence.`,
     `12. Only ${finalSynthesisOwner} may write the final synthesized deliverable after cross-chapter review.`,
   ];
   appendBoqPricingWorkbookProtocol(lines, contract, 13);
@@ -146,8 +171,8 @@ function appendComplexAgentOrchestrationProtocol(lines: string[], contract: Sess
 
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
-  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status and report_path readiness for helper progress; do not treat status "todo" as failed execution.`);
-  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner and must resolve helper handoffs before writing the final deliverable.`);
+  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status, lastActivityAt, isStale, and report_path readiness for helper progress; do not use an arbitrary fixed timeout or treat status "todo" as failed execution.`);
+  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner and must read, compare, and resolve helper handoffs before writing the final deliverable.`);
   return startIndex + 4;
 }
 
@@ -195,7 +220,8 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | und
   const agentPlan = formatDocumentAgentPlan(plan?.agentPlan);
   const evidenceMatrix = formatDocumentEvidenceMatrix(plan?.evidenceMatrix);
   const deliveryReviewPlan = formatDocumentDeliveryReviewPlan(plan?.deliveryReviewPlan);
-  if (!sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan) return undefined;
+  const artifactVisibility = formatDocumentArtifactVisibility(plan?.artifactVisibility);
+  if (!sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan && !artifactVisibility) return undefined;
 
   return [
     sectionPlan,
@@ -207,7 +233,19 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | und
     agentPlan ? ['Document agent plan:', agentPlan].join('\n') : undefined,
     evidenceMatrix ? ['Evidence matrix:', evidenceMatrix].join('\n') : undefined,
     deliveryReviewPlan ? ['Delivery review plan:', deliveryReviewPlan].join('\n') : undefined,
+    artifactVisibility ? ['Artifact visibility:', artifactVisibility].join('\n') : undefined,
   ].filter(Boolean).join('\n');
+}
+
+function formatDocumentArtifactVisibility(plan: SessionDocumentArtifactVisibilityPlan | undefined): string | undefined {
+  if (!plan) return undefined;
+  return [
+    `Reader-facing: ${plan.readerFacing.join(', ')}`,
+    `Internal only by default: ${plan.internal.join(', ')}`,
+    `Explicitly visible internal artifacts: ${plan.visibleInternal.join(', ') || '(none)'}`,
+    `Table-led profile: ${plan.tableLed ? 'yes' : 'no'}`,
+    'Keep internal control artifacts out of the final body unless listed as explicitly visible.',
+  ].join('\n');
 }
 
 function formatDocumentDeliveryReviewPlan(plan: SessionDocumentDeliveryReviewPlan | undefined): string | undefined {

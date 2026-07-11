@@ -14,15 +14,31 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V2.1.0.**
+**Current release: V2.1.1.**
 
-**当前发布版：V2.1.0。**
+**当前发布版：V2.1.1。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.1.1 Controlled Source Analysis / V2.1.1 受控来源分析
+
+V2.1.1 keeps narrow source questions narrow and makes professional delivery gates deterministic. Single-page and single-table analysis no longer expands into a generic five-section report, while evidence, assumptions, sub-agent handoffs, requested formats, and reader-facing quality are checked before completion.
+
+V2.1.1 让局部来源问题保持局部，并把专业交付门槛落实到确定性检查。单页、单表分析不再膨胀为通用五章报告；证据、假设、子智能体交接、指定格式和正文质量均在完成前接受审查。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Quick source analysis | Single-page, single-table, and bounded-range questions default to one result table, one explanation, and one confirmation item without automatic multi-agent expansion. | 单页、单表和局部范围问题默认输出一张结果表、一段解释和一个待确认事项，不自动扩展多智能体。 |
+| Evidence-neutral briefs | Sub-agent briefs contain only the question, scope, allowed sources/files, and report destination; unverified parent conclusions are excluded. | 子智能体 brief 只包含问题、范围、允许来源/文件和报告路径，不携带主会话未经验证的结论。 |
+| Assumption gate | Claims marked `assumption` or `unverified` in the evidence matrix cannot become unconditional core conclusions. | 证据矩阵中标记为 `assumption` 或 `unverified` 的声明不能无条件进入核心结论。 |
+| Handoff lifecycle | Child work uses activity-based stale detection and report readiness instead of a fixed wait; contradictory handoffs block merge. | 子智能体按活动时间和报告就绪状态判断，不再固定等待；交接结论冲突会阻止合并。 |
+| Completion and evidence | Agent-side `done` is rejected until Goal Audit passes; evidence matrices use versioned JSON and zero source coverage cannot pass. | Goal Audit 通过前拒绝智能体设置 `done`；证据矩阵使用版本化 JSON，零来源覆盖不能通过。 |
+| Professional artifacts | Requested Office/data/professional formats are tracked explicitly; PDF is produced only when requested, and DOCX export preserves A3/A4 page intent. | 显式追踪 Office、数据和专业格式；仅在用户要求时输出 PDF，DOCX 导出保留 A3/A4 页面意图。 |
+| Reader-facing quality | Internal evidence matrices and audit records stay out of the body by default; table balance, visual evidence, captions, sources, and export structure are audited. | 内部证据矩阵和审计记录默认不进入正文；表格比例、视觉证据、图注、来源和导出结构均接受审查。 |
 
 ### V2.1.0 Verifiable Document Delivery / V2.1.0 可验证文档交付
 
@@ -56,21 +72,6 @@ V2.0.1 让新的编排层更可见、更克制：“信息”弹窗展示阶段�
 | Narrow BOQ scope | Named page/sheet pricing such as MEDIAN BARRIER remains serial and item-focused instead of triggering cross-sheet dispatch and final synthesis. | 类似 MEDIAN BARRIER 的指定页/表组价保持串行和逐项推导，不触发跨表分派和最终统稿。 |
 | Spawn governance | Spawned sub-agents may not spawn further child sessions; oversized work must return structured gaps and recommendations to the main session. | 子智能体不得继续派生子子智能体；任务过大时把缺口和建议结构化交回主会话。 |
 | Core dependency | Claude Agent SDK updated to 0.3.202; Anthropic SDK and Pi packages were already current. | Claude Agent SDK 升级到 0.3.202；Anthropic SDK 和 Pi 组件已是最新版。 |
-
-### V2.0.0 Architecture Upgrade / V2.0.0 架构升级
-
-V2.0.0 turns Agent Pi's long-task execution into a structured orchestration system. The app now carries a task board through the run, separates planning, auditing, and final merging, monitors orchestration entropy, and records sub-agent lifecycle state so large document jobs stay scoped, auditable, and recoverable.
-
-V2.0.0 将 Agent π 的长任务执行升级为结构化编排系统：任务板贯穿执行过程，Plan/Audit/Merge 分离，编排熵持续监控，子智能体生命周期可追踪，让大型文档和知识库任务保持边界清晰、可审查、可恢复。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Structured task board | Every professional long task can carry task scope, role, dependencies, selected sources, forbidden actions, and expected handoff fields. | 专业长任务可携带任务范围、角色、依赖、选中来源、禁止动作和交接字段。 |
-| Plan / Audit / Merge | Sub-agents produce scoped evidence handoffs; the main session audits instruction fidelity and source compliance before final synthesis. | 分智能体产出范围化证据交接；主会话先审指令遵守和来源合规，再最终合成。 |
-| Knowledge-base hard boundary | Selected knowledge-base entries become a hard source boundary; unselected source tools and working-directory corpus scans are blocked unless the user expands scope. | 选中的知识库条目成为硬边界；未选来源工具和工作目录语料扫描会被拦截，除非用户明确扩大范围。 |
-| Human confirmation pause | Structured `<requires_user_decision>` blocks pause Goal Loop for manual review instead of being auto-covered by the next loop. | 结构化 `<requires_user_decision>` 会暂停到人工确认，不再被下一轮自动纠偏掩盖。 |
-| Entropy and lifecycle | The audit layer tracks many-source/many-agent/tool-failure/write-failure/workspace-scan pressure and records spawned-agent lifecycle state. | 审查层记录多来源、多智能体、工具失败、写入失败、工作目录扫描压力，并记录分智能体生命周期。 |
-| Regression suite | Adds IWG-style regression tests for source scope, task board prompts, tool preflight blocking, structured pauses, and entropy signals. | 新增 IWG 风格回归测试，覆盖来源边界、任务板提示、工具前置拦截、结构化暂停和熵信号。 |
 
 Older release details are available on GitHub Releases.
 

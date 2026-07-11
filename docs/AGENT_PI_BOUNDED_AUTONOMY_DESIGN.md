@@ -258,7 +258,22 @@ V2.1 regression set:
 - Build IWG-style regression tasks for engineering tender, BOQ pricing, investment analysis, knowledge-base-only analysis, and long Markdown generation.
 - Each pack should include selected sources, forbidden scope, expected reports, and failure cases.
 
-## 9. Non-Goals
+## 9. V2.1.1 Artifact and Reader-Facing Quality Kernel
+
+V2.1.1 extends the V2.1 document kernel from Markdown transaction safety to format-aware delivery and reader-facing quality:
+
+1. Output intent is extracted only from explicit generation, conversion, save, or export clauses. Input filenames and source extensions never create output requirements. A strict attached Word template may infer DOCX, while a professional document with no formal format uses one app-native transactional Markdown draft; PDF remains opt-in.
+2. `SessionTaskContract.artifactDeliverables` is the source of truth for required artifact kind, format, origin, capability, and validation level. `outputFormats` remains a derived compatibility projection.
+3. The format capability registry separates transactional, native-export, tool-backed, and unregistered formats. Unknown professional formats remain explicit but are validated only for non-empty existence until an adapter is registered.
+4. `SessionDocumentPlan.artifactVisibility` keeps evidence matrices, Goal Audit records, assumption registers, and visual manifests internal by default. Only citations, source notes, requested tables, requested visuals, and reader-facing narrative enter the formal body unless the user explicitly requests an internal artifact in the deliverable.
+5. Deterministic document quality checks reject leaked control headings or editorial process text and flag excessive table density unless the contract declares a table-led register.
+6. `VisualSpec` requires a title, caption, alt text, evidence type, source references, and a reusable data sidecar for data-derived visuals. Visible Markdown contains the visual, caption, and source note; internal audit rationale remains in the visual manifest.
+7. Export audits report the strongest validation actually achieved. DOCX, XLSX, and PPTX receive package checks; PDF, HTML, JSON, and text formats receive syntax checks; unregistered formats cannot claim schema or round-trip validation.
+8. DOCX export preserves A3/A4 portrait or landscape page intent found in professional visual assets.
+
+Deferred adapters include native BIM/GIS/model validation, Primavera/Candy round-trip checks, simulation solver validation, and proprietary engineering format semantics. These formats can be requested now, but they must remain existence-only until a dedicated adapter and regression fixture are added.
+
+## 10. Non-Goals
 
 - Do not add a general autonomous planner that can recursively create agents.
 - Do not make working-directory scan a default source.
