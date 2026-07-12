@@ -149,6 +149,46 @@ function scheduleActivity(id: string, name: string, durationDays: number, predec
   };
 }
 
+function costData() {
+  return {
+    currency: 'ZAR',
+    costStatus: 'reviewed',
+    rateSources: [
+      {
+        id: 'rate-concrete',
+        description: 'Synthetic supplier quote',
+        sourceRef: { documentId: 'quote', page: 1 },
+        currency: 'ZAR',
+        effectiveAt: '2026-07-01',
+      },
+    ],
+    components: [
+      {
+        id: 'component-concrete',
+        kind: 'material',
+        description: 'Concrete supply allowance',
+        quantity: '1250.5',
+        unit: 'm',
+        rate: '10.25',
+        rateSourceId: 'rate-concrete',
+        assumptionStatus: 'sourced',
+      },
+    ],
+    buildUps: [
+      { boqItemId: 'boq-5201', componentIds: ['component-concrete'], total: '12817.625' },
+    ],
+    cashFlow: [
+      {
+        period: '2026-08',
+        activityIds: ['concrete'],
+        plannedCost: '12817.625',
+        cumulativeCost: '12817.625',
+      },
+    ],
+    scenarios: [],
+  };
+}
+
 describe('tender_capability handler', () => {
   let root: string;
   let workingDirectory: string;
@@ -509,12 +549,79 @@ describe('tender_capability handler', () => {
     expect(output.modelPath).toEndWith(join('packs', 'schedule-resources.json'));
   });
 
-  test('rejects capability packs that are not implemented yet', async () => {
+  test('rejects cost planning before BOQ and schedule packs are ready', async () => {
     const handler = await loadHandler();
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'cost_cashflow',
+      data: costData(),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('requires ready upstream capability boq_reconciliation');
+  });
+
+  test('initializes a ready cost and cash-flow pack from ready BOQ and schedule packs', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_documents',
+      projectId: 'n3-upgrade',
+      documents: [
+        { id: 'boq', name: 'BOQ', path: 'C:/tender/boq.xlsx', kind: 'boq', status: 'active' },
+        { id: 'spec', name: 'Specification', path: 'C:/tender/spec.pdf', kind: 'specification', status: 'active' },
+        { id: 'drawing', name: 'Drawing', path: 'C:/tender/drawing.pdf', kind: 'drawing', status: 'active' },
+        { id: 'quote', name: 'Supplier Quote', path: 'C:/tender/quote.pdf', kind: 'supporting_evidence', status: 'active' },
+      ],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_requirements',
+      projectId: 'n3-upgrade',
+      requirements: [
+        {
+          id: 'req-drainage',
+          title: 'Drainage scope',
+          text: 'Construct the scheduled drainage works.',
+          type: 'technical',
+          criticality: 'high',
+          source: { documentId: 'spec', page: 20, clause: '5.2' },
+          evidenceNeeded: [],
+          status: 'planned',
+        },
+      ],
+    });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'schedule_resources', data: scheduleData() });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'cost_cashflow',
+      enabled: true,
+      required: true,
+      data: costData(),
+    });
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.estimatedTotal).toBe('12817.625');
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 6 },
+      { capability: 'boq_reconciliation', revision: 1 },
+      { capability: 'schedule_resources', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'cost-cashflow.json'));
+  });
+
+  test('rejects capability packs that are not implemented yet', async () => {
+    const handler = await loadHandler();
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'submission_audit',
       data: {},
     });
 
