@@ -1,10 +1,12 @@
 import {
   auditDeliveryContractScope,
+  auditDeliveryProgrammeProgress,
   getDeliveryCapabilityDependencies,
   isDeliveryCapabilityStale,
   parseDeliveryCapabilityEnvelope,
   parseDeliveryCapabilityIndex,
   parseDeliveryContractScopeData,
+  parseDeliveryProgrammeProgressData,
   parseDeliveryWorkspace,
   type DeliveryCapabilityAuditIssue,
   type DeliveryCapabilityEnvelope,
@@ -12,7 +14,6 @@ import {
   type DeliveryCapabilityIndex,
   type DeliveryCapabilityIndexEntry,
   type DeliveryCapabilityReadiness,
-  type DeliveryContractScopeAudit,
   type DeliveryWorkspace,
 } from '@agent-pi/business-core/delivery';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -101,14 +102,25 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
         updatedAt,
         data: parseCapabilityData(args.capability, args.data),
       });
-      const audit = auditCapability(args.capability, workspace, envelope.data, updatedAt);
+      const audit = auditCapability(
+        args.capability,
+        workspace,
+        envelope.data,
+        loadUpstreamData(paths.projectDirectory, args.capability),
+        updatedAt,
+      );
       index = updateIndex(index, args, envelope, audit, false, workspace.revision);
       persist(paths, envelope, audit, index);
       return successResponse(JSON.stringify(buildResult(paths, envelope, audit, index, false), null, 2));
     }
 
     const envelope = parseDeliveryCapabilityEnvelope(JSON.parse(readFileSync(paths.modelPath, 'utf8')));
-    const audit = auditCapability(args.capability, workspace, envelope.data);
+    const audit = auditCapability(
+      args.capability,
+      workspace,
+      envelope.data,
+      loadUpstreamData(paths.projectDirectory, args.capability),
+    );
     const revisions = Object.fromEntries(index.capabilities.map((entry) => [entry.capability, entry.revision]));
     const stale = isDeliveryCapabilityStale(envelope, workspace.revision, revisions)
       || findUpstreamReadinessError(index, args.capability) !== undefined;
@@ -121,12 +133,13 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' {
-  return capability === 'contract_scope';
+function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' {
+  return capability === 'contract_scope' || capability === 'programme_progress';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
   if (capability === 'contract_scope') return parseDeliveryContractScopeData(data);
+  if (capability === 'programme_progress') return parseDeliveryProgrammeProgressData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -134,10 +147,30 @@ function auditCapability(
   capability: DeliveryCapabilityId,
   workspace: DeliveryWorkspace,
   data: unknown,
+  upstreamData: Partial<Record<DeliveryCapabilityId, unknown>>,
   generatedAt?: string,
-): DeliveryContractScopeAudit {
+): { readiness: DeliveryCapabilityReadiness; issues: DeliveryCapabilityAuditIssue[] } {
   if (capability === 'contract_scope') return auditDeliveryContractScope(workspace, data, generatedAt);
+  if (capability === 'programme_progress') {
+    return auditDeliveryProgrammeProgress(workspace, upstreamData.contract_scope, data, generatedAt);
+  }
   throw new Error(`Delivery capability ${capability} is not implemented.`);
+}
+
+function loadUpstreamData(
+  projectDirectory: string,
+  capability: DeliveryCapabilityId,
+): Partial<Record<DeliveryCapabilityId, unknown>> {
+  const enabled: DeliveryCapabilityId[] = Object.keys(CAPABILITY_FILES) as DeliveryCapabilityId[];
+  const upstreamData: Partial<Record<DeliveryCapabilityId, unknown>> = {};
+  for (const dependency of getDeliveryCapabilityDependencies(capability, enabled)) {
+    if (dependency === 'core') continue;
+    const filePath = join(projectDirectory, 'packs', `${CAPABILITY_FILES[dependency]}.json`);
+    if (!existsSync(filePath)) continue;
+    const envelope = parseDeliveryCapabilityEnvelope(JSON.parse(readFileSync(filePath, 'utf8')));
+    upstreamData[dependency] = envelope.data;
+  }
+  return upstreamData;
 }
 
 function findUpstreamReadinessError(index: DeliveryCapabilityIndex, capability: DeliveryCapabilityId): string | undefined {
@@ -208,7 +241,7 @@ function resolvePaths(workingDirectory: string, projectId: string, capability: D
 function buildResult(
   paths: ReturnType<typeof resolvePaths>,
   envelope: DeliveryCapabilityEnvelope,
-  audit: DeliveryContractScopeAudit,
+  audit: { readiness: DeliveryCapabilityReadiness; issues: DeliveryCapabilityAuditIssue[] },
   index: DeliveryCapabilityIndex,
   stale: boolean,
 ) {
@@ -227,7 +260,7 @@ function buildResult(
 function persist(
   paths: ReturnType<typeof resolvePaths>,
   envelope: DeliveryCapabilityEnvelope,
-  audit: DeliveryContractScopeAudit,
+  audit: { readiness: DeliveryCapabilityReadiness; issues: DeliveryCapabilityAuditIssue[] },
   index: DeliveryCapabilityIndex,
 ): void {
   atomicWriteJson(paths.modelPath, envelope);
