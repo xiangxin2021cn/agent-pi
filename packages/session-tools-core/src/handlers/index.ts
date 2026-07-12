@@ -49,6 +49,10 @@ export type { DeliveryCapabilityArgs, DeliveryCapabilityAction } from './deliver
 export { handleInvestmentWorkspace } from './investment-workspace.ts';
 export type { InvestmentWorkspaceArgs, InvestmentWorkspaceAction } from './investment-workspace.ts';
 
+// Resource Investment Intelligence Capability Packs
+export { handleInvestmentCapability } from './investment-capability.ts';
+export type { InvestmentCapabilityArgs, InvestmentCapabilityAction } from './investment-capability.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

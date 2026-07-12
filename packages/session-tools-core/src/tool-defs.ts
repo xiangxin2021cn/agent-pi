@@ -28,6 +28,7 @@ import { handleTenderCapability } from './handlers/tender-capability.ts';
 import { handleDeliveryWorkspace } from './handlers/delivery-workspace.ts';
 import { handleDeliveryCapability } from './handlers/delivery-capability.ts';
 import { handleInvestmentWorkspace } from './handlers/investment-workspace.ts';
+import { handleInvestmentCapability } from './handlers/investment-capability.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -295,6 +296,20 @@ export const InvestmentWorkspaceToolSchema = z.object({
   knowledgeUses: z.array(TenderEntityInputSchema).optional(),
 });
 
+export const InvestmentCapabilityToolSchema = z.object({
+  action: z.enum(['configure', 'init', 'replace', 'status', 'validate'])
+    .describe('Investment capability-pack operation.'),
+  projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  capability: z.enum([
+    'mandate_screening', 'resource_technical', 'market_offtake',
+    'legal_esg', 'financial_valuation', 'transaction_decision',
+  ]),
+  data: z.unknown().optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  enabled: z.boolean().optional(),
+  required: z.boolean().optional(),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -464,6 +479,12 @@ Actions: configure, init, replace, status, validate. Only implemented delivery c
 Initialize only from explicit user-owned investment records. Tender, delivery, investment, or enterprise-knowledge publications may be imported only as frozen, hash-addressed, user-confirmed snapshots. The tool never reads another plugin's private store and never scans the working directory.
 
 Actions: init, upsert_sources, upsert_snapshots, upsert_assumption_sets, upsert_knowledge_uses, status, validate.`,
+
+  investment_capability: `Maintain one versioned Resource Investment Intelligence capability pack.
+
+Use this only after investment_workspace has registered explicit user-owned investment inputs and an approved local assumption set. Capability packs are stored only under business/investment and follow the investment dependency chain. Tender, delivery, or enterprise-knowledge snapshots may corroborate a conclusion but cannot replace required active direct investment evidence.
+
+Actions: configure, init, replace, status, validate.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -741,6 +762,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'delivery_workspace', description: TOOL_DESCRIPTIONS.delivery_workspace, inputSchema: DeliveryWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryWorkspace },
   { name: 'delivery_capability', description: TOOL_DESCRIPTIONS.delivery_capability, inputSchema: DeliveryCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryCapability },
   { name: 'investment_workspace', description: TOOL_DESCRIPTIONS.investment_workspace, inputSchema: InvestmentWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleInvestmentWorkspace },
+  { name: 'investment_capability', description: TOOL_DESCRIPTIONS.investment_capability, inputSchema: InvestmentCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleInvestmentCapability },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
