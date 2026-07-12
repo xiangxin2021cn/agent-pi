@@ -4,3 +4,4 @@ export * from './registry.ts';
 export * from './contract-scope/index.ts';
 export * from './programme-progress/index.ts';
 export * from './resource-procurement/index.ts';
+export * from './cost-commercial/index.ts';

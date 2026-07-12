@@ -64,6 +64,22 @@ function resourceProcurementData() {
   };
 }
 
+function costCommercialData() {
+  return {
+    controlStatus: 'reviewed', dataDate: '2026-07-12', currency: 'ZAR',
+    budgetLines: [{
+      id: 'drainage-cost', scopeItemId: 'drainage', activityIds: ['drainage-works'], title: 'Drainage',
+      approvedBudget: '1000.10', approvedVariationAmount: '100.20', currentBudget: '1100.30',
+      evidenceRefs: [{ kind: 'source', sourceId: 'budget', sheet: 'Budget', cell: 'B2:H2' }], status: 'reviewed',
+    }],
+    commitments: [{ id: 'po-1', costCodeId: 'drainage-cost', supplier: 'Supplier', committedAmount: '600.10', evidenceRefs: [{ kind: 'source', sourceId: 'commercial', sheet: 'Commitments', cell: 'B2:H2' }], status: 'confirmed' }],
+    actualCosts: [{ id: 'actual-1', costCodeId: 'drainage-cost', period: '2026-07', amount: '200.10', evidenceRefs: [{ kind: 'source', sourceId: 'commercial', sheet: 'Actuals', cell: 'B2:H2' }], status: 'posted' }],
+    accruals: [{ id: 'accrual-1', costCodeId: 'drainage-cost', period: '2026-07', amount: '50.20', evidenceRefs: [{ kind: 'source', sourceId: 'commercial', sheet: 'Accruals', cell: 'B2:H2' }], status: 'posted' }],
+    variations: [{ id: 'vo-1', costCodeId: 'drainage-cost', title: 'Approved change', amount: '100.20', evidenceRefs: [{ kind: 'source', sourceId: 'commercial', sheet: 'Variations', cell: 'B2:H2' }], status: 'approved' }],
+    forecasts: [{ costCodeId: 'drainage-cost', forecastToComplete: '700.20', estimateAtCompletion: '950.50', evidenceRefs: [{ kind: 'source', sourceId: 'commercial', sheet: 'Forecast', cell: 'B2:H2' }], confidence: 'confirmed' }],
+  };
+}
+
 describe('delivery_capability handler', () => {
   let root: string;
   let context: SessionToolContext;
@@ -76,7 +92,7 @@ describe('delivery_capability handler', () => {
       callbacks: { onPlanSubmitted: () => {}, onAuthRequest: () => {} }, fs: createNodeFileSystem(), loadSourceConfig: () => null,
     };
     await handleDeliveryWorkspace(context, {
-      action: 'init', projectId: 'n3-delivery', project: { id: 'n3-delivery', title: 'N3 Delivery', status: 'active', dataDate: '2026-07-12' },
+      action: 'init', projectId: 'n3-delivery', project: { id: 'n3-delivery', title: 'N3 Delivery', status: 'active', currency: 'ZAR', dataDate: '2026-07-12' },
     });
     await handleDeliveryWorkspace(context, {
       action: 'upsert_sources', projectId: 'n3-delivery', sources: [
@@ -87,6 +103,8 @@ describe('delivery_capability handler', () => {
         { id: 'resource-plan', name: 'Resource Plan', path: 'C:/resource.xlsx', kind: 'resource', status: 'active', sha256: 'e'.repeat(64) },
         { id: 'procurement', name: 'Procurement Register', path: 'C:/procurement.xlsx', kind: 'commitment', status: 'active', sha256: 'f'.repeat(64) },
         { id: 'organization', name: 'Approved Organization', path: 'C:/org.pdf', kind: 'organization', status: 'active', sha256: '1'.repeat(64) },
+        { id: 'budget', name: 'Approved Budget', path: 'C:/budget.xlsx', kind: 'budget', status: 'active', sha256: '2'.repeat(64) },
+        { id: 'commercial', name: 'Commercial Ledger', path: 'C:/commercial.xlsx', kind: 'commitment', status: 'active', sha256: '3'.repeat(64) },
       ],
     });
     await handleDeliveryWorkspace(context, {
@@ -95,6 +113,7 @@ describe('delivery_capability handler', () => {
         { id: 'scope-baseline', kind: 'scope', title: 'Scope', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'scope' }] },
         { id: 'programme-baseline', kind: 'schedule', title: 'Approved Programme', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'programme' }] },
         { id: 'organization-baseline', kind: 'organization', title: 'Approved Organization', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'organization' }] },
+        { id: 'budget-baseline', kind: 'budget', title: 'Approved Budget', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'budget' }] },
       ],
     });
   });
@@ -175,5 +194,31 @@ describe('delivery_capability handler', () => {
       { capability: 'programme_progress', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'resource-procurement.json'));
+  });
+
+  test('persists exact-arithmetic cost control only after resource procurement is ready', async () => {
+    const handlers = await import('./index.ts') as Record<string, unknown>;
+    const handle = handlers.handleDeliveryCapability as Function;
+    for (const [capability, data] of [
+      ['contract_scope', contractScopeData()],
+      ['programme_progress', programmeProgressData()],
+      ['resource_procurement', resourceProcurementData()],
+    ]) {
+      expect((await handle(context, { action: 'init', projectId: 'n3-delivery', capability, data })).isError).toBe(false);
+    }
+
+    const initialized = await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'cost_commercial', data: costCommercialData(),
+    });
+    expect(initialized.isError).toBe(false);
+    const output = JSON.parse(initialized.content[0]?.text ?? '{}');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.estimateAtCompletion).toBe('950.5');
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 3 },
+      { capability: 'contract_scope', revision: 1 },
+      { capability: 'resource_procurement', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'cost-commercial.json'));
   });
 });

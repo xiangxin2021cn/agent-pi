@@ -1,5 +1,6 @@
 import {
   auditDeliveryContractScope,
+  auditDeliveryCostCommercial,
   auditDeliveryProgrammeProgress,
   auditDeliveryResourceProcurement,
   getDeliveryCapabilityDependencies,
@@ -7,6 +8,7 @@ import {
   parseDeliveryCapabilityEnvelope,
   parseDeliveryCapabilityIndex,
   parseDeliveryContractScopeData,
+  parseDeliveryCostCommercialData,
   parseDeliveryProgrammeProgressData,
   parseDeliveryResourceProcurementData,
   parseDeliveryWorkspace,
@@ -135,14 +137,18 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' {
-  return capability === 'contract_scope' || capability === 'programme_progress' || capability === 'resource_procurement';
+function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' {
+  return capability === 'contract_scope'
+    || capability === 'programme_progress'
+    || capability === 'resource_procurement'
+    || capability === 'cost_commercial';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
   if (capability === 'contract_scope') return parseDeliveryContractScopeData(data);
   if (capability === 'programme_progress') return parseDeliveryProgrammeProgressData(data);
   if (capability === 'resource_procurement') return parseDeliveryResourceProcurementData(data);
+  if (capability === 'cost_commercial') return parseDeliveryCostCommercialData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -162,6 +168,15 @@ function auditCapability(
       workspace,
       upstreamData.contract_scope,
       upstreamData.programme_progress,
+      data,
+      generatedAt,
+    );
+  }
+  if (capability === 'cost_commercial') {
+    return auditDeliveryCostCommercial(
+      workspace,
+      upstreamData.contract_scope,
+      upstreamData.resource_procurement,
       data,
       generatedAt,
     );
