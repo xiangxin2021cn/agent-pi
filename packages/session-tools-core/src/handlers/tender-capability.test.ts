@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
@@ -186,6 +187,33 @@ function costData() {
       },
     ],
     scenarios: [],
+  };
+}
+
+function submissionData(filePath: string, sha256: string) {
+  return {
+    submissionStatus: 'reviewed',
+    items: [
+      {
+        deliverableId: 'methodology',
+        filePath,
+        format: 'pdf',
+        signatureStatus: 'not_required',
+        dependencies: [],
+        validationStatus: 'passed',
+        evidenceRefs: [{ documentId: 'tender-data', page: 12 }],
+        sha256,
+        checks: {
+          filePresent: true,
+          formatMatch: true,
+          templateMatch: true,
+          renderPassed: true,
+          hashVerified: true,
+        },
+      },
+    ],
+    contradictions: [],
+    redTeamFindings: [],
   };
 }
 
@@ -616,16 +644,102 @@ describe('tender_capability handler', () => {
     expect(output.modelPath).toEndWith(join('packs', 'cost-cashflow.json'));
   });
 
-  test('rejects capability packs that are not implemented yet', async () => {
+  test('initializes a ready submission audit from the ready required packs', async () => {
     const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_deliverables',
+      projectId: 'n3-upgrade',
+      deliverables: [
+        {
+          id: 'methodology',
+          title: 'Technical methodology',
+          format: 'pdf',
+          requirementIds: ['req-method'],
+          status: 'ready',
+        },
+      ],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_responses',
+      projectId: 'n3-upgrade',
+      responses: [
+        {
+          id: 'response-method',
+          title: 'Methodology response',
+          requirementIds: ['req-method'],
+          criterionIds: ['criterion-method'],
+          deliverableId: 'methodology',
+          evidenceRefs: [{ documentId: 'tender-data', page: 12 }],
+          status: 'verified',
+        },
+      ],
+    });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'evaluation_strategy',
+      enabled: true,
+      required: true,
+      data: strategyData(),
+    });
+    const artifactPath = join(workingDirectory, 'Agent Pi Outputs', 'methodology.pdf');
+    mkdirSync(join(workingDirectory, 'Agent Pi Outputs'), { recursive: true });
+    const artifact = Buffer.from('synthetic rendered tender methodology');
+    writeFileSync(artifactPath, artifact);
+    const artifactHash = createHash('sha256').update(artifact).digest('hex');
+
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'submission_audit',
-      data: {},
+      enabled: true,
+      required: true,
+      data: submissionData(artifactPath, artifactHash),
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('not implemented');
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.passedSubmissionItems).toBe(1);
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 6 },
+      { capability: 'evaluation_strategy', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'submission-audit.json'));
+  });
+
+  test('overrides self-reported file and hash checks with runtime verification', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_deliverables',
+      projectId: 'n3-upgrade',
+      deliverables: [{ id: 'methodology', title: 'Technical methodology', format: 'pdf', requirementIds: ['req-method'], status: 'ready' }],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_responses',
+      projectId: 'n3-upgrade',
+      responses: [{
+        id: 'response-method', title: 'Methodology response', requirementIds: ['req-method'],
+        criterionIds: ['criterion-method'], deliverableId: 'methodology',
+        evidenceRefs: [{ documentId: 'tender-data', page: 12 }], status: 'verified',
+      }],
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy',
+      enabled: true, required: true, data: strategyData(),
+    });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'submission_audit',
+      data: submissionData(join(workingDirectory, 'Agent Pi Outputs', 'missing.pdf'), 'a'.repeat(64)),
+    });
+    const output = resultJson(result);
+
+    expect(result.isError).toBe(false);
+    expect(output.audit.readiness).toBe('not_ready');
+    expect(output.audit.issues.map((issue: { code: string }) => issue.code)).toContain('submission_file_missing');
+    expect(output.audit.issues.map((issue: { code: string }) => issue.code)).toContain('submission_hash_failed');
   });
 });

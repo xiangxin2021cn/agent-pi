@@ -19,7 +19,7 @@ import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
 import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
 import { auditExportedArtifact } from '../documents/export-quality'
 import { validateEvidenceMatrixArtifact } from './evidence-matrix-artifact'
-import { extractTenderWorkspaceEvidence } from './tender-workspace-evidence'
+import { extractTenderSubmissionEvidence, extractTenderWorkspaceEvidence } from './tender-workspace-evidence'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
 import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
@@ -182,6 +182,7 @@ export class GoalController {
       }
     }
     const tenderWorkspaceEvidence = extractTenderWorkspaceEvidence(turnMessages)
+    const tenderSubmissionEvidence = extractTenderSubmissionEvidence(turnMessages)
     if (tenderWorkspaceEvidence) {
       evidence.push({
         type: 'tool',
@@ -198,6 +199,13 @@ export class GoalController {
         }),
       })
     }
+    if (tenderSubmissionEvidence) {
+      evidence.push({
+        type: 'tool',
+        label: 'tender_submission_readiness',
+        detail: JSON.stringify(tenderSubmissionEvidence),
+      })
+    }
     if (requiresSubmissionReadyTender(goalState)) {
       if (!tenderWorkspaceEvidence) {
         tenderReadinessIssues.push('Submission-ready tender delivery requires a successful tender_workspace validation result.')
@@ -205,6 +213,13 @@ export class GoalController {
         tenderReadinessIssues.push(`Tender Workspace evidence is ${tenderWorkspaceEvidence.status}: ${tenderWorkspaceEvidence.error ?? 'invalid readiness payload'}`)
       } else if (tenderWorkspaceEvidence.readiness !== 'ready') {
         tenderReadinessIssues.push(`Tender Workspace readiness is ${tenderWorkspaceEvidence.readiness}; submission-ready delivery requires ready.`)
+      }
+      if (!tenderSubmissionEvidence) {
+        tenderReadinessIssues.push('Submission-ready tender delivery requires a successful submission_audit validation result.')
+      } else if (tenderSubmissionEvidence.status !== 'valid') {
+        tenderReadinessIssues.push(`Tender submission audit evidence is ${tenderSubmissionEvidence.status}: ${tenderSubmissionEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (tenderSubmissionEvidence.readiness !== 'ready') {
+        tenderReadinessIssues.push(`Tender submission audit readiness is ${tenderSubmissionEvidence.readiness}; submission-ready delivery requires ready.`)
       }
     }
 

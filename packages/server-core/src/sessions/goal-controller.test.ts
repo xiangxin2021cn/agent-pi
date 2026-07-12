@@ -47,6 +47,28 @@ function tenderWorkspaceToolResult(readiness: 'not_ready' | 'needs_review' | 're
   })
 }
 
+function tenderSubmissionToolResult(readiness: 'not_ready' | 'needs_review' | 'ready', stale = false): string {
+  return JSON.stringify({
+    envelope: {
+      capability: 'submission_audit',
+      projectId: 'n3-upgrade',
+      revision: 1,
+      coreRevision: 3,
+    },
+    audit: {
+      capability: 'submission_audit',
+      projectId: 'n3-upgrade',
+      coreRevision: 3,
+      readiness,
+      issues: readiness === 'ready' ? [] : [{ code: 'submission_item_missing' }],
+    },
+    stale,
+    effectiveReadiness: stale ? 'not_ready' : readiness,
+    modelPath: 'C:/project/.agent-pi/business/tender/n3-upgrade/packs/submission-audit.json',
+    auditPath: 'C:/project/.agent-pi/business/tender/n3-upgrade/audits/submission-audit-audit.json',
+  })
+}
+
 describe('GoalController', () => {
   test('skips when no goal state is present', async () => {
     const controller = new GoalController()
@@ -260,7 +282,7 @@ describe('GoalController', () => {
     }
   })
 
-  test('allows an explicitly submission-ready tender when readiness is ready', async () => {
+  test('blocks an explicitly submission-ready tender when submission audit evidence is missing', async () => {
     const controller = new GoalController()
     const toolResult = tenderWorkspaceToolResult('ready')
 
@@ -273,6 +295,38 @@ describe('GoalController', () => {
           toolName: 'tender_workspace',
           toolStatus: 'completed',
           toolResult,
+        }),
+        message('a1', 'assistant', 'The submission-ready tender package is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.join('\n')).toContain('submission_audit validation result')
+    }
+  })
+
+  test('allows an explicitly submission-ready tender when workspace and submission audit are ready', async () => {
+    const controller = new GoalController()
+    const workspaceResult = tenderWorkspaceToolResult('ready')
+    const submissionResult = tenderSubmissionToolResult('ready')
+
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Prepare the final tender package ready for formal submission.',
+    }), {
+      messages: [
+        message('u1', 'user', 'Prepare the final tender package ready for formal submission.'),
+        message('t1', 'tool', workspaceResult, {
+          toolName: 'tender_workspace',
+          toolStatus: 'completed',
+          toolResult: workspaceResult,
+        }),
+        message('t2', 'tool', submissionResult, {
+          toolName: 'tender_capability',
+          toolStatus: 'completed',
+          toolResult: submissionResult,
         }),
         message('a1', 'assistant', 'The submission-ready tender package is complete.'),
       ],

@@ -1,14 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import type { Message } from '@craft-agent/core/types';
-import { extractTenderWorkspaceEvidence } from './tender-workspace-evidence.ts';
+import { extractTenderSubmissionEvidence, extractTenderWorkspaceEvidence } from './tender-workspace-evidence.ts';
 
-function toolMessage(id: string, toolResult: string, toolStatus: Message['toolStatus'] = 'completed'): Message {
+function toolMessage(
+  id: string,
+  toolResult: string,
+  toolStatus: Message['toolStatus'] = 'completed',
+  toolName = 'tender_workspace',
+): Message {
   return {
     id,
     role: 'tool',
     content: toolResult,
     timestamp: 1,
-    toolName: 'tender_workspace',
+    toolName,
     toolStatus,
     toolResult,
   };
@@ -60,5 +65,43 @@ describe('extractTenderWorkspaceEvidence', () => {
       toolMessage('t1', '[ERROR] invalid reference', 'error'),
     ]);
     expect(result).toBeUndefined();
+  });
+});
+
+describe('extractTenderSubmissionEvidence', () => {
+  test('extracts a valid submission audit capability payload', () => {
+    const result = extractTenderSubmissionEvidence([
+      toolMessage('t1', JSON.stringify({
+        envelope: { capability: 'submission_audit', projectId: 'n3-upgrade', revision: 2, coreRevision: 3 },
+        audit: { capability: 'submission_audit', projectId: 'n3-upgrade', coreRevision: 3, readiness: 'ready', issues: [] },
+        stale: false,
+        effectiveReadiness: 'ready',
+        modelPath: 'C:/project/packs/submission-audit.json',
+        auditPath: 'C:/project/audits/submission-audit-audit.json',
+      }), 'completed', 'tender_capability'),
+    ]);
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'valid',
+      projectId: 'n3-upgrade',
+      revision: 2,
+      readiness: 'ready',
+      stale: false,
+    }));
+  });
+
+  test('rejects stale submission audit capability evidence', () => {
+    const result = extractTenderSubmissionEvidence([
+      toolMessage('t1', JSON.stringify({
+        envelope: { capability: 'submission_audit', projectId: 'n3-upgrade', revision: 2, coreRevision: 3 },
+        audit: { capability: 'submission_audit', projectId: 'n3-upgrade', coreRevision: 3, readiness: 'ready', issues: [] },
+        stale: true,
+        effectiveReadiness: 'not_ready',
+        modelPath: 'C:/project/packs/submission-audit.json',
+        auditPath: 'C:/project/audits/submission-audit-audit.json',
+      }), 'completed', 'tender_capability'),
+    ]);
+
+    expect(result?.status).toBe('stale');
   });
 });

@@ -4,6 +4,7 @@ import {
   auditTenderExecutionPlan,
   auditTenderScheduleResources,
   auditTenderCostCashFlow,
+  auditTenderSubmission,
   getTenderCapabilityDependencies,
   isTenderCapabilityStale,
   parseTenderCapabilityEnvelope,
@@ -13,6 +14,7 @@ import {
   parseTenderExecutionPlanData,
   parseTenderScheduleResourceData,
   parseTenderCostCashFlowData,
+  parseTenderSubmissionAuditData,
   parseTenderWorkspace,
   type TenderCapabilityAuditIssue,
   type TenderCapabilityEnvelope,
@@ -25,13 +27,15 @@ import {
   type TenderExecutionPlanAudit,
   type TenderScheduleResourceAudit,
   type TenderCostCashFlowAudit,
+  type TenderSubmissionAudit,
   type TenderWorkspace,
 } from '@agent-pi/business-core/tender';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
-import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { isPathWithinDirectory, isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
 
@@ -50,7 +54,8 @@ type ImplementedAudit =
   | TenderBoqReconciliationAudit
   | TenderExecutionPlanAudit
   | TenderScheduleResourceAudit
-  | TenderCostCashFlowAudit;
+  | TenderCostCashFlowAudit
+  | TenderSubmissionAudit;
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
@@ -147,13 +152,14 @@ export async function handleTenderCapability(
         coreRevision: workspace.revision,
         upstream: buildUpstream(index, args.capability, workspace.revision),
         updatedAt,
-        data: parseCapabilityData(args.capability, args.data),
+        data: await parseCapabilityData(args.capability, args.data, ctx.workingDirectory),
       });
       const audit = auditCapability(
         args.capability,
         workspace,
         envelope.data,
         loadUpstreamData(paths.projectDirectory, args.capability),
+        index,
         updatedAt,
       );
       index = updateIndexFromAudit(index, args, envelope, audit, false, workspace.revision);
@@ -167,6 +173,7 @@ export async function handleTenderCapability(
       workspace,
       envelope.data,
       loadUpstreamData(paths.projectDirectory, args.capability),
+      index,
     );
     const revisions = Object.fromEntries(index.capabilities.map((entry) => [entry.capability, entry.revision]));
     const stale = isTenderCapabilityStale(envelope, workspace.revision, revisions)
@@ -187,21 +194,65 @@ function isImplementedCapability(
   | 'boq_reconciliation'
   | 'execution_plan'
   | 'schedule_resources'
-  | 'cost_cashflow' {
+  | 'cost_cashflow'
+  | 'submission_audit' {
   return capability === 'evaluation_strategy'
     || capability === 'boq_reconciliation'
     || capability === 'execution_plan'
     || capability === 'schedule_resources'
-    || capability === 'cost_cashflow';
+    || capability === 'cost_cashflow'
+    || capability === 'submission_audit';
 }
 
-function parseCapabilityData(capability: TenderCapabilityId, data: unknown): unknown {
+async function parseCapabilityData(
+  capability: TenderCapabilityId,
+  data: unknown,
+  workingDirectory: string,
+): Promise<unknown> {
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
   if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
   if (capability === 'schedule_resources') return parseTenderScheduleResourceData(data);
   if (capability === 'cost_cashflow') return parseTenderCostCashFlowData(data);
+  if (capability === 'submission_audit') {
+    return verifySubmissionRuntimeData(parseTenderSubmissionAuditData(data), workingDirectory);
+  }
   throw new Error(`Tender capability ${capability} is not implemented.`);
+}
+
+async function verifySubmissionRuntimeData(
+  data: ReturnType<typeof parseTenderSubmissionAuditData>,
+  workingDirectory: string,
+): Promise<ReturnType<typeof parseTenderSubmissionAuditData>> {
+  return {
+    ...data,
+    items: await Promise.all(data.items.map(async (item) => {
+      const filePath = isAbsolute(item.filePath) ? resolve(item.filePath) : resolve(workingDirectory, item.filePath);
+      const filePresent = isPathWithinDirectory(filePath, workingDirectory) && existsSync(filePath);
+      const format = item.format.toLowerCase().replace(/^\./, '');
+      const formatMatch = extname(filePath).toLowerCase().replace(/^\./, '') === format;
+      const hashVerified = filePresent && await hashFile(filePath) === item.sha256.toLowerCase();
+      return {
+        ...item,
+        checks: {
+          ...item.checks,
+          filePresent,
+          formatMatch,
+          hashVerified,
+        },
+      };
+    })),
+  };
+}
+
+function hashFile(filePath: string): Promise<string> {
+  return new Promise((resolveHash, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolveHash(hash.digest('hex')));
+  });
 }
 
 function auditCapability(
@@ -209,6 +260,7 @@ function auditCapability(
   workspace: TenderWorkspace,
   data: unknown,
   upstreamData: Partial<Record<TenderCapabilityId, unknown>>,
+  index: TenderCapabilityIndex,
   generatedAt?: string,
 ): ImplementedAudit {
   if (capability === 'evaluation_strategy') {
@@ -231,6 +283,9 @@ function auditCapability(
       data,
       generatedAt,
     );
+  }
+  if (capability === 'submission_audit') {
+    return auditTenderSubmission(workspace, index, data, generatedAt);
   }
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }

@@ -14,6 +14,19 @@ export interface TenderWorkspaceEvidence {
   error?: string;
 }
 
+export interface TenderSubmissionEvidence {
+  status: TenderWorkspaceEvidenceStatus;
+  projectId?: string;
+  revision?: number;
+  coreRevision?: number;
+  readiness?: TenderWorkspaceReadiness;
+  stale?: boolean;
+  issueCodes: string[];
+  modelPath?: string;
+  auditPath?: string;
+  error?: string;
+}
+
 export function extractTenderWorkspaceEvidence(messages: readonly Message[]): TenderWorkspaceEvidence | undefined {
   const message = [...messages].reverse().find((candidate) =>
     candidate.role === 'tool'
@@ -78,8 +91,70 @@ export function extractTenderWorkspaceEvidence(messages: readonly Message[]): Te
   }
 }
 
+export function extractTenderSubmissionEvidence(messages: readonly Message[]): TenderSubmissionEvidence | undefined {
+  const message = [...messages].reverse().find((candidate) => {
+    if (candidate.role !== 'tool' || !isTenderCapabilityTool(candidate.toolName)) return false;
+    if (candidate.toolStatus === 'error' || candidate.toolResult?.startsWith('[ERROR]')) return false;
+    try {
+      const value = parseJsonObject(candidate.toolResult ?? candidate.content);
+      return asString(asRecord(value.envelope).capability) === 'submission_audit';
+    } catch {
+      return false;
+    }
+  });
+  if (!message) return undefined;
+
+  try {
+    const value = parseJsonObject(message.toolResult ?? message.content);
+    const envelope = asRecord(value.envelope);
+    const audit = asRecord(value.audit);
+    const projectId = asString(envelope.projectId);
+    const revision = asNumber(envelope.revision);
+    const coreRevision = asNumber(envelope.coreRevision);
+    const auditCoreRevision = asNumber(audit.coreRevision);
+    const readiness = asReadiness(value.effectiveReadiness) ?? asReadiness(audit.readiness);
+    const stale = value.stale === true;
+    const modelPath = asString(value.modelPath);
+    const auditPath = asString(value.auditPath);
+    const issueCodes = Array.isArray(audit.issues)
+      ? audit.issues.flatMap((issue) => {
+        const code = asString(asRecord(issue).code);
+        return code ? [code] : [];
+      })
+      : [];
+
+    if (!projectId || revision === undefined || coreRevision === undefined || auditCoreRevision === undefined || !readiness || !modelPath || !auditPath) {
+      return { status: 'malformed', issueCodes, error: 'Submission audit result is missing required readiness fields.' };
+    }
+    if (coreRevision !== auditCoreRevision) {
+      return {
+        status: 'stale', projectId, revision, coreRevision, readiness, stale: true, issueCodes,
+        modelPath, auditPath,
+        error: `Submission audit core revision ${auditCoreRevision} does not match envelope core revision ${coreRevision}.`,
+      };
+    }
+    if (stale) {
+      return {
+        status: 'stale', projectId, revision, coreRevision, readiness, stale, issueCodes,
+        modelPath, auditPath, error: 'Submission audit capability is stale.',
+      };
+    }
+    return { status: 'valid', projectId, revision, coreRevision, readiness, stale, issueCodes, modelPath, auditPath };
+  } catch (error) {
+    return {
+      status: 'malformed',
+      issueCodes: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function isTenderWorkspaceTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/-/g, '_').endsWith('tender_workspace') ?? false;
+}
+
+function isTenderCapabilityTool(toolName: string | undefined): boolean {
+  return toolName?.toLowerCase().replace(/-/g, '_').endsWith('tender_capability') ?? false;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> {
