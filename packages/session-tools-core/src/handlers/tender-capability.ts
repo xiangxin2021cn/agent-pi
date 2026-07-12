@@ -1,12 +1,14 @@
 import {
   auditTenderEvaluationStrategy,
   auditTenderBoqReconciliation,
+  auditTenderExecutionPlan,
   getTenderCapabilityDependencies,
   isTenderCapabilityStale,
   parseTenderCapabilityEnvelope,
   parseTenderCapabilityIndex,
   parseTenderEvaluationStrategyData,
   parseTenderBoqReconciliationData,
+  parseTenderExecutionPlanData,
   parseTenderWorkspace,
   type TenderCapabilityAuditIssue,
   type TenderCapabilityEnvelope,
@@ -16,6 +18,7 @@ import {
   type TenderCapabilityReadiness,
   type TenderEvaluationStrategyAudit,
   type TenderBoqReconciliationAudit,
+  type TenderExecutionPlanAudit,
   type TenderWorkspace,
 } from '@agent-pi/business-core/tender';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -36,7 +39,7 @@ export interface TenderCapabilityArgs {
   required?: boolean;
 }
 
-type ImplementedAudit = TenderEvaluationStrategyAudit | TenderBoqReconciliationAudit;
+type ImplementedAudit = TenderEvaluationStrategyAudit | TenderBoqReconciliationAudit | TenderExecutionPlanAudit;
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
@@ -109,6 +112,8 @@ export async function handleTenderCapability(
 
     if (args.action === 'init' || args.action === 'replace') {
       if (args.data === undefined) return errorResponse(`${args.action} requires data.`);
+      const upstreamError = findUpstreamReadinessError(index, args.capability);
+      if (upstreamError) return errorResponse(upstreamError);
       const current = existsSync(paths.modelPath)
         ? parseTenderCapabilityEnvelope(JSON.parse(readFileSync(paths.modelPath, 'utf8')))
         : undefined;
@@ -133,16 +138,28 @@ export async function handleTenderCapability(
         updatedAt,
         data: parseCapabilityData(args.capability, args.data),
       });
-      const audit = auditCapability(args.capability, workspace, envelope.data, updatedAt);
+      const audit = auditCapability(
+        args.capability,
+        workspace,
+        envelope.data,
+        loadUpstreamData(paths.projectDirectory, args.capability),
+        updatedAt,
+      );
       index = updateIndexFromAudit(index, args, envelope, audit, false, workspace.revision);
       persistCapability(paths, envelope, audit, index);
       return successResponse(JSON.stringify(buildResult(paths, envelope, audit, index, false), null, 2));
     }
 
     const envelope = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(paths.modelPath, 'utf8')));
-    const audit = auditCapability(args.capability, workspace, envelope.data);
+    const audit = auditCapability(
+      args.capability,
+      workspace,
+      envelope.data,
+      loadUpstreamData(paths.projectDirectory, args.capability),
+    );
     const revisions = Object.fromEntries(index.capabilities.map((entry) => [entry.capability, entry.revision]));
-    const stale = isTenderCapabilityStale(envelope, workspace.revision, revisions);
+    const stale = isTenderCapabilityStale(envelope, workspace.revision, revisions)
+      || findUpstreamReadinessError(index, args.capability) !== undefined;
     index = updateIndexFromAudit(index, args, envelope, audit, stale, workspace.revision);
     atomicWriteJson(paths.indexPath, index);
     if (args.action === 'validate') atomicWriteJson(paths.auditPath, audit);
@@ -154,13 +171,16 @@ export async function handleTenderCapability(
 
 function isImplementedCapability(
   capability: TenderCapabilityId,
-): capability is 'evaluation_strategy' | 'boq_reconciliation' {
-  return capability === 'evaluation_strategy' || capability === 'boq_reconciliation';
+): capability is 'evaluation_strategy' | 'boq_reconciliation' | 'execution_plan' {
+  return capability === 'evaluation_strategy'
+    || capability === 'boq_reconciliation'
+    || capability === 'execution_plan';
 }
 
 function parseCapabilityData(capability: TenderCapabilityId, data: unknown): unknown {
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
+  if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }
 
@@ -168,6 +188,7 @@ function auditCapability(
   capability: TenderCapabilityId,
   workspace: TenderWorkspace,
   data: unknown,
+  upstreamData: Partial<Record<TenderCapabilityId, unknown>>,
   generatedAt?: string,
 ): ImplementedAudit {
   if (capability === 'evaluation_strategy') {
@@ -176,7 +197,39 @@ function auditCapability(
   if (capability === 'boq_reconciliation') {
     return auditTenderBoqReconciliation(workspace, data, generatedAt);
   }
+  if (capability === 'execution_plan') {
+    return auditTenderExecutionPlan(workspace, upstreamData.boq_reconciliation, data, generatedAt);
+  }
   throw new Error(`Tender capability ${capability} is not implemented.`);
+}
+
+function findUpstreamReadinessError(
+  index: TenderCapabilityIndex,
+  capability: TenderCapabilityId,
+): string | undefined {
+  const enabled = index.capabilities.filter((entry) => entry.enabled).map((entry) => entry.capability);
+  for (const dependency of getTenderCapabilityDependencies(capability, enabled)) {
+    if (dependency === 'core') continue;
+    const entry = index.capabilities.find((candidate) => candidate.capability === dependency);
+    if (!entry || entry.revision === 0 || entry.readiness !== 'ready' || entry.stale) {
+      return `Tender capability ${capability} requires ready upstream capability ${dependency}.`;
+    }
+  }
+  return undefined;
+}
+
+function loadUpstreamData(
+  projectDirectory: string,
+  capability: TenderCapabilityId,
+): Partial<Record<TenderCapabilityId, unknown>> {
+  const result: Partial<Record<TenderCapabilityId, unknown>> = {};
+  for (const dependency of getTenderCapabilityDependencies(capability)) {
+    if (dependency === 'core') continue;
+    const modelPath = join(projectDirectory, 'packs', `${CAPABILITY_FILE_NAMES[dependency]}.json`);
+    if (!existsSync(modelPath)) continue;
+    result[dependency] = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(modelPath, 'utf8'))).data;
+  }
+  return result;
 }
 
 function buildUpstream(

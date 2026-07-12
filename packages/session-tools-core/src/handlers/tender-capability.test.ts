@@ -72,6 +72,44 @@ function boqData() {
   };
 }
 
+function executionData() {
+  return {
+    workPackages: [
+      {
+        id: 'wp-drainage-01',
+        title: 'Construct concrete side drains',
+        boqItemIds: ['boq-5201'],
+        requirementIds: ['req-drainage'],
+        methodSteps: [
+          'Confirm setting-out and service clearances.',
+          'Excavate and prepare the founding surface.',
+          'Place, finish, cure, and inspect the concrete drain.',
+        ],
+        resourceNeeds: [
+          {
+            resourceClass: 'excavator',
+            quantity: '1',
+            unit: 'item',
+            basis: 'One active drainage workfront',
+            status: 'verified',
+          },
+        ],
+        holdPoints: ['Founding surface acceptance before concrete placement'],
+        interfaces: ['Traffic accommodation and adjacent earthworks'],
+        constraints: ['Maintain access through the live work zone'],
+        temporaryWorks: [],
+        hseControls: ['Approved excavation and plant-pedestrian controls'],
+        environmentalControls: ['Prevent sediment discharge from excavation'],
+        sourceRefs: [
+          { documentId: 'spec', page: 20, clause: '5.2' },
+          { documentId: 'drawing', page: 3, section: 'DRAIN-01' },
+        ],
+        status: 'reviewed',
+      },
+    ],
+  };
+}
+
 describe('tender_capability handler', () => {
   let root: string;
   let workingDirectory: string;
@@ -295,12 +333,85 @@ describe('tender_capability handler', () => {
     expect(output.modelPath).toEndWith(join('packs', 'boq-reconciliation.json'));
   });
 
-  test('rejects capability packs that are not implemented yet', async () => {
+  test('rejects execution planning before required upstream packs are ready', async () => {
     const handler = await loadHandler();
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'execution_plan',
+      data: executionData(),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('requires ready upstream capability evaluation_strategy');
+  });
+
+  test('initializes a ready execution plan from ready evaluation and BOQ packs', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_documents',
+      projectId: 'n3-upgrade',
+      documents: [
+        { id: 'boq', name: 'BOQ', path: 'C:/tender/boq.xlsx', kind: 'boq', status: 'active' },
+        { id: 'spec', name: 'Specification', path: 'C:/tender/spec.pdf', kind: 'specification', status: 'active' },
+        { id: 'drawing', name: 'Drawing', path: 'C:/tender/drawing.pdf', kind: 'drawing', status: 'active' },
+      ],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_requirements',
+      projectId: 'n3-upgrade',
+      requirements: [
+        {
+          id: 'req-drainage',
+          title: 'Drainage scope',
+          text: 'Construct the scheduled drainage works.',
+          type: 'technical',
+          criticality: 'high',
+          source: { documentId: 'spec', page: 20, clause: '5.2' },
+          evidenceNeeded: [],
+          status: 'planned',
+        },
+      ],
+    });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'evaluation_strategy',
+      data: strategyData(),
+    });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'boq_reconciliation',
+      data: boqData(),
+    });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'execution_plan',
+      enabled: true,
+      required: true,
+      data: executionData(),
+    });
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 6 },
+      { capability: 'evaluation_strategy', revision: 1 },
+      { capability: 'boq_reconciliation', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'execution-plan.json'));
+  });
+
+  test('rejects capability packs that are not implemented yet', async () => {
+    const handler = await loadHandler();
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'schedule_resources',
       data: {},
     });
 
