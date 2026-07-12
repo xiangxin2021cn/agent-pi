@@ -7,7 +7,7 @@ const OptionalText = z.string().trim().min(1).optional();
 const IsoDateSchema = z.string().refine((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), 'Expected an ISO date.');
 const IsoDateTimeSchema = z.string().refine((value) => value.includes('T') && Number.isFinite(Date.parse(value)), 'Expected an ISO date-time.');
 
-const EvidenceRefSchema = z.discriminatedUnion('kind', [
+export const DeliveryEvidenceRefSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('source'),
     sourceId: EntityIdSchema,
@@ -55,7 +55,7 @@ export const DeliveryWorkspaceSchema = z.object({
     kind: z.enum(['contract', 'scope', 'schedule', 'budget', 'organization', 'progress']),
     title: z.string().trim().min(1),
     status: z.enum(['draft', 'approved', 'superseded']),
-    evidenceRefs: z.array(EvidenceRefSchema).default([]),
+    evidenceRefs: z.array(DeliveryEvidenceRefSchema).default([]),
   })),
   knowledgeUses: z.array(z.object({
     publicationId: EntityIdSchema,
