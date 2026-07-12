@@ -94,6 +94,20 @@ function cashflowData() {
   };
 }
 
+function riskChangeData() {
+  const riskEvidence = [{ kind: 'source', sourceId: 'risk-register', sheet: 'Risks', cell: 'B2:N2' }];
+  const changeEvidence = [{ kind: 'source', sourceId: 'change-register', sheet: 'Changes', cell: 'B2:N2' }];
+  return {
+    controlStatus: 'reviewed', dataDate: '2026-07-12', currency: 'ZAR',
+    risks: [{ id: 'risk-1', type: 'risk', title: 'Utility conflict', scopeItemIds: ['drainage'], cause: 'Unknown utility', effect: 'Delay', probability: 2, impact: 3, rating: 6, owner: 'Construction Manager', dueDate: '2026-07-20', response: 'Trial holes complete', evidenceRefs: riskEvidence, status: 'mitigated', confidence: 'confirmed' }],
+    issues: [{ id: 'issue-1', title: 'Utility exposed', scopeItemIds: ['drainage'], owner: 'Construction Manager', dueDate: '2026-07-10', resolution: 'Rerouted', evidenceRefs: riskEvidence, status: 'resolved' }],
+    notices: [{ id: 'notice-1', type: 'contractual', obligationId: 'notice', title: 'Utility notice', dueDate: '2026-07-05', sentDate: '2026-07-04', evidenceRefs: changeEvidence, status: 'acknowledged' }],
+    changes: [{ id: 'change-1', title: 'Utility reroute', scopeItemIds: ['drainage'], noticeIds: ['notice-1'], costImpact: '100.20', scheduleImpactDays: 2, evidenceRefs: changeEvidence, status: 'approved', confidence: 'confirmed' }],
+    claims: [{ id: 'claim-1', title: 'Utility reroute claim', changeIds: ['change-1'], noticeIds: ['notice-1'], amount: '100.20', extensionDays: 2, evidenceRefs: changeEvidence, status: 'agreed' }],
+    decisions: [{ id: 'decision-1', title: 'Approve reroute', relatedEntityIds: ['change-1'], owner: 'Project Manager', dueDate: '2026-07-06', decidedAt: '2026-07-06', decision: 'Approved', evidenceRefs: changeEvidence, status: 'approved' }],
+  };
+}
+
 describe('delivery_capability handler', () => {
   let root: string;
   let context: SessionToolContext;
@@ -120,6 +134,8 @@ describe('delivery_capability handler', () => {
         { id: 'budget', name: 'Approved Budget', path: 'C:/budget.xlsx', kind: 'budget', status: 'active', sha256: '2'.repeat(64) },
         { id: 'commercial', name: 'Commercial Ledger', path: 'C:/commercial.xlsx', kind: 'commitment', status: 'active', sha256: '3'.repeat(64) },
         { id: 'cashflow', name: 'Cash Flow', path: 'C:/cashflow.xlsx', kind: 'budget', status: 'active', sha256: '4'.repeat(64) },
+        { id: 'risk-register', name: 'Risk Register', path: 'C:/risk.xlsx', kind: 'risk', status: 'active', sha256: '5'.repeat(64) },
+        { id: 'change-register', name: 'Change Register', path: 'C:/change.xlsx', kind: 'change', status: 'active', sha256: '6'.repeat(64) },
       ],
     });
     await handleDeliveryWorkspace(context, {
@@ -262,5 +278,26 @@ describe('delivery_capability handler', () => {
       { capability: 'cost_commercial', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'cashflow.json'));
+  });
+
+  test('persists risk and change control independently after contract scope is ready', async () => {
+    const handlers = await import('./index.ts') as Record<string, unknown>;
+    const handle = handlers.handleDeliveryCapability as Function;
+    expect((await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'contract_scope', data: contractScopeData(),
+    })).isError).toBe(false);
+
+    const initialized = await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'risk_change', data: riskChangeData(),
+    });
+    expect(initialized.isError).toBe(false);
+    const output = JSON.parse(initialized.content[0]?.text ?? '{}');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.approvedChanges).toBe(1);
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 3 },
+      { capability: 'contract_scope', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'risk-change.json'));
   });
 });

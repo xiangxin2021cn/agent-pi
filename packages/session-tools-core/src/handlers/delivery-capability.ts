@@ -4,6 +4,7 @@ import {
   auditDeliveryCostCommercial,
   auditDeliveryProgrammeProgress,
   auditDeliveryResourceProcurement,
+  auditDeliveryRiskChange,
   getDeliveryCapabilityDependencies,
   isDeliveryCapabilityStale,
   parseDeliveryCapabilityEnvelope,
@@ -13,6 +14,7 @@ import {
   parseDeliveryCostCommercialData,
   parseDeliveryProgrammeProgressData,
   parseDeliveryResourceProcurementData,
+  parseDeliveryRiskChangeData,
   parseDeliveryWorkspace,
   type DeliveryCapabilityAuditIssue,
   type DeliveryCapabilityEnvelope,
@@ -139,12 +141,13 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' | 'cashflow' {
+function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' | 'cashflow' | 'risk_change' {
   return capability === 'contract_scope'
     || capability === 'programme_progress'
     || capability === 'resource_procurement'
     || capability === 'cost_commercial'
-    || capability === 'cashflow';
+    || capability === 'cashflow'
+    || capability === 'risk_change';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
@@ -153,6 +156,7 @@ function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): u
   if (capability === 'resource_procurement') return parseDeliveryResourceProcurementData(data);
   if (capability === 'cost_commercial') return parseDeliveryCostCommercialData(data);
   if (capability === 'cashflow') return parseDeliveryCashflowData(data);
+  if (capability === 'risk_change') return parseDeliveryRiskChangeData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -190,6 +194,14 @@ function auditCapability(
       workspace,
       upstreamData.programme_progress,
       upstreamData.cost_commercial,
+      data,
+      generatedAt,
+    );
+  }
+  if (capability === 'risk_change') {
+    return auditDeliveryRiskChange(
+      workspace,
+      upstreamData.contract_scope,
       data,
       generatedAt,
     );
