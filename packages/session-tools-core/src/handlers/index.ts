@@ -33,6 +33,10 @@ export type { FileMemorySourceCreateArgs } from './file-memory-source-create.ts'
 export { handleTenderWorkspace } from './tender-workspace.ts';
 export type { TenderWorkspaceArgs, TenderWorkspaceAction } from './tender-workspace.ts';
 
+// Tender Capability Packs
+export { handleTenderCapability } from './tender-capability.ts';
+export type { TenderCapabilityArgs, TenderCapabilityAction } from './tender-capability.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

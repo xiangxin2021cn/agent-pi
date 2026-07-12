@@ -49,6 +49,25 @@ describe('session tool filtering helpers', () => {
     }
   });
 
+  it('registers tender_capability as a blocked registry tool with typed actions', () => {
+    const definition = SESSION_TOOL_DEFS.find(def => def.name === 'tender_capability');
+
+    expect(definition).toBeDefined();
+    expect(definition?.executionMode).toBe('registry');
+    expect(definition?.safeMode).toBe('block');
+    expect(definition?.inputSchema.safeParse({
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'evaluation_strategy',
+      data: { strategies: [] },
+    }).success).toBe(true);
+    expect(definition?.inputSchema.safeParse({
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'invented_pack',
+    }).success).toBe(false);
+  });
+
   it('safe-mode helper sets classify expected tools', () => {
     const allowed = getSessionSafeAllowedToolNames();
     const blocked = getSessionSafeBlockedToolNames();
@@ -62,6 +81,7 @@ describe('session tool filtering helpers', () => {
 
     expect(blocked.has('source_oauth_trigger')).toBe(true);
     expect(blocked.has('source_credential_prompt')).toBe(true);
+    expect(blocked.has('tender_capability')).toBe(true);
   });
 
   it('safe-mode helpers support MCP prefixing', () => {

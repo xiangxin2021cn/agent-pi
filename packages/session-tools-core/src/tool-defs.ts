@@ -24,6 +24,7 @@ import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
 import { handleSourceTest } from './handlers/source-test.ts';
 import { handleFileMemorySourceCreate } from './handlers/file-memory-source-create.ts';
 import { handleTenderWorkspace } from './handlers/tender-workspace.ts';
+import { handleTenderCapability } from './handlers/tender-capability.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -233,6 +234,26 @@ export const TenderWorkspaceToolSchema = z.object({
   responses: z.array(TenderEntityInputSchema).optional().describe('Full response-plan entities for upsert_responses.'),
 });
 
+export const TenderCapabilityToolSchema = z.object({
+  action: z.enum(['configure', 'init', 'replace', 'status', 'validate'])
+    .describe('Capability-pack operation to perform.'),
+  projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .describe('Filesystem-safe Tender Workspace project ID.'),
+  capability: z.enum([
+    'evaluation_strategy',
+    'boq_reconciliation',
+    'execution_plan',
+    'schedule_resources',
+    'cost_cashflow',
+    'submission_audit',
+  ]).describe('Tender capability pack to operate on.'),
+  data: z.unknown().optional().describe('Complete capability data required by init and replace.'),
+  expectedRevision: z.number().int().positive().optional()
+    .describe('Optimistic concurrency revision required when replacing known state.'),
+  enabled: z.boolean().optional().describe('Whether the capability is enabled for this tender.'),
+  required: z.boolean().optional().describe('Whether the enabled capability must pass before submission.'),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -365,6 +386,19 @@ Actions:
 - validate: recompute and persist readiness-audit.json
 
 Call validate before any completion claim. A ready result is a deterministic coverage state, not professional approval.`,
+
+  tender_capability: `Maintain one versioned Tender Intelligence capability pack for an existing Tender Workspace.
+
+Use this after tender_workspace has registered the authoritative project, sources, requirements, criteria, deliverables, and response plans. The tool stores capability data separately under the tender project, records core and upstream revisions, rejects stale optimistic updates, and returns deterministic readiness.
+
+Actions:
+- configure: set whether a capability is enabled and required
+- init: create a capability pack from complete typed data
+- replace: atomically replace the pack using expectedRevision when available
+- status: inspect current data, audit, and stale dependencies
+- validate: recompute and persist the capability audit
+
+Only implemented capability packs can be initialized. A stale pack cannot be treated as ready. The tool never scans the working directory.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -638,6 +672,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: SourceTestSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
   { name: 'file_memory_source_create', description: TOOL_DESCRIPTIONS.file_memory_source_create, inputSchema: FileMemorySourceCreateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleFileMemorySourceCreate },
   { name: 'tender_workspace', description: TOOL_DESCRIPTIONS.tender_workspace, inputSchema: TenderWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderWorkspace },
+  { name: 'tender_capability', description: TOOL_DESCRIPTIONS.tender_capability, inputSchema: TenderCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderCapability },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
