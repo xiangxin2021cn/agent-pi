@@ -20,6 +20,7 @@ import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/
 import { auditExportedArtifact } from '../documents/export-quality'
 import { validateEvidenceMatrixArtifact } from './evidence-matrix-artifact'
 import { extractTenderSubmissionEvidence, extractTenderWorkspaceEvidence } from './tender-workspace-evidence'
+import { extractDeliveryReportingEvidence, extractDeliveryWorkspaceEvidence } from './delivery-workspace-evidence'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
 import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
@@ -129,6 +130,7 @@ export class GoalController {
     const implicitOutputCandidatePaths = new Set<string>()
     const verifiedOutputPaths = new Set<string>()
     const tenderReadinessIssues: string[] = []
+    const deliveryReadinessIssues: string[] = []
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -183,6 +185,8 @@ export class GoalController {
     }
     const tenderWorkspaceEvidence = extractTenderWorkspaceEvidence(turnMessages)
     const tenderSubmissionEvidence = extractTenderSubmissionEvidence(turnMessages)
+    const deliveryWorkspaceEvidence = extractDeliveryWorkspaceEvidence(turnMessages)
+    const deliveryReportingEvidence = extractDeliveryReportingEvidence(turnMessages)
     if (tenderWorkspaceEvidence) {
       evidence.push({
         type: 'tool',
@@ -206,6 +210,20 @@ export class GoalController {
         detail: JSON.stringify(tenderSubmissionEvidence),
       })
     }
+    if (deliveryWorkspaceEvidence) {
+      evidence.push({
+        type: 'tool',
+        label: 'delivery_workspace_readiness',
+        detail: JSON.stringify(deliveryWorkspaceEvidence),
+      })
+    }
+    if (deliveryReportingEvidence) {
+      evidence.push({
+        type: 'tool',
+        label: 'delivery_reporting_readiness',
+        detail: JSON.stringify(deliveryReportingEvidence),
+      })
+    }
     if (requiresSubmissionReadyTender(goalState)) {
       if (!tenderWorkspaceEvidence) {
         tenderReadinessIssues.push('Submission-ready tender delivery requires a successful tender_workspace validation result.')
@@ -220,6 +238,22 @@ export class GoalController {
         tenderReadinessIssues.push(`Tender submission audit evidence is ${tenderSubmissionEvidence.status}: ${tenderSubmissionEvidence.error ?? 'invalid readiness payload'}`)
       } else if (tenderSubmissionEvidence.readiness !== 'ready') {
         tenderReadinessIssues.push(`Tender submission audit readiness is ${tenderSubmissionEvidence.readiness}; submission-ready delivery requires ready.`)
+      }
+    }
+    if (requiresFormalDeliveryPeriodClose(goalState)) {
+      if (!deliveryWorkspaceEvidence) {
+        deliveryReadinessIssues.push('Formal delivery period close requires a successful delivery_workspace validation result.')
+      } else if (deliveryWorkspaceEvidence.status !== 'valid') {
+        deliveryReadinessIssues.push(`Delivery Workspace evidence is ${deliveryWorkspaceEvidence.status}: ${deliveryWorkspaceEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (deliveryWorkspaceEvidence.readiness !== 'ready') {
+        deliveryReadinessIssues.push(`Delivery Workspace readiness is ${deliveryWorkspaceEvidence.readiness}; formal period close requires ready.`)
+      }
+      if (!deliveryReportingEvidence) {
+        deliveryReadinessIssues.push('Formal delivery period close requires a successful reporting_audit validation result.')
+      } else if (deliveryReportingEvidence.status !== 'valid') {
+        deliveryReadinessIssues.push(`Delivery reporting audit evidence is ${deliveryReportingEvidence.status}: ${deliveryReportingEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (deliveryReportingEvidence.readiness !== 'ready') {
+        deliveryReadinessIssues.push(`Delivery reporting audit readiness is ${deliveryReportingEvidence.readiness}; formal period close requires ready.`)
       }
     }
 
@@ -714,6 +748,15 @@ export class GoalController {
       }
     }
 
+    if (deliveryReadinessIssues.length > 0) {
+      status = 'fail'
+      deterministicFailureCategories.add('evidence_gap')
+      missingCriteria.push(...deliveryReadinessIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because Project Delivery Controls are not ready for formal period close.'
+      }
+    }
+
     if (deliveryReviewGateAudit.missingCriteria.length > 0) {
       status = 'fail'
       deterministicFailureCategories.add('evidence_gap')
@@ -1028,6 +1071,20 @@ function requiresSubmissionReadyTender(goalState: SessionGoalState): boolean {
   const isTender = /\b(?:tender|bid)\b|投标|标书|招标/i.test(text)
   const requestsSubmissionReady = /submission[- ]ready|ready\s+for\s+(?:formal\s+)?submission|final\s+(?:tender|bid).{0,40}submission|正式递交|可(?:以)?提交|提交就绪|最终投标文件|完整投标文件/i.test(text)
   return isTender && requestsSubmissionReady
+}
+
+function requiresFormalDeliveryPeriodClose(goalState: SessionGoalState): boolean {
+  const contract = goalState.taskContract
+  const text = [
+    goalState.objective,
+    contract?.originalRequest,
+    ...(contract?.followUpRequests ?? []),
+    ...(contract?.deliverables ?? []),
+    ...(contract?.acceptanceCriteria ?? []),
+  ].filter(Boolean).join('\n')
+  const isDeliveryControl = /\b(?:project delivery|delivery control|project controls?|implementation|management report)\b|项目实施|项目管理|实施控制|月报|管理报告/i.test(text)
+  const requestsFormalClose = /\b(?:period close|close.{0,40}reporting period|approved management report|issue.{0,40}management report)\b|期间关闭|月度关闭|关闭.{0,20}期间|批准.{0,20}管理报告|正式月报/i.test(text)
+  return isDeliveryControl && requestsFormalClose
 }
 
 function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {

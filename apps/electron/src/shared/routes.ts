@@ -186,6 +186,9 @@ export const routes = {
     tenderWorkspaces: (projectId?: string) =>
       projectId ? `tender-workspaces/project/${projectId}` as const : 'tender-workspaces' as const,
 
+    deliveryWorkspaces: (projectId?: string) =>
+      projectId ? `delivery-workspaces/project/${projectId}` as const : 'delivery-workspaces' as const,
+
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>
       subpage

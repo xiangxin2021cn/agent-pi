@@ -32,12 +32,13 @@ import {
   isSkillsNavigation,
   isAutomationsNavigation,
   isTenderNavigation,
+  isDeliveryNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
 import { sourceSelection, skillSelection, automationSelection } from '@/hooks/useEntitySelection'
 import { extractLabelId } from '@craft-agent/shared/labels'
 import type { SessionStatusId } from '@/config/session-status-config'
-import { SourceInfoPage, ChatPage, TenderWorkspacePage } from '@/pages'
+import { SourceInfoPage, ChatPage, TenderWorkspacePage, DeliveryWorkspacePage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
@@ -261,6 +262,21 @@ export function MainContentPanel({
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           Select a tender workspace.
         </div>
+      </Panel>
+    )
+  }
+
+  if (isDeliveryNavigation(navState)) {
+    if (navState.details && activeSessionWorkingDirectory) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <DeliveryWorkspacePage workingDirectory={activeSessionWorkingDirectory} projectId={navState.details.projectId} />
+        </Panel>
+      )
+    }
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a delivery workspace.</div>
       </Panel>
     )
   }

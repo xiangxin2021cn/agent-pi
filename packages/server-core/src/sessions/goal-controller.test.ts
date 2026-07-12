@@ -69,6 +69,26 @@ function tenderSubmissionToolResult(readiness: 'not_ready' | 'needs_review' | 'r
   })
 }
 
+function deliveryWorkspaceToolResult(readiness: 'not_ready' | 'needs_review' | 'ready'): string {
+  return JSON.stringify({
+    workspace: { revision: 3, project: { id: 'n3-delivery' } },
+    audit: { projectId: 'n3-delivery', workspaceRevision: 3, readiness, issues: readiness === 'ready' ? [] : [{ code: 'approved_baseline_missing' }] },
+    modelPath: 'C:/project/.agent-pi/business/delivery/n3-delivery/delivery-workspace.json',
+    auditPath: 'C:/project/.agent-pi/business/delivery/n3-delivery/readiness-audit.json',
+  })
+}
+
+function deliveryReportingToolResult(readiness: 'not_ready' | 'needs_review' | 'ready', stale = false): string {
+  return JSON.stringify({
+    envelope: { capability: 'reporting_audit', projectId: 'n3-delivery', revision: 1, coreRevision: 3 },
+    audit: { capability: 'reporting_audit', projectId: 'n3-delivery', coreRevision: 3, readiness, issues: readiness === 'ready' ? [] : [{ code: 'period_close_not_approved' }] },
+    stale,
+    effectiveReadiness: stale ? 'not_ready' : readiness,
+    modelPath: 'C:/project/.agent-pi/business/delivery/n3-delivery/packs/reporting-audit.json',
+    auditPath: 'C:/project/.agent-pi/business/delivery/n3-delivery/audits/reporting-audit-audit.json',
+  })
+}
+
 describe('GoalController', () => {
   test('skips when no goal state is present', async () => {
     const controller = new GoalController()
@@ -329,6 +349,47 @@ describe('GoalController', () => {
           toolResult: submissionResult,
         }),
         message('a1', 'assistant', 'The submission-ready tender package is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('complete')
+  })
+
+  test('blocks formal delivery period close when reporting audit evidence is missing', async () => {
+    const controller = new GoalController()
+    const workspaceResult = deliveryWorkspaceToolResult('ready')
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Close the July project delivery reporting period and issue the approved management report.',
+    }), {
+      messages: [
+        message('u1', 'user', 'Close the July project delivery reporting period and issue the approved management report.'),
+        message('t1', 'tool', workspaceResult, { toolName: 'delivery_workspace', toolStatus: 'completed', toolResult: workspaceResult }),
+        message('a1', 'assistant', 'The delivery reporting period is closed.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.missingCriteria.join('\n')).toContain('reporting_audit validation result')
+    }
+  })
+
+  test('allows formal delivery period close when workspace and reporting audit are ready', async () => {
+    const controller = new GoalController()
+    const workspaceResult = deliveryWorkspaceToolResult('ready')
+    const reportingResult = deliveryReportingToolResult('ready')
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Close the July project delivery reporting period and issue the approved management report.',
+    }), {
+      messages: [
+        message('u1', 'user', 'Close the July project delivery reporting period and issue the approved management report.'),
+        message('t1', 'tool', workspaceResult, { toolName: 'delivery_workspace', toolStatus: 'completed', toolResult: workspaceResult }),
+        message('t2', 'tool', reportingResult, { toolName: 'delivery_capability', toolStatus: 'completed', toolResult: reportingResult }),
+        message('a1', 'assistant', 'The delivery reporting period is closed with approved management reporting.'),
       ],
       stoppedReason: 'complete',
       now: 10,

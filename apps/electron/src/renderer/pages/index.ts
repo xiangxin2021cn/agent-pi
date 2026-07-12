@@ -7,6 +7,7 @@
 export { default as ChatPage } from './ChatPage'
 export { default as SourceInfoPage } from './SourceInfoPage'
 export { default as TenderWorkspacePage } from './TenderWorkspacePage'
+export { default as DeliveryWorkspacePage } from './DeliveryWorkspacePage'
 // Settings pages
 export {
   SettingsNavigator,

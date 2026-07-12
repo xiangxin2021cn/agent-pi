@@ -255,6 +255,10 @@ import type {
   TenderWorkspaceSummaryDto,
   TenderWorkspaceBundleDto,
   TenderWorkspaceMutationRequest,
+  DeliveryWorkspaceLocationRequest,
+  DeliveryWorkspaceSummaryDto,
+  DeliveryWorkspaceBundleDto,
+  DeliveryWorkspaceMutationRequest,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -313,6 +317,9 @@ export interface ElectronAPI {
   listTenderWorkspaces(request: TenderWorkspaceLocationRequest): Promise<TenderWorkspaceSummaryDto[]>
   getTenderWorkspace(request: TenderWorkspaceLocationRequest & { projectId: string }): Promise<TenderWorkspaceBundleDto>
   mutateTenderWorkspace(request: TenderWorkspaceMutationRequest): Promise<Record<string, unknown>>
+  listDeliveryWorkspaces(request: DeliveryWorkspaceLocationRequest): Promise<DeliveryWorkspaceSummaryDto[]>
+  getDeliveryWorkspace(request: DeliveryWorkspaceLocationRequest & { projectId: string }): Promise<DeliveryWorkspaceBundleDto>
+  mutateDeliveryWorkspace(request: DeliveryWorkspaceMutationRequest): Promise<Record<string, unknown>>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
@@ -922,6 +929,12 @@ export interface TenderNavigationState {
   rightSidebar?: RightSidebarPanel
 }
 
+export interface DeliveryNavigationState {
+  navigator: 'delivery'
+  details: { type: 'deliveryWorkspace'; projectId: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
 /**
  * Unified navigation state
  */
@@ -932,6 +945,7 @@ export type NavigationState =
   | SkillsNavigationState
   | AutomationsNavigationState
   | TenderNavigationState
+  | DeliveryNavigationState
 
 export const isSessionsNavigation = (
   state: NavigationState
@@ -957,6 +971,10 @@ export const isTenderNavigation = (
   state: NavigationState
 ): state is TenderNavigationState => state.navigator === 'tender'
 
+export const isDeliveryNavigation = (
+  state: NavigationState
+): state is DeliveryNavigationState => state.navigator === 'delivery'
+
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
   navigator: 'sessions',
   filter: { kind: 'allSessions' },
@@ -966,6 +984,9 @@ export const DEFAULT_NAVIGATION_STATE: NavigationState = {
 export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'tender') {
     return state.details ? `tender-workspaces/project/${state.details.projectId}` : 'tender-workspaces'
+  }
+  if (state.navigator === 'delivery') {
+    return state.details ? `delivery-workspaces/project/${state.details.projectId}` : 'delivery-workspaces'
   }
   if (state.navigator === 'sources') {
     if (state.details) {

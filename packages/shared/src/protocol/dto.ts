@@ -505,6 +505,41 @@ export interface TenderWorkspaceMutationRequest {
   args: Record<string, unknown>;
 }
 
+export interface DeliveryWorkspaceLocationRequest {
+  workingDirectory: string;
+  projectId?: string;
+}
+
+export interface DeliveryWorkspaceSummaryDto {
+  projectId: string;
+  title: string;
+  reference?: string;
+  status: string;
+  revision: number;
+  readiness: 'not_ready' | 'needs_review' | 'ready';
+  issueCount: number;
+}
+
+export interface DeliveryWorkspaceBundleDto {
+  workspace: Record<string, unknown>;
+  audit: Record<string, unknown>;
+  capabilityIndex: Record<string, unknown>;
+  packs: Record<string, Record<string, unknown>>;
+  packAudits: Record<string, Record<string, unknown>>;
+  paths: {
+    projectDirectory: string;
+    modelPath: string;
+    auditPath: string;
+    indexPath: string;
+  };
+}
+
+export interface DeliveryWorkspaceMutationRequest {
+  workingDirectory: string;
+  target: 'workspace' | 'capability';
+  args: Record<string, unknown>;
+}
+
 export interface SessionFile {
   name: string
   path: string

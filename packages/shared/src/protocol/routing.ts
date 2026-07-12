@@ -226,6 +226,16 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.server.STATUS_CHANGED,
   RPC_CHANNELS.server.HOME_DIR,
 
+  // delivery workspace — workspace-owned enterprise project controls
+  RPC_CHANNELS.deliveryWorkspace.LIST,
+  RPC_CHANNELS.deliveryWorkspace.GET,
+  RPC_CHANNELS.deliveryWorkspace.MUTATE,
+
+  // tender workspace — workspace-owned enterprise tender controls
+  RPC_CHANNELS.tenderWorkspace.LIST,
+  RPC_CHANNELS.tenderWorkspace.GET,
+  RPC_CHANNELS.tenderWorkspace.MUTATE,
+
   // sessions — core session runtime
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
@@ -353,6 +363,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sources.GET,
   RPC_CHANNELS.sources.CREATE,
   RPC_CHANNELS.sources.CREATE_KNOWLEDGE_BASE_FILE_SOURCE,
+  RPC_CHANNELS.sources.INSTALL_RECOMMENDED,
   RPC_CHANNELS.sources.DELETE,
   RPC_CHANNELS.sources.START_OAUTH,
   RPC_CHANNELS.sources.SAVE_CREDENTIALS,
@@ -372,6 +383,8 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspace.WRITE_IMAGE,
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
+  RPC_CHANNELS.workspace.MINERU_CREDENTIAL_STATUS,
+  RPC_CHANNELS.workspace.SAVE_MINERU_TOKEN,
 
   // permissions — workspace permissions
   RPC_CHANNELS.permissions.GET_DEFAULTS,

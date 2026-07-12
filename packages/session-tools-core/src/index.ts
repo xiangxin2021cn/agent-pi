@@ -152,6 +152,8 @@ export {
   handleFileMemorySourceCreate,
   handleTenderWorkspace,
   handleTenderCapability,
+  handleDeliveryWorkspace,
+  handleDeliveryCapability,
   // OAuth Triggers
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,

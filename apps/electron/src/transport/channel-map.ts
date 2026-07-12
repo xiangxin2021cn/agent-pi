@@ -57,6 +57,9 @@ export const CHANNEL_MAP = {
   listTenderWorkspaces: invoke(RPC_CHANNELS.tenderWorkspace.LIST),
   getTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.GET),
   mutateTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.MUTATE),
+  listDeliveryWorkspaces: invoke(RPC_CHANNELS.deliveryWorkspace.LIST),
+  getDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.GET),
+  mutateDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.MUTATE),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)
