@@ -1,10 +1,12 @@
 import {
   auditTenderEvaluationStrategy,
+  auditTenderBoqReconciliation,
   getTenderCapabilityDependencies,
   isTenderCapabilityStale,
   parseTenderCapabilityEnvelope,
   parseTenderCapabilityIndex,
   parseTenderEvaluationStrategyData,
+  parseTenderBoqReconciliationData,
   parseTenderWorkspace,
   type TenderCapabilityAuditIssue,
   type TenderCapabilityEnvelope,
@@ -13,6 +15,7 @@ import {
   type TenderCapabilityIndexEntry,
   type TenderCapabilityReadiness,
   type TenderEvaluationStrategyAudit,
+  type TenderBoqReconciliationAudit,
   type TenderWorkspace,
 } from '@agent-pi/business-core/tender';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -33,7 +36,7 @@ export interface TenderCapabilityArgs {
   required?: boolean;
 }
 
-type ImplementedAudit = TenderEvaluationStrategyAudit;
+type ImplementedAudit = TenderEvaluationStrategyAudit | TenderBoqReconciliationAudit;
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
@@ -149,12 +152,15 @@ export async function handleTenderCapability(
   }
 }
 
-function isImplementedCapability(capability: TenderCapabilityId): capability is 'evaluation_strategy' {
-  return capability === 'evaluation_strategy';
+function isImplementedCapability(
+  capability: TenderCapabilityId,
+): capability is 'evaluation_strategy' | 'boq_reconciliation' {
+  return capability === 'evaluation_strategy' || capability === 'boq_reconciliation';
 }
 
 function parseCapabilityData(capability: TenderCapabilityId, data: unknown): unknown {
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
+  if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }
 
@@ -166,6 +172,9 @@ function auditCapability(
 ): ImplementedAudit {
   if (capability === 'evaluation_strategy') {
     return auditTenderEvaluationStrategy(workspace, data, generatedAt);
+  }
+  if (capability === 'boq_reconciliation') {
+    return auditTenderBoqReconciliation(workspace, data, generatedAt);
   }
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }

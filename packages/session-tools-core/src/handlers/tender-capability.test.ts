@@ -41,6 +41,37 @@ function strategyData() {
   };
 }
 
+function boqData() {
+  return {
+    items: [
+      {
+        id: 'boq-5201',
+        source: { documentId: 'boq', sheet: 'Drainage', cell: 'B18:F18' },
+        code: '52.01',
+        description: 'Concrete side drain',
+        unit: 'm',
+        quantity: '1250.5',
+        quantityBasis: 'boq',
+        quantityStatus: 'sourced',
+        quantityRefs: [{ documentId: 'boq', sheet: 'Drainage', cell: 'F18' }],
+      },
+    ],
+    scopeLinks: [
+      {
+        boqItemId: 'boq-5201',
+        requirementIds: ['req-drainage'],
+        specificationRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+        drawingRefs: [{ documentId: 'drawing', page: 3, section: 'DRAIN-01' }],
+        measurementRuleRefs: [{ documentId: 'spec', page: 24, clause: '5.2.4' }],
+        inclusions: ['Scheduled concrete side drain scope'],
+        exclusions: [],
+        assumptions: [],
+        gapStatus: 'clear',
+      },
+    ],
+  };
+}
+
 describe('tender_capability handler', () => {
   let root: string;
   let workingDirectory: string;
@@ -220,12 +251,56 @@ describe('tender_capability handler', () => {
     expect(result.content[0]?.text).toContain('required capability must be enabled');
   });
 
+  test('initializes a ready BOQ reconciliation pack from registered sources', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_documents',
+      projectId: 'n3-upgrade',
+      documents: [
+        { id: 'boq', name: 'BOQ', path: 'C:/tender/boq.xlsx', kind: 'boq', status: 'active' },
+        { id: 'spec', name: 'Specification', path: 'C:/tender/spec.pdf', kind: 'specification', status: 'active' },
+        { id: 'drawing', name: 'Drawing', path: 'C:/tender/drawing.pdf', kind: 'drawing', status: 'active' },
+      ],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_requirements',
+      projectId: 'n3-upgrade',
+      requirements: [
+        {
+          id: 'req-drainage',
+          title: 'Drainage scope',
+          text: 'Construct the scheduled drainage works.',
+          type: 'technical',
+          criticality: 'high',
+          source: { documentId: 'spec', page: 20, clause: '5.2' },
+          evidenceNeeded: [],
+          status: 'planned',
+        },
+      ],
+    });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'boq_reconciliation',
+      enabled: true,
+      required: true,
+      data: boqData(),
+    });
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+    expect(output.envelope.capability).toBe('boq_reconciliation');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.effectiveReadiness).toBe('ready');
+    expect(output.modelPath).toEndWith(join('packs', 'boq-reconciliation.json'));
+  });
+
   test('rejects capability packs that are not implemented yet', async () => {
     const handler = await loadHandler();
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
-      capability: 'boq_reconciliation',
+      capability: 'execution_plan',
       data: {},
     });
 
