@@ -1,4 +1,5 @@
 import {
+  auditDeliveryCashflow,
   auditDeliveryContractScope,
   auditDeliveryCostCommercial,
   auditDeliveryProgrammeProgress,
@@ -7,6 +8,7 @@ import {
   isDeliveryCapabilityStale,
   parseDeliveryCapabilityEnvelope,
   parseDeliveryCapabilityIndex,
+  parseDeliveryCashflowData,
   parseDeliveryContractScopeData,
   parseDeliveryCostCommercialData,
   parseDeliveryProgrammeProgressData,
@@ -137,11 +139,12 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' {
+function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' | 'cashflow' {
   return capability === 'contract_scope'
     || capability === 'programme_progress'
     || capability === 'resource_procurement'
-    || capability === 'cost_commercial';
+    || capability === 'cost_commercial'
+    || capability === 'cashflow';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
@@ -149,6 +152,7 @@ function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): u
   if (capability === 'programme_progress') return parseDeliveryProgrammeProgressData(data);
   if (capability === 'resource_procurement') return parseDeliveryResourceProcurementData(data);
   if (capability === 'cost_commercial') return parseDeliveryCostCommercialData(data);
+  if (capability === 'cashflow') return parseDeliveryCashflowData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -177,6 +181,15 @@ function auditCapability(
       workspace,
       upstreamData.contract_scope,
       upstreamData.resource_procurement,
+      data,
+      generatedAt,
+    );
+  }
+  if (capability === 'cashflow') {
+    return auditDeliveryCashflow(
+      workspace,
+      upstreamData.programme_progress,
+      upstreamData.cost_commercial,
       data,
       generatedAt,
     );

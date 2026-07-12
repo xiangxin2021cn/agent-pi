@@ -80,6 +80,20 @@ function costCommercialData() {
   };
 }
 
+function cashflowData() {
+  return {
+    controlStatus: 'reviewed', dataDate: '2026-07-12', currency: 'ZAR',
+    periods: [{
+      period: '2026-07',
+      planned: { openingBalance: '2000.00', inflow: '100.30', outflow: '1100.30', closingBalance: '1000.00' },
+      actual: { openingBalance: '2000.00', inflow: '50.00', outflow: '200.00', closingBalance: '1850.00' },
+      forecast: { openingBalance: '2000.00', inflow: '100.50', outflow: '950.50', closingBalance: '1150.00' },
+      evidenceRefs: [{ kind: 'source', sourceId: 'cashflow', sheet: 'Monthly', cell: 'B2:M2' }], status: 'reviewed',
+    }],
+    fundingConstraints: [],
+  };
+}
+
 describe('delivery_capability handler', () => {
   let root: string;
   let context: SessionToolContext;
@@ -105,6 +119,7 @@ describe('delivery_capability handler', () => {
         { id: 'organization', name: 'Approved Organization', path: 'C:/org.pdf', kind: 'organization', status: 'active', sha256: '1'.repeat(64) },
         { id: 'budget', name: 'Approved Budget', path: 'C:/budget.xlsx', kind: 'budget', status: 'active', sha256: '2'.repeat(64) },
         { id: 'commercial', name: 'Commercial Ledger', path: 'C:/commercial.xlsx', kind: 'commitment', status: 'active', sha256: '3'.repeat(64) },
+        { id: 'cashflow', name: 'Cash Flow', path: 'C:/cashflow.xlsx', kind: 'budget', status: 'active', sha256: '4'.repeat(64) },
       ],
     });
     await handleDeliveryWorkspace(context, {
@@ -220,5 +235,32 @@ describe('delivery_capability handler', () => {
       { capability: 'resource_procurement', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'cost-commercial.json'));
+  });
+
+  test('persists cash flow after programme and cost controls are ready', async () => {
+    const handlers = await import('./index.ts') as Record<string, unknown>;
+    const handle = handlers.handleDeliveryCapability as Function;
+    for (const [capability, data] of [
+      ['contract_scope', contractScopeData()],
+      ['programme_progress', programmeProgressData()],
+      ['resource_procurement', resourceProcurementData()],
+      ['cost_commercial', costCommercialData()],
+    ]) {
+      expect((await handle(context, { action: 'init', projectId: 'n3-delivery', capability, data })).isError).toBe(false);
+    }
+
+    const initialized = await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'cashflow', data: cashflowData(),
+    });
+    expect(initialized.isError).toBe(false);
+    const output = JSON.parse(initialized.content[0]?.text ?? '{}');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.forecastOutflow).toBe('950.5');
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 3 },
+      { capability: 'programme_progress', revision: 1 },
+      { capability: 'cost_commercial', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'cashflow.json'));
   });
 });
