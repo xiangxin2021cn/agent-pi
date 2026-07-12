@@ -64,6 +64,11 @@ export const RPC_CHANNELS = {
   tasks: {
     GET_OUTPUT: 'tasks:getOutput',
   },
+  tenderWorkspace: {
+    LIST: 'tenderWorkspace:list',
+    GET: 'tenderWorkspace:get',
+    MUTATE: 'tenderWorkspace:mutate',
+  },
   workspaces: {
     GET: 'workspaces:get',
     CREATE: 'workspaces:create',

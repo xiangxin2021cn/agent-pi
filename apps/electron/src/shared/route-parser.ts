@@ -35,7 +35,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'settings'
+export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'tender' | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -61,7 +61,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
+  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'tender-workspaces', 'settings'
 ]
 
 /**
@@ -106,6 +106,14 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       navigator: 'settings',
       details: { type: subpage, id: subpage },
     }
+  }
+
+  if (first === 'tender-workspaces') {
+    if (segments.length === 1) return { navigator: 'tender', details: null }
+    if (segments[1] === 'project' && segments[2]) {
+      return { navigator: 'tender', details: { type: 'tenderWorkspace', id: segments[2] } }
+    }
+    return null
   }
 
   // Sources navigator - supports type filters (api, mcp, local)
@@ -305,6 +313,11 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     return `${base}/automation/${parsed.details.id}`
   }
 
+  if (parsed.navigator === 'tender') {
+    if (!parsed.details) return 'tender-workspaces'
+    return `tender-workspaces/project/${parsed.details.id}`
+  }
+
   // Sessions navigator
   let base: string
   const filter = parsed.sessionFilter
@@ -426,6 +439,11 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
       return { type: 'view', name: 'automations', params: {} }
     }
     return { type: 'view', name: 'automation-info', id: compound.details.id, params: {} }
+  }
+
+  if (compound.navigator === 'tender') {
+    if (!compound.details) return { type: 'view', name: 'tender-workspaces', params: {} }
+    return { type: 'view', name: 'tender-workspace', id: compound.details.id, params: {} }
   }
 
   // Sessions
@@ -563,6 +581,11 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
+  if (compound.navigator === 'tender') {
+    if (!compound.details) return { navigator: 'tender', details: null }
+    return { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: compound.details.id } }
+  }
+
   // Sessions
   const filter = compound.sessionFilter || { kind: 'allSessions' as const }
   if (compound.details) {
@@ -640,6 +663,12 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         }
       }
       return { navigator: 'automations', details: null }
+    case 'tender-workspaces':
+      return { navigator: 'tender', details: null }
+    case 'tender-workspace':
+      return parsed.id
+        ? { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: parsed.id } }
+        : { navigator: 'tender', details: null }
     case 'session':
       if (parsed.id) {
         // Reconstruct filter from params
@@ -745,6 +774,13 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
       navigator: 'automations',
       automationFilter: state.filter ?? undefined,
       details: state.details ? { type: 'automation', id: state.details.automationId } : null,
+    }
+  }
+
+  if (state.navigator === 'tender') {
+    return {
+      navigator: 'tender',
+      details: state.details ? { type: 'tenderWorkspace', id: state.details.projectId } : null,
     }
   }
 

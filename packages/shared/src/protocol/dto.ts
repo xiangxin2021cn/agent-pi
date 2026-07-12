@@ -470,6 +470,41 @@ export interface SuggestKnowledgeBaseCategoryResult {
   fallback?: boolean
 }
 
+export interface TenderWorkspaceLocationRequest {
+  workingDirectory: string;
+  projectId?: string;
+}
+
+export interface TenderWorkspaceSummaryDto {
+  projectId: string;
+  title: string;
+  reference?: string;
+  status: string;
+  revision: number;
+  readiness: 'not_ready' | 'needs_review' | 'ready';
+  issueCount: number;
+}
+
+export interface TenderWorkspaceBundleDto {
+  workspace: Record<string, unknown>;
+  audit: Record<string, unknown>;
+  capabilityIndex: Record<string, unknown>;
+  packs: Record<string, Record<string, unknown>>;
+  packAudits: Record<string, Record<string, unknown>>;
+  paths: {
+    projectDirectory: string;
+    modelPath: string;
+    auditPath: string;
+    indexPath: string;
+  };
+}
+
+export interface TenderWorkspaceMutationRequest {
+  workingDirectory: string;
+  target: 'workspace' | 'capability';
+  args: Record<string, unknown>;
+}
+
 export interface SessionFile {
   name: string
   path: string

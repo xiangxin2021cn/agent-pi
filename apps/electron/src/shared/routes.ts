@@ -183,6 +183,9 @@ export const routes = {
     automationsAgentic: (automationId?: string) =>
       automationId ? `automations/agentic/automation/${automationId}` as const : 'automations/agentic' as const,
 
+    tenderWorkspaces: (projectId?: string) =>
+      projectId ? `tender-workspaces/project/${projectId}` as const : 'tender-workspaces' as const,
+
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>
       subpage
