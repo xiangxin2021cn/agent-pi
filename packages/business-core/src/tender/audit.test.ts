@@ -73,6 +73,20 @@ function issueCodes(workspace: TenderWorkspace): string[] {
 }
 
 describe('auditTenderWorkspace', () => {
+  test('does not report an empty initialized workspace as ready', () => {
+    const workspace = readyWorkspace();
+    workspace.documents = [];
+    workspace.requirements = [];
+    workspace.criteria = [];
+    workspace.deliverables = [];
+    workspace.responses = [];
+
+    const audit = auditTenderWorkspace(workspace, '2026-07-12T09:00:00.000Z');
+    expect(audit.readiness).toBe('not_ready');
+    expect(audit.issues.map((issue) => issue.code)).toContain('no_source_documents');
+    expect(audit.issues.map((issue) => issue.code)).toContain('no_requirements_registered');
+  });
+
   test('marks a complete, referenced workspace ready', () => {
     const audit = auditTenderWorkspace(readyWorkspace(), '2026-07-12T09:00:00.000Z');
 

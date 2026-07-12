@@ -150,6 +150,7 @@ export {
   // Source Test
   handleSourceTest,
   handleFileMemorySourceCreate,
+  handleTenderWorkspace,
   // OAuth Triggers
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -179,6 +180,8 @@ export type {
   MermaidValidateArgs,
   SourceTestArgs,
   FileMemorySourceCreateArgs,
+  TenderWorkspaceArgs,
+  TenderWorkspaceAction,
   SourceOAuthTriggerArgs,
   GoogleOAuthTriggerArgs,
   SlackOAuthTriggerArgs,
@@ -203,6 +206,7 @@ export {
   MermaidValidateSchema,
   SourceTestSchema,
   FileMemorySourceCreateSchema,
+  TenderWorkspaceToolSchema,
   SourceOAuthTriggerSchema,
   CredentialPromptSchema,
   CallLlmSchema,

@@ -47,6 +47,25 @@ export function auditTenderWorkspace(
     issues.push(issue);
   };
 
+  if (workspace.documents.length === 0) {
+    addIssue({
+      code: 'no_source_documents',
+      severity: 'error',
+      entityType: 'project',
+      entityId: workspace.project.id,
+      message: 'No tender source documents are registered.',
+    });
+  }
+  if (workspace.requirements.length === 0) {
+    addIssue({
+      code: 'no_requirements_registered',
+      severity: 'error',
+      entityType: 'project',
+      entityId: workspace.project.id,
+      message: 'No tender requirements are registered.',
+    });
+  }
+
   const inspectSource = (
     source: TenderSourceLocator,
     entityType: TenderAuditIssue['entityType'],

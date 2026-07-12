@@ -29,6 +29,10 @@ export type { SourceTestArgs } from './source-test.ts';
 export { handleFileMemorySourceCreate } from './file-memory-source-create.ts';
 export type { FileMemorySourceCreateArgs } from './file-memory-source-create.ts';
 
+// Tender Workspace
+export { handleTenderWorkspace } from './tender-workspace.ts';
+export type { TenderWorkspaceArgs, TenderWorkspaceAction } from './tender-workspace.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

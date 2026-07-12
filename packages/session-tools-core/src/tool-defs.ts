@@ -23,6 +23,7 @@ import { handleSkillValidate } from './handlers/skill-validate.ts';
 import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
 import { handleSourceTest } from './handlers/source-test.ts';
 import { handleFileMemorySourceCreate } from './handlers/file-memory-source-create.ts';
+import { handleTenderWorkspace } from './handlers/tender-workspace.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -209,6 +210,29 @@ export const GetSessionInfoSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
 });
 
+const TenderEntityInputSchema = z.record(z.string(), z.unknown());
+
+export const TenderWorkspaceToolSchema = z.object({
+  action: z.enum([
+    'init',
+    'upsert_documents',
+    'upsert_requirements',
+    'upsert_criteria',
+    'upsert_deliverables',
+    'upsert_responses',
+    'status',
+    'validate',
+  ]).describe('Tender workspace operation to perform.'),
+  projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .describe('Filesystem-safe stable tender project ID.'),
+  project: TenderEntityInputSchema.optional().describe('Project fields required by init.'),
+  documents: z.array(TenderEntityInputSchema).optional().describe('Full document entities for upsert_documents.'),
+  requirements: z.array(TenderEntityInputSchema).optional().describe('Full requirement entities for upsert_requirements.'),
+  criteria: z.array(TenderEntityInputSchema).optional().describe('Full evaluation criterion entities for upsert_criteria.'),
+  deliverables: z.array(TenderEntityInputSchema).optional().describe('Full deliverable entities for upsert_deliverables.'),
+  responses: z.array(TenderEntityInputSchema).optional().describe('Full response-plan entities for upsert_responses.'),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -329,6 +353,18 @@ Use this when the user wants a specific file, parsed artifact, tender excerpt, s
 4. Runs \`source_test\` so the source can be enabled and activated when possible.
 
 This first version indexes text-like artifacts. For PDF, Excel, scanned documents, or images, extract them first with the existing document skills/tools, then call this tool on the generated Markdown/JSON/TXT file.`,
+
+  tender_workspace: `Maintain the project-local Tender Workspace business register and deterministic readiness audit.
+
+Use this as the system of record for tender documents, requirements, evaluation criteria, deliverables, and response plans. Register entities in dependency order. Every requirement and criterion must cite a registered source document. The tool never scans the working directory for source material.
+
+Actions:
+- init: create the versioned project model
+- upsert_documents, upsert_requirements, upsert_criteria, upsert_deliverables, upsert_responses: validate and atomically persist full entities
+- status: return the current model and computed audit without mutation
+- validate: recompute and persist readiness-audit.json
+
+Call validate before any completion claim. A ready result is a deterministic coverage state, not professional approval.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -601,6 +637,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
   { name: 'source_test', description: TOOL_DESCRIPTIONS.source_test, inputSchema: SourceTestSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSourceTest },
   { name: 'file_memory_source_create', description: TOOL_DESCRIPTIONS.file_memory_source_create, inputSchema: FileMemorySourceCreateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleFileMemorySourceCreate },
+  { name: 'tender_workspace', description: TOOL_DESCRIPTIONS.tender_workspace, inputSchema: TenderWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderWorkspace },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
