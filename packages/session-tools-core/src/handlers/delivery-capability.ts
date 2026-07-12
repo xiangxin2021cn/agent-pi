@@ -3,6 +3,7 @@ import {
   auditDeliveryContractScope,
   auditDeliveryCostCommercial,
   auditDeliveryProgrammeProgress,
+  auditDeliveryReportingAudit,
   auditDeliveryResourceProcurement,
   auditDeliveryRiskChange,
   getDeliveryCapabilityDependencies,
@@ -13,6 +14,7 @@ import {
   parseDeliveryContractScopeData,
   parseDeliveryCostCommercialData,
   parseDeliveryProgrammeProgressData,
+  parseDeliveryReportingAuditData,
   parseDeliveryResourceProcurementData,
   parseDeliveryRiskChangeData,
   parseDeliveryWorkspace,
@@ -114,7 +116,11 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
         args.capability,
         workspace,
         envelope.data,
-        loadUpstreamData(paths.projectDirectory, args.capability),
+        loadUpstreamData(
+          paths.projectDirectory,
+          args.capability,
+          index.capabilities.filter((entry) => entry.enabled).map((entry) => entry.capability),
+        ),
         updatedAt,
       );
       index = updateIndex(index, args, envelope, audit, false, workspace.revision);
@@ -127,7 +133,11 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
       args.capability,
       workspace,
       envelope.data,
-      loadUpstreamData(paths.projectDirectory, args.capability),
+      loadUpstreamData(
+        paths.projectDirectory,
+        args.capability,
+        index.capabilities.filter((entry) => entry.enabled).map((entry) => entry.capability),
+      ),
     );
     const revisions = Object.fromEntries(index.capabilities.map((entry) => [entry.capability, entry.revision]));
     const stale = isDeliveryCapabilityStale(envelope, workspace.revision, revisions)
@@ -141,13 +151,14 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' | 'cost_commercial' | 'cashflow' | 'risk_change' {
+function isImplemented(capability: DeliveryCapabilityId): capability is DeliveryCapabilityId {
   return capability === 'contract_scope'
     || capability === 'programme_progress'
     || capability === 'resource_procurement'
     || capability === 'cost_commercial'
     || capability === 'cashflow'
-    || capability === 'risk_change';
+    || capability === 'risk_change'
+    || capability === 'reporting_audit';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
@@ -157,6 +168,7 @@ function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): u
   if (capability === 'cost_commercial') return parseDeliveryCostCommercialData(data);
   if (capability === 'cashflow') return parseDeliveryCashflowData(data);
   if (capability === 'risk_change') return parseDeliveryRiskChangeData(data);
+  if (capability === 'reporting_audit') return parseDeliveryReportingAuditData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -206,16 +218,19 @@ function auditCapability(
       generatedAt,
     );
   }
+  if (capability === 'reporting_audit') {
+    return auditDeliveryReportingAudit(workspace, upstreamData, data, generatedAt);
+  }
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
 function loadUpstreamData(
   projectDirectory: string,
   capability: DeliveryCapabilityId,
+  enabledCapabilities: DeliveryCapabilityId[],
 ): Partial<Record<DeliveryCapabilityId, unknown>> {
-  const enabled: DeliveryCapabilityId[] = Object.keys(CAPABILITY_FILES) as DeliveryCapabilityId[];
   const upstreamData: Partial<Record<DeliveryCapabilityId, unknown>> = {};
-  for (const dependency of getDeliveryCapabilityDependencies(capability, enabled)) {
+  for (const dependency of getDeliveryCapabilityDependencies(capability, enabledCapabilities)) {
     if (dependency === 'core') continue;
     const filePath = join(projectDirectory, 'packs', `${CAPABILITY_FILES[dependency]}.json`);
     if (!existsSync(filePath)) continue;

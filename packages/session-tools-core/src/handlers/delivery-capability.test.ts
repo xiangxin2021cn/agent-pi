@@ -108,6 +108,22 @@ function riskChangeData() {
   };
 }
 
+function reportingAuditData() {
+  const capabilityIds = ['contract_scope', 'programme_progress', 'resource_procurement', 'cost_commercial', 'cashflow', 'risk_change'];
+  const evidenceRefs = [{ kind: 'source', sourceId: 'period-report', sheet: 'Summary', cell: 'B2:H2' }];
+  return {
+    controlStatus: 'reviewed', period: '2026-07', dataDate: '2026-07-12',
+    capabilityAttestations: capabilityIds.map((capability) => ({ capability, status: 'reviewed', note: 'Reviewed for period close' })),
+    varianceExplanations: [{ id: 'schedule-variance', capability: 'programme_progress', metric: 'Forecast finish', baseline: '2026-07-20', actual: '2026-07-22', variance: '2 days', explanation: 'Utility interface', owner: 'Project Manager', evidenceRefs, status: 'reviewed' }],
+    managementReports: [{ id: 'monthly-report', title: 'Monthly Management Report', format: 'docx', artifactPath: 'reports/2026-07.docx', contentSha256: '7'.repeat(64), capabilityIds, evidenceRefs, status: 'approved' }],
+    closeApproval: { status: 'approved', approvedBy: 'Project Director', approvedAt: '2026-07-13', evidenceRefs },
+    auditHistory: [
+      { id: 'event-1', action: 'prepared', actor: 'Project Controls Manager', at: '2026-07-12T10:00:00.000Z', contentHash: '8'.repeat(64) },
+      { id: 'event-2', action: 'approved', actor: 'Project Director', at: '2026-07-13T10:00:00.000Z', previousHash: '8'.repeat(64), contentHash: '9'.repeat(64) },
+    ],
+  };
+}
+
 describe('delivery_capability handler', () => {
   let root: string;
   let context: SessionToolContext;
@@ -136,6 +152,7 @@ describe('delivery_capability handler', () => {
         { id: 'cashflow', name: 'Cash Flow', path: 'C:/cashflow.xlsx', kind: 'budget', status: 'active', sha256: '4'.repeat(64) },
         { id: 'risk-register', name: 'Risk Register', path: 'C:/risk.xlsx', kind: 'risk', status: 'active', sha256: '5'.repeat(64) },
         { id: 'change-register', name: 'Change Register', path: 'C:/change.xlsx', kind: 'change', status: 'active', sha256: '6'.repeat(64) },
+        { id: 'period-report', name: 'Period Report Evidence', path: 'C:/report.xlsx', kind: 'supporting_evidence', status: 'active', sha256: '7'.repeat(64) },
       ],
     });
     await handleDeliveryWorkspace(context, {
@@ -299,5 +316,38 @@ describe('delivery_capability handler', () => {
       { capability: 'contract_scope', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'risk-change.json'));
+  });
+
+  test('closes a reporting period only after all enabled delivery packs are ready', async () => {
+    const handlers = await import('./index.ts') as Record<string, unknown>;
+    const handle = handlers.handleDeliveryCapability as Function;
+    for (const [capability, data] of [
+      ['contract_scope', contractScopeData()],
+      ['programme_progress', programmeProgressData()],
+      ['resource_procurement', resourceProcurementData()],
+      ['cost_commercial', costCommercialData()],
+      ['cashflow', cashflowData()],
+      ['risk_change', riskChangeData()],
+    ]) {
+      expect((await handle(context, { action: 'init', projectId: 'n3-delivery', capability, data })).isError).toBe(false);
+    }
+
+    const initialized = await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'reporting_audit', data: reportingAuditData(),
+    });
+    expect(initialized.isError).toBe(false);
+    const output = JSON.parse(initialized.content[0]?.text ?? '{}');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.attestedCapabilities).toBe(6);
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 3 },
+      { capability: 'contract_scope', revision: 1 },
+      { capability: 'programme_progress', revision: 1 },
+      { capability: 'resource_procurement', revision: 1 },
+      { capability: 'cost_commercial', revision: 1 },
+      { capability: 'cashflow', revision: 1 },
+      { capability: 'risk_change', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'reporting-audit.json'));
   });
 });
