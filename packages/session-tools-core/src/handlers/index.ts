@@ -37,6 +37,10 @@ export type { TenderWorkspaceArgs, TenderWorkspaceAction } from './tender-worksp
 export { handleTenderCapability } from './tender-capability.ts';
 export type { TenderCapabilityArgs, TenderCapabilityAction } from './tender-capability.ts';
 
+// Project Delivery Controls Workspace
+export { handleDeliveryWorkspace } from './delivery-workspace.ts';
+export type { DeliveryWorkspaceArgs, DeliveryWorkspaceAction } from './delivery-workspace.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

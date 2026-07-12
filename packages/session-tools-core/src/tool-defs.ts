@@ -25,6 +25,7 @@ import { handleSourceTest } from './handlers/source-test.ts';
 import { handleFileMemorySourceCreate } from './handlers/file-memory-source-create.ts';
 import { handleTenderWorkspace } from './handlers/tender-workspace.ts';
 import { handleTenderCapability } from './handlers/tender-capability.ts';
+import { handleDeliveryWorkspace } from './handlers/delivery-workspace.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -254,6 +255,20 @@ export const TenderCapabilityToolSchema = z.object({
   required: z.boolean().optional().describe('Whether the enabled capability must pass before submission.'),
 });
 
+export const DeliveryWorkspaceToolSchema = z.object({
+  action: z.enum([
+    'init', 'upsert_sources', 'upsert_snapshots', 'upsert_baselines',
+    'upsert_knowledge_uses', 'status', 'validate',
+  ]).describe('Delivery Workspace operation to perform.'),
+  projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .describe('Filesystem-safe stable delivery project ID.'),
+  project: TenderEntityInputSchema.optional().describe('Project fields required by init.'),
+  sources: z.array(TenderEntityInputSchema).optional().describe('User-owned implementation source records.'),
+  snapshots: z.array(TenderEntityInputSchema).optional().describe('Frozen optional tender or knowledge evidence snapshots.'),
+  baselines: z.array(TenderEntityInputSchema).optional().describe('Delivery baseline records with local evidence references.'),
+  knowledgeUses: z.array(TenderEntityInputSchema).optional().describe('Explicit enterprise knowledge use and verification records.'),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -399,6 +414,18 @@ Actions:
 - validate: recompute and persist the capability audit
 
 Only implemented capability packs can be initialized. A stale pack cannot be treated as ready. The tool never scans the working directory.`,
+
+  delivery_workspace: `Maintain the independent Project Delivery Controls system of record.
+
+Initialize this workspace from user-owned implementation records such as the contract, approved scope, BOQ, baseline programme, budget, organization, commitments, resources, or progress. Tender data is optional and may only be imported as a frozen, user-confirmed evidence snapshot. The tool never reads or writes Tender Workspace or Investment Workspace private stores and never scans the working directory.
+
+Actions:
+- init: create the delivery project model
+- upsert_sources: register explicit user-owned project inputs
+- upsert_snapshots: register frozen optional tender or knowledge snapshots
+- upsert_baselines: register locally approved baseline records and evidence
+- upsert_knowledge_uses: record corroborating, conflicting, derived, or superseding knowledge use
+- status and validate: inspect or persist the deterministic readiness audit`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -673,6 +700,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'file_memory_source_create', description: TOOL_DESCRIPTIONS.file_memory_source_create, inputSchema: FileMemorySourceCreateSchema, executionMode: 'registry', safeMode: 'allow', handler: handleFileMemorySourceCreate },
   { name: 'tender_workspace', description: TOOL_DESCRIPTIONS.tender_workspace, inputSchema: TenderWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderWorkspace },
   { name: 'tender_capability', description: TOOL_DESCRIPTIONS.tender_capability, inputSchema: TenderCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderCapability },
+  { name: 'delivery_workspace', description: TOOL_DESCRIPTIONS.delivery_workspace, inputSchema: DeliveryWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryWorkspace },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },

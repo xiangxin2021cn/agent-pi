@@ -8,7 +8,8 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./tender": "./src/tender/index.ts"
+    "./tender": "./src/tender/index.ts",
+    "./delivery": "./src/delivery/index.ts"
   },
   "scripts": {
     "test": "bun test",
