@@ -706,6 +706,7 @@ describe('tender_capability handler', () => {
       { capability: 'evaluation_strategy', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'submission-audit.json'));
+    expect(readdirSync(join(workingDirectory, '.agent-pi', 'business'))).toEqual(['tender']);
   });
 
   test('overrides self-reported file and hash checks with runtime verification', async () => {
