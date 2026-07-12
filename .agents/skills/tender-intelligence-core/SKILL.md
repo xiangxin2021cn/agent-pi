@@ -19,6 +19,7 @@ Use this skill for bounded tender intake, compliance mapping, evaluation-criteri
 - Do not copy full licensed standards into the workspace or skill output.
 - Do not spawn nested sub-agents.
 - Record unresolved assumptions as gaps; never promote them to unconditional conclusions.
+- Share an approved tender artifact with other plugins only through `business_knowledge_publish`; never expose the live Tender Workspace store.
 
 ## Tool Contract
 
@@ -42,3 +43,5 @@ Register entities in dependency order. Reject and correct invalid references ins
 3. Follow [references/readiness-gates.md](references/readiness-gates.md) before reporting completion or handing work downstream.
 
 Hand off to BOQ, methodology, schedule, resource, cost, or cash-flow capabilities only after the source boundary is confirmed, ambiguity is resolved or explicitly recorded, and deterministic validation has run. Readiness is not legal, engineering, commercial, or tender-manager approval.
+
+When the user approves cross-plugin reuse, publish the exact approved artifact to the enterprise knowledge base. The returned immutable knowledge snapshot may then be explicitly imported and corroborated by Delivery or Investment without creating a live dependency.

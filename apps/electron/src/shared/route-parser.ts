@@ -35,7 +35,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'tender' | 'delivery' | 'settings'
+export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'tender' | 'delivery' | 'investment' | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -61,7 +61,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'tender-workspaces', 'delivery-workspaces', 'settings'
+  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'tender-workspaces', 'delivery-workspaces', 'investment-workspaces', 'settings'
 ]
 
 /**
@@ -120,6 +120,14 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     if (segments.length === 1) return { navigator: 'delivery', details: null }
     if (segments[1] === 'project' && segments[2]) {
       return { navigator: 'delivery', details: { type: 'deliveryWorkspace', id: segments[2] } }
+    }
+    return null
+  }
+
+  if (first === 'investment-workspaces') {
+    if (segments.length === 1) return { navigator: 'investment', details: null }
+    if (segments[1] === 'project' && segments[2]) {
+      return { navigator: 'investment', details: { type: 'investmentWorkspace', id: segments[2] } }
     }
     return null
   }
@@ -329,6 +337,10 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     if (!parsed.details) return 'delivery-workspaces'
     return `delivery-workspaces/project/${parsed.details.id}`
   }
+  if (parsed.navigator === 'investment') {
+    if (!parsed.details) return 'investment-workspaces'
+    return `investment-workspaces/project/${parsed.details.id}`
+  }
 
   // Sessions navigator
   let base: string
@@ -460,6 +472,10 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
   if (compound.navigator === 'delivery') {
     if (!compound.details) return { type: 'view', name: 'delivery-workspaces', params: {} }
     return { type: 'view', name: 'delivery-workspace', id: compound.details.id, params: {} }
+  }
+  if (compound.navigator === 'investment') {
+    if (!compound.details) return { type: 'view', name: 'investment-workspaces', params: {} }
+    return { type: 'view', name: 'investment-workspace', id: compound.details.id, params: {} }
   }
 
   // Sessions
@@ -605,6 +621,10 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     if (!compound.details) return { navigator: 'delivery', details: null }
     return { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: compound.details.id } }
   }
+  if (compound.navigator === 'investment') {
+    if (!compound.details) return { navigator: 'investment', details: null }
+    return { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: compound.details.id } }
+  }
 
   // Sessions
   const filter = compound.sessionFilter || { kind: 'allSessions' as const }
@@ -695,6 +715,12 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return parsed.id
         ? { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: parsed.id } }
         : { navigator: 'delivery', details: null }
+    case 'investment-workspaces':
+      return { navigator: 'investment', details: null }
+    case 'investment-workspace':
+      return parsed.id
+        ? { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: parsed.id } }
+        : { navigator: 'investment', details: null }
     case 'session':
       if (parsed.id) {
         // Reconstruct filter from params
@@ -813,6 +839,12 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
     return {
       navigator: 'delivery',
       details: state.details ? { type: 'deliveryWorkspace', id: state.details.projectId } : null,
+    }
+  }
+  if (state.navigator === 'investment') {
+    return {
+      navigator: 'investment',
+      details: state.details ? { type: 'investmentWorkspace', id: state.details.projectId } : null,
     }
   }
 

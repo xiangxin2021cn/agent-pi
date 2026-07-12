@@ -53,6 +53,10 @@ export type { InvestmentWorkspaceArgs, InvestmentWorkspaceAction } from './inves
 export { handleInvestmentCapability } from './investment-capability.ts';
 export type { InvestmentCapabilityArgs, InvestmentCapabilityAction } from './investment-capability.ts';
 
+// Enterprise Knowledge Business Publications
+export { handleBusinessKnowledgePublish } from './business-knowledge-publish.ts';
+export type { BusinessKnowledgePublishArgs } from './business-knowledge-publish.ts';
+
 // OAuth Triggers
 export {
   handleSourceOAuthTrigger,

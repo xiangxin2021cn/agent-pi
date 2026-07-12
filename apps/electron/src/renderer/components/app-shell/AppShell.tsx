@@ -34,6 +34,7 @@ import {
   MailOpen,
   ClipboardCheck,
   ClipboardList,
+  Landmark,
 } from "lucide-react"
 // SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
 import { SourceAvatar } from "@/components/ui/source-avatar"
@@ -117,6 +118,7 @@ import {
   isAutomationsNavigation,
   isTenderNavigation,
   isDeliveryNavigation,
+  isInvestmentNavigation,
   type NavigationState,
 } from "@/contexts/NavigationContext"
 import type { SettingsSubpage } from "../../../shared/types"
@@ -125,6 +127,7 @@ import { SkillsListPanel } from "./SkillsListPanel"
 import { AutomationsListPanel } from "../automations/AutomationsListPanel"
 import { TenderWorkspaceListPanel } from "./TenderWorkspaceListPanel"
 import { DeliveryWorkspaceListPanel } from "./DeliveryWorkspaceListPanel"
+import { InvestmentWorkspaceListPanel } from "./InvestmentWorkspaceListPanel"
 import { APP_EVENTS, AGENT_EVENTS, type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
 import { useAutomations } from "@/hooks/useAutomations"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
@@ -1730,6 +1733,14 @@ function AppShellContent({
     navigate(routes.view.deliveryWorkspaces(projectId))
   }, [])
 
+  const handleInvestmentWorkspacesClick = useCallback(() => {
+    navigate(routes.view.investmentWorkspaces())
+  }, [])
+
+  const handleInvestmentWorkspaceSelect = useCallback((projectId: string) => {
+    navigate(routes.view.investmentWorkspaces(projectId))
+  }, [])
+
   // Handlers for automations view
   const handleAutomationsClick = useCallback(() => {
     navigate(routes.view.automations())
@@ -1994,11 +2005,12 @@ function AppShellContent({
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
     result.push({ id: 'nav:tender-workspaces', type: 'nav', action: handleTenderWorkspacesClick })
     result.push({ id: 'nav:delivery-workspaces', type: 'nav', action: handleDeliveryWorkspacesClick })
+    result.push({ id: 'nav:investment-workspaces', type: 'nav', action: handleInvestmentWorkspacesClick })
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick() })
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleTenderWorkspacesClick, handleDeliveryWorkspacesClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleTenderWorkspacesClick, handleDeliveryWorkspacesClick, handleInvestmentWorkspacesClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2130,6 +2142,7 @@ function AppShellContent({
 
     if (isTenderNavigation(navState)) return t("sidebar.tenderWorkspaces")
     if (isDeliveryNavigation(navState)) return t("sidebar.deliveryWorkspaces")
+    if (isInvestmentNavigation(navState)) return t("sidebar.investmentWorkspaces")
 
     // Settings navigator
     if (isSettingsNavigation(navState)) return t("sidebar.settings")
@@ -2529,6 +2542,13 @@ function AppShellContent({
                       icon: ClipboardList,
                       variant: isDeliveryNavigation(navState) ? "default" : "ghost",
                       onClick: handleDeliveryWorkspacesClick,
+                    },
+                    {
+                      id: "nav:investment-workspaces",
+                      title: t("sidebar.investmentWorkspaces"),
+                      icon: Landmark,
+                      variant: isInvestmentNavigation(navState) ? "default" : "ghost",
+                      onClick: handleInvestmentWorkspacesClick,
                     },
                     // --- Separator ---
                     { id: "separator:skills-settings", type: "separator" },
@@ -3281,6 +3301,13 @@ function AppShellContent({
                 workingDirectory={activeSessionWorkingDirectory}
                 selectedProjectId={navState.details?.projectId ?? null}
                 onProjectClick={handleDeliveryWorkspaceSelect}
+              />
+            )}
+            {isInvestmentNavigation(navState) && (
+              <InvestmentWorkspaceListPanel
+                workingDirectory={activeSessionWorkingDirectory}
+                selectedProjectId={navState.details?.projectId ?? null}
+                onProjectClick={handleInvestmentWorkspaceSelect}
               />
             )}
             {isSettingsNavigation(navState) && (

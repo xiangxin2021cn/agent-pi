@@ -231,6 +231,11 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.deliveryWorkspace.GET,
   RPC_CHANNELS.deliveryWorkspace.MUTATE,
 
+  // investment workspace — workspace-owned independent investment controls
+  RPC_CHANNELS.investmentWorkspace.LIST,
+  RPC_CHANNELS.investmentWorkspace.GET,
+  RPC_CHANNELS.investmentWorkspace.MUTATE,
+
   // tender workspace — workspace-owned enterprise tender controls
   RPC_CHANNELS.tenderWorkspace.LIST,
   RPC_CHANNELS.tenderWorkspace.GET,

@@ -259,6 +259,10 @@ import type {
   DeliveryWorkspaceSummaryDto,
   DeliveryWorkspaceBundleDto,
   DeliveryWorkspaceMutationRequest,
+  InvestmentWorkspaceLocationRequest,
+  InvestmentWorkspaceSummaryDto,
+  InvestmentWorkspaceBundleDto,
+  InvestmentWorkspaceMutationRequest,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -320,6 +324,9 @@ export interface ElectronAPI {
   listDeliveryWorkspaces(request: DeliveryWorkspaceLocationRequest): Promise<DeliveryWorkspaceSummaryDto[]>
   getDeliveryWorkspace(request: DeliveryWorkspaceLocationRequest & { projectId: string }): Promise<DeliveryWorkspaceBundleDto>
   mutateDeliveryWorkspace(request: DeliveryWorkspaceMutationRequest): Promise<Record<string, unknown>>
+  listInvestmentWorkspaces(request: InvestmentWorkspaceLocationRequest): Promise<InvestmentWorkspaceSummaryDto[]>
+  getInvestmentWorkspace(request: InvestmentWorkspaceLocationRequest & { projectId: string }): Promise<InvestmentWorkspaceBundleDto>
+  mutateInvestmentWorkspace(request: InvestmentWorkspaceMutationRequest): Promise<Record<string, unknown>>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
@@ -935,6 +942,12 @@ export interface DeliveryNavigationState {
   rightSidebar?: RightSidebarPanel
 }
 
+export interface InvestmentNavigationState {
+  navigator: 'investment'
+  details: { type: 'investmentWorkspace'; projectId: string } | null
+  rightSidebar?: RightSidebarPanel
+}
+
 /**
  * Unified navigation state
  */
@@ -946,6 +959,7 @@ export type NavigationState =
   | AutomationsNavigationState
   | TenderNavigationState
   | DeliveryNavigationState
+  | InvestmentNavigationState
 
 export const isSessionsNavigation = (
   state: NavigationState
@@ -975,6 +989,10 @@ export const isDeliveryNavigation = (
   state: NavigationState
 ): state is DeliveryNavigationState => state.navigator === 'delivery'
 
+export const isInvestmentNavigation = (
+  state: NavigationState
+): state is InvestmentNavigationState => state.navigator === 'investment'
+
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
   navigator: 'sessions',
   filter: { kind: 'allSessions' },
@@ -987,6 +1005,9 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   }
   if (state.navigator === 'delivery') {
     return state.details ? `delivery-workspaces/project/${state.details.projectId}` : 'delivery-workspaces'
+  }
+  if (state.navigator === 'investment') {
+    return state.details ? `investment-workspaces/project/${state.details.projectId}` : 'investment-workspaces'
   }
   if (state.navigator === 'sources') {
     if (state.details) {

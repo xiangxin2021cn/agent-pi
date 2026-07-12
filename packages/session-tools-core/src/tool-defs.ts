@@ -29,6 +29,7 @@ import { handleDeliveryWorkspace } from './handlers/delivery-workspace.ts';
 import { handleDeliveryCapability } from './handlers/delivery-capability.ts';
 import { handleInvestmentWorkspace } from './handlers/investment-workspace.ts';
 import { handleInvestmentCapability } from './handlers/investment-capability.ts';
+import { handleBusinessKnowledgePublish } from './handlers/business-knowledge-publish.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -310,6 +311,19 @@ export const InvestmentCapabilityToolSchema = z.object({
   required: z.boolean().optional(),
 });
 
+export const BusinessKnowledgePublishToolSchema = z.object({
+  artifactPath: z.string().min(1).describe('Explicit business artifact inside the session working directory.'),
+  publicationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  producerPlugin: z.enum(['tender', 'delivery', 'investment']),
+  producerWorkspaceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+  producerRevision: z.number().int().nonnegative(),
+  title: z.string().min(1),
+  category: z.string().min(1),
+  approvalState: z.literal('approved'),
+  userConfirmed: z.literal(true),
+  snapshotId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -485,6 +499,10 @@ Actions: init, upsert_sources, upsert_snapshots, upsert_assumption_sets, upsert_
 Use this only after investment_workspace has registered explicit user-owned investment inputs and an approved local assumption set. Capability packs are stored only under business/investment and follow the investment dependency chain. Tender, delivery, or enterprise-knowledge snapshots may corroborate a conclusion but cannot replace required active direct investment evidence.
 
 Actions: configure, init, replace, status, validate.`,
+
+  business_knowledge_publish: `Publish one approved business artifact to the global enterprise knowledge base.
+
+Use this only after the user confirms the exact artifact, producer plugin, workspace revision, and category. The tool copies the file into immutable SHA-256-addressed knowledge storage and returns a frozen snapshot descriptor that another independent business plugin may explicitly import. It never grants access to the producer plugin's private store and never scans the working directory.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -763,6 +781,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'delivery_capability', description: TOOL_DESCRIPTIONS.delivery_capability, inputSchema: DeliveryCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryCapability },
   { name: 'investment_workspace', description: TOOL_DESCRIPTIONS.investment_workspace, inputSchema: InvestmentWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleInvestmentWorkspace },
   { name: 'investment_capability', description: TOOL_DESCRIPTIONS.investment_capability, inputSchema: InvestmentCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleInvestmentCapability },
+  { name: 'business_knowledge_publish', description: TOOL_DESCRIPTIONS.business_knowledge_publish, inputSchema: BusinessKnowledgePublishToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleBusinessKnowledgePublish },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },

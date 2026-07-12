@@ -136,6 +136,7 @@ export type {
 } from './context.ts';
 
 export { createNodeFileSystem } from './context.ts';
+export * from './knowledge-base-business-publication.ts';
 
 // Handlers
 export {
@@ -155,6 +156,8 @@ export {
   handleDeliveryWorkspace,
   handleDeliveryCapability,
   handleInvestmentWorkspace,
+  handleInvestmentCapability,
+  handleBusinessKnowledgePublish,
   // OAuth Triggers
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -190,6 +193,7 @@ export type {
   TenderCapabilityAction,
   InvestmentCapabilityArgs,
   InvestmentCapabilityAction,
+  BusinessKnowledgePublishArgs,
   SourceOAuthTriggerArgs,
   GoogleOAuthTriggerArgs,
   SlackOAuthTriggerArgs,
@@ -217,6 +221,7 @@ export {
   TenderWorkspaceToolSchema,
   TenderCapabilityToolSchema,
   InvestmentCapabilityToolSchema,
+  BusinessKnowledgePublishToolSchema,
   SourceOAuthTriggerSchema,
   CredentialPromptSchema,
   CallLlmSchema,

@@ -25,6 +25,7 @@ import { registerWorkspaceCoreHandlers } from './workspace'
 import { registerMessagingHandlers } from './messaging'
 import { registerTenderWorkspaceHandlers } from './tender-workspace'
 import { registerDeliveryWorkspaceHandlers } from './delivery-workspace'
+import { registerInvestmentWorkspaceHandlers } from './investment-workspace'
 
 export function registerCoreRpcHandlers(
   server: RpcServer,
@@ -51,4 +52,5 @@ export function registerCoreRpcHandlers(
   registerMessagingHandlers(server, deps)
   registerTenderWorkspaceHandlers(server)
   registerDeliveryWorkspaceHandlers(server)
+  registerInvestmentWorkspaceHandlers(server)
 }

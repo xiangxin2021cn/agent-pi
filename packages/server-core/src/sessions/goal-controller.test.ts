@@ -89,6 +89,25 @@ function deliveryReportingToolResult(readiness: 'not_ready' | 'needs_review' | '
   })
 }
 
+function investmentWorkspaceToolResult(readiness: 'not_ready' | 'needs_review' | 'ready'): string {
+  return JSON.stringify({
+    workspace: { revision: 3, project: { id: 'quarry-investment' } },
+    audit: { projectId: 'quarry-investment', workspaceRevision: 3, readiness, issues: readiness === 'ready' ? [] : [{ code: 'approved_assumption_set_missing' }] },
+    modelPath: 'C:/project/.agent-pi/business/investment/quarry-investment/investment-workspace.json',
+    auditPath: 'C:/project/.agent-pi/business/investment/quarry-investment/readiness-audit.json',
+  })
+}
+
+function investmentDecisionToolResult(readiness: 'not_ready' | 'needs_review' | 'ready', approvedDecisions: number, stale = false): string {
+  return JSON.stringify({
+    envelope: { capability: 'transaction_decision', projectId: 'quarry-investment', revision: 1, coreRevision: 3 },
+    audit: { capability: 'transaction_decision', projectId: 'quarry-investment', coreRevision: 3, readiness, summary: { approvedDecisions }, issues: readiness === 'ready' ? [] : [{ code: 'approved_decision_missing' }] },
+    stale, effectiveReadiness: stale ? 'not_ready' : readiness,
+    modelPath: 'C:/project/.agent-pi/business/investment/quarry-investment/packs/transaction-decision.json',
+    auditPath: 'C:/project/.agent-pi/business/investment/quarry-investment/audits/transaction-decision-audit.json',
+  })
+}
+
 describe('GoalController', () => {
   test('skips when no goal state is present', async () => {
     const controller = new GoalController()
@@ -395,6 +414,35 @@ describe('GoalController', () => {
       now: 10,
     })
 
+    expect(decision.action).toBe('complete')
+  })
+
+  test('blocks formal investment approval when transaction decision evidence is missing', async () => {
+    const controller = new GoalController()
+    const workspaceResult = investmentWorkspaceToolResult('ready')
+    const decision = await controller.onTurnStopped(goal({ objective: 'Approve the quarry acquisition investment committee decision.' }), {
+      messages: [
+        message('u1', 'user', 'Approve the quarry acquisition investment committee decision.'),
+        message('t1', 'tool', workspaceResult, { toolName: 'investment_workspace', toolStatus: 'completed', toolResult: workspaceResult }),
+        message('a1', 'assistant', 'The investment is approved.'),
+      ], stoppedReason: 'complete', now: 10,
+    })
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') expect(decision.result.missingCriteria.join('\n')).toContain('transaction_decision validation result')
+  })
+
+  test('allows formal investment approval only with ready evidenced decision', async () => {
+    const controller = new GoalController()
+    const workspaceResult = investmentWorkspaceToolResult('ready')
+    const decisionResult = investmentDecisionToolResult('ready', 1)
+    const decision = await controller.onTurnStopped(goal({ objective: 'Approve the quarry acquisition investment committee decision.' }), {
+      messages: [
+        message('u1', 'user', 'Approve the quarry acquisition investment committee decision.'),
+        message('t1', 'tool', workspaceResult, { toolName: 'investment_workspace', toolStatus: 'completed', toolResult: workspaceResult }),
+        message('t2', 'tool', decisionResult, { toolName: 'investment_capability', toolStatus: 'completed', toolResult: decisionResult }),
+        message('a1', 'assistant', 'The investment committee decision is approved with evidence.'),
+      ], stoppedReason: 'complete', now: 10,
+    })
     expect(decision.action).toBe('complete')
   })
 

@@ -540,6 +540,36 @@ export interface DeliveryWorkspaceMutationRequest {
   args: Record<string, unknown>;
 }
 
+export interface InvestmentWorkspaceLocationRequest {
+  workingDirectory: string;
+  projectId?: string;
+}
+
+export interface InvestmentWorkspaceSummaryDto {
+  projectId: string;
+  title: string;
+  stage: string;
+  status: string;
+  revision: number;
+  readiness: 'not_ready' | 'needs_review' | 'ready';
+  issueCount: number;
+}
+
+export interface InvestmentWorkspaceBundleDto {
+  workspace: Record<string, unknown>;
+  audit: Record<string, unknown>;
+  capabilityIndex: Record<string, unknown>;
+  packs: Record<string, Record<string, unknown>>;
+  packAudits: Record<string, Record<string, unknown>>;
+  paths: { projectDirectory: string; modelPath: string; auditPath: string; indexPath: string };
+}
+
+export interface InvestmentWorkspaceMutationRequest {
+  workingDirectory: string;
+  target: 'workspace' | 'capability';
+  args: Record<string, unknown>;
+}
+
 export interface SessionFile {
   name: string
   path: string

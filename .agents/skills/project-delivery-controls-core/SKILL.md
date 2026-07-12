@@ -18,6 +18,7 @@ Use `delivery_workspace` as the system of record. Initialize from user-selected,
   budget, organization, or progress baseline by itself.
 - Do not read or write Tender Workspace or Investment Workspace private files.
 - Do not silently refresh a snapshot after its producer changes.
+- Publish approved delivery artifacts for cross-plugin use only through `business_knowledge_publish`.
 - Keep conflicting and stale knowledge evidence visible until resolved.
 - Do not spawn nested agents.
 
@@ -34,6 +35,8 @@ Use `delivery_workspace` as the system of record. Initialize from user-selected,
 7. Record knowledge uses as corroborating, contradicting, derived, or superseding local evidence.
 8. Call `validate`. Correct broken evidence and unresolved conflicts before any approved-baseline
    or period-close claim.
+9. When explicitly approved for reuse, publish the exact controlled artifact to the enterprise
+   knowledge base; other plugins must import the returned immutable snapshot and corroborate it.
 
 Core readiness means the delivery project has active direct inputs and internally valid evidence.
 It does not approve later programme, cost, cash-flow, change, or reporting capability packs.

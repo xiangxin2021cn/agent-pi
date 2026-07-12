@@ -60,6 +60,9 @@ export const CHANNEL_MAP = {
   listDeliveryWorkspaces: invoke(RPC_CHANNELS.deliveryWorkspace.LIST),
   getDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.GET),
   mutateDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.MUTATE),
+  listInvestmentWorkspaces: invoke(RPC_CHANNELS.investmentWorkspace.LIST),
+  getInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.GET),
+  mutateInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.MUTATE),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)

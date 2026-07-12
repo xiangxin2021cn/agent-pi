@@ -33,6 +33,7 @@ export function isDetailNavState(navState: NavigationState | null): boolean {
     case 'automations':
     case 'tender':
     case 'delivery':
+    case 'investment':
       return navState.details !== null
   }
 }

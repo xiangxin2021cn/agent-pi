@@ -21,6 +21,7 @@ import { auditExportedArtifact } from '../documents/export-quality'
 import { validateEvidenceMatrixArtifact } from './evidence-matrix-artifact'
 import { extractTenderSubmissionEvidence, extractTenderWorkspaceEvidence } from './tender-workspace-evidence'
 import { extractDeliveryReportingEvidence, extractDeliveryWorkspaceEvidence } from './delivery-workspace-evidence'
+import { extractInvestmentDecisionEvidence, extractInvestmentWorkspaceEvidence } from './investment-workspace-evidence'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
 import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
@@ -131,6 +132,7 @@ export class GoalController {
     const verifiedOutputPaths = new Set<string>()
     const tenderReadinessIssues: string[] = []
     const deliveryReadinessIssues: string[] = []
+    const investmentReadinessIssues: string[] = []
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -187,6 +189,8 @@ export class GoalController {
     const tenderSubmissionEvidence = extractTenderSubmissionEvidence(turnMessages)
     const deliveryWorkspaceEvidence = extractDeliveryWorkspaceEvidence(turnMessages)
     const deliveryReportingEvidence = extractDeliveryReportingEvidence(turnMessages)
+    const investmentWorkspaceEvidence = extractInvestmentWorkspaceEvidence(turnMessages)
+    const investmentDecisionEvidence = extractInvestmentDecisionEvidence(turnMessages)
     if (tenderWorkspaceEvidence) {
       evidence.push({
         type: 'tool',
@@ -224,6 +228,12 @@ export class GoalController {
         detail: JSON.stringify(deliveryReportingEvidence),
       })
     }
+    if (investmentWorkspaceEvidence) {
+      evidence.push({ type: 'tool', label: 'investment_workspace_readiness', detail: JSON.stringify(investmentWorkspaceEvidence) })
+    }
+    if (investmentDecisionEvidence) {
+      evidence.push({ type: 'tool', label: 'investment_decision_readiness', detail: JSON.stringify(investmentDecisionEvidence) })
+    }
     if (requiresSubmissionReadyTender(goalState)) {
       if (!tenderWorkspaceEvidence) {
         tenderReadinessIssues.push('Submission-ready tender delivery requires a successful tender_workspace validation result.')
@@ -254,6 +264,22 @@ export class GoalController {
         deliveryReadinessIssues.push(`Delivery reporting audit evidence is ${deliveryReportingEvidence.status}: ${deliveryReportingEvidence.error ?? 'invalid readiness payload'}`)
       } else if (deliveryReportingEvidence.readiness !== 'ready') {
         deliveryReadinessIssues.push(`Delivery reporting audit readiness is ${deliveryReportingEvidence.readiness}; formal period close requires ready.`)
+      }
+    }
+    if (requiresFormalInvestmentDecision(goalState)) {
+      if (!investmentWorkspaceEvidence) {
+        investmentReadinessIssues.push('Formal investment decision requires a successful investment_workspace validation result.')
+      } else if (investmentWorkspaceEvidence.status !== 'valid') {
+        investmentReadinessIssues.push(`Investment Workspace evidence is ${investmentWorkspaceEvidence.status}: ${investmentWorkspaceEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (investmentWorkspaceEvidence.readiness !== 'ready') {
+        investmentReadinessIssues.push(`Investment Workspace readiness is ${investmentWorkspaceEvidence.readiness}; formal investment decision requires ready.`)
+      }
+      if (!investmentDecisionEvidence) {
+        investmentReadinessIssues.push('Formal investment decision requires a successful transaction_decision validation result.')
+      } else if (investmentDecisionEvidence.status !== 'valid') {
+        investmentReadinessIssues.push(`Investment transaction decision evidence is ${investmentDecisionEvidence.status}: ${investmentDecisionEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (investmentDecisionEvidence.readiness !== 'ready' || (investmentDecisionEvidence.approvedDecisions ?? 0) < 1) {
+        investmentReadinessIssues.push('Investment transaction decision must be ready and contain at least one evidenced approved decision.')
       }
     }
 
@@ -757,6 +783,15 @@ export class GoalController {
       }
     }
 
+    if (investmentReadinessIssues.length > 0) {
+      status = 'fail'
+      deterministicFailureCategories.add('evidence_gap')
+      missingCriteria.push(...investmentReadinessIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because Resource Investment Intelligence is not ready for formal decision.'
+      }
+    }
+
     if (deliveryReviewGateAudit.missingCriteria.length > 0) {
       status = 'fail'
       deterministicFailureCategories.add('evidence_gap')
@@ -1085,6 +1120,20 @@ function requiresFormalDeliveryPeriodClose(goalState: SessionGoalState): boolean
   const isDeliveryControl = /\b(?:project delivery|delivery control|project controls?|implementation|management report)\b|项目实施|项目管理|实施控制|月报|管理报告/i.test(text)
   const requestsFormalClose = /\b(?:period close|close.{0,40}reporting period|approved management report|issue.{0,40}management report)\b|期间关闭|月度关闭|关闭.{0,20}期间|批准.{0,20}管理报告|正式月报/i.test(text)
   return isDeliveryControl && requestsFormalClose
+}
+
+function requiresFormalInvestmentDecision(goalState: SessionGoalState): boolean {
+  const contract = goalState.taskContract
+  const text = [
+    goalState.objective,
+    contract?.originalRequest,
+    ...(contract?.followUpRequests ?? []),
+    ...(contract?.deliverables ?? []),
+    ...(contract?.acceptanceCriteria ?? []),
+  ].filter(Boolean).join('\n')
+  const isInvestment = /\b(?:investment|acquisition|transaction|investment committee)\b|投资|收购|交易|投委会/i.test(text)
+  const requestsDecision = /\b(?:approve|approval|reject|investment decision|committee decision|transaction decision)\b|批准|审批|否决|投资决策|交易决策/i.test(text)
+  return isInvestment && requestsDecision
 }
 
 function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {
