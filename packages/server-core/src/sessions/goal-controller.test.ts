@@ -33,6 +33,20 @@ function goal(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
   }
 }
 
+function tenderWorkspaceToolResult(readiness: 'not_ready' | 'needs_review' | 'ready'): string {
+  return JSON.stringify({
+    workspace: { revision: 3, project: { id: 'n3-upgrade' } },
+    audit: {
+      projectId: 'n3-upgrade',
+      workspaceRevision: 3,
+      readiness,
+      issues: readiness === 'ready' ? [] : [{ code: 'mandatory_requirement_uncovered' }],
+    },
+    modelPath: 'C:/project/.agent-pi/business/tender/n3-upgrade/tender-workspace.json',
+    auditPath: 'C:/project/.agent-pi/business/tender/n3-upgrade/readiness-audit.json',
+  })
+}
+
 describe('GoalController', () => {
   test('skips when no goal state is present', async () => {
     const controller = new GoalController()
@@ -177,6 +191,96 @@ describe('GoalController', () => {
       expect(decision.result.summary).toBe('All explicit criteria are satisfied.')
       expect(decision.result.missingCriteria).toEqual([])
     }
+  })
+
+  test('records needs-review tender evidence without blocking an ordinary analysis task', async () => {
+    const controller = new GoalController()
+    const toolResult = tenderWorkspaceToolResult('needs_review')
+
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Analyze the selected tender requirements.',
+    }), {
+      messages: [
+        message('u1', 'user', 'Analyze the selected tender requirements.'),
+        message('t1', 'tool', toolResult, {
+          toolName: 'tender_workspace',
+          toolStatus: 'completed',
+          toolResult,
+        }),
+        message('a1', 'assistant', 'Analysis complete; unresolved items are marked for review.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'tool',
+        label: 'tender_workspace_readiness',
+        detail: expect.stringContaining('needs_review'),
+      }))
+    }
+  })
+
+  test('blocks an explicitly submission-ready tender when readiness is not ready', async () => {
+    const controller = new GoalController()
+    const toolResult = tenderWorkspaceToolResult('needs_review')
+
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Prepare the final tender package ready for formal submission.',
+      taskContract: {
+        originalRequest: '生成可正式递交的完整投标文件。',
+        taskType: 'document',
+        deliverables: ['Submission-ready tender package'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', '生成可正式递交的完整投标文件。'),
+        message('t1', 'tool', toolResult, {
+          toolName: 'tender_workspace',
+          toolStatus: 'completed',
+          toolResult,
+        }),
+        message('a1', 'assistant', 'The tender package is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      expect(decision.result.status).toBe('fail')
+      expect(decision.result.missingCriteria.join('\n')).toContain('Tender Workspace readiness is needs_review')
+    }
+  })
+
+  test('allows an explicitly submission-ready tender when readiness is ready', async () => {
+    const controller = new GoalController()
+    const toolResult = tenderWorkspaceToolResult('ready')
+
+    const decision = await controller.onTurnStopped(goal({
+      objective: 'Prepare the final tender package ready for formal submission.',
+    }), {
+      messages: [
+        message('u1', 'user', 'Prepare the final tender package ready for formal submission.'),
+        message('t1', 'tool', toolResult, {
+          toolName: 'tender_workspace',
+          toolStatus: 'completed',
+          toolResult,
+        }),
+        message('a1', 'assistant', 'The submission-ready tender package is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+    })
+
+    expect(decision.action).toBe('complete')
   })
 
   test('requires review for pending professional requirement ledger entries and satisfies them on reviewer pass', async () => {

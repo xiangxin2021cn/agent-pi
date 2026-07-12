@@ -19,6 +19,7 @@ import { analyzeVisualOpportunities } from '../documents/visual-opportunity'
 import { auditTemplateFidelity, type TemplateFidelityAudit } from '../documents/template-fidelity'
 import { auditExportedArtifact } from '../documents/export-quality'
 import { validateEvidenceMatrixArtifact } from './evidence-matrix-artifact'
+import { extractTenderWorkspaceEvidence } from './tender-workspace-evidence'
 import type { ExtractedTemplateProfile } from '../documents/template-profile'
 import type { VisualPlan } from '@craft-agent/shared/document-visuals'
 
@@ -127,6 +128,7 @@ export class GoalController {
     const outputFileEvidencePaths = new Set<string>()
     const implicitOutputCandidatePaths = new Set<string>()
     const verifiedOutputPaths = new Set<string>()
+    const tenderReadinessIssues: string[] = []
     if (finalAssistant) {
       evidence.push({
         type: 'message',
@@ -177,6 +179,32 @@ export class GoalController {
           label: message.toolName ?? 'tool_file',
           detail: path.slice(0, 500),
         })
+      }
+    }
+    const tenderWorkspaceEvidence = extractTenderWorkspaceEvidence(turnMessages)
+    if (tenderWorkspaceEvidence) {
+      evidence.push({
+        type: 'tool',
+        label: 'tender_workspace_readiness',
+        detail: JSON.stringify({
+          status: tenderWorkspaceEvidence.status,
+          projectId: tenderWorkspaceEvidence.projectId,
+          revision: tenderWorkspaceEvidence.revision,
+          readiness: tenderWorkspaceEvidence.readiness,
+          issueCodes: tenderWorkspaceEvidence.issueCodes,
+          modelPath: tenderWorkspaceEvidence.modelPath,
+          auditPath: tenderWorkspaceEvidence.auditPath,
+          error: tenderWorkspaceEvidence.error,
+        }),
+      })
+    }
+    if (requiresSubmissionReadyTender(goalState)) {
+      if (!tenderWorkspaceEvidence) {
+        tenderReadinessIssues.push('Submission-ready tender delivery requires a successful tender_workspace validation result.')
+      } else if (tenderWorkspaceEvidence.status !== 'valid') {
+        tenderReadinessIssues.push(`Tender Workspace evidence is ${tenderWorkspaceEvidence.status}: ${tenderWorkspaceEvidence.error ?? 'invalid readiness payload'}`)
+      } else if (tenderWorkspaceEvidence.readiness !== 'ready') {
+        tenderReadinessIssues.push(`Tender Workspace readiness is ${tenderWorkspaceEvidence.readiness}; submission-ready delivery requires ready.`)
       }
     }
 
@@ -662,6 +690,15 @@ export class GoalController {
       }
     }
 
+    if (tenderReadinessIssues.length > 0) {
+      status = 'fail'
+      deterministicFailureCategories.add('evidence_gap')
+      missingCriteria.push(...tenderReadinessIssues)
+      if (summary === 'Goal audit passed deterministic completion checks.') {
+        summary = 'Goal audit failed because the Tender Workspace is not ready for formal submission.'
+      }
+    }
+
     if (deliveryReviewGateAudit.missingCriteria.length > 0) {
       status = 'fail'
       deterministicFailureCategories.add('evidence_gap')
@@ -962,6 +999,20 @@ function requiresOutputFileEvidence(goalState: SessionGoalState): boolean {
   )
     || (goalState.taskContract?.artifactDeliverables?.some(deliverable => deliverable.required) ?? false)
     || (isStrictDeliveryContract(goalState) && getContractOutputFormats(goalState).length > 0)
+}
+
+function requiresSubmissionReadyTender(goalState: SessionGoalState): boolean {
+  const contract = goalState.taskContract
+  const text = [
+    goalState.objective,
+    contract?.originalRequest,
+    ...(contract?.followUpRequests ?? []),
+    ...(contract?.deliverables ?? []),
+    ...(contract?.acceptanceCriteria ?? []),
+  ].filter(Boolean).join('\n')
+  const isTender = /\b(?:tender|bid)\b|投标|标书|招标/i.test(text)
+  const requestsSubmissionReady = /submission[- ]ready|ready\s+for\s+(?:formal\s+)?submission|final\s+(?:tender|bid).{0,40}submission|正式递交|可(?:以)?提交|提交就绪|最终投标文件|完整投标文件/i.test(text)
+  return isTender && requestsSubmissionReady
 }
 
 function requiresToolVerificationEvidence(goalState: SessionGoalState): boolean {
