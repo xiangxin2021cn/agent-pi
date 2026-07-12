@@ -1,12 +1,14 @@
 import {
   auditDeliveryContractScope,
   auditDeliveryProgrammeProgress,
+  auditDeliveryResourceProcurement,
   getDeliveryCapabilityDependencies,
   isDeliveryCapabilityStale,
   parseDeliveryCapabilityEnvelope,
   parseDeliveryCapabilityIndex,
   parseDeliveryContractScopeData,
   parseDeliveryProgrammeProgressData,
+  parseDeliveryResourceProcurementData,
   parseDeliveryWorkspace,
   type DeliveryCapabilityAuditIssue,
   type DeliveryCapabilityEnvelope,
@@ -133,13 +135,14 @@ export async function handleDeliveryCapability(ctx: SessionToolContext, args: De
   }
 }
 
-function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' {
-  return capability === 'contract_scope' || capability === 'programme_progress';
+function isImplemented(capability: DeliveryCapabilityId): capability is 'contract_scope' | 'programme_progress' | 'resource_procurement' {
+  return capability === 'contract_scope' || capability === 'programme_progress' || capability === 'resource_procurement';
 }
 
 function parseCapabilityData(capability: DeliveryCapabilityId, data: unknown): unknown {
   if (capability === 'contract_scope') return parseDeliveryContractScopeData(data);
   if (capability === 'programme_progress') return parseDeliveryProgrammeProgressData(data);
+  if (capability === 'resource_procurement') return parseDeliveryResourceProcurementData(data);
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }
 
@@ -153,6 +156,15 @@ function auditCapability(
   if (capability === 'contract_scope') return auditDeliveryContractScope(workspace, data, generatedAt);
   if (capability === 'programme_progress') {
     return auditDeliveryProgrammeProgress(workspace, upstreamData.contract_scope, data, generatedAt);
+  }
+  if (capability === 'resource_procurement') {
+    return auditDeliveryResourceProcurement(
+      workspace,
+      upstreamData.contract_scope,
+      upstreamData.programme_progress,
+      data,
+      generatedAt,
+    );
   }
   throw new Error(`Delivery capability ${capability} is not implemented.`);
 }

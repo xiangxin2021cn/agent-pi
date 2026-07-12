@@ -44,6 +44,26 @@ function programmeProgressData() {
   };
 }
 
+function resourceProcurementData() {
+  return {
+    controlStatus: 'reviewed', dataDate: '2026-07-12',
+    resources: [
+      { id: 'crew', category: 'labour', name: 'Drainage crew', unit: 'crew', availableQuantity: 1, capacityPerDay: 20, evidenceRefs: [{ kind: 'source', sourceId: 'resource-plan', sheet: 'Labour', cell: 'B2:H2' }], status: 'confirmed' },
+      { id: 'pipes', category: 'material', name: 'Concrete pipes', unit: 'm', availableQuantity: 500, evidenceRefs: [{ kind: 'source', sourceId: 'procurement', sheet: 'Materials', cell: 'B4:H4' }], status: 'confirmed' },
+    ],
+    allocations: [
+      { id: 'crew-drainage', resourceId: 'crew', activityId: 'drainage-works', plannedStart: '2026-07-01', plannedFinish: '2026-07-22', requiredQuantity: 1, demandPerDay: 20, evidenceRefs: [{ kind: 'source', sourceId: 'resource-plan', sheet: 'Allocations', cell: 'B2:H2' }], status: 'reviewed' },
+      { id: 'pipes-drainage', resourceId: 'pipes', activityId: 'drainage-works', plannedStart: '2026-07-10', plannedFinish: '2026-07-22', requiredQuantity: 400, evidenceRefs: [{ kind: 'source', sourceId: 'resource-plan', sheet: 'Materials', cell: 'B4:H4' }], status: 'reviewed' },
+    ],
+    procurementPackages: [{
+      id: 'pipes-package', title: 'Concrete pipes', category: 'material', resourceIds: ['pipes'], activityIds: ['drainage-works'],
+      requiredOnSiteDate: '2026-07-15', forecastDeliveryDate: '2026-07-14', leadTimeDays: 21, supplier: 'Approved Supplier',
+      evidenceRefs: [{ kind: 'source', sourceId: 'procurement', sheet: 'Packages', cell: 'B2:H2' }], status: 'ordered', confidence: 'confirmed',
+    }],
+    constraints: [],
+  };
+}
+
 describe('delivery_capability handler', () => {
   let root: string;
   let context: SessionToolContext;
@@ -64,6 +84,9 @@ describe('delivery_capability handler', () => {
         { id: 'scope', name: 'Scope', path: 'C:/scope.pdf', kind: 'approved_scope', status: 'active', sha256: 'b'.repeat(64) },
         { id: 'programme', name: 'Approved Programme', path: 'C:/programme.xml', kind: 'baseline_programme', status: 'active', sha256: 'c'.repeat(64) },
         { id: 'progress', name: 'Progress Cut', path: 'C:/progress.xlsx', kind: 'progress', status: 'active', sha256: 'd'.repeat(64) },
+        { id: 'resource-plan', name: 'Resource Plan', path: 'C:/resource.xlsx', kind: 'resource', status: 'active', sha256: 'e'.repeat(64) },
+        { id: 'procurement', name: 'Procurement Register', path: 'C:/procurement.xlsx', kind: 'commitment', status: 'active', sha256: 'f'.repeat(64) },
+        { id: 'organization', name: 'Approved Organization', path: 'C:/org.pdf', kind: 'organization', status: 'active', sha256: '1'.repeat(64) },
       ],
     });
     await handleDeliveryWorkspace(context, {
@@ -71,6 +94,7 @@ describe('delivery_capability handler', () => {
         { id: 'contract-baseline', kind: 'contract', title: 'Contract', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'contract' }] },
         { id: 'scope-baseline', kind: 'scope', title: 'Scope', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'scope' }] },
         { id: 'programme-baseline', kind: 'schedule', title: 'Approved Programme', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'programme' }] },
+        { id: 'organization-baseline', kind: 'organization', title: 'Approved Organization', status: 'approved', evidenceRefs: [{ kind: 'source', sourceId: 'organization' }] },
       ],
     });
   });
@@ -127,5 +151,29 @@ describe('delivery_capability handler', () => {
       { capability: 'contract_scope', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'programme-progress.json'));
+  });
+
+  test('loads contract and programme upstream data before persisting resource procurement', async () => {
+    const handlers = await import('./index.ts') as Record<string, unknown>;
+    const handle = handlers.handleDeliveryCapability as Function;
+    expect((await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'contract_scope', data: contractScopeData(),
+    })).isError).toBe(false);
+    expect((await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'programme_progress', data: programmeProgressData(),
+    })).isError).toBe(false);
+
+    const initialized = await handle(context, {
+      action: 'init', projectId: 'n3-delivery', capability: 'resource_procurement', data: resourceProcurementData(),
+    });
+    expect(initialized.isError).toBe(false);
+    const output = JSON.parse(initialized.content[0]?.text ?? '{}');
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 3 },
+      { capability: 'contract_scope', revision: 1 },
+      { capability: 'programme_progress', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'resource-procurement.json'));
   });
 });
