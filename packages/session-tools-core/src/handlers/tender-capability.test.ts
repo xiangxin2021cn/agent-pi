@@ -110,6 +110,45 @@ function executionData() {
   };
 }
 
+function scheduleData() {
+  return {
+    programmeStart: '2026-08-03',
+    programmeStatus: 'reviewed',
+    calendars: [
+      { id: 'cal-1', name: 'Tender calendar', workingDays: [1, 2, 3, 4, 5], exceptions: [] },
+    ],
+    activities: [
+      scheduleActivity('setout', 'Set out drainage works', 1, []),
+      scheduleActivity('excavate', 'Excavate drainage', 2, [{ activityId: 'setout', type: 'FS', lagDays: 0 }]),
+      scheduleActivity('concrete', 'Construct concrete drain', 3, [{ activityId: 'excavate', type: 'FS', lagDays: 0 }]),
+    ],
+    resources: [
+      { id: 'crew', class: 'drainage-crew', capacity: '1', unit: 'crew', calendarId: 'cal-1' },
+    ],
+    assignments: [
+      { activityId: 'setout', resourceId: 'crew', demand: '1' },
+      { activityId: 'excavate', resourceId: 'crew', demand: '1' },
+      { activityId: 'concrete', resourceId: 'crew', demand: '1' },
+    ],
+    milestones: [],
+  };
+}
+
+function scheduleActivity(id: string, name: string, durationDays: number, predecessors: unknown[]) {
+  return {
+    id,
+    workPackageId: 'wp-drainage-01',
+    name,
+    durationDays,
+    durationBasis: 'Derived from the reviewed tender work package.',
+    calendarId: 'cal-1',
+    predecessors,
+    requirementIds: [],
+    sourceRefs: [{ documentId: 'spec', page: 20 }],
+    confidence: 'confirmed',
+  };
+}
+
 describe('tender_capability handler', () => {
   let root: string;
   let workingDirectory: string;
@@ -406,12 +445,76 @@ describe('tender_capability handler', () => {
     expect(output.modelPath).toEndWith(join('packs', 'execution-plan.json'));
   });
 
-  test('rejects capability packs that are not implemented yet', async () => {
+  test('rejects schedule planning before the execution pack is ready', async () => {
     const handler = await loadHandler();
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'schedule_resources',
+      data: scheduleData(),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('requires ready upstream capability execution_plan');
+  });
+
+  test('initializes a ready schedule and resource pack from a ready execution plan', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_documents',
+      projectId: 'n3-upgrade',
+      documents: [
+        { id: 'boq', name: 'BOQ', path: 'C:/tender/boq.xlsx', kind: 'boq', status: 'active' },
+        { id: 'spec', name: 'Specification', path: 'C:/tender/spec.pdf', kind: 'specification', status: 'active' },
+        { id: 'drawing', name: 'Drawing', path: 'C:/tender/drawing.pdf', kind: 'drawing', status: 'active' },
+      ],
+    });
+    await handleTenderWorkspace(context, {
+      action: 'upsert_requirements',
+      projectId: 'n3-upgrade',
+      requirements: [
+        {
+          id: 'req-drainage',
+          title: 'Drainage scope',
+          text: 'Construct the scheduled drainage works.',
+          type: 'technical',
+          criticality: 'high',
+          source: { documentId: 'spec', page: 20, clause: '5.2' },
+          evidenceNeeded: [],
+          status: 'planned',
+        },
+      ],
+    });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'schedule_resources',
+      enabled: true,
+      required: true,
+      data: scheduleData(),
+    });
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+
+    expect(output.audit.readiness).toBe('ready');
+    expect(output.audit.summary.projectDurationDays).toBe(6);
+    expect(output.envelope.upstream).toEqual([
+      { capability: 'core', revision: 6 },
+      { capability: 'execution_plan', revision: 1 },
+    ]);
+    expect(output.modelPath).toEndWith(join('packs', 'schedule-resources.json'));
+  });
+
+  test('rejects capability packs that are not implemented yet', async () => {
+    const handler = await loadHandler();
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'cost_cashflow',
       data: {},
     });
 

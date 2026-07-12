@@ -2,6 +2,7 @@ import {
   auditTenderEvaluationStrategy,
   auditTenderBoqReconciliation,
   auditTenderExecutionPlan,
+  auditTenderScheduleResources,
   getTenderCapabilityDependencies,
   isTenderCapabilityStale,
   parseTenderCapabilityEnvelope,
@@ -9,6 +10,7 @@ import {
   parseTenderEvaluationStrategyData,
   parseTenderBoqReconciliationData,
   parseTenderExecutionPlanData,
+  parseTenderScheduleResourceData,
   parseTenderWorkspace,
   type TenderCapabilityAuditIssue,
   type TenderCapabilityEnvelope,
@@ -19,6 +21,7 @@ import {
   type TenderEvaluationStrategyAudit,
   type TenderBoqReconciliationAudit,
   type TenderExecutionPlanAudit,
+  type TenderScheduleResourceAudit,
   type TenderWorkspace,
 } from '@agent-pi/business-core/tender';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -39,7 +42,11 @@ export interface TenderCapabilityArgs {
   required?: boolean;
 }
 
-type ImplementedAudit = TenderEvaluationStrategyAudit | TenderBoqReconciliationAudit | TenderExecutionPlanAudit;
+type ImplementedAudit =
+  | TenderEvaluationStrategyAudit
+  | TenderBoqReconciliationAudit
+  | TenderExecutionPlanAudit
+  | TenderScheduleResourceAudit;
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
@@ -171,16 +178,18 @@ export async function handleTenderCapability(
 
 function isImplementedCapability(
   capability: TenderCapabilityId,
-): capability is 'evaluation_strategy' | 'boq_reconciliation' | 'execution_plan' {
+): capability is 'evaluation_strategy' | 'boq_reconciliation' | 'execution_plan' | 'schedule_resources' {
   return capability === 'evaluation_strategy'
     || capability === 'boq_reconciliation'
-    || capability === 'execution_plan';
+    || capability === 'execution_plan'
+    || capability === 'schedule_resources';
 }
 
 function parseCapabilityData(capability: TenderCapabilityId, data: unknown): unknown {
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
   if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
+  if (capability === 'schedule_resources') return parseTenderScheduleResourceData(data);
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }
 
@@ -199,6 +208,9 @@ function auditCapability(
   }
   if (capability === 'execution_plan') {
     return auditTenderExecutionPlan(workspace, upstreamData.boq_reconciliation, data, generatedAt);
+  }
+  if (capability === 'schedule_resources') {
+    return auditTenderScheduleResources(workspace, upstreamData.execution_plan, data, generatedAt);
   }
   throw new Error(`Tender capability ${capability} is not implemented.`);
 }
