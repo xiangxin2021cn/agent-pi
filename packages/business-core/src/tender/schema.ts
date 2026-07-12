@@ -77,6 +77,7 @@ export const TenderResponsePlanSchema = z.object({
   requirementIds: z.array(EntityIdSchema).default([]),
   criterionIds: z.array(EntityIdSchema).default([]),
   deliverableId: EntityIdSchema.optional(),
+  nonDocumentResponseAccepted: z.boolean().optional(),
   responseSection: OptionalNonEmptyString,
   evidenceRefs: z.array(TenderSourceLocatorSchema).default([]),
   evidenceArtifacts: z.array(z.string().trim().min(1)).default([]),

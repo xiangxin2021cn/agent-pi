@@ -20,4 +20,6 @@ Classify requirements explicitly and preserve criticality, required evidence, ow
 
 Deliverables define the required output, format, submission section, due time, template path, linked requirements, and status. Response plans connect requirements and criteria to a deliverable, response section, evidence locators or artifact paths, owner, and lifecycle status.
 
+When a requirement is genuinely satisfied outside a document deliverable, omit `deliverableId` only after human acceptance and set `nonDocumentResponseAccepted: true`. Narrative explanation alone does not establish this exception.
+
 All referenced IDs must already exist. If an upsert fails cross-entity validation, correct the missing or incorrect entity and retry; never persist partial or invented links.

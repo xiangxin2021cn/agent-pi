@@ -118,6 +118,18 @@ describe('auditTenderWorkspace', () => {
     expect(audit.issues.map((issue) => issue.code)).toContain('evaluation_criterion_uncovered');
   });
 
+  test('requires a deliverable or explicit acceptance for non-document responses', () => {
+    const unresolved = readyWorkspace();
+    delete unresolved.responses[0]!.deliverableId;
+    expect(issueCodes(unresolved)).toContain('response_delivery_unresolved');
+    expect(auditTenderWorkspace(unresolved).readiness).toBe('not_ready');
+
+    const accepted = readyWorkspace();
+    delete accepted.responses[0]!.deliverableId;
+    accepted.responses[0]!.nonDocumentResponseAccepted = true;
+    expect(auditTenderWorkspace(accepted).readiness).toBe('ready');
+  });
+
   test('requires evidence for responses marked verified', () => {
     const workspace = readyWorkspace();
     workspace.responses[0]!.evidenceRefs = [];

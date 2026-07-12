@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
@@ -46,6 +46,16 @@ describe('tender_workspace handler', () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('working directory');
+  });
+
+  test('rejects project path traversal', async () => {
+    const result = await handleTenderWorkspace(context, {
+      action: 'init',
+      projectId: '../escape',
+      project: { id: '../escape', title: 'Escape', status: 'active' },
+    });
+    expect(result.isError).toBe(true);
+    expect(existsSync(join(root, 'escape'))).toBe(false);
   });
 
   test('initializes the project-local tender model and audit files', async () => {
@@ -149,5 +159,14 @@ describe('tender_workspace handler', () => {
     const output = resultJson(validation);
     expect(output.audit.readiness).toBe('not_ready');
     expect(output.audit.issues.map((issue: any) => issue.code)).toContain('mandatory_requirement_uncovered');
+
+    const restartedContext = { ...context };
+    const status = await handleTenderWorkspace(restartedContext, {
+      action: 'status',
+      projectId: 'n3-upgrade',
+    });
+    expect(resultJson(status).workspace.revision).toBe(3);
+    const projectDirectory = join(workingDirectory, '.agent-pi', 'business', 'tender', 'n3-upgrade');
+    expect(readdirSync(projectDirectory).some((name) => name.endsWith('.tmp'))).toBe(false);
   });
 });

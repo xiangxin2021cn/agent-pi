@@ -112,6 +112,7 @@ export interface TenderResponsePlan {
   requirementIds: string[];
   criterionIds: string[];
   deliverableId?: string;
+  nonDocumentResponseAccepted?: boolean;
   responseSection?: string;
   evidenceRefs: TenderSourceLocator[];
   evidenceArtifacts?: string[];

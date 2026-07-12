@@ -190,6 +190,19 @@ export function auditTenderWorkspace(
         message: `Response references missing deliverable ${response.deliverableId}.`,
       });
     }
+    if (
+      response.requirementIds.length > 0
+      && !response.deliverableId
+      && response.nonDocumentResponseAccepted !== true
+    ) {
+      addIssue({
+        code: 'response_delivery_unresolved',
+        severity: 'error',
+        entityType: 'response',
+        entityId: response.id,
+        message: `Response ${response.id} has no deliverable and is not accepted as a non-document response.`,
+      });
+    }
     for (const source of response.evidenceRefs) {
       inspectSource(source, 'response', response.id);
     }
@@ -209,7 +222,10 @@ export function auditTenderWorkspace(
   }
 
   const activeResponses = workspace.responses.filter((response) => response.status !== 'blocked');
-  const coveredRequirementIds = new Set(activeResponses.flatMap((response) => response.requirementIds));
+  const requirementCoverageResponses = activeResponses.filter((response) =>
+    Boolean(response.deliverableId) || response.nonDocumentResponseAccepted === true,
+  );
+  const coveredRequirementIds = new Set(requirementCoverageResponses.flatMap((response) => response.requirementIds));
   const coveredCriterionIds = new Set(activeResponses.flatMap((response) => response.criterionIds));
   const mandatoryRequirements = workspace.requirements.filter((requirement) => requirement.type === 'mandatory');
 
