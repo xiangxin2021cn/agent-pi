@@ -9,7 +9,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./tender": "./src/tender/index.ts",
-    "./delivery": "./src/delivery/index.ts"
+    "./delivery": "./src/delivery/index.ts",
+    "./investment": "./src/investment/index.ts"
   },
   "scripts": {
     "test": "bun test",

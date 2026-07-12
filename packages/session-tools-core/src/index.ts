@@ -154,6 +154,7 @@ export {
   handleTenderCapability,
   handleDeliveryWorkspace,
   handleDeliveryCapability,
+  handleInvestmentWorkspace,
   // OAuth Triggers
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,

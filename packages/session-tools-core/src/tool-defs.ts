@@ -27,6 +27,7 @@ import { handleTenderWorkspace } from './handlers/tender-workspace.ts';
 import { handleTenderCapability } from './handlers/tender-capability.ts';
 import { handleDeliveryWorkspace } from './handlers/delivery-workspace.ts';
 import { handleDeliveryCapability } from './handlers/delivery-capability.ts';
+import { handleInvestmentWorkspace } from './handlers/investment-workspace.ts';
 import {
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
@@ -284,6 +285,16 @@ export const DeliveryCapabilityToolSchema = z.object({
   required: z.boolean().optional(),
 });
 
+export const InvestmentWorkspaceToolSchema = z.object({
+  action: z.enum(['init', 'upsert_sources', 'upsert_snapshots', 'upsert_assumption_sets', 'upsert_knowledge_uses', 'status', 'validate']),
+  projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  project: TenderEntityInputSchema.optional(),
+  sources: z.array(TenderEntityInputSchema).optional(),
+  snapshots: z.array(TenderEntityInputSchema).optional(),
+  assumptionSets: z.array(TenderEntityInputSchema).optional(),
+  knowledgeUses: z.array(TenderEntityInputSchema).optional(),
+});
+
 export const DocumentArtifactSchema = z.object({
   action: z.enum(['init', 'write_section', 'status', 'prepare_merge', 'assemble', 'validate'])
     .describe('Transactional artifact operation.'),
@@ -447,6 +458,12 @@ Actions:
 Use this only after delivery_workspace has registered explicit user-owned implementation inputs and local baselines. Capability packs are stored only under business/delivery, record core and upstream revisions, and become stale after relevant delivery records change. Tender or enterprise-knowledge snapshots remain evidence and cannot replace required direct project support.
 
 Actions: configure, init, replace, status, validate. Only implemented delivery capability packs can be initialized.`,
+
+  investment_workspace: `Maintain the independent Resource Investment Intelligence system of record.
+
+Initialize only from explicit user-owned investment records. Tender, delivery, investment, or enterprise-knowledge publications may be imported only as frozen, hash-addressed, user-confirmed snapshots. The tool never reads another plugin's private store and never scans the working directory.
+
+Actions: init, upsert_sources, upsert_snapshots, upsert_assumption_sets, upsert_knowledge_uses, status, validate.`,
 
   source_oauth_trigger: `Start OAuth authentication for an MCP source.
 
@@ -723,6 +740,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'tender_capability', description: TOOL_DESCRIPTIONS.tender_capability, inputSchema: TenderCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleTenderCapability },
   { name: 'delivery_workspace', description: TOOL_DESCRIPTIONS.delivery_workspace, inputSchema: DeliveryWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryWorkspace },
   { name: 'delivery_capability', description: TOOL_DESCRIPTIONS.delivery_capability, inputSchema: DeliveryCapabilityToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleDeliveryCapability },
+  { name: 'investment_workspace', description: TOOL_DESCRIPTIONS.investment_workspace, inputSchema: InvestmentWorkspaceToolSchema, executionMode: 'registry', safeMode: 'block', handler: handleInvestmentWorkspace },
   { name: 'source_oauth_trigger', description: TOOL_DESCRIPTIONS.source_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSourceOAuthTrigger },
   { name: 'source_google_oauth_trigger', description: TOOL_DESCRIPTIONS.source_google_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleGoogleOAuthTrigger },
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, executionMode: 'registry', safeMode: 'block', handler: handleSlackOAuthTrigger },
