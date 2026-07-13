@@ -6,6 +6,7 @@ import {
   type DeliveryCapabilityId,
 } from '@agent-pi/business-core/delivery';
 import { RPC_CHANNELS, type DeliveryWorkspaceBundleDto, type DeliveryWorkspaceSummaryDto } from '@craft-agent/shared/protocol';
+import { CONFIG_DIR } from '@craft-agent/shared/config';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
@@ -124,6 +125,7 @@ function createDeliveryToolContext(workingDirectory: string): SessionToolContext
     skillsPath: join(workingDirectory, '.agent-pi', 'skills'),
     plansFolderPath: join(workingDirectory, '.agent-pi', 'plans'),
     workingDirectory,
+    knowledgeBaseRegistryRootPath: CONFIG_DIR,
     callbacks: { onPlanSubmitted: () => {}, onAuthRequest: () => {} },
     fs: createNodeFileSystem(),
     loadSourceConfig: () => null,

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 
 export type BusinessPluginId = 'tender' | 'delivery' | 'investment';
 
@@ -25,6 +25,16 @@ export interface BusinessKnowledgePublicationRegistry {
 }
 
 export type BusinessKnowledgePublicationInput = Omit<BusinessKnowledgePublication, 'schemaVersion' | 'managedArtifactPath' | 'contentSha256'>;
+
+export interface BusinessEvidenceSnapshotReference {
+  producerPlugin: string;
+  producerWorkspaceId: string;
+  producerRevision: number;
+  managedArtifactPath: string;
+  contentSha256: string;
+  approvalState: string;
+  userConfirmed: boolean;
+}
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -88,6 +98,30 @@ export function toBusinessEvidenceSnapshot(publication: BusinessKnowledgePublica
   } as const;
 }
 
+export function verifyBusinessEvidenceSnapshots(rootPath: string, snapshots: BusinessEvidenceSnapshotReference[]): void {
+  const registry = loadBusinessKnowledgePublications(rootPath);
+  for (const snapshot of snapshots) {
+    const publication = registry.entries.find((entry) => (
+      samePath(entry.managedArtifactPath, snapshot.managedArtifactPath)
+      && entry.contentSha256.toLowerCase() === snapshot.contentSha256.toLowerCase()
+      && entry.producerPlugin === snapshot.producerPlugin
+      && entry.producerWorkspaceId === snapshot.producerWorkspaceId
+      && entry.producerRevision === snapshot.producerRevision
+    ));
+    if (!publication || publication.approvalState !== 'approved' || !publication.userConfirmed
+      || snapshot.approvalState !== 'approved' || !snapshot.userConfirmed) {
+      throw new Error('Evidence snapshot must match a registered approved publication in the enterprise knowledge base.');
+    }
+    if (!existsSync(publication.managedArtifactPath)) {
+      throw new Error(`Registered business knowledge artifact is missing: ${publication.managedArtifactPath}`);
+    }
+    const currentHash = createHash('sha256').update(readFileSync(publication.managedArtifactPath)).digest('hex');
+    if (currentHash !== publication.contentSha256.toLowerCase()) {
+      throw new Error(`Registered business knowledge artifact content hash does not match: ${publication.publicationId}`);
+    }
+  }
+}
+
 function validateInput(input: BusinessKnowledgePublicationInput): void {
   if (!SAFE_ID.test(input.publicationId)) throw new Error('publicationId must be a filesystem-safe identifier.');
   if (!SAFE_ID.test(input.producerWorkspaceId)) throw new Error('producerWorkspaceId must be a filesystem-safe identifier.');
@@ -108,6 +142,14 @@ function isPublication(value: unknown): value is BusinessKnowledgePublication {
 
 function sanitizeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim();
+}
+
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = resolve(left);
+  const normalizedRight = resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function normalizeKnowledgeBaseFolder(value: string | undefined): string | null {

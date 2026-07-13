@@ -137,7 +137,7 @@
     },
     "apps/electron": {
       "name": "@agent-pi/electron",
-      "version": "2.1.1",
+      "version": "2.2.0",
       "dependencies": {
         "@craft-agent/core": "workspace:*",
         "@craft-agent/messaging-gateway": "workspace:*",

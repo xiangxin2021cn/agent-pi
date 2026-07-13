@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadBusinessKnowledgePublications, publishBusinessKnowledgeArtifact, toBusinessEvidenceSnapshot } from './knowledge-base-business-publication.ts';
+import { loadBusinessKnowledgePublications, publishBusinessKnowledgeArtifact, toBusinessEvidenceSnapshot, verifyBusinessEvidenceSnapshots } from './knowledge-base-business-publication.ts';
 
 describe('enterprise knowledge business publication storage', () => {
   test('copies an approved business artifact into immutable hash-addressed knowledge storage', () => {
@@ -35,6 +35,22 @@ describe('enterprise knowledge business publication storage', () => {
       publishBusinessKnowledgeArtifact(root, source, metadata);
       writeFileSync(source, 'two', 'utf8');
       expect(() => publishBusinessKnowledgeArtifact(root, source, metadata)).toThrow('immutable');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test('rejects a registered snapshot when its managed artifact was tampered with', () => {
+    const root = mkdtempSync(join(tmpdir(), 'business-publication-'));
+    try {
+      const source = join(root, 'source.json');
+      writeFileSync(source, '{"value":1}\n', 'utf8');
+      const publication = publishBusinessKnowledgeArtifact(root, source, {
+        publicationId: 'verified-id', producerPlugin: 'tender', producerWorkspaceId: 'tender-one',
+        producerRevision: 1, title: 'Verified', category: 'Tender', approvalState: 'approved',
+        userConfirmed: true, publishedAt: '2026-07-12T10:00:00.000Z',
+      });
+      const snapshot = toBusinessEvidenceSnapshot(publication, 'snapshot-one', '2026-07-12T11:00:00.000Z');
+      writeFileSync(publication.managedArtifactPath, '{"value":2}\n', 'utf8');
+      expect(() => verifyBusinessEvidenceSnapshots(root, [snapshot])).toThrow('content hash');
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

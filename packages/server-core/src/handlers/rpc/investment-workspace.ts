@@ -3,6 +3,7 @@ import {
   parseInvestmentWorkspace, type InvestmentCapabilityId,
 } from '@agent-pi/business-core/investment';
 import { RPC_CHANNELS, type InvestmentWorkspaceBundleDto, type InvestmentWorkspaceSummaryDto } from '@craft-agent/shared/protocol';
+import { CONFIG_DIR } from '@craft-agent/shared/config';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
@@ -95,6 +96,7 @@ function createInvestmentToolContext(workingDirectory: string): SessionToolConte
     sessionId: 'investment-workspace-rpc', workspacePath: workingDirectory,
     sourcesPath: join(workingDirectory, '.agent-pi', 'sources'), skillsPath: join(workingDirectory, '.agent-pi', 'skills'),
     plansFolderPath: join(workingDirectory, '.agent-pi', 'plans'), workingDirectory,
+    knowledgeBaseRegistryRootPath: CONFIG_DIR,
     callbacks: { onPlanSubmitted: () => {}, onAuthRequest: () => {} }, fs: createNodeFileSystem(), loadSourceConfig: () => null,
   };
 }

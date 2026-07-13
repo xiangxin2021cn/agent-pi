@@ -11,6 +11,7 @@ import {
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
+import { verifyBusinessEvidenceSnapshots } from '../knowledge-base-business-publication.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
 
@@ -55,6 +56,10 @@ export async function handleInvestmentWorkspace(ctx: SessionToolContext, args: I
       return successResponse(JSON.stringify({ workspace: current, audit, modelPath, auditPath }, null, 2));
     }
     const candidate = parseInvestmentWorkspace(applyUpsert(current, args));
+    if (args.action === 'upsert_snapshots') {
+      if (!ctx.knowledgeBaseRegistryRootPath) return errorResponse('upsert_snapshots requires the global knowledge base registry root.');
+      verifyBusinessEvidenceSnapshots(ctx.knowledgeBaseRegistryRootPath, candidate.snapshots);
+    }
     return persistAndRespond(projectDirectory, modelPath, auditPath, candidate);
   } catch (error) {
     return errorResponse(error instanceof Error ? error.message : String(error));
