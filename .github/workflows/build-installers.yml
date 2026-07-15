@@ -11,7 +11,7 @@ on:
         description: Existing release tag to upload to when upload_to_release is enabled
         type: string
         required: false
-        default: v2.1.1
+        default: v2.2.0
 
 permissions:
   contents: write
@@ -52,6 +52,7 @@ jobs:
           apps/electron/scripts/build-dmg.sh "${{ matrix.arch }}"
 
       - name: Upload workflow artifact
+        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-macos-${{ matrix.arch }}
@@ -71,12 +72,14 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           ARCH: ${{ matrix.arch }}
         run: |
+          cp apps/electron/release/latest-mac.yml "apps/electron/release/latest-mac-${ARCH}.yml"
           shopt -s nullglob
           assets=(
             "apps/electron/release/Agent-Pi-${ARCH}.dmg"
             "apps/electron/release/Agent-Pi-${ARCH}.dmg.blockmap"
             "apps/electron/release/Agent-Pi-${ARCH}.zip"
             "apps/electron/release/Agent-Pi-${ARCH}.zip.blockmap"
+            "apps/electron/release/latest-mac-${ARCH}.yml"
           )
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
 
@@ -99,16 +102,30 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download arm64 build metadata
+        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
         uses: actions/download-artifact@v4
         with:
           name: agent-pi-macos-arm64
           path: macos-artifacts/arm64
 
       - name: Download x64 build metadata
+        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
         uses: actions/download-artifact@v4
         with:
           name: agent-pi-macos-x64
           path: macos-artifacts/x64
+
+      - name: Download release build metadata
+        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p macos-artifacts/arm64 macos-artifacts/x64
+          gh release download "$RELEASE_TAG" --pattern latest-mac-arm64.yml --dir macos-artifacts/arm64
+          gh release download "$RELEASE_TAG" --pattern latest-mac-x64.yml --dir macos-artifacts/x64
+          mv macos-artifacts/arm64/latest-mac-arm64.yml macos-artifacts/arm64/latest-mac.yml
+          mv macos-artifacts/x64/latest-mac-x64.yml macos-artifacts/x64/latest-mac.yml
 
       - name: Merge update metadata
         run: |
@@ -118,6 +135,7 @@ jobs:
             macos-update/latest-mac.yml
 
       - name: Upload workflow artifact
+        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-macos-update-metadata
@@ -159,6 +177,7 @@ jobs:
           apps/electron/scripts/build-linux.sh x64
 
       - name: Upload workflow artifact
+        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-linux-x64
