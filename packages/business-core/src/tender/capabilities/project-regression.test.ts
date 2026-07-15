@@ -9,11 +9,12 @@ function fixture(name: 'complete-project' | 'incomplete-project' | 'stale-projec
 }
 
 describe('V2.2 tender project regression gate', () => {
-  test('keeps all six tender packs inside the tender business domain', () => {
+  test('keeps all tender packs inside the tender business domain', () => {
     const complete = fixture('complete-project');
     const expected: TenderCapabilityId[] = [
-      'evaluation_strategy', 'boq_reconciliation', 'execution_plan',
-      'schedule_resources', 'cost_cashflow', 'submission_audit',
+      'document_analysis', 'evaluation_strategy', 'boq_reconciliation',
+      'boq_five_step_pricing', 'execution_plan', 'schedule_resources',
+      'cost_cashflow', 'submission_documents', 'submission_audit',
     ];
 
     expect(complete.requiredCapabilities).toEqual(expected);
@@ -45,12 +46,15 @@ describe('V2.2 tender project regression gate', () => {
       projectId: stale.projectId,
       revision: 2,
       coreRevision: 4,
-      upstream: [{ capability: 'core', revision: 4 }],
+      upstream: [
+        { capability: 'core', revision: 4 },
+        { capability: 'document_analysis', revision: 1 },
+      ],
       updatedAt: '2026-07-12T17:00:00.000Z',
       data: {},
     };
 
-    expect(isTenderCapabilityStale(envelope, 5, {})).toBe(true);
+    expect(isTenderCapabilityStale(envelope, 5, { document_analysis: 1 })).toBe(true);
     expect(stale.expectedStaleCapabilities).toContain('submission_audit');
   });
 });

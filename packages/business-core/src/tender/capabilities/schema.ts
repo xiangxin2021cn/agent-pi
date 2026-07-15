@@ -2,11 +2,14 @@ import { z } from 'zod';
 import type { TenderCapabilityEnvelope, TenderCapabilityIndex } from './types.ts';
 
 export const TenderCapabilityIdSchema = z.enum([
+  'document_analysis',
   'evaluation_strategy',
   'boq_reconciliation',
+  'boq_five_step_pricing',
   'execution_plan',
   'schedule_resources',
   'cost_cashflow',
+  'submission_documents',
   'submission_audit',
 ]);
 

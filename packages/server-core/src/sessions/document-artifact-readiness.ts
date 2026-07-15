@@ -104,7 +104,7 @@ export function verifyDocumentArtifactReadiness(
 
 function requiresValidatedMarkdownArtifact(goalState: SessionGoalState): boolean {
   const contract = goalState.taskContract
-  if (!contract || !contract.documentQualityMode || contract.documentQualityMode === 'quick') return false
+  if (!contract || !contract.documentQualityMode || contract.documentQualityMode === 'native_quick' || contract.documentQualityMode === 'quick') return false
   return contract.outputFormats.some(format => {
     const normalized = format.trim().toLowerCase()
     return normalized === 'md' || normalized === 'markdown'

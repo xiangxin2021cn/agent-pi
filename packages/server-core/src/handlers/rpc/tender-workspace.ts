@@ -19,11 +19,14 @@ import type { RpcServer } from '../../transport/types.ts';
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILES: Record<TenderCapabilityId, string> = {
+  document_analysis: 'document-analysis',
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
+  boq_five_step_pricing: 'boq-five-step-pricing',
   execution_plan: 'execution-plan',
   schedule_resources: 'schedule-resources',
   cost_cashflow: 'cost-cashflow',
+  submission_documents: 'submission-documents',
   submission_audit: 'submission-audit',
 };
 

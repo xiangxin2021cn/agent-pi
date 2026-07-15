@@ -3,11 +3,14 @@ import type { TenderWorkspaceBundleDto } from '@craft-agent/shared/protocol';
 export type TenderWorkspaceTabId =
   | 'sources'
   | 'compliance'
+  | 'analysis'
   | 'evaluation'
   | 'boq'
+  | 'pricing'
   | 'execution'
   | 'schedule'
   | 'cost'
+  | 'submissionDocuments'
   | 'submission';
 
 export interface TenderWorkspaceRow {
@@ -45,11 +48,14 @@ const TAB_DEFINITIONS: Array<{
 }> = [
   { id: 'sources', label: 'Sources and Addenda' },
   { id: 'compliance', label: 'Compliance and Deliverables' },
+  { id: 'analysis', label: 'Tender Document Analysis', capability: 'document_analysis' },
   { id: 'evaluation', label: 'Evaluation', capability: 'evaluation_strategy' },
   { id: 'boq', label: 'BOQ Reconciliation', capability: 'boq_reconciliation' },
+  { id: 'pricing', label: 'BOQ Five-Step Pricing', capability: 'boq_five_step_pricing' },
   { id: 'execution', label: 'Execution Plan', capability: 'execution_plan' },
   { id: 'schedule', label: 'Programme and Resources', capability: 'schedule_resources' },
   { id: 'cost', label: 'Cost and Cash Flow', capability: 'cost_cashflow' },
+  { id: 'submissionDocuments', label: 'Submission Documents', capability: 'submission_documents' },
   { id: 'submission', label: 'Submission Audit', capability: 'submission_audit' },
 ];
 
@@ -110,11 +116,14 @@ function rowsForTab(
   }
   const capability = TAB_DEFINITIONS.find((definition) => definition.id === tab)?.capability;
   const data = record(record(capability ? packs[capability] : undefined).data);
+  if (tab === 'analysis') return mapRows(data.sections, (item) => text(item.title, text(item.kind)), 'id');
   if (tab === 'evaluation') return mapRows(data.strategies, (item) => text(item.responseTheme, text(item.criterionId)), 'criterionId');
   if (tab === 'boq') return mapRows(data.items, (item) => `${text(item.code)} ${text(item.description)}`.trim(), 'id');
+  if (tab === 'pricing') return mapRows(data.itemBuildUps, (item) => `BOQ ${text(item.boqItemId)} · ${text(item.directCost)}`, 'boqItemId');
   if (tab === 'execution') return mapRows(data.workPackages, (item) => text(item.title), 'id');
   if (tab === 'schedule') return mapRows(data.activities, (item) => text(item.name), 'id');
   if (tab === 'cost') return mapRows(data.buildUps, (item) => `BOQ ${text(item.boqItemId)} · ${text(item.total)}`, 'boqItemId');
+  if (tab === 'submissionDocuments') return mapRows(data.items, (item) => text(item.title, text(item.kind)), 'id');
   if (tab === 'submission') return mapRows(data.items, (item) => text(item.filePath, text(item.deliverableId)), 'deliverableId');
   return [];
 }

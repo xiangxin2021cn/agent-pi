@@ -2003,6 +2003,17 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
   })
 
+  it('does not initialize a goal for a work-like message when native quick mode is selected', async () => {
+    const sessionId = 'goal-explicit-native-quick-document-workflow-mode'
+    const managed = buildSession(sessionId, { goalState: undefined })
+    const events = captureEvents()
+
+    await sm.sendMessage(sessionId, '请根据附件写一封正式回信。', undefined, undefined, { documentQualityMode: 'native_quick' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBeUndefined()
+    expect(events.some(event => event.type === 'goal_state_changed')).toBe(false)
+  })
+
   it('uses auto-improve for explicit strict document mode even when workspace default is check-only', async () => {
     saveWorkspaceGoalLoopDefault({ defaultMode: 'check_only' })
     const sessionId = 'goal-explicit-strict-document-workflow-mode'
@@ -2129,6 +2140,17 @@ describe('SessionManager goal loop routing', () => {
     captureEvents()
 
     await sm.sendMessage(sessionId, '谢谢', undefined, undefined, { documentQualityMode: 'quick' }).catch(() => { /* expected after pre-agent setup */ })
+
+    expect(managed.goalState).toBe(originalGoal)
+  })
+
+  it('does not add native-quick work-like chat to an existing goal', async () => {
+    const sessionId = 'goal-ignore-native-quick-follow-up'
+    const managed = buildSession(sessionId)
+    const originalGoal = managed.goalState
+    captureEvents()
+
+    await sm.sendMessage(sessionId, '请根据附件写一封正式回信。', undefined, undefined, { documentQualityMode: 'native_quick' }).catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState).toBe(originalGoal)
   })

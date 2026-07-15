@@ -1812,7 +1812,7 @@ function isWorkLikeGoalMessage(
   }
 
   const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
-  if (documentQualityMode && documentQualityMode !== 'quick') {
+  if (documentQualityMode && documentQualityMode !== 'native_quick' && documentQualityMode !== 'quick') {
     return true
   }
 
@@ -1870,7 +1870,8 @@ function normalizeSendGoalLoopMode(value: unknown): SessionGoalMode | undefined 
 }
 
 function normalizeSendDocumentQualityMode(value: unknown): SessionDocumentQualityMode | undefined {
-  return value === 'quick'
+  return value === 'native_quick'
+    || value === 'quick'
     || value === 'professional_document'
     || value === 'strict_delivery'
     || value === 'multi_agent_deep'
@@ -8375,6 +8376,11 @@ export class SessionManager implements ISessionManager {
       return
     }
 
+    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
+    if (documentQualityMode === 'native_quick') {
+      return
+    }
+
     if (managed.goalState) {
       this.maybeUpdateGoalStateForUserMessage(managed, message, storedAttachments, options)
       return
@@ -8390,7 +8396,6 @@ export class SessionManager implements ISessionManager {
     }
 
     const now = Date.now()
-    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
     const criteria = buildGoalCriteriaFromMessage({
       message,
       storedAttachments,
@@ -8462,12 +8467,16 @@ export class SessionManager implements ISessionManager {
       return
     }
 
+    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
+    if (documentQualityMode === 'native_quick') {
+      return
+    }
+
     if (!isWorkLikeGoalMessage(message, storedAttachments, options)) {
       return
     }
 
     const existingCriteria = new Set(current.criteria.map(criterion => `${criterion.kind}\u0000${criterion.text}`))
-    const documentQualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
     const newCriteria = buildGoalCriteriaUpdateFromMessage({
       message,
       storedAttachments,

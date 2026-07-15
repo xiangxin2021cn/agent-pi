@@ -235,6 +235,8 @@ function getDocumentQualityModeLabel(
   mode: SessionDocumentQualityMode | undefined,
 ): string | undefined {
   switch (mode) {
+    case 'native_quick':
+      return t('sessionInfo.documentQualityModeNativeQuick', { defaultValue: '原生快速' })
     case 'professional_document':
       return t('sessionInfo.documentQualityModeProfessional', { defaultValue: '专业文档' })
     case 'strict_delivery':

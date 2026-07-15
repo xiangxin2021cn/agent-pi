@@ -243,6 +243,32 @@ describe('SourceManager', () => {
       expect(formatted).toContain('search_file_memory');
       expect(formatted).toContain('read_file_memory_chunk');
     });
+
+    it('should add collection tool guidance for the knowledge base index source', () => {
+      sourceManager.setAllSources([
+        createMockSource('knowledge-base-index', {
+          name: 'Knowledge Base Index',
+          provider: 'knowledge-base-index',
+          tagline: 'Deterministic full-text index across local knowledge-base file memories',
+          metadata: {
+            category: 'knowledge_base',
+            knowledgeCategory: 'Knowledge Base',
+            knowledgeFolder: 'Knowledge Base/_Index',
+            scope: 'global',
+            sourceKind: 'knowledge-base-index',
+          },
+        }),
+      ]);
+      sourceManager.updateActiveState(['knowledge-base-index'], [], ['knowledge-base-index']);
+
+      const formatted = sourceManager.formatSourceState();
+
+      expect(formatted).toContain('list_sources');
+      expect(formatted).toContain('search_kb');
+      expect(formatted).toContain('read_chunk');
+      expect(formatted).toContain('citation_audit');
+      expect(formatted).not.toContain('get_file_memory_manifest');
+    });
   });
 
   describe('Authentication Utilities', () => {

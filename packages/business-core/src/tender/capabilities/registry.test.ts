@@ -10,17 +10,58 @@ describe('tender capability registry', () => {
       enabled?: string[],
     ) => string[];
 
-    expect(dependencies('evaluation_strategy')).toEqual(['core']);
-    expect(dependencies('execution_plan')).toEqual([
+    expect(dependencies('document_analysis')).toEqual(['core']);
+    expect(dependencies('evaluation_strategy')).toEqual(['core', 'document_analysis']);
+    expect(dependencies('boq_reconciliation')).toEqual(['core', 'document_analysis']);
+    expect(dependencies('boq_five_step_pricing')).toEqual([
       'core',
-      'evaluation_strategy',
+      'document_analysis',
       'boq_reconciliation',
     ]);
+    expect(dependencies('execution_plan')).toEqual([
+      'core',
+      'document_analysis',
+      'boq_reconciliation',
+      'boq_five_step_pricing',
+    ]);
+    expect(dependencies('schedule_resources')).toEqual([
+      'core',
+      'execution_plan',
+      'boq_five_step_pricing',
+    ]);
+    expect(dependencies('cost_cashflow')).toEqual([
+      'core',
+      'boq_reconciliation',
+      'boq_five_step_pricing',
+      'schedule_resources',
+    ]);
+    expect(dependencies('submission_documents')).toEqual([
+      'core',
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+    ]);
     expect(dependencies('submission_audit', [
+      'document_analysis',
       'evaluation_strategy',
       'boq_reconciliation',
+      'boq_five_step_pricing',
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+      'submission_documents',
       'submission_audit',
-    ])).toEqual(['core', 'evaluation_strategy', 'boq_reconciliation']);
+    ])).toEqual([
+      'core',
+      'document_analysis',
+      'evaluation_strategy',
+      'boq_reconciliation',
+      'boq_five_step_pricing',
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+      'submission_documents',
+    ]);
   });
 
   test('marks an envelope stale when core or upstream revisions change', async () => {

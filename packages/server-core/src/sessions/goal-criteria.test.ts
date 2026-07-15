@@ -325,6 +325,20 @@ describe('buildGoalExecutionPolicyFromMessage', () => {
     expect(policy.maxWallClockMs).toBe(15 * 60 * 1000)
   })
 
+  it('turns automatic repair off for native quick mode', () => {
+    const policy = buildGoalExecutionPolicyFromMessage({
+      message: '请全面详细生成专业文档报告，包含A3横向甘特图和模板复核。',
+      storedAttachments: [attachment('reference-template.docx')],
+      documentQualityMode: 'native_quick',
+    })
+
+    expect(policy).toEqual({
+      mode: 'off',
+      maxIterations: 0,
+      maxWallClockMs: 0,
+    })
+  })
+
   it('uses the professional document budget when the mode is explicitly selected', () => {
     const policy = buildGoalExecutionPolicyFromMessage({
       message: '整理一下这份材料。',
@@ -532,6 +546,36 @@ describe('buildTaskContractFromMessage', () => {
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
     expect(contract.evidenceRequirements).toContain('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
     expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.')
+  })
+
+  it('keeps deep research correspondence lightweight and reader-facing by default', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '请深度调查附件来信内容，帮我委婉起草一封英文回信。',
+      storedAttachments: [attachment('RE1-LET467.pdf')],
+    })
+
+    expect(contract.taskType).toBe('document')
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('quick')
+    expect(contract.documentPlan?.editorialProfile?.genre).toBe('contractual_correspondence')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.documentPlan?.evidenceMatrix).toBeUndefined()
+    expect(contract.documentPlan?.tables).toEqual([])
+    expect(contract.acceptanceCriteria).not.toContain(`[coverage] ${COMPREHENSIVE_QUALITY_CRITERION_TEXT}`)
+    expect(contract.acceptanceCriteria).not.toContain(`[coverage] ${DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT}`)
+    expect(contract.forbiddenShortcuts).toContain('Do not expose internal research, legal analysis, evidence matrices, goal audits, or process notes in the final correspondence unless the user explicitly asks.')
+  })
+
+  it('does not convert a focused dispute question into a professional document workflow automatically', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '充分调研一下 COLTO 关于 slotted drain cover 的质量验收规范，Engineer 以外观瑕疵拒绝接收是否成立？',
+    })
+
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('quick')
+    expect(contract.documentPlan?.editorialProfile?.genre).toBe('technical_dispute_memo')
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.documentPlan?.evidenceMatrix).toBeUndefined()
+    expect(contract.acceptanceCriteria).not.toContain(`[coverage] ${COMPREHENSIVE_QUALITY_CRITERION_TEXT}`)
+    expect(contract.acceptanceCriteria).not.toContain(`[coverage] ${DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT}`)
   })
 
   it('keeps a focused professional dispute memo single-agent and narrative-first', () => {
@@ -746,15 +790,14 @@ describe('buildTaskContractFromMessage', () => {
     expect(contract.forbiddenShortcuts).toContain('Do not spawn sub-agents, cross-chapter reviews, or workbook-wide synthesis for a narrow BOQ page/sheet pricing request unless the user explicitly asks.')
   })
 
-  it('lets a narrow BOQ page instruction override an explicit deep multi-agent mode', () => {
+  it('keeps explicit deep multi-agent mode from keyword-based narrowing', () => {
     const contract = buildTaskContractFromMessage({
       message: '本次 only do the MEDIAN BARRIER worksheet item-by-item five-step pricing. 不要扩展到其他页。',
       documentQualityMode: 'multi_agent_deep',
       storedAttachments: [attachment('pricing.xlsx')],
     })
 
-    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
-    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('multi_agent_deep')
     expect(contract.forbiddenShortcuts).toContain('Do not spawn sub-agents, cross-chapter reviews, or workbook-wide synthesis for a narrow BOQ page/sheet pricing request unless the user explicitly asks.')
   })
 

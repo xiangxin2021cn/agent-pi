@@ -5,6 +5,9 @@ export interface BusinessWorkflowStage {
   label: string
   prompt: string
   skillSlug?: string
+  requiredCapabilities?: BusinessCapabilityId[]
+  producesCapabilities?: BusinessCapabilityId[]
+  dispatchPolicy?: 'controlled-subagents'
 }
 
 export interface BusinessWorkflowDefinition {
@@ -13,18 +16,71 @@ export interface BusinessWorkflowDefinition {
   stages: BusinessWorkflowStage[]
 }
 
+export type BusinessCapabilityId =
+  | 'document_analysis'
+  | 'evaluation_strategy'
+  | 'boq_reconciliation'
+  | 'boq_five_step_pricing'
+  | 'execution_plan'
+  | 'schedule_resources'
+  | 'cost_cashflow'
+  | 'submission_documents'
+  | 'submission_audit'
+
 const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
   tender: {
     id: 'tender-main',
     label: '投标全流程',
     stages: [
       { id: 'project-setup', label: '项目与资料确认', prompt: '确认项目边界、用户指定资料、文件优先级和交付物。不得把工作目录当作来源扫描。' },
-      { id: 'tender-analysis', label: '招标文件与合规分析', prompt: '提取硬性指标、提交格式、评分点、合同条件和 BOQ 范围，并保留出处。', skillSlug: 'tender-evaluation-strategy' },
-      { id: 'project-planning', label: '项目总体策划', prompt: '基于已核实招标要求形成项目总体策划、组织、资源、进度、成本与现金流框架。', skillSlug: 'tender-execution-planning' },
-      { id: 'work-plan-methodology', label: 'WORK PLAN AND PROPOSED METHODOLOGY', prompt: '基于项目策划与招标要求编制可提交的 WORK PLAN AND PROPOSED METHODOLOGY，方法、资源、顺序、质量、安全和环境措施必须可追溯。', skillSlug: 'tender-execution-planning' },
-      { id: 'boq-five-step-pricing', label: 'BOQ 逐项五步法成本分解组价', prompt: '对每一条清单项分别执行五步法：范围与工程量依据、施工方法与生产率、资源消耗、询源单价与直接成本、复核与条件风险。不得用汇总项代替逐项推导。', skillSlug: 'tender-cost-cashflow-planning' },
-      { id: 'programme-resources', label: '进度、资源、成本与现金流', prompt: '将方法论与清单组价联动为 CPM 计划、资源计划、成本计划和现金流计划。', skillSlug: 'tender-schedule-resource-planning' },
-      { id: 'submission-audit', label: '递交审查', prompt: '按招标要求、模板、交付格式、证据覆盖和内部一致性完成提交前审查。', skillSlug: 'tender-submission-audit' },
+      {
+        id: 'tender-document-analysis',
+        label: '招标文件与合规分析',
+        prompt: '按册/卷拆解招标文件，产出项目认知、项目基本信息、硬性递交要求、评分点、专用条款及修订、答疑分析、BOQ 清单解析和工程量特征。每一类结论必须保留来源，不得提前进入施工策划或组价。',
+        skillSlug: 'tender-evaluation-strategy',
+        producesCapabilities: ['document_analysis', 'evaluation_strategy', 'boq_reconciliation'],
+      },
+      {
+        id: 'boq-five-step-pricing',
+        label: 'BOQ 逐项五步法成本分解组价',
+        prompt: '基于已完成的招标文件分析、合同要求、专用条款修订、规范工作范围定义和 BOQ 项，对每一条清单项无遗漏执行五步法：范围与工程量依据、施工方法与生产率、人材机资源消耗、询源单价与直接成本、复核与条件风险。必须汇总人材机数量、形成成本分解，并为后续工期、资源和现金流推定提供结构化依据。',
+        skillSlug: 'tender-boq-five-step-pricing',
+        requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
+        producesCapabilities: ['boq_five_step_pricing'],
+        dispatchPolicy: 'controlled-subagents',
+      },
+      {
+        id: 'work-plan-methodology',
+        label: '施工总策划 / WORK PLAN AND PROPOSED METHODOLOGY',
+        prompt: '基于招标工期要求、项目所在地工作时间/节假日规定、BOQ 五步法推导、人材机约束和可参考知识库模板，编制投标施工总策划与 WORK PLAN AND PROPOSED METHODOLOGY。内容应覆盖施工总体部署、关键施工方法、分区分段顺序、组织资源、质量安全环保、交通/接口/临设/风险措施，并匹配标书评审要求。',
+        skillSlug: 'tender-execution-planning',
+        requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'],
+        producesCapabilities: ['execution_plan'],
+      },
+      {
+        id: 'programme-resources-cost-cashflow',
+        label: '进度、资源、成本与现金流',
+        prompt: '在施工总策划基础上细化施工总进度计划、人材机资源计划、成本计划和现金流计划。进度计划必须依据工期要求、作业日历、生产率和施工逻辑；资源和现金流必须追溯到 BOQ 五步法组价和施工部署。',
+        skillSlug: 'tender-schedule-resource-planning',
+        requiredCapabilities: ['execution_plan', 'boq_five_step_pricing'],
+        producesCapabilities: ['schedule_resources', 'cost_cashflow'],
+      },
+      {
+        id: 'tender-submission-documents',
+        label: '递交文件编制',
+        prompt: '按投标要求生成正式递交文档模块，包括 WORK PLAN AND PROPOSED METHODOLOGY、施工进度计划、人员/材料/机械计划、现金流计划以及用户或招标文件明确要求的其他专业格式文件。只在用户或招标文件要求时导出 PDF/DOCX/XLSX/Project/P6 等格式；默认先产出可审阅的正式 Markdown/结构化源文件。',
+        skillSlug: 'tender-submission-documents',
+        requiredCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
+        producesCapabilities: ['submission_documents'],
+      },
+      {
+        id: 'submission-audit',
+        label: '递交审查',
+        prompt: '按招标要求、模板、交付格式、证据覆盖和内部一致性完成提交前审查。重点核查 WORK PLAN AND PROPOSED METHODOLOGY、施工进度计划、人材机计划、现金流计划是否和招标边界、BOQ 组价、施工策划一致。',
+        skillSlug: 'tender-submission-audit',
+        requiredCapabilities: ['submission_documents'],
+        producesCapabilities: ['submission_audit'],
+      },
     ],
   },
   delivery: {

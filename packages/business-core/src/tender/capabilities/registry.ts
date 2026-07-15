@@ -5,11 +5,14 @@ import type {
 } from './types.ts';
 
 const STATIC_DEPENDENCIES: Record<Exclude<TenderCapabilityId, 'submission_audit'>, TenderCapabilityDependency[]> = {
-  evaluation_strategy: ['core'],
-  boq_reconciliation: ['core'],
-  execution_plan: ['core', 'evaluation_strategy', 'boq_reconciliation'],
-  schedule_resources: ['core', 'execution_plan'],
-  cost_cashflow: ['core', 'boq_reconciliation', 'schedule_resources'],
+  document_analysis: ['core'],
+  evaluation_strategy: ['core', 'document_analysis'],
+  boq_reconciliation: ['core', 'document_analysis'],
+  boq_five_step_pricing: ['core', 'document_analysis', 'boq_reconciliation'],
+  execution_plan: ['core', 'document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'],
+  schedule_resources: ['core', 'execution_plan', 'boq_five_step_pricing'],
+  cost_cashflow: ['core', 'boq_reconciliation', 'boq_five_step_pricing', 'schedule_resources'],
+  submission_documents: ['core', 'execution_plan', 'schedule_resources', 'cost_cashflow'],
 };
 
 export function getTenderCapabilityDependencies(

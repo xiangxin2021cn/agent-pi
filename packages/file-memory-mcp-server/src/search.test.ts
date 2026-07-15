@@ -68,4 +68,39 @@ describe('file memory search', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('uses CJK n-gram terms so Chinese technical queries do not require exact full phrase matches', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'file-memory-'));
+    try {
+      const manifestPath = join(dir, 'manifest.json');
+      writeFileSync(
+        manifestPath,
+        JSON.stringify(
+          {
+            version: 1,
+            displayName: 'COLTO Drain Cover',
+            sourceFile: 'E:/project/standard.md',
+            chunks: [
+              {
+                id: 'chunk-1',
+                title: 'Slotted Drain Cover Acceptance',
+                text: '排水沟盖板应检查外观质量、裂缝、钢筋外露和边角破损，并记录验收结论。',
+                startLine: 1,
+                endLine: 3,
+              },
+            ],
+          },
+          null,
+          2
+        )
+      );
+
+      const manifest = loadManifestFromPath(manifestPath);
+      const results = searchManifest(manifest, '沟盖 外观 验收', 5);
+      expect(results).toHaveLength(1);
+      expect(results[0]?.chunk.id).toBe('chunk-1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

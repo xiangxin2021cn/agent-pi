@@ -202,7 +202,8 @@ export function formatChunk(manifest: LoadedFileMemoryManifest, chunk: LoadedChu
 function scoreChunk(chunk: LoadedChunk, normalizedQuery: string, tokens: string[]): number {
   const title = normalizeForSearch(chunk.title || '');
   const text = normalizeForSearch(chunk.text);
-  const combined = `${title}\n${text}`;
+  const metadata = normalizeForSearch(flattenMetadata(chunk.metadata));
+  const combined = `${title}\n${metadata}\n${text}`;
   let score = 0;
 
   if (combined.includes(normalizedQuery)) {
@@ -214,8 +215,9 @@ function scoreChunk(chunk: LoadedChunk, normalizedQuery: string, tokens: string[
 
   for (const token of tokens) {
     const titleHits = countOccurrences(title, token);
+    const metadataHits = countOccurrences(metadata, token);
     const textHits = countOccurrences(text, token);
-    score += Math.min(titleHits * 6 + textHits * 2, 18);
+    score += Math.min(titleHits * 6 + metadataHits * 4 + textHits * 2, 24);
   }
 
   return score;
@@ -257,7 +259,15 @@ function formatCitation(manifest: LoadedFileMemoryManifest, chunk: LoadedChunk):
 }
 
 function tokenize(value: string): string[] {
-  return Array.from(new Set(value.split(/[\s,.;:!?()[\]{}"'`\\/|+-]+/).filter((token) => token.length >= 2)));
+  const tokens = value.split(/[\s,.;:!?()[\]{}"'`\\/|+-]+/).filter((token) => token.length >= 2);
+  for (const segment of value.match(/[\u4e00-\u9fff]{2,}/g) ?? []) {
+    for (let size = 2; size <= 3; size++) {
+      for (let index = 0; index <= segment.length - size; index++) {
+        tokens.push(segment.slice(index, index + size));
+      }
+    }
+  }
+  return Array.from(new Set(tokens));
 }
 
 function normalizeForSearch(value: string): string {
@@ -266,6 +276,14 @@ function normalizeForSearch(value: string): string {
 
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function flattenMetadata(value: unknown): string {
+  if (!value) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(flattenMetadata).join(' ');
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).map(flattenMetadata).join(' ');
+  return '';
 }
 
 function countOccurrences(value: string, token: string): number {

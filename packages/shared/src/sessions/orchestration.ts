@@ -81,6 +81,8 @@ export function buildSessionOrchestrationState(input: BuildSessionOrchestrationS
   const tasks = buildTaskBoardTasks(contract, selectedSourceSlugs);
   const sourceScoped = selectedSourceSlugs.length > 0;
   const workflowMode = contract.documentQualityMode;
+  if (workflowMode === 'native_quick') return undefined;
+
   const orchestrationEnabled = sourceScoped
     || workflowMode === 'professional_document'
     || workflowMode === 'strict_delivery'

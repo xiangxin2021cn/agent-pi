@@ -1224,6 +1224,7 @@ function hasStrictTemplatePlan(goalState: SessionGoalState): boolean {
 function requiresEvidenceMatrixAudit(goalState: SessionGoalState): boolean {
   const mode = goalState.taskContract?.documentQualityMode
   return mode !== undefined
+    && mode !== 'native_quick'
     && mode !== 'quick'
     && (goalState.taskContract?.documentPlan?.evidenceMatrix?.length ?? 0) > 0
 }
@@ -1555,6 +1556,7 @@ function formatVisualBlockAudit(report: VisualBlockAudit): string {
 
 function requiresDocumentAgentPlanAudit(goalState: SessionGoalState): boolean {
   return goalState.taskContract?.documentQualityMode !== undefined
+    && goalState.taskContract.documentQualityMode !== 'native_quick'
     && goalState.taskContract.documentQualityMode !== 'quick'
     && (goalState.taskContract.documentPlan?.agentPlan?.assignments.length ?? 0) > 0
 }
@@ -1827,7 +1829,7 @@ function getExplicitUserRequirements(goalState: SessionGoalState): string[] {
 }
 
 function getPendingRequirementLedgerEntries(goalState: SessionGoalState): SessionRequirementLedgerEntry[] {
-  if (goalState.taskContract?.documentQualityMode === 'quick') return []
+  if (goalState.taskContract?.documentQualityMode === 'native_quick' || goalState.taskContract?.documentQualityMode === 'quick') return []
   return goalState.taskContract?.requirementLedger?.entries.filter(entry => entry.status === 'pending') ?? []
 }
 

@@ -51,15 +51,29 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.0.**
+**Current release: V2.2.1.**
 
-**当前发布版：V2.2.0。**
+**当前发布版：V2.2.1。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.1 Tender Production Pipeline / V2.2.1 投标生产流水线
+
+V2.2.1 tightens document quality routing and upgrades Tender Workbench from isolated stage prompts into a dependent production pipeline. Tender analysis, BOQ five-step pricing, construction methodology, programme/resource/cost/cash-flow planning, formal submission documents, and final audit now have clearer handoffs and capability gates.
+
+V2.2.1 收紧文档质量路由，并将投标工作台从彼此孤立的阶段提示升级为有依赖关系的生产流水线。标书分析、BOQ 逐项五步法组价、施工方法论、进度/资源/成本/现金流计划、正式递交文件和最终审查均有更清晰的交接与能力门禁。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Tender pipeline | Stages now follow document analysis -> BOQ five-step pricing -> WORK PLAN AND PROPOSED METHODOLOGY -> programme/resources/cost/cash flow -> formal submission documents -> audit. | 阶段调整为标书分析 -> BOQ 五步法组价 -> WORK PLAN AND PROPOSED METHODOLOGY -> 进度/资源/成本/现金流 -> 正式递交文件 -> 审查。 |
+| BOQ five-step pricing | A dedicated capability pack and skill require item-by-item scope, productivity, resource consumption, sourced rates, direct cost, and risk reconciliation. | 新增专用能力包和 skill，要求逐项记录范围、生产率、资源消耗、询源单价、直接成本和风险复核。 |
+| Controlled sub-agents | Large BOQ scopes can dispatch child agents with narrow briefs, allowed sources, assigned items, and report paths; child agents cannot spawn further agents. | 大型清单可派发受控子智能体，brief 仅包含允许来源、分配条目和报告路径；子智能体禁止继续派生。 |
+| Formal submission documents | After planning, Agent Pi compiles required tender deliverables such as methodology, construction programme, labour/material/plant plan, and cash-flow plan. | 施工策划后编制投标要求的正式递交文件，包括方法论、施工进度计划、人材机计划和现金流计划。 |
+| Quality routing | Native Quick stays close to upstream lightweight execution, while Guarded Quick and professional modes keep source boundaries and checks for higher-risk tasks. | 原生快速模式保留接近上游的轻量执行；受控快速和专业模式继续用于高风险任务的来源边界与检查。 |
 
 ### V2.2.0 Enterprise Workbenches and Document Quality / V2.2.0 企业工作台与文档质量
 
@@ -91,23 +105,6 @@ V2.1.1 让局部来源问题保持局部，并把专业交付门槛落实到确�
 | Completion and evidence | Agent-side `done` is rejected until Goal Audit passes; evidence matrices use versioned JSON and zero source coverage cannot pass. | Goal Audit 通过前拒绝智能体设置 `done`；证据矩阵使用版本化 JSON，零来源覆盖不能通过。 |
 | Professional artifacts | Requested Office/data/professional formats are tracked explicitly; PDF is produced only when requested, and DOCX export preserves A3/A4 page intent. | 显式追踪 Office、数据和专业格式；仅在用户要求时输出 PDF，DOCX 导出保留 A3/A4 页面意图。 |
 | Reader-facing quality | Internal evidence matrices and audit records stay out of the body by default; table balance, visual evidence, captions, sources, and export structure are audited. | 内部证据矩阵和审计记录默认不进入正文；表格比例、视觉证据、图注、来源和导出结构均接受审查。 |
-
-### V2.1.0 Verifiable Document Delivery / V2.1.0 可验证文档交付
-
-V2.1.0 turns enterprise long-document execution into an application-owned delivery protocol. Stable requirements, recoverable section artifacts, executable Plan/Audit/Merge transitions, complete-text checks, and final evidence packages make delivery state inspectable instead of relying on model self-reporting.
-
-V2.1.0 将企业长文档执行升级为应用负责的交付协议。稳定需求账本、可恢复章节产物、可执行 Plan/Audit/Merge、全文校验和最终证据包让交付状态可检查，不再只依赖模型自述。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Stable requirement ledger | Assigns stable IDs and verification rules to deliverables, constraints, evidence, formats, and acceptance criteria; follow-ups extend rather than reset the ledger. | 为交付物、约束、证据、格式和验收项分配稳定 ID 与验证规则；后续要求只扩展、不重置账本。 |
-| Requirement provenance | Final audits persist status, evidence references, verification time, and failure reason per requirement; the session Info popover shows a bounded summary. | 最终审查按需求记录状态、证据引用、验证时间和失败原因；会话“信息”弹窗展示受控摘要。 |
-| Transactional Markdown | `document_artifact` writes section chunks, freezes hashes, assembles atomically, and validates the final file so failed sections resume without rewriting completed work. | `document_artifact` 分章节写入、冻结哈希、原子组装并校验最终文件，失败后可从章节续跑。 |
-| Executable orchestration | Dependency-aware Plan/Audit/Merge/Done transitions block premature review, merge, or completion when tasks, handoffs, sections, or artifacts are incomplete. | 依赖感知的 Plan/Audit/Merge/Done 状态机会在任务、交接、章节或产物未完成时阻止过早审查、合并或结束。 |
-| Complete-text audit | Markdown, text, and JSON outputs up to 5 MiB are audited in full while previews stay bounded; oversized mandatory audits fail closed to manual review. | 5 MiB 以内 Markdown、文本和 JSON 输出执行全文审查，预览仍保持受控；超限的强制审查转入人工复核。 |
-| Current-turn completion proof | Completion requires a transactionally validated artifact that the deterministic verifier identifies as output of the current turn; old files, read-only access, and reviewer claims cannot pass the gate. | 完成必须同时具备事务校验产物和确定性“本轮输出”证明；旧文件、只读访问和审查模型自述不能通过门槛。 |
-| Final evidence package | Goal Audit uses a compact evidence package first and rewrites it after reviewer and completion gates resolve. | Goal Audit 优先使用紧凑证据包，并在审查与完成门槛结束后写回最终状态。 |
-| Core runtime | Claude Agent SDK 0.3.206 adds lifecycle/terminal-state signals; Pi 0.80.6 improves Windows discovery, long-run retries, compaction accounting, truncated tool calls, and DeepSeek DS4 overflow detection. | Claude Agent SDK 0.3.206 增加生命周期与终态信号；Pi 0.80.6 改进 Windows 发现、长任务重试、压缩预算、截断工具调用和 DeepSeek DS4 溢出识别。 |
 
 Older release details are available on GitHub Releases.
 

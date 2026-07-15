@@ -151,6 +151,7 @@ export {
   // Source Test
   handleSourceTest,
   handleFileMemorySourceCreate,
+  ensureKnowledgeBaseIndexSourceForWorkspace,
   handleTenderWorkspace,
   handleTenderCapability,
   handleDeliveryWorkspace,

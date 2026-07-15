@@ -16,6 +16,7 @@ import { safeJsonParse } from '@craft-agent/shared/utils/files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import {
+  ensureKnowledgeBaseIndexSourceForWorkspace,
   handleFileMemorySourceCreate,
   type FileMemorySourceCreateArgs,
   type SessionToolContext,
@@ -129,6 +130,23 @@ function readFileMemoryCreateResult(result: ToolResult): CreateFileMemorySourceR
   }
 }
 
+function ensureKnowledgeBaseIndexSourceIfNeeded(workspaceRootPath: string): void {
+  const registryPath = join(CONFIG_DIR, 'knowledge-base', 'registry.json')
+  if (!existsSync(registryPath)) return
+  try {
+    const parsed = JSON.parse(readFileSync(registryPath, 'utf-8')) as { entries?: unknown[] }
+    if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) return
+  } catch {
+    return
+  }
+
+  ensureKnowledgeBaseIndexSourceForWorkspace(createWorkspaceFileMemoryToolContext({
+    workspaceRootPath,
+    workingDirectory: workspaceRootPath,
+    knowledgeBaseRegistryRootPath: CONFIG_DIR,
+  }))
+}
+
 export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
 
@@ -139,6 +157,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       log.error(`SOURCES_GET: Workspace not found: ${workspaceId}`)
       return []
     }
+    ensureKnowledgeBaseIndexSourceIfNeeded(workspace.rootPath)
     return loadWorkspaceSources(workspace.rootPath)
   })
 

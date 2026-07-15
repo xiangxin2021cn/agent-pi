@@ -116,6 +116,7 @@ export type SessionTaskContractType =
   | 'general';
 
 export type SessionDocumentQualityMode =
+  | 'native_quick'
   | 'quick'
   | 'professional_document'
   | 'strict_delivery'
@@ -189,6 +190,7 @@ export interface SessionTaskContract {
 }
 
 export type SessionDocumentGenre =
+  | 'contractual_correspondence'
   | 'technical_dispute_memo'
   | 'research_report'
   | 'analysis_report'

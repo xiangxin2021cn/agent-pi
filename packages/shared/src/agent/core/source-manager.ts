@@ -227,11 +227,18 @@ export class SourceManager {
       for (const source of activeKnowledgeBaseSources) {
         parts.push(`- ${source.config.slug}: ${source.config.name} (folder: ${getKnowledgeBaseFolder(source) ?? 'General'})`);
       }
+      const hasKnowledgeBaseIndex = activeKnowledgeBaseSources.some(source => getSourceKind(source) === 'knowledge-base-index');
+      const hasFileMemory = activeKnowledgeBaseSources.some(source => getSourceKind(source) !== 'knowledge-base-index');
       parts.push('Knowledge-base guardrails:');
       parts.push('- Use selected knowledge-base sources first for source-sensitive analysis, specifications, clauses, standards, and cited document work.');
       parts.push('- Do not search the working directory for alternate copies before querying the selected knowledge-base source, unless the user explicitly asks for project-folder discovery.');
       parts.push('- If the selected knowledge base does not contain the requested evidence, state the gap or ask the user before broadening to working-directory files.');
-      parts.push('- For file-memory knowledge bases, call get_file_memory_manifest, search_file_memory, and read_file_memory_chunk before synthesizing source-backed conclusions.');
+      if (hasKnowledgeBaseIndex) {
+        parts.push('- For the knowledge-base index, call list_sources, search_kb/find_clause/find_table, read_chunk/read_range, and citation_audit before synthesizing source-backed conclusions.');
+      }
+      if (hasFileMemory) {
+        parts.push('- For single-file file-memory knowledge bases, call get_file_memory_manifest, search_file_memory, and read_file_memory_chunk before synthesizing source-backed conclusions.');
+      }
     }
 
     // Source descriptions (shown once per session when first introduced)
@@ -399,4 +406,11 @@ export class SourceManager {
   sourceNeedsAuthentication(source: LoadedSource): boolean {
     return sourceNeedsAuthentication(source);
   }
+}
+
+function getSourceKind(source: LoadedSource): string | null {
+  const metadata = source.config.metadata;
+  if (!metadata || typeof metadata !== 'object') return null;
+  const sourceKind = (metadata as Record<string, unknown>).sourceKind;
+  return typeof sourceKind === 'string' ? sourceKind : null;
 }

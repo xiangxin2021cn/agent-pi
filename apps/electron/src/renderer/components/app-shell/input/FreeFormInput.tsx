@@ -2954,6 +2954,7 @@ type DocumentQualityModeSelectorValue = SessionDocumentQualityMode | 'auto'
 
 const DOCUMENT_QUALITY_MODE_VALUES: DocumentQualityModeSelectorValue[] = [
   'auto',
+  'native_quick',
   'quick',
   'professional_document',
   'strict_delivery',
@@ -3025,9 +3026,11 @@ function DocumentQualityModeDropdown({
 function getDocumentQualityModeOptionLabel(t: ReturnType<typeof useTranslation>['t'], mode: DocumentQualityModeSelectorValue): string {
   switch (mode) {
     case 'auto':
-      return t('sessionInfo.documentQualityModeAuto', { defaultValue: '文档模式' })
+      return t('sessionInfo.documentQualityModeAuto', { defaultValue: '自动' })
+    case 'native_quick':
+      return t('sessionInfo.documentQualityModeNativeQuick', { defaultValue: '原生快速' })
     case 'quick':
-      return t('sessionInfo.documentQualityModeQuick', { defaultValue: '快速' })
+      return t('sessionInfo.documentQualityModeQuick', { defaultValue: '受控快速' })
     case 'professional_document':
       return t('sessionInfo.documentQualityModeProfessional', { defaultValue: '专业文档' })
     case 'strict_delivery':
@@ -3040,9 +3043,11 @@ function getDocumentQualityModeOptionLabel(t: ReturnType<typeof useTranslation>[
 function getDocumentQualityModeOptionDescription(t: ReturnType<typeof useTranslation>['t'], mode: DocumentQualityModeSelectorValue): string {
   switch (mode) {
     case 'auto':
-      return t('sessionInfo.documentQualityModeAutoDesc', { defaultValue: '按任务自动选择质量模式。' })
+      return t('sessionInfo.documentQualityModeAutoDesc', { defaultValue: '按任务自动选择质量模式，只有自动模式会使用关键词路由。' })
+    case 'native_quick':
+      return t('sessionInfo.documentQualityModeNativeQuickDesc', { defaultValue: '基本对齐原版轻量执行；不启用任务契约、Document Plan 或自动 Goal Loop。' })
     case 'quick':
-      return t('sessionInfo.documentQualityModeQuickDesc', { defaultValue: '沿用轻量流程，减少额外审查。' })
+      return t('sessionInfo.documentQualityModeQuickDesc', { defaultValue: '保留轻量任务契约、来源边界和显式要求校验。' })
     case 'professional_document':
       return t('sessionInfo.documentQualityModeProfessionalDesc', { defaultValue: '启用文档合同、证据矩阵、章节计划和质量审查。' })
     case 'strict_delivery':

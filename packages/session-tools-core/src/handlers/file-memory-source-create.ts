@@ -27,6 +27,12 @@ interface ChunkDraft {
   text: string;
   startLine: number;
   endLine: number;
+  metadata: {
+    headingPath: string[];
+    clauseRefs: string[];
+    tableRefs: string[];
+    boqRefs: string[];
+  };
 }
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
@@ -92,6 +98,7 @@ export async function handleFileMemorySourceCreate(
       originalSourceFile: knowledgeBase ? sourceFilePath : undefined,
       displayName,
       description: `Read-only file memory index generated from ${indexedSourceFilePath}`,
+      sourceSha256: createHash('sha256').update(content).digest('hex'),
       createdAt: now,
       indexedAt: now,
       knowledgeBase: knowledgeBase
@@ -156,11 +163,13 @@ export async function handleFileMemorySourceCreate(
       knowledgeBase,
     }), 'utf-8');
     if (knowledgeBase) {
-      upsertKnowledgeBaseRegistry(resolveKnowledgeBaseRegistryRoot(ctx), {
+      const knowledgeBaseRoot = resolveKnowledgeBaseRegistryRoot(ctx);
+      upsertKnowledgeBaseRegistry(knowledgeBaseRoot, {
         sourceSlug: slug,
         name: displayName,
         sourceFilePath: indexedSourceFilePath,
         originalSourceFilePath,
+        manifestPath,
         workspacePath: ctx.workspacePath,
         knowledgeCategory: knowledgeBase.knowledgeCategory,
         knowledgeFolder: knowledgeBase.knowledgeFolder,
@@ -170,6 +179,12 @@ export async function handleFileMemorySourceCreate(
         fileExtension: knowledgeBase.fileExtension,
         createdAt: now,
         updatedAt: now,
+      });
+      ensureKnowledgeBaseIndexSource(ctx, {
+        knowledgeBaseRoot,
+        serverPath,
+        runtime,
+        now,
       });
     }
 
@@ -224,6 +239,7 @@ interface KnowledgeBaseRegistryEntry extends KnowledgeBaseSourceMetadata {
   name: string;
   sourceFilePath: string;
   originalSourceFilePath?: string;
+  manifestPath?: string;
   workspacePath?: string;
   createdAt: number;
   updatedAt: number;
@@ -314,6 +330,84 @@ function upsertKnowledgeBaseRegistry(rootPath: string, entry: KnowledgeBaseRegis
   writeFileSync(join(registryDir, 'index.md'), buildKnowledgeBaseIndexMarkdown(entries), 'utf-8');
 }
 
+function ensureKnowledgeBaseIndexSource(
+  ctx: SessionToolContext,
+  args: {
+    knowledgeBaseRoot: string;
+    serverPath: string;
+    runtime: { command: string; argsPrefix: string[] };
+    now: number;
+  }
+): void {
+  const slug = 'knowledge-base-index';
+  const sourceDir = getSourcePath(ctx.workspacePath, slug);
+  mkdirSync(sourceDir, { recursive: true });
+
+  const existing = ctx.loadSourceConfig(slug);
+  const config: SourceConfig = {
+    id: existing?.id || `${slug}_${randomUUID().slice(0, 8)}`,
+    name: 'Knowledge Base Index',
+    slug,
+    enabled: existing?.enabled ?? false,
+    provider: 'knowledge-base-index',
+    type: 'mcp',
+    mcp: {
+      transport: 'stdio',
+      authType: 'none',
+      command: args.runtime.command,
+      args: [...args.runtime.argsPrefix, args.serverPath, '--knowledge-base-root', args.knowledgeBaseRoot],
+    },
+    isAuthenticated: true,
+    connectionStatus: existing?.connectionStatus ?? 'unknown',
+    tagline: 'Deterministic full-text index across local knowledge-base file memories',
+    metadata: {
+      category: KNOWLEDGE_BASE_METADATA_CATEGORY,
+      collectionId: KNOWLEDGE_BASE_COLLECTION_ID,
+      knowledgeCategory: 'Knowledge Base',
+      knowledgeFolder: 'Knowledge Base/_Index',
+      scope: KNOWLEDGE_BASE_SCOPE,
+      sourceKind: 'knowledge-base-index',
+      sourceFilePath: join(args.knowledgeBaseRoot, 'knowledge-base', 'registry.json'),
+      createdAt: existing?.metadata && typeof existing.metadata === 'object' && typeof existing.metadata.createdAt === 'number'
+        ? existing.metadata.createdAt
+        : args.now,
+    },
+    createdAt: existing?.createdAt ?? args.now,
+    updatedAt: args.now,
+  };
+
+  writeFileSync(getSourceConfigPath(ctx.workspacePath, slug), JSON.stringify(config, null, 2), 'utf-8');
+  writeFileSync(getSourceGuidePath(ctx.workspacePath, slug), buildKnowledgeBaseIndexGuide(args.knowledgeBaseRoot), 'utf-8');
+}
+
+function buildKnowledgeBaseIndexGuide(knowledgeBaseRoot: string): string {
+  return [
+    '# Knowledge Base Index',
+    '',
+    'Deterministic full-text MCP index for registered Agent Pi knowledge-base file memories.',
+    '',
+    '## Scope',
+    '',
+    `Registry root: ${knowledgeBaseRoot}`,
+    '',
+    'This source is a router and citation verifier. It does not load whole documents into context.',
+    '',
+    '## Required workflow',
+    '',
+    '- Call list_sources first to identify available source slugs and folders.',
+    '- Call search_kb, find_clause, or find_table to locate candidate evidence.',
+    '- Call read_chunk for each result used in an answer.',
+    '- Use read_range only for exact line-range checks after a chunk has been found.',
+    '- Call citation_audit before final source-backed conclusions.',
+    '- If search_kb returns no match, say the selected knowledge base did not contain evidence instead of guessing.',
+    '',
+    '## Citation rule',
+    '',
+    'Every factual conclusion based on this source must cite sourceSlug:chunkId plus source file/page/line metadata returned by the tools.',
+    '',
+  ].join('\n');
+}
+
 function readKnowledgeBaseRegistry(registryPath: string): { version: 1; entries: KnowledgeBaseRegistryEntry[] } {
   if (!existsSync(registryPath)) return { version: 1, entries: [] };
   try {
@@ -325,6 +419,20 @@ function readKnowledgeBaseRegistry(registryPath: string): { version: 1; entries:
   } catch {
     return { version: 1, entries: [] };
   }
+}
+
+export function ensureKnowledgeBaseIndexSourceForWorkspace(ctx: SessionToolContext): void {
+  const knowledgeBaseRoot = resolveKnowledgeBaseRegistryRoot(ctx);
+  const serverPath = resolveFileMemoryServerPath();
+  const runtime = resolveScriptRuntime('bun', {
+    isPackaged: process.env.CRAFT_IS_PACKAGED === '1' || process.env.CRAFT_IS_PACKAGED === 'true',
+  });
+  ensureKnowledgeBaseIndexSource(ctx, {
+    knowledgeBaseRoot,
+    serverPath,
+    runtime,
+    now: Date.now(),
+  });
 }
 
 function buildKnowledgeBaseIndexMarkdown(entries: KnowledgeBaseRegistryEntry[]): string {
@@ -353,6 +461,9 @@ function buildKnowledgeBaseIndexMarkdown(entries: KnowledgeBaseRegistryEntry[]):
       lines.push(`- ${entry.name}`);
       lines.push(`  - Source slug: ${entry.sourceSlug}`);
       lines.push(`  - Indexed file: ${entry.sourceFilePath}`);
+      if (entry.manifestPath) {
+        lines.push(`  - Manifest: ${entry.manifestPath}`);
+      }
       if (entry.originalSourceFilePath) {
         lines.push(`  - Original file: ${entry.originalSourceFilePath}`);
       }
@@ -454,12 +565,15 @@ function chunkText(content: string, options: { chunkSize: number; overlap: numbe
 
     const text = normalized.slice(start, end).trim();
     if (text) {
+      const startLine = lineNumberAt(normalized, start);
+      const endLine = lineNumberAt(normalized, end);
       chunks.push({
         id: `chunk-${String(index).padStart(4, '0')}`,
-        title: `${options.titlePrefix} #${index}`,
+        title: buildChunkTitle(options.titlePrefix, index, text),
         text,
-        startLine: lineNumberAt(normalized, start),
-        endLine: lineNumberAt(normalized, end),
+        startLine,
+        endLine,
+        metadata: extractChunkMetadata(normalized, startLine, text),
       });
       index++;
     }
@@ -469,6 +583,56 @@ function chunkText(content: string, options: { chunkSize: number; overlap: numbe
   }
 
   return chunks;
+}
+
+function buildChunkTitle(titlePrefix: string, index: number, text: string): string {
+  const heading = text.split('\n').map(line => line.trim()).find(line => /^#{1,6}\s+\S/.test(line));
+  if (!heading) return `${titlePrefix} #${index}`;
+  return `${titlePrefix} #${index} - ${heading.replace(/^#{1,6}\s+/, '').trim()}`;
+}
+
+function extractChunkMetadata(content: string, startLine: number, text: string): ChunkDraft['metadata'] {
+  return {
+    headingPath: extractHeadingPath(content, startLine),
+    clauseRefs: uniqueMatches(text, /\b(?:clause|section|cl\.?)\s*([A-Z]?\d{1,4}(?:\.\d+)*(?:\([a-z0-9]+\))*)\b/gi),
+    tableRefs: extractTableRefs(text),
+    boqRefs: uniqueMatches(text, /\b\d+\/\d+(?:\.\d+)*(?:\([a-z0-9]+\))*/gi),
+  };
+}
+
+function extractHeadingPath(content: string, startLine: number): string[] {
+  const lines = content.split('\n');
+  const stack: string[] = [];
+  for (let lineIndex = 0; lineIndex < Math.min(startLine, lines.length); lineIndex++) {
+    const match = /^(#{1,6})\s+(.+?)\s*$/.exec(lines[lineIndex] ?? '');
+    if (!match) continue;
+    const level = match[1]!.length;
+    stack.length = level - 1;
+    stack[level - 1] = match[2]!.trim();
+  }
+  return stack.filter(Boolean);
+}
+
+function extractTableRefs(text: string): string[] {
+  const refs: string[] = [];
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length - 1; index++) {
+    const current = lines[index]?.trim() ?? '';
+    const next = lines[index + 1]?.trim() ?? '';
+    if (!current.startsWith('|') || !current.endsWith('|')) continue;
+    if (!/^\|?[\s:-]+\|[\s|:-]*$/.test(next)) continue;
+    refs.push(current.replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim()).join(' | '));
+  }
+  return [...new Set(refs)];
+}
+
+function uniqueMatches(text: string, pattern: RegExp): string[] {
+  const values = new Set<string>();
+  for (const match of text.matchAll(pattern)) {
+    const value = (match[1] ?? match[0])?.trim();
+    if (value) values.add(value);
+  }
+  return [...values];
 }
 
 function lineNumberAt(content: string, offset: number): number {

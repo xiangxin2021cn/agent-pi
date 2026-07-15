@@ -12,10 +12,11 @@ export interface KnowledgeBaseSourceMetadata {
   knowledgeCategory: string;
   knowledgeFolder?: string;
   scope: typeof KNOWLEDGE_BASE_SCOPE;
-  sourceKind: 'file-memory';
+  sourceKind: 'file-memory' | 'knowledge-base-index';
   fileExtension?: KnowledgeBaseFileExtension;
   sourceFilePath?: string;
   originalSourceFilePath?: string;
+  manifestPath?: string;
   tags?: string[];
   owner?: string;
   createdAt?: number;

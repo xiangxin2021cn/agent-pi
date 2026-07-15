@@ -7,6 +7,7 @@ const WORKBOOK_PROTOCOL_PATTERN = /excel|xlsx?|xlsm|workbook|spreadsheet|workshe
 
 export function formatTaskContractContext(contract: SessionTaskContract | undefined): string | undefined {
   if (!contract) return undefined;
+  if (contract.documentQualityMode === 'native_quick') return undefined;
 
   const sections = [
     formatInline('Document workflow mode', contract.documentQualityMode, 80),

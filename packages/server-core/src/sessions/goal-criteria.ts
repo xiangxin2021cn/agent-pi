@@ -42,8 +42,8 @@ export const VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT = 'Pass a visual block a
 export const TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT = 'Pass a template fidelity audit when a reference template or strict layout requirement is present; prompt-only compliance is insufficient.'
 export const OUTPUT_FORMAT_REQUIRED_CRITERION_PREFIX = 'Create output file(s) in the requested format(s):'
 
-const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|report|proposal|document|summary|analysis|review|plan|manual/i
-const RESEARCH_WORK_PATTERN = /调研|搜索|尽调|研究|资料|research|investigate|survey/i
+const DOCUMENT_WORK_PATTERN = /报告|方案|文档|总结|分析|审查|计划|手册|说明|回信|复函|函件|信函|答复函|report|proposal|document|summary|analysis|review|plan|manual|letter|correspondence/i
+const RESEARCH_WORK_PATTERN = /调研|调查|搜索|尽调|研究|资料|research|investigate|survey/i
 const VERIFICATION_PATTERN = /验证|测试|检查|核对|复核|校验|verify|test|check|validate/i
 const COMPREHENSIVE_PATTERN = /全面|详细|认真|深入|深度|系统|高质量|复核|审稿|comprehensive|detailed|thorough|deep|high[- ]quality|review/i
 const UNTIL_DONE_PATTERN = /直到|直至|不达标不|满足要求再|反复|多轮|continue until|until .*done|until .*complete|until .*satisf/i
@@ -70,6 +70,7 @@ const EMBEDDED_HTML_PATTERN = /html|HTML|内嵌|嵌入|embed|embedded|interactiv
 const PROCESS_VISUAL_PATTERN = /流程|关系|架构|步骤|路径|process|workflow|architecture|relationship|diagram/i
 const PROFESSIONAL_DOCUMENT_MODE_PATTERN = /专业文档|专业报告|正式报告|正式文档|证据矩阵|章节计划|质量审查|高质量报告|professional document|professional report|evidence matrix|chapter plan|quality audit/i
 const TECHNICAL_DISPUTE_MEMO_PATTERN = /争议|拒收|是否成立|索赔|违约|合规性|工程师.{0,30}(?:拒绝|拒收)|engineer.{0,30}(?:reject|refuse)|rejection|dispute|claim entitlement/i
+const CORRESPONDENCE_WORK_PATTERN = /回信|复函|函件|信函|答复函|来信|委婉.{0,16}(?:回复|答复)|reply letter|response letter|correspondence|letter|email reply|(?:draft|write|prepare).{0,40}reply/i
 const STRICT_DELIVERY_MODE_PATTERN = /正式交付|最终交付|交付版|必须通过.{0,40}(?:来源|模板|导出|图表|格式).*审查|strict delivery|delivery gates?/i
 const MULTI_AGENT_DEEP_MODE_PATTERN = /多智能体深度|多智能体|分章节智能体|子智能体|多角色评审|大型投标|大型.{0,12}(?:工程|投标|尽调|报告)|due diligence|large tender|multi[- ]agent|sub[- ]agent|chapter agents?|role review/i
 const COMPLEX_AGENT_ORCHESTRATION_PATTERN = /多文件|多来源|多章节|多专业|多角色|全文|全册|整册|全规范|大型|复杂|综合|投标|尽调|工程报告|施工组织|成本|进度|风险|many files|multiple sources|multi[- ]source|multi[- ]chapter|complex|large|full report|whole report|due diligence|tender|engineering report/i
@@ -93,14 +94,20 @@ const OUTPUT_FORMAT_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
 const LOCAL_PATH_PATTERN = /(?:[A-Za-z]:\\[^\s"'<>|]+|\/[^\s"'<>|]+)/g
 const NUMERIC_DETAIL_PATTERN = /(?:\b\d+(?:[.,]\d+)*(?:\s?[%万亿千百元美元日天月年页项轮次mb|gb|kb|m|km|h])?\b|\b\d{4}[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?\b)/gi
 
+function isQuickLikeDocumentQualityMode(mode: SessionDocumentQualityMode | undefined): boolean {
+  return mode === 'native_quick' || mode === 'quick'
+}
+
 export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): SessionGoalCriterionSpec[] {
   const criteria: SessionGoalCriterionSpec[] = [BASE_DELIVERABLE_CRITERION]
   const message = input.message.trim()
   const referencedNames = getReferencedNames(input)
-  const explicitQuickMode = input.documentQualityMode === 'quick'
+  const explicitQuickMode = isQuickLikeDocumentQualityMode(input.documentQualityMode)
   const isDocumentWork = DOCUMENT_WORK_PATTERN.test(message)
   const isResearchWork = RESEARCH_WORK_PATTERN.test(message)
   const isComprehensiveWork = COMPREHENSIVE_PATTERN.test(message)
+  const lightweightReaderFacing = input.documentQualityMode === undefined && isLightweightReaderFacingDocument(message)
+  const shouldRequireComprehensiveOutput = isComprehensiveWork && !lightweightReaderFacing
   const isSourceSensitive = SOURCE_SENSITIVE_PATTERN.test(message)
 
   if (referencedNames.length > 0) {
@@ -113,7 +120,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     criteria.push(SOURCE_GROUNDED_CRITERION)
   }
 
-  if (isDocumentWork || (isResearchWork && isComprehensiveWork)) {
+  if (isDocumentWork || (isResearchWork && shouldRequireComprehensiveOutput)) {
     criteria.push({
       text: 'Produce a structured, readable deliverable with clear sections and enough detail for the requested work product.',
       kind: 'format',
@@ -121,7 +128,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (isComprehensiveWork) {
+  if (shouldRequireComprehensiveOutput) {
     criteria.push({
       text: COMPREHENSIVE_QUALITY_CRITERION_TEXT,
       kind: 'coverage',
@@ -129,7 +136,7 @@ export function buildGoalCriteriaFromMessage(input: BuildGoalCriteriaInput): Ses
     })
   }
 
-  if (!explicitQuickMode && (isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
+  if (!explicitQuickMode && !lightweightReaderFacing && (isDocumentWork || isResearchWork) && (referencedNames.length > 0 || isSourceSensitive || isComprehensiveWork || isResearchWork)) {
     criteria.push({
       text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
       kind: 'coverage',
@@ -328,7 +335,8 @@ export function buildGoalCriteriaUpdateFromMessage(input: BuildGoalCriteriaInput
 function getTaskContractType(message: string): SessionTaskContractType {
   if (isCodeChangeRequest(message)) return 'code'
   if (/自动化|定时任务|事件触发|workflow|automation|scheduled|trigger/i.test(message)) return 'automation'
-  if (/调研|搜索|尽调|研究|资料|research|investigate|survey/i.test(message)) return 'research'
+  if (isCorrespondenceDocumentRequest(message)) return 'document'
+  if (RESEARCH_WORK_PATTERN.test(message)) return 'research'
   if (isNarrowSourceAnalysisScope(message)) return 'data'
   if (DOCUMENT_WORK_PATTERN.test(message)) return 'document'
   if (/数据|表格|清单|统计|测算|分析表|excel|xlsx?|csv|database|sql|data|spreadsheet/i.test(message)) return 'data'
@@ -340,9 +348,23 @@ function getTaskContractTypeWithDocumentMode(
   taskType: SessionTaskContractType,
   documentQualityMode: SessionDocumentQualityMode | undefined,
 ): SessionTaskContractType {
-  if (!documentQualityMode || documentQualityMode === 'quick') return taskType
+  if (!documentQualityMode || isQuickLikeDocumentQualityMode(documentQualityMode)) return taskType
   if (taskType === 'code' || taskType === 'automation') return taskType
   return 'document'
+}
+
+function isCorrespondenceDocumentRequest(message: string): boolean {
+  return CORRESPONDENCE_WORK_PATTERN.test(message)
+}
+
+function isFocusedDisputeQuestion(message: string): boolean {
+  if (!TECHNICAL_DISPUTE_MEMO_PATTERN.test(message)) return false
+  if (!/(?:是否|能否|可否|成立|是否可以|是否能够|whether|valid|entitled|can\b|could\b)/i.test(message)) return false
+  return !/(?:生成|输出|编写|撰写|起草|制作|形成|完整|正式|交付|报告|文档|文件|generate|create|write|draft|author|produce|full|formal|deliverable|report|document|file)/i.test(message)
+}
+
+function isLightweightReaderFacingDocument(message: string): boolean {
+  return isCorrespondenceDocumentRequest(message) || isFocusedDisputeQuestion(message) || isNarrowSourceAnalysisScope(message)
 }
 
 function buildRequirementLedger(input: {
@@ -426,7 +448,9 @@ function resolveDocumentQualityMode(
   input: BuildGoalCriteriaInput,
   taskType: SessionTaskContractType,
 ): SessionDocumentQualityMode {
-  const requestedMode = input.documentQualityMode ?? getDocumentQualityMode(message, input, taskType)
+  if (input.documentQualityMode) return input.documentQualityMode
+
+  const requestedMode = getDocumentQualityMode(message, input, taskType)
   if (requestedMode === 'multi_agent_deep' && isNarrowBoqPricingScope(message)) {
     return 'professional_document'
   }
@@ -444,6 +468,7 @@ function getDocumentQualityMode(
   const referencedCount = getReferencedNames(input).length
   const documentLike = shouldCreateDocumentPlan(message, taskType)
 
+  if (documentLike && isLightweightReaderFacingDocument(message)) return 'quick'
   if (documentLike && isNarrowBoqPricingScope(message)) return 'professional_document'
   if (documentLike && isBoqPricingWorkbookTask(message)) return 'multi_agent_deep'
   if (documentLike && MULTI_AGENT_DEEP_MODE_PATTERN.test(message)) return 'multi_agent_deep'
@@ -467,7 +492,9 @@ function getDocumentQualityMode(
 function buildTaskContractDeliverables(message: string, taskType: SessionTaskContractType): string[] {
   const deliverables: string[] = []
 
-  if (isNarrowSourceAnalysisScope(message)) {
+  if (isCorrespondenceDocumentRequest(message)) {
+    deliverables.push('Draft the requested correspondence in the requested language and tone; keep internal research, legal analysis, and process notes out of the reader-facing message.')
+  } else if (isNarrowSourceAnalysisScope(message)) {
     deliverables.push('Answer the narrow source-analysis request with one result table, one concise interpretation paragraph, and one confirmation-needed note for any unresolved mapping or source gap.')
   } else if (DOCUMENT_WORK_PATTERN.test(message)) {
     deliverables.push('Produce a structured, readable work product with clear sections and enough detail for the requested audience.')
@@ -548,6 +575,10 @@ function buildDocumentPlan(input: {
   explicitRequirements: string[]
   outputFormats: string[]
 }): SessionDocumentPlan | undefined {
+  if (input.documentQualityMode === 'native_quick') {
+    return undefined
+  }
+
   if (!shouldCreateDocumentPlan(input.message, input.taskType)) {
     return undefined
   }
@@ -615,6 +646,17 @@ function buildDocumentEditorialProfile(
   message: string,
   taskType: SessionTaskContractType,
 ): SessionDocumentEditorialProfile {
+  if (isCorrespondenceDocumentRequest(message)) {
+    return {
+      genre: 'contractual_correspondence',
+      readerDecision: 'Send a concise, courteous, source-bounded response that protects the position and asks for the specific next action.',
+      narrativeFirst: true,
+      maxHeadings: 6,
+      maxTables: 0,
+      maxTableLineRatio: 0.12,
+    }
+  }
+
   if (TECHNICAL_DISPUTE_MEMO_PATTERN.test(message)) {
     return {
       genre: 'technical_dispute_memo',
@@ -729,6 +771,9 @@ function buildDocumentPlanSections(
   if (isNarrowSourceAnalysisScope(message)) {
     return ['Result table', 'Interpretation', 'Confirmation needed']
   }
+  if (editorialProfile?.genre === 'contractual_correspondence') {
+    return ['Reference and acknowledgement', 'Position and response', 'Requested next step', 'Reservation of rights']
+  }
 
   const sections = explicitRequirements.length > 0
     ? explicitRequirements
@@ -759,6 +804,9 @@ function buildDocumentPlanTables(message: string, explicitRequirements: string[]
     return ['Use one source-grounded result table limited to the requested page, table, range, or rows.']
   }
   const hasTableRequest = /表格|清单|矩阵|对比表|统计表|table|matrix|schedule|boq|excel|xlsx|csv/i.test(message)
+  if (isCorrespondenceDocumentRequest(message) && !hasTableRequest) {
+    return []
+  }
 
   if (hasTableRequest || taskType === 'data') {
     tables.push('Use readable native tables for key structured data instead of plain text table-like paragraphs.')
@@ -800,8 +848,11 @@ function buildDocumentPlanEnhancements(
     enhancements.push('For this narrow source analysis, provide one result table, one concise interpretation paragraph, and one confirmation-needed note; omit risk matrices, commercial extrapolation, and decorative diagrams unless requested.')
   }
 
-  if (documentQualityMode !== 'quick') {
+  if (!isQuickLikeDocumentQualityMode(documentQualityMode)) {
     enhancements.push(`Use document workflow mode ${documentQualityMode} for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.`)
+  }
+  if (editorialProfile.genre === 'contractual_correspondence') {
+    enhancements.push('Keep the correspondence concise, courteous, and action-oriented; do not include internal research tables, legal memos, or audit narration in the reader-facing draft.')
   }
   enhancements.push(`Write as a ${editorialProfile.genre} for this reader decision: ${editorialProfile.readerDecision}`)
   if (editorialProfile.narrativeFirst) {
@@ -835,7 +886,7 @@ function buildDocumentEvidenceMatrix(input: {
   message: string
   taskType: SessionTaskContractType
 }): SessionDocumentEvidenceMatrixEntry[] | undefined {
-  if (input.documentQualityMode === 'quick') return undefined
+  if (isQuickLikeDocumentQualityMode(input.documentQualityMode)) return undefined
 
   const sources = uniqueBounded(input.referencedNames, 6)
   if (sources.length > 0) {
@@ -971,7 +1022,7 @@ function shouldCreateComplexDocumentAgentPlan(
   message: string,
   taskType: SessionTaskContractType,
 ): boolean {
-  if (documentQualityMode === 'quick') return false
+  if (isQuickLikeDocumentQualityMode(documentQualityMode)) return false
   if (documentQualityMode === 'multi_agent_deep') return true
 
   const titleCount = titles.filter(title => !isFinalSynthesisInstruction(title)).length
@@ -1297,6 +1348,10 @@ function buildForbiddenShortcuts(
   if (COMPREHENSIVE_PATTERN.test(message) || DOCUMENT_WORK_PATTERN.test(message)) {
     shortcuts.push('Do not replace the requested document-quality work product with a high-level outline, template, or brief note.')
   }
+  if (isCorrespondenceDocumentRequest(message)) {
+    shortcuts.push('Do not expose internal research, legal analysis, evidence matrices, goal audits, or process notes in the final correspondence unless the user explicitly asks.')
+    shortcuts.push('Do not invent actions already completed, admissions, deadlines, or commitments that are not supported by the source material or the user instruction.')
+  }
   if (SOURCE_SENSITIVE_PATTERN.test(message) || taskType === 'research') {
     shortcuts.push('Do not invent facts, figures, clauses, page numbers, file names, dates, prices, or technical parameters.')
     shortcuts.push('Do not inventory or mine the working directory as a source corpus unless the user explicitly names that folder/path for analysis.')
@@ -1332,10 +1387,11 @@ function mergeDocumentQualityModes(
   if (!next) return current
 
   const rank: Record<SessionDocumentQualityMode, number> = {
-    quick: 0,
-    professional_document: 1,
-    strict_delivery: 2,
-    multi_agent_deep: 3,
+    native_quick: 0,
+    quick: 1,
+    professional_document: 2,
+    strict_delivery: 3,
+    multi_agent_deep: 4,
   }
   return rank[next] > rank[current] ? next : current
 }
@@ -1446,7 +1502,15 @@ function uniqueBounded(items: string[], limit: number): string[] {
 
 export function buildGoalExecutionPolicyFromMessage(input: BuildGoalCriteriaInput): GoalExecutionPolicy {
   const message = input.message.trim()
-  const explicitQuickMode = input.documentQualityMode === 'quick'
+  if (input.documentQualityMode === 'native_quick') {
+    return {
+      mode: 'off',
+      maxIterations: 0,
+      maxWallClockMs: 0,
+    }
+  }
+
+  const explicitQuickMode = isQuickLikeDocumentQualityMode(input.documentQualityMode)
   const maxIterations = MAX_AUTOMATIC_GOAL_REPAIR_PASSES
   let maxWallClockMs = 15 * 60 * 1000
 
@@ -1547,7 +1611,7 @@ function buildArtifactDeliverables(
     }
   }
 
-  const needsAppDraft = documentQualityMode !== 'quick'
+  const needsAppDraft = !isQuickLikeDocumentQualityMode(documentQualityMode)
     && (taskType === 'document' || taskType === 'research' || taskType === 'data')
     && APP_DRAFT_DOCUMENT_PATTERN.test(input.message)
   if (!needsAppDraft) return deliverables

@@ -1,9 +1,12 @@
 export type TenderCapabilityId =
+  | 'document_analysis'
   | 'evaluation_strategy'
   | 'boq_reconciliation'
+  | 'boq_five_step_pricing'
   | 'execution_plan'
   | 'schedule_resources'
   | 'cost_cashflow'
+  | 'submission_documents'
   | 'submission_audit';
 
 export type TenderCapabilityDependency = TenderCapabilityId | 'core';

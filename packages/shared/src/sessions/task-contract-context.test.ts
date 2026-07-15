@@ -128,6 +128,15 @@ describe('formatTaskContractContext', () => {
     expect(formatted).not.toContain('Critical reasoning protocol:');
   });
 
+  it('does not inject a goal contract for native quick document mode', () => {
+    const formatted = formatTaskContractContext({
+      ...contract,
+      documentQualityMode: 'native_quick',
+    });
+
+    expect(formatted).toBeUndefined();
+  });
+
   it('includes multi-agent document plan constraints when available', () => {
     const formatted = formatTaskContractContext({
       ...contract,

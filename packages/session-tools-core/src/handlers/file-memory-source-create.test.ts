@@ -216,6 +216,7 @@ describe('file_memory_source_create', () => {
 
       const manifestPath = join(workspacePath, 'file-memory', 'file-memory-company-standard', 'manifest.json');
       const sourceConfigPath = join(workspacePath, 'sources', 'file-memory-company-standard', 'config.json');
+      const indexConfigPath = join(workspacePath, 'sources', 'knowledge-base-index', 'config.json');
       const guidePath = join(workspacePath, 'sources', 'file-memory-company-standard', 'guide.md');
 
       const config = JSON.parse(readFileSync(sourceConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
@@ -249,6 +250,14 @@ describe('file_memory_source_create', () => {
       const guide = readFileSync(guidePath, 'utf-8');
       expect(guide).toContain('Knowledge Base');
       expect(guide).toContain('Tender Standards/Method Statements');
+
+      const indexConfig = JSON.parse(readFileSync(indexConfigPath, 'utf-8')) as SourceConfig & { metadata?: Record<string, unknown> };
+      expect(indexConfig.name).toBe('Knowledge Base Index');
+      expect(indexConfig.mcp?.args).toContain('--knowledge-base-root');
+      expect(indexConfig.metadata).toMatchObject({
+        category: 'knowledge_base',
+        sourceKind: 'knowledge-base-index',
+      });
 
       const registryPath = join(knowledgeBaseRegistryRootPath, 'knowledge-base', 'registry.json');
       const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as {
@@ -333,6 +342,67 @@ describe('file_memory_source_create', () => {
       expect(stableSourceFilePath.endsWith('.pdf')).toBe(false);
       expect(config.metadata?.originalSourceFilePath).toBe(originalFile);
       expect(readFileSync(stableSourceFilePath, 'utf-8')).toContain('Structured Markdown text.');
+    } finally {
+      if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+      else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;
+      if (previousBun === undefined) delete process.env.CRAFT_BUN;
+      else process.env.CRAFT_BUN = previousBun;
+      if (previousPackaged === undefined) delete process.env.CRAFT_IS_PACKAGED;
+      else process.env.CRAFT_IS_PACKAGED = previousPackaged;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('records heading, clause, table, and source hash metadata for deterministic knowledge retrieval', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'file-memory-source-'));
+    const previousServer = process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
+    const previousBun = process.env.CRAFT_BUN;
+    const previousPackaged = process.env.CRAFT_IS_PACKAGED;
+
+    try {
+      const workspacePath = join(root, 'workspace');
+      const workingDirectory = join(root, 'project');
+      mkdirSync(workspacePath, { recursive: true });
+      mkdirSync(workingDirectory, { recursive: true });
+
+      const fakeServer = join(root, 'file-memory-server.js');
+      writeFileSync(fakeServer, 'console.log("ok");', 'utf-8');
+      process.env.CRAFT_FILE_MEMORY_MCP_SERVER = fakeServer;
+      process.env.CRAFT_BUN = 'bun';
+      process.env.CRAFT_IS_PACKAGED = '0';
+
+      const sourceFile = join(workingDirectory, 'standard.md');
+      writeFileSync(sourceFile, [
+        '# Chapter 1 General',
+        '',
+        'Clause 1101 requires inspection records.',
+        '',
+        '| BOQ Ref | Requirement |',
+        '| --- | --- |',
+        '| 1/66.08(a) | Slotted drain cover sealant |',
+      ].join('\n'), 'utf-8');
+
+      const ctx = createTestContext(workspacePath, workingDirectory);
+      const result = await handleFileMemorySourceCreate(ctx, {
+        filePath: 'standard.md',
+        sourceSlug: 'file-memory-standard',
+        autoEnable: false,
+      });
+
+      expect(result.isError).toBeFalsy();
+
+      const manifestPath = join(workspacePath, 'file-memory', 'file-memory-standard', 'manifest.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
+        sourceSha256?: string;
+        chunks: Array<{ metadata?: Record<string, unknown> }>;
+      };
+      expect(manifest.sourceSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(manifest.chunks[0]?.metadata).toMatchObject({
+        headingPath: ['Chapter 1 General'],
+        clauseRefs: ['1101'],
+        tableRefs: ['BOQ Ref | Requirement'],
+        boqRefs: ['1/66.08(a)'],
+      });
     } finally {
       if (previousServer === undefined) delete process.env.CRAFT_FILE_MEMORY_MCP_SERVER;
       else process.env.CRAFT_FILE_MEMORY_MCP_SERVER = previousServer;
