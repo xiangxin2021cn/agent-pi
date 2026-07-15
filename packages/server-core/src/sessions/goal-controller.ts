@@ -173,6 +173,7 @@ export class GoalController {
         ...resultPaths,
       ])
       for (const path of extractOutputFilePaths(message, inputPaths, resultPaths)) {
+        if (isInternalControlArtifactPath(path)) continue
         outputFileEvidencePaths.add(path)
         paths.add(path)
       }
@@ -364,6 +365,7 @@ export class GoalController {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
         const isOutputFile = outputFileEvidencePaths.has(filePath)
+        const isInternalControlArtifact = isInternalControlArtifactPath(filePath)
         const artifactDeliverable = isOutputFile
           ? findArtifactDeliverableForPath(goalState.taskContract, filePath)
           : undefined
@@ -435,14 +437,18 @@ export class GoalController {
           if (preview) {
             evidence.push({
               type: 'file',
-              label: buildFilePreviewEvidenceLabel(verification, isOutputFile),
+              label: isInternalControlArtifact
+                ? 'internal_control_artifact_preview'
+                : buildFilePreviewEvidenceLabel(verification, isOutputFile),
               detail: `${filePath}\n${preview}`.slice(0, 3000),
             })
           }
         }
       }
     }
-    const sourceFileEvidencePaths = [...fileEvidencePaths].filter(filePath => !outputFileEvidencePaths.has(filePath))
+    const sourceFileEvidencePaths = [...fileEvidencePaths].filter(filePath =>
+      !outputFileEvidencePaths.has(filePath) && !isInternalControlArtifactPath(filePath)
+    )
     if (
       finalAssistant
       && sourceFileEvidencePaths.length > 0
@@ -510,6 +516,7 @@ export class GoalController {
         strict: goalState.mode === 'strict_work' || isStrictDeliveryContract(goalState),
         allowVisibleInternalArtifacts: goalState.taskContract?.documentPlan?.artifactVisibility?.visibleInternal,
         tableLed: goalState.taskContract?.documentPlan?.artifactVisibility?.tableLed,
+        editorialProfile: goalState.taskContract?.documentPlan?.editorialProfile,
       })
       evidence.push({
         type: 'system',
@@ -2187,6 +2194,13 @@ const COMMAND_OUTPUT_CANDIDATE_TOOL_NAME_PATTERN = /(?:^|[_\-\s])(?:bash|shell|p
 const OUTPUT_RESULT_TEXT_PATTERN = /(?:created|wrote|written|saved|exported|converted|generated|updated|创建|生成|写入|保存|导出|转换|更新).{0,200}(?:[A-Za-z]:\\|\/)/i
 const FILE_PATH_TEXT_PATTERN = /(?:[A-Za-z]:\\[^"'<>|\r\n]+?|\/[^\s"'<>|]+)\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml)\b/gi
 const QUOTED_FILE_PATH_TEXT_PATTERN = /["'`]((?:[A-Za-z]:\\|\/)[^"'`<>|\r\n]+?\.(?:csv|docx?|html?|json|md|pdf|pptx?|txt|xlsx?|xml|yaml|yml))["'`]/gi
+const INTERNAL_CONTROL_ARTIFACT_PATH_PATTERN = /(?:^|[\\/])(?:orchestration[\\/](?:briefs|reports|evidence-packages)|_reviews)(?:[\\/]|$)/i
+const INTERNAL_CONTROL_ARTIFACT_FILE_PATTERN = /(?:^|[\\/])(?:evidence-matrix|progress-ledger)\.json$/i
+
+function isInternalControlArtifactPath(filePath: string): boolean {
+  return INTERNAL_CONTROL_ARTIFACT_PATH_PATTERN.test(filePath)
+    || INTERNAL_CONTROL_ARTIFACT_FILE_PATTERN.test(filePath)
+}
 
 function promoteFormalOutputFileEvidencePaths(input: {
   candidatePaths: Set<string>
@@ -2201,6 +2215,7 @@ function promoteFormalOutputFileEvidencePaths(input: {
   const requiredFormats = new Set(input.requiredOutputFormats)
   for (const filePath of input.candidatePaths) {
     if (input.outputFileEvidencePaths.has(filePath)) continue
+    if (isInternalControlArtifactPath(filePath)) continue
     if (!pathStartsWith(filePath, input.expectedOutputDirectory)) continue
     if (!getOutputFormatsForPath(filePath).some(format => requiredFormats.has(format))) continue
     input.outputFileEvidencePaths.add(filePath)

@@ -263,6 +263,11 @@ import type {
   InvestmentWorkspaceSummaryDto,
   InvestmentWorkspaceBundleDto,
   InvestmentWorkspaceMutationRequest,
+  BusinessProjectRecord,
+  CreateBusinessProjectInput,
+  ListBusinessProjectsRequest,
+  UpdateBusinessProjectInputsRequest,
+  UnregisterBusinessProjectRequest,
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
@@ -327,6 +332,10 @@ export interface ElectronAPI {
   listInvestmentWorkspaces(request: InvestmentWorkspaceLocationRequest): Promise<InvestmentWorkspaceSummaryDto[]>
   getInvestmentWorkspace(request: InvestmentWorkspaceLocationRequest & { projectId: string }): Promise<InvestmentWorkspaceBundleDto>
   mutateInvestmentWorkspace(request: InvestmentWorkspaceMutationRequest): Promise<Record<string, unknown>>
+  listBusinessProjects(request: ListBusinessProjectsRequest): Promise<BusinessProjectRecord[]>
+  createBusinessProject(request: CreateBusinessProjectInput): Promise<BusinessProjectRecord>
+  updateBusinessProjectInputs(request: UpdateBusinessProjectInputsRequest): Promise<BusinessProjectRecord>
+  unregisterBusinessProject(request: UnregisterBusinessProjectRequest): Promise<{ success: true }>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
@@ -932,19 +941,19 @@ export interface AutomationsNavigationState {
 
 export interface TenderNavigationState {
   navigator: 'tender'
-  details: { type: 'tenderWorkspace'; projectId: string } | null
+  details: { type: 'tenderWorkspace'; projectId: string; sessionId?: string } | null
   rightSidebar?: RightSidebarPanel
 }
 
 export interface DeliveryNavigationState {
   navigator: 'delivery'
-  details: { type: 'deliveryWorkspace'; projectId: string } | null
+  details: { type: 'deliveryWorkspace'; projectId: string; sessionId?: string } | null
   rightSidebar?: RightSidebarPanel
 }
 
 export interface InvestmentNavigationState {
   navigator: 'investment'
-  details: { type: 'investmentWorkspace'; projectId: string } | null
+  details: { type: 'investmentWorkspace'; projectId: string; sessionId?: string } | null
   rightSidebar?: RightSidebarPanel
 }
 
@@ -1001,13 +1010,19 @@ export const DEFAULT_NAVIGATION_STATE: NavigationState = {
 
 export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'tender') {
-    return state.details ? `tender-workspaces/project/${state.details.projectId}` : 'tender-workspaces'
+    return state.details
+      ? `tender-workspaces/project/${state.details.projectId}${state.details.sessionId ? `/session/${state.details.sessionId}` : ''}`
+      : 'tender-workspaces'
   }
   if (state.navigator === 'delivery') {
-    return state.details ? `delivery-workspaces/project/${state.details.projectId}` : 'delivery-workspaces'
+    return state.details
+      ? `delivery-workspaces/project/${state.details.projectId}${state.details.sessionId ? `/session/${state.details.sessionId}` : ''}`
+      : 'delivery-workspaces'
   }
   if (state.navigator === 'investment') {
-    return state.details ? `investment-workspaces/project/${state.details.projectId}` : 'investment-workspaces'
+    return state.details
+      ? `investment-workspaces/project/${state.details.projectId}${state.details.sessionId ? `/session/${state.details.sessionId}` : ''}`
+      : 'investment-workspaces'
   }
   if (state.navigator === 'sources') {
     if (state.details) {

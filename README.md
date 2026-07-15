@@ -14,15 +14,30 @@ Agent Pi is not a thin chat wrapper. It is a project workbench: conversations ar
 
 ## Latest Version / 最新版本
 
-**Current release: V2.1.1.**
+**Current release: V2.2.0.**
 
-**当前发布版：V2.1.1。**
+**当前发布版：V2.2.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.0 Enterprise Workbenches and Document Quality / V2.2.0 企业工作台与文档质量
+
+V2.2.0 adds independent tender, project-delivery, and resource-investment workbenches while keeping the existing conversation engine as the execution surface. It also introduces a Document Quality First patch so focused professional reports prioritize genre, reader decisions, narrative coherence, and clean formal deliverables instead of workflow-heavy prose.
+
+V2.2.0 新增相互独立的投标、项目实施和资源投资工作台，并继续复用现有对话引擎执行专业任务。同时加入“文档质量优先”补丁，让聚焦型专业报告优先匹配文体、读者决策、叙事连贯性和正式成果纯净度，不再被工作流式正文淹没。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Enterprise workbenches | Tender, delivery, and investment projects have dedicated project lists, guided workflow bars, source intake, conversations, and output views. | 投标、实施和投资项目拥有独立项目列表、流程引导、资料输入、会话和成果视图。 |
+| Independent source boundaries | Delivery and investment projects can start from their own inputs without depending on tender-stage data. | 实施和投资项目可直接使用各自输入启动，不依赖投标阶段资料。 |
+| Controlled knowledge sharing | Explicitly approved artifacts are copied into immutable, hash-addressed enterprise knowledge storage for corroborative reuse across workbenches. | 经明确确认的成果复制到不可变、哈希寻址的企业知识库，供不同工作台受控复用和相互印证。 |
+| Document Quality First | Genre-aware editorial profiles, narrative-first planning, and table/heading budgets keep focused reports readable and professional. | 文体感知、叙事优先规划及表格/标题预算让聚焦型报告保持专业和可读。 |
+| Clean formal deliverables | Evidence matrices, handoffs, progress ledgers, and review metadata remain internal; the editorial reviewer checks answer visibility, source applicability, and process leakage. | 证据矩阵、交接、进度台账和审查元数据保持为内部文件；编辑审查检查结论可见性、来源适用性和过程信息泄漏。 |
+| Core runtime | Claude Agent SDK 0.3.209 and Anthropic SDK 0.111.0 are bundled; Pi remains on 0.80.6. | 内置 Claude Agent SDK 0.3.209 和 Anthropic SDK 0.111.0；Pi 保持 0.80.6。 |
 
 ### V2.1.1 Controlled Source Analysis / V2.1.1 受控来源分析
 
@@ -56,22 +71,6 @@ V2.1.0 将企业长文档执行升级为应用负责的交付协议。稳定需�
 | Current-turn completion proof | Completion requires a transactionally validated artifact that the deterministic verifier identifies as output of the current turn; old files, read-only access, and reviewer claims cannot pass the gate. | 完成必须同时具备事务校验产物和确定性“本轮输出”证明；旧文件、只读访问和审查模型自述不能通过门槛。 |
 | Final evidence package | Goal Audit uses a compact evidence package first and rewrites it after reviewer and completion gates resolve. | Goal Audit 优先使用紧凑证据包，并在审查与完成门槛结束后写回最终状态。 |
 | Core runtime | Claude Agent SDK 0.3.206 adds lifecycle/terminal-state signals; Pi 0.80.6 improves Windows discovery, long-run retries, compaction accounting, truncated tool calls, and DeepSeek DS4 overflow detection. | Claude Agent SDK 0.3.206 增加生命周期与终态信号；Pi 0.80.6 改进 Windows 发现、长任务重试、压缩预算、截断工具调用和 DeepSeek DS4 溢出识别。 |
-
-### V2.0.1 Orchestration Control Patch / V2.0.1 编排控制小修
-
-V2.0.1 makes the new orchestration layer visible and tighter. The Info popover now exposes phase, selected-source boundary, task board, sub-agent lifecycle, progress ledger, and entropy alerts; sub-agent dispatch is narrowed through file-backed briefs and reports; Goal Audit now prefers compact evidence packages before reconstructing a task from broader context.
-
-V2.0.1 让新的编排层更可见、更克制：“信息”弹窗展示阶段、来源硬边界、任务板、子智能体生命周期、进度账本和熵告警；子智能体通过文件化 brief/report 限定任务；Goal Audit 优先读取紧凑 evidence package，再回看更大的上下文。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Orchestration UI | Session Info shows phase, source boundary, task board, sub-agent lifecycle, progress ledger, evidence package path, and entropy alerts; the Goal badge only adds a short status hint. | 会话信息展示阶段、来源边界、任务板、子智能体生命周期、进度账本、证据包路径和熵告警；Goal badge 只加短状态提示。 |
-| Bounded autonomy files | Each orchestrated session gets `orchestration/briefs`, `reports`, `evidence-packages`, and `progress-ledger.json` so long tasks are inspectable and resumable. | 每个编排会话新增 `orchestration/briefs`、`reports`、`evidence-packages` 和 `progress-ledger.json`，让长任务可检查、可续跑。 |
-| Narrow sub-agent dispatch | Spawned agents receive only `brief_path`, allowed sources, report path, and evidence package path instead of a broad parent prompt. | 子智能体只接收 `brief_path`、允许来源、报告路径和证据包路径，不再直接吞入宽泛主提示词。 |
-| Evidence-first audit | Goal Audit writes an evidence package before model review and treats it as the preferred compact audit bundle. | Goal Audit 在模型审查前写入 evidence package，并优先作为紧凑审查证据。 |
-| Narrow BOQ scope | Named page/sheet pricing such as MEDIAN BARRIER remains serial and item-focused instead of triggering cross-sheet dispatch and final synthesis. | 类似 MEDIAN BARRIER 的指定页/表组价保持串行和逐项推导，不触发跨表分派和最终统稿。 |
-| Spawn governance | Spawned sub-agents may not spawn further child sessions; oversized work must return structured gaps and recommendations to the main session. | 子智能体不得继续派生子子智能体；任务过大时把缺口和建议结构化交回主会话。 |
-| Core dependency | Claude Agent SDK updated to 0.3.202; Anthropic SDK and Pi packages were already current. | Claude Agent SDK 升级到 0.3.202；Anthropic SDK 和 Pi 组件已是最新版。 |
 
 Older release details are available on GitHub Releases.
 

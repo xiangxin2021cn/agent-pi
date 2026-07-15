@@ -1985,7 +1985,7 @@ describe('SessionManager goal loop routing', () => {
     await sm.sendMessage(sessionId, '你好', undefined, undefined, { documentQualityMode: 'professional_document' }).catch(() => { /* expected after pre-agent setup */ })
 
     expect(managed.goalState?.taskContract?.documentQualityMode).toBe('professional_document')
-    expect(managed.goalState?.taskContract?.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+    expect(managed.goalState?.taskContract?.documentPlan?.enhancements).toContain('Use document workflow mode professional_document for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.')
     expect(events.some(event =>
       event.type === 'goal_state_changed'
       && event.goalState.id === managed.goalState?.id

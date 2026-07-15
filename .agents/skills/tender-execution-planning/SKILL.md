@@ -7,6 +7,9 @@ description: Build and validate tender-stage construction work packages, method 
 
 Translate reconciled tender scope into controlled work packages. Use `tender_capability` as the tender execution-plan system of record. Use the document-delivery kernel separately when the user requests formal method statements or proposal chapters.
 
+The formal tender deliverable is **WORK PLAN AND PROPOSED METHODOLOGY**. Produce it only from an
+approved project-planning basis, validated work packages, and the user-selected tender sources.
+
 ## Guardrails
 
 - Use only user-selected sources and registered Tender Workspace records.
@@ -41,6 +44,9 @@ Translate reconciled tender scope into controlled work packages. Use `tender_cap
    packages, and unverified resource assumptions instead of bypassing audit results.
 7. If status reports stale, inspect only changed registered core or upstream records, revise affected
    work packages, replace the pack, and validate again.
+8. Render the validated plan as a formal proposal narrative. Follow the tender template and requested
+   language, preserve source traceability, and explain the proposed sequence, resources, interfaces,
+   quality controls, HSE controls, and environmental controls as a coherent submission chapter.
 
 ## Completion
 

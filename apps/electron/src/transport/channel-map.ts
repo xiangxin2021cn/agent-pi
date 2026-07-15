@@ -63,6 +63,10 @@ export const CHANNEL_MAP = {
   listInvestmentWorkspaces: invoke(RPC_CHANNELS.investmentWorkspace.LIST),
   getInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.GET),
   mutateInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.MUTATE),
+  listBusinessProjects: invoke(RPC_CHANNELS.businessProjects.LIST),
+  createBusinessProject: invoke(RPC_CHANNELS.businessProjects.CREATE),
+  updateBusinessProjectInputs: invoke(RPC_CHANNELS.businessProjects.UPDATE_INPUTS),
+  unregisterBusinessProject: invoke(RPC_CHANNELS.businessProjects.UNREGISTER),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)

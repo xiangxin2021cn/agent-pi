@@ -13,6 +13,7 @@ import type { Getter, Setter } from 'jotai/vanilla'
 import { atomFamily } from 'jotai-family'
 import type { Session, Message } from '../../shared/types'
 import type { SessionGoalState } from '@craft-agent/shared/sessions'
+import type { SessionBusinessContext } from '@craft-agent/shared/business-projects'
 
 /**
  * Session metadata for list display (lightweight, no messages)
@@ -29,6 +30,8 @@ export interface SessionMeta {
   isFlagged?: boolean
   lastReadMessageId?: string
   workingDirectory?: string
+  /** Professional module/project/workflow location for this session */
+  businessContext?: SessionBusinessContext
   enabledSourceSlugs?: string[]
   /** Shared viewer URL (if shared via viewer) */
   sharedUrl?: string

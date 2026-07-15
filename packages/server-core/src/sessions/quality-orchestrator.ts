@@ -188,6 +188,10 @@ function buildRolePrompt(
     '- Use pass only when the evidence clearly proves all required criteria.',
     '- When verified file previews are present, judge the artifact content instead of relying only on the final response.',
     '- When source_file_preview evidence is present, use it as source material for grounding and citation checks, not as proof that a requested output file was produced.',
+    '- Judge genre and audience fit, whether the direct answer is easy to find, and whether prose connects evidence to the reader decision.',
+    '- Treat evidence matrices, goal audits, handoff notes, session metadata, and orchestration paths as internal control artifacts unless the user explicitly requested them in the deliverable.',
+    '- Fail with shallow_output when a reader-facing document is fragmented, table-dominated, or padded with process narration even if internal evidence controls are complete.',
+    '- Judge whether a source applies to the claim and scenario; citation count alone is not evidence quality.',
     '- When status is "pass", missingCriteria must be [] and correctivePrompt must be omitted.',
     '- If any criterion is missing or any correctivePrompt is needed, status must not be "pass".',
     '- Use fail when another pass can fix concrete missing work.',
@@ -220,8 +224,8 @@ function buildQualityReviewRoles(input: GoalReviewInput): QualityReviewRole[] {
 
   if (documentQualityMode === 'professional_document' || documentQualityMode === 'strict_delivery' || documentQualityMode === 'multi_agent_deep') {
     roles.push({
-      name: 'document_evidence_reviewer',
-      focus: 'Check the document contract, evidence matrix, chapter plan, citations, tables, figures, and quality-audit depth.',
+      name: 'document_editor_reviewer',
+      focus: 'Check genre and audience fit, whether the direct answer is easy to find, narrative coherence, table and heading economy, source applicability, and whether internal control artifacts leaked into reader-facing prose.',
     })
   }
 

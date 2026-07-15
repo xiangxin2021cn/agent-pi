@@ -2,7 +2,7 @@ import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
 import { deriveOutputFormats, getArtifactFormatCapability, normalizeArtifactFormat } from '@craft-agent/shared/artifacts'
 import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
 import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
-import type { SessionArtifactDeliverable, SessionDocumentAgentPlan, SessionDocumentArtifactVisibilityPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEvidenceMatrixEntry, SessionDocumentInternalArtifactKind, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
+import type { SessionArtifactDeliverable, SessionDocumentAgentPlan, SessionDocumentArtifactVisibilityPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEditorialProfile, SessionDocumentEvidenceMatrixEntry, SessionDocumentInternalArtifactKind, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
 
@@ -69,6 +69,7 @@ const STRICT_TEMPLATE_PATTERN = /严格.{0,12}(?:模板|版式|格式|布局|字
 const EMBEDDED_HTML_PATTERN = /html|HTML|内嵌|嵌入|embed|embedded|interactive/i
 const PROCESS_VISUAL_PATTERN = /流程|关系|架构|步骤|路径|process|workflow|architecture|relationship|diagram/i
 const PROFESSIONAL_DOCUMENT_MODE_PATTERN = /专业文档|专业报告|正式报告|正式文档|证据矩阵|章节计划|质量审查|高质量报告|professional document|professional report|evidence matrix|chapter plan|quality audit/i
+const TECHNICAL_DISPUTE_MEMO_PATTERN = /争议|拒收|是否成立|索赔|违约|合规性|工程师.{0,30}(?:拒绝|拒收)|engineer.{0,30}(?:reject|refuse)|rejection|dispute|claim entitlement/i
 const STRICT_DELIVERY_MODE_PATTERN = /正式交付|最终交付|交付版|必须通过.{0,40}(?:来源|模板|导出|图表|格式).*审查|strict delivery|delivery gates?/i
 const MULTI_AGENT_DEEP_MODE_PATTERN = /多智能体深度|多智能体|分章节智能体|子智能体|多角色评审|大型投标|大型.{0,12}(?:工程|投标|尽调|报告)|due diligence|large tender|multi[- ]agent|sub[- ]agent|chapter agents?|role review/i
 const COMPLEX_AGENT_ORCHESTRATION_PATTERN = /多文件|多来源|多章节|多专业|多角色|全文|全册|整册|全规范|大型|复杂|综合|投标|尽调|工程报告|施工组织|成本|进度|风险|many files|multiple sources|multi[- ]source|multi[- ]chapter|complex|large|full report|whole report|due diligence|tender|engineering report/i
@@ -551,12 +552,13 @@ function buildDocumentPlan(input: {
     return undefined
   }
 
-  const sections = buildDocumentPlanSections(input.message, input.explicitRequirements, input.taskType)
+  const editorialProfile = buildDocumentEditorialProfile(input.message, input.taskType)
+  const sections = buildDocumentPlanSections(input.message, input.explicitRequirements, input.taskType, editorialProfile)
   const tables = buildDocumentPlanTables(input.message, input.explicitRequirements, input.taskType)
   const charts = buildDocumentPlanCharts(input.message, input.explicitRequirements)
   const visualPlan = buildVisualPlan(input.message)
   const strictTemplate = requiresTemplateFidelityAudit(input.message)
-  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate, input.documentQualityMode)
+  const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate, input.documentQualityMode, editorialProfile)
   const agentPlan = buildDocumentAgentPlan(input.documentQualityMode, sections, input.message, input.taskType)
   const evidenceMatrix = buildDocumentEvidenceMatrix({
     documentQualityMode: input.documentQualityMode,
@@ -584,6 +586,7 @@ function buildDocumentPlan(input: {
     audience: extractFirstMatch(input.message, DOCUMENT_AUDIENCE_PATTERN),
     tone: extractFirstMatch(input.message, DOCUMENT_TONE_PATTERN),
     length: extractFirstMatch(input.message, DOCUMENT_LENGTH_PATTERN),
+    editorialProfile,
     domain: detectDocumentDomain(input.message),
     visualPlan,
     agentPlan,
@@ -608,6 +611,97 @@ function shouldCreateDocumentPlan(message: string, taskType: SessionTaskContract
     || /报告|方案|简报|手册|清单|章节|表格|图表|引用|交付|PPT|幻灯片|word|docx|pptx|pdf|report|proposal|brief|manual|slides?|section|table|chart|citation|deliverable/i.test(message)
 }
 
+function buildDocumentEditorialProfile(
+  message: string,
+  taskType: SessionTaskContractType,
+): SessionDocumentEditorialProfile {
+  if (TECHNICAL_DISPUTE_MEMO_PATTERN.test(message)) {
+    return {
+      genre: 'technical_dispute_memo',
+      readerDecision: 'Resolve the central technical or contractual dispute and state the conditions that change the answer.',
+      narrativeFirst: true,
+      maxHeadings: 12,
+      maxTables: 2,
+      maxTableLineRatio: 0.25,
+    }
+  }
+
+  if (/施工方案|施工组织|method statement|construction method/i.test(message)) {
+    return {
+      genre: 'method_statement',
+      readerDecision: 'Confirm that the proposed method is complete, feasible, controlled, and ready for approval or execution.',
+      narrativeFirst: true,
+      maxHeadings: 24,
+      maxTables: 6,
+      maxTableLineRatio: 0.4,
+    }
+  }
+
+  if (/投标|标书|tender submission|bid submission/i.test(message)) {
+    return {
+      genre: 'tender_submission',
+      readerDecision: 'Demonstrate compliance, delivery credibility, and differentiating value against the tender requirements.',
+      narrativeFirst: true,
+      maxHeadings: 32,
+      maxTables: 8,
+      maxTableLineRatio: 0.4,
+    }
+  }
+
+  if (/尽调|尽职调查|due diligence/i.test(message)) {
+    return {
+      genre: 'due_diligence_report',
+      readerDecision: 'Support a bounded proceed, revise, or stop decision with material evidence, risks, and unresolved conditions.',
+      narrativeFirst: true,
+      maxHeadings: 28,
+      maxTables: 8,
+      maxTableLineRatio: 0.4,
+    }
+  }
+
+  if (/简报|汇报|executive brief|management brief/i.test(message)) {
+    return {
+      genre: 'management_brief',
+      readerDecision: 'Enable the reader to understand the decision, material basis, and next action quickly.',
+      narrativeFirst: true,
+      maxHeadings: 10,
+      maxTables: 2,
+      maxTableLineRatio: 0.3,
+    }
+  }
+
+  if (taskType === 'research' || /调研|研究|research/i.test(message)) {
+    return {
+      genre: 'research_report',
+      readerDecision: 'Explain what the evidence supports, what remains uncertain, and the resulting recommendation.',
+      narrativeFirst: true,
+      maxHeadings: 18,
+      maxTables: 4,
+      maxTableLineRatio: 0.35,
+    }
+  }
+
+  if (/分析|analysis|评估|assessment/i.test(message)) {
+    return {
+      genre: 'analysis_report',
+      readerDecision: 'Present the material finding, its basis, implications, and the action or decision it supports.',
+      narrativeFirst: true,
+      maxHeadings: 16,
+      maxTables: 4,
+      maxTableLineRatio: 0.35,
+    }
+  }
+
+  return {
+    genre: 'general_document',
+    readerDecision: 'Deliver the requested reader-facing outcome with a clear conclusion and supporting basis.',
+    narrativeFirst: true,
+    maxHeadings: 18,
+    maxTables: 4,
+    maxTableLineRatio: 0.35,
+  }
+}
+
 function buildDocumentArtifactVisibilityPlan(message: string): SessionDocumentArtifactVisibilityPlan {
   const visibleInternal: SessionDocumentInternalArtifactKind[] = []
   const visibleContext = /(?:正文|附录|交付物|reader-facing|appendix|deliverable).{0,30}(?:证据矩阵|目标审计|假设登记|视觉清单|evidence matrix|goal audit|assumption register|visual manifest)|(?:证据矩阵|目标审计|假设登记|视觉清单|evidence matrix|goal audit|assumption register|visual manifest).{0,30}(?:正文|附录|交付物|reader-facing|appendix|deliverable)/i
@@ -626,18 +720,25 @@ function buildDocumentArtifactVisibilityPlan(message: string): SessionDocumentAr
   }
 }
 
-function buildDocumentPlanSections(message: string, explicitRequirements: string[], taskType: SessionTaskContractType): string[] {
+function buildDocumentPlanSections(
+  message: string,
+  explicitRequirements: string[],
+  taskType: SessionTaskContractType,
+  editorialProfile?: SessionDocumentEditorialProfile,
+): string[] {
   if (isNarrowSourceAnalysisScope(message)) {
     return ['Result table', 'Interpretation', 'Confirmation needed']
   }
 
   const sections = explicitRequirements.length > 0
     ? explicitRequirements
-    : taskType === 'research'
-      ? ['Research objective', 'Key findings', 'Evidence and sources', 'Risks or uncertainties', 'Recommended next steps']
-      : taskType === 'data'
-        ? ['Objective and data scope', 'Method', 'Key tables', 'Charts and interpretation', 'Conclusions and caveats']
-        : ['Objective and scope', 'Source material and assumptions', 'Main analysis', 'Risks or gaps', 'Conclusion and next steps']
+    : editorialProfile?.genre === 'technical_dispute_memo'
+      ? ['Issue and direct answer', 'Applicable requirements', 'Assessment by scenario', 'Recommended action', 'Information to confirm']
+      : taskType === 'research'
+        ? ['Research objective', 'Key findings', 'Evidence and sources', 'Risks or uncertainties', 'Recommended next steps']
+        : taskType === 'data'
+          ? ['Objective and data scope', 'Method', 'Key tables', 'Charts and interpretation', 'Conclusions and caveats']
+          : ['Objective and scope', 'Source material and assumptions', 'Main analysis', 'Risks or gaps', 'Conclusion and next steps']
 
   if (/目录|toc|table of contents/i.test(message)) {
     sections.unshift('Table of contents')
@@ -691,6 +792,7 @@ function buildDocumentPlanEnhancements(
   visualPlan: VisualPlan | undefined,
   strictTemplate: boolean,
   documentQualityMode: SessionDocumentQualityMode,
+  editorialProfile: SessionDocumentEditorialProfile,
 ): string[] {
   const enhancements: string[] = []
 
@@ -699,7 +801,11 @@ function buildDocumentPlanEnhancements(
   }
 
   if (documentQualityMode !== 'quick') {
-    enhancements.push(`Use document workflow mode ${documentQualityMode} to drive the contract, evidence matrix, chapter plan, and quality audit depth.`)
+    enhancements.push(`Use document workflow mode ${documentQualityMode} for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.`)
+  }
+  enhancements.push(`Write as a ${editorialProfile.genre} for this reader decision: ${editorialProfile.readerDecision}`)
+  if (editorialProfile.narrativeFirst) {
+    enhancements.push(`Keep the document narrative-first: state the answer early, connect evidence to reasoning in prose, and stay within ${editorialProfile.maxHeadings} headings, ${editorialProfile.maxTables} tables, and a ${Math.round(editorialProfile.maxTableLineRatio * 100)}% table-line ratio unless the user explicitly requests a table-led deliverable.`)
   }
   if (visualPlan && visualPlan.selectedKinds.length > 0) {
     enhancements.push('Render required professional visuals from verified data and include captions, source notes, and audit reasons.')
@@ -876,7 +982,6 @@ function shouldCreateComplexDocumentAgentPlan(
     || STRICT_TEMPLATE_PATTERN.test(message)
     || STRICT_DELIVERY_MODE_PATTERN.test(message)
 
-  if (titleCount >= 4) return true
   if (strictOrTemplate && titleCount >= 2) return true
   if ((taskType === 'document' || taskType === 'research') && titleCount >= 3 && complexText) return true
   return false
@@ -991,6 +1096,7 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     audience: current.audience ?? next.audience,
     tone: current.tone ?? next.tone,
     length: current.length ?? next.length,
+    editorialProfile: current.editorialProfile ?? next.editorialProfile,
     domain: current.domain ?? next.domain,
     visualPlan: mergeVisualPlans(current.visualPlan, next.visualPlan),
     agentPlan: mergeDocumentAgentPlans(current.agentPlan, next.agentPlan),
@@ -1108,6 +1214,7 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Audience: ${plan.audience ?? '(unspecified)'}`,
     `Tone: ${plan.tone ?? '(unspecified)'}`,
     `Length: ${plan.length ?? '(unspecified)'}`,
+    `Editorial profile:\n${formatDocumentEditorialProfile(plan.editorialProfile)}`,
     `Domain: ${plan.domain ?? '(unspecified)'}`,
     `Strict template: ${plan.strictTemplate ? 'yes' : 'no'}`,
     `Template profile: ${plan.templateProfileId ?? '(none)'}`,
@@ -1122,6 +1229,16 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Enhancements:\n${formatContractList(plan.enhancements ?? [])}`,
     `Citations:\n${formatContractList(plan.citations)}`,
     `Delivery formats:\n${formatContractList(plan.deliveryFormats)}`,
+  ].join('\n')
+}
+
+function formatDocumentEditorialProfile(profile: SessionDocumentEditorialProfile | undefined): string {
+  if (!profile) return '(none)'
+  return [
+    `Genre: ${profile.genre}`,
+    `Reader decision: ${profile.readerDecision}`,
+    `Narrative first: ${profile.narrativeFirst ? 'yes' : 'no'}`,
+    `Budgets: headings<=${profile.maxHeadings}, tables<=${profile.maxTables}, tableLineRatio<=${profile.maxTableLineRatio}`,
   ].join('\n')
 }
 

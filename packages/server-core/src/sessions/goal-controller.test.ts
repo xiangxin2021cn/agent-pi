@@ -1155,6 +1155,70 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not let orchestration briefs dilute the formal document quality audit', async () => {
+    const controller = new GoalController()
+    const outputPath = '/tmp/project/Agent Pi Outputs/session-1/final-report.md'
+    const briefPath = '/tmp/workspace/sessions/session-1/orchestration/briefs/chapter-agent-1.md'
+    const rows = Array.from({ length: 14 }, (_, index) => `| Item ${index + 1} | Value ${index + 1} |`).join('\n')
+    const finalReport = `# Final Report\n\n## Findings\n\n| Item | Value |\n|---|---|\n${rows}\n\n## Conclusion\n\nThe decision depends on the cited specification, the recorded defect, and the contract acceptance procedure.`
+    const internalBrief = Array.from({ length: 30 }, (_, index) => `Internal planning paragraph ${index + 1} contains enough narrative text to dilute a combined table ratio but is not a reader-facing deliverable.`).join('\n\n')
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'auto_improve',
+      criteria: [{
+        id: 'crit-document-quality',
+        text: DOCUMENT_QUALITY_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Write a professional report.'),
+        message('t1', 'tool', 'written', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { path: outputPath },
+        }),
+        message('t2', 'tool', 'written', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { path: briefPath },
+        }),
+        message('a1', 'assistant', 'The report is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      expectedOutputDirectory: '/tmp/project/Agent Pi Outputs/session-1',
+      fileVerifier: async (path) => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: path === outputPath ? finalReport.length : internalBrief.length,
+        preview: path === outputPath ? finalReport : internalBrief,
+        auditContent: path === outputPath ? finalReport : internalBrief,
+      }),
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'No additional gaps.',
+        missingCriteria: [],
+      }),
+    })
+
+    expect(decision.action).toBe('continue')
+    if (decision.action === 'continue') {
+      expect(decision.result.missingCriteria.some(item => item.includes('表格占比过高'))).toBe(true)
+      expect(decision.result.evidence).not.toContainEqual({
+        type: 'file',
+        label: 'output_file_verified',
+        detail: briefPath,
+      })
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        type: 'file',
+        label: 'internal_control_artifact_preview',
+      }))
+    }
+  })
+
   test('does not accept pure prose for a visual-heavy professional document task', async () => {
     const controller = new GoalController()
 

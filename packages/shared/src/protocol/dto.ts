@@ -30,6 +30,14 @@ import type {
   CredentialAuthRequest as SharedCredentialAuthRequest,
 } from '../agent/index'
 import type { WorkspaceDocumentExtractionConfig } from '../workspaces/types'
+import type {
+  BusinessModuleId,
+  BusinessProjectRecord,
+  CreateBusinessProjectInput,
+  SessionBusinessContext,
+} from '../business-projects/types.ts'
+
+export type { BusinessModuleId, BusinessProjectRecord, CreateBusinessProjectInput, SessionBusinessContext }
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@craft-agent/core/types'
@@ -76,6 +84,8 @@ export interface Session {
   hasUnread?: boolean
   enabledSourceSlugs?: string[]
   workingDirectory?: string
+  /** Professional module/project/workflow location for this session. */
+  businessContext?: SessionBusinessContext
   sessionFolderPath?: string
   sharedUrl?: string
   sharedId?: string
@@ -133,6 +143,8 @@ export interface CreateSessionOptions {
    * - Absolute path string: Use this specific path
    */
   workingDirectory?: string | 'user_default' | 'none'
+  /** Professional module/project/workflow location for this session. */
+  businessContext?: SessionBusinessContext
   model?: string
   llmConnection?: string
   /** Optional application-level goal audit state. Omitted/`off` keeps legacy completion behavior. */
@@ -296,6 +308,9 @@ export type SessionCommand =
 export interface NewChatActionParams {
   input?: string
   name?: string
+  workingDirectory?: string
+  businessContext?: SessionBusinessContext
+  attachments?: FileAttachment[]
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +488,24 @@ export interface SuggestKnowledgeBaseCategoryResult {
 export interface TenderWorkspaceLocationRequest {
   workingDirectory: string;
   projectId?: string;
+}
+
+export interface ListBusinessProjectsRequest {
+  workspaceRootPath: string
+  module?: BusinessModuleId
+}
+
+export interface UpdateBusinessProjectInputsRequest {
+  workspaceRootPath: string
+  module: BusinessModuleId
+  projectId: string
+  inputPaths: string[]
+}
+
+export interface UnregisterBusinessProjectRequest {
+  workspaceRootPath: string
+  module: BusinessModuleId
+  projectId: string
 }
 
 export interface TenderWorkspaceSummaryDto {

@@ -79,6 +79,12 @@ export const RPC_CHANNELS = {
     GET: 'investmentWorkspace:get',
     MUTATE: 'investmentWorkspace:mutate',
   },
+  businessProjects: {
+    LIST: 'businessProjects:list',
+    CREATE: 'businessProjects:create',
+    UPDATE_INPUTS: 'businessProjects:updateInputs',
+    UNREGISTER: 'businessProjects:unregister',
+  },
   workspaces: {
     GET: 'workspaces:get',
     CREATE: 'workspaces:create',

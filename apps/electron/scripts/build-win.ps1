@@ -22,6 +22,19 @@ $GitForWindowsInstallerName = "Git-$GitForWindowsVersion-64-bit.exe"
 $GitForWindowsUrl = "https://github.com/git-for-windows/git/releases/download/v$GitForWindowsVersion.windows.1/$GitForWindowsInstallerName"
 $GitForWindowsInstallerPath = "$ElectronDir\resources\installers\windows\$GitForWindowsInstallerName"
 
+function Get-Sha256Hash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Add-BundledBunToPath {
     $BunDir = Split-Path -Parent $BunExePath
     $pathParts = $env:Path -split ';'
@@ -63,7 +76,7 @@ function Ensure-BundledBun {
 
         Write-Host "Verifying checksum..."
         $ExpectedHash = (Get-Content "$TempDir\SHASUMS256.txt" | Select-String "$BunDownload.zip").ToString().Split(" ")[0]
-        $ActualHash = (Get-FileHash "$TempDir\$BunDownload.zip" -Algorithm SHA256).Hash.ToLower()
+        $ActualHash = Get-Sha256Hash "$TempDir\$BunDownload.zip"
 
         if ($ActualHash -ne $ExpectedHash) {
             throw "Checksum verification failed! Expected: $ExpectedHash, Got: $ActualHash"
@@ -493,7 +506,7 @@ if (Test-Path $BunExe) {
     }
 
     # Check file hash
-    $hash = (Get-FileHash $BunExe -Algorithm SHA256).Hash
+    $hash = Get-Sha256Hash $BunExe
     Write-Host "SHA256: $hash"
 } else {
     Write-Host "ERROR: bun.exe not found at $BunExe" -ForegroundColor Red

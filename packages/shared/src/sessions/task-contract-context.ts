@@ -95,21 +95,18 @@ function formatCriticalReasoningProtocol(contract: SessionTaskContract): string 
 
   const lines = [
     'Critical reasoning protocol:',
-    '1. Break the problem into three material dimensions and state why each dimension matters.',
-    '2. Compare optimistic and pessimistic interpretations for each material dimension. Include explicit assumptions, evidence, and counterarguments.',
-    '3. Challenge the draft from a skeptical third-party reviewer view. Identify the weakest logic or evidence gaps.',
-    '4. Reconcile the challenge by revising claims, structure, or assumptions before finalizing.',
-    '5. End with a bounded conclusion that states conditions, risks, and what would change the answer.',
-    '6. Use this as private reasoning scaffolding unless the requested deliverable explicitly asks for visible step headings.',
-    '7. Never promote an unverified assumption into a definitive core conclusion. Keep it conditional and show the alternative branch until source evidence resolves it.',
+    '1. Test material claims, counterarguments, and evidence gaps privately before drafting.',
+    '2. Resolve contradictions and keep unverified claims conditional until source evidence supports them.',
+    '3. Do not expose reasoning scaffolds as numbered sections, framework tables, or review narration.',
+    '4. Draft only the reader-facing genre, structure, and decision support defined by the document plan.',
   ];
 
   if (mode === 'strict_delivery') {
-    lines.push('8. Do not invent cases, data, citations, or source locators; mark unavailable evidence as a gap.');
+    lines.push('5. Do not invent cases, data, citations, or source locators; mark unavailable evidence as a gap.');
   }
 
   if (mode === 'multi_agent_deep') {
-    lines.push('8. Use reviewer or chapter-agent handoffs to surface opposing views before final synthesis.');
+    lines.push('5. Use reviewer or chapter-agent handoffs to surface opposing views privately before final synthesis.');
   }
 
   return lines.join('\n');
@@ -211,6 +208,15 @@ function formatGoalContractOpenTag(contract: SessionTaskContract): string {
 }
 
 function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | undefined {
+  const editorialProfile = plan?.editorialProfile
+    ? [
+        'Document editorial profile:',
+        `Genre: ${plan.editorialProfile.genre}`,
+        `Reader decision: ${plan.editorialProfile.readerDecision}`,
+        `Narrative first: ${plan.editorialProfile.narrativeFirst ? 'yes' : 'no'}`,
+        `Budgets: headings<=${plan.editorialProfile.maxHeadings}, tables<=${plan.editorialProfile.maxTables}, tableLineRatio<=${plan.editorialProfile.maxTableLineRatio}`,
+      ].join('\n')
+    : undefined;
   const sectionPlan = formatList('Document section plan', plan?.sections);
   const tablePlan = formatList('Document table plan', plan?.tables);
   const chartPlan = formatList('Document chart plan', plan?.charts);
@@ -221,9 +227,10 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | und
   const evidenceMatrix = formatDocumentEvidenceMatrix(plan?.evidenceMatrix);
   const deliveryReviewPlan = formatDocumentDeliveryReviewPlan(plan?.deliveryReviewPlan);
   const artifactVisibility = formatDocumentArtifactVisibility(plan?.artifactVisibility);
-  if (!sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan && !artifactVisibility) return undefined;
+  if (!editorialProfile && !sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan && !artifactVisibility) return undefined;
 
   return [
+    editorialProfile,
     sectionPlan,
     tablePlan,
     chartPlan,

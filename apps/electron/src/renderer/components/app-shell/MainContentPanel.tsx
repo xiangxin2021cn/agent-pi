@@ -39,13 +39,15 @@ import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelecti
 import { sourceSelection, skillSelection, automationSelection } from '@/hooks/useEntitySelection'
 import { extractLabelId } from '@craft-agent/shared/labels'
 import type { SessionStatusId } from '@/config/session-status-config'
-import { SourceInfoPage, ChatPage, TenderWorkspacePage, DeliveryWorkspacePage, InvestmentWorkspacePage } from '@/pages'
+import { SourceInfoPage, ChatPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
 import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendResourceToWorkspaceDialog'
+import { BusinessModuleLanding } from './BusinessModuleEntry'
+import { BusinessProjectOverview } from './BusinessProjectOverview'
 
 export interface MainContentPanelProps {
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
@@ -93,6 +95,7 @@ export function MainContentPanel({
   const { clearMultiSelect } = useSessionSelection()
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const automations = useAtomValue(automationsAtom)
+  const activeWorkspaceRootPath = workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.rootPath
 
   // Execution history for the selected automation
   const selectedAutomationId = isAutomationsNavigation(navState) ? navState.details?.automationId : undefined
@@ -248,51 +251,67 @@ export function MainContentPanel({
   }
 
   if (isTenderNavigation(navState)) {
-    if (navState.details && activeSessionWorkingDirectory) {
+    if (navState.details?.sessionId) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
-          <TenderWorkspacePage
-            workingDirectory={activeSessionWorkingDirectory}
-            projectId={navState.details.projectId}
-          />
+          <ChatPage sessionId={navState.details.sessionId} />
+        </Panel>
+      )
+    }
+    if (navState.details && activeWorkspaceRootPath) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <BusinessProjectOverview moduleId="tender" workspaceRootPath={activeWorkspaceRootPath} projectId={navState.details.projectId} />
         </Panel>
       )
     }
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-          Select a tender workspace.
-        </div>
+        <BusinessModuleLanding moduleId="tender" workspaceRootPath={activeWorkspaceRootPath} />
       </Panel>
     )
   }
 
   if (isDeliveryNavigation(navState)) {
-    if (navState.details && activeSessionWorkingDirectory) {
+    if (navState.details?.sessionId) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
-          <DeliveryWorkspacePage workingDirectory={activeSessionWorkingDirectory} projectId={navState.details.projectId} />
+          <ChatPage sessionId={navState.details.sessionId} />
+        </Panel>
+      )
+    }
+    if (navState.details && activeWorkspaceRootPath) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <BusinessProjectOverview moduleId="delivery" workspaceRootPath={activeWorkspaceRootPath} projectId={navState.details.projectId} />
         </Panel>
       )
     }
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a delivery workspace.</div>
+        <BusinessModuleLanding moduleId="delivery" workspaceRootPath={activeWorkspaceRootPath} />
       </Panel>
     )
   }
 
   if (isInvestmentNavigation(navState)) {
-    if (navState.details && activeSessionWorkingDirectory) {
+    if (navState.details?.sessionId) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
-          <InvestmentWorkspacePage workingDirectory={activeSessionWorkingDirectory} projectId={navState.details.projectId} />
+          <ChatPage sessionId={navState.details.sessionId} />
+        </Panel>
+      )
+    }
+    if (navState.details && activeWorkspaceRootPath) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <BusinessProjectOverview moduleId="investment" workspaceRootPath={activeWorkspaceRootPath} projectId={navState.details.projectId} />
         </Panel>
       )
     }
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select an investment workspace.</div>
+        <BusinessModuleLanding moduleId="investment" workspaceRootPath={activeWorkspaceRootPath} />
       </Panel>
     )
   }

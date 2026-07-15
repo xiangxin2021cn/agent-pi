@@ -531,7 +531,24 @@ describe('buildTaskContractFromMessage', () => {
 
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
     expect(contract.evidenceRequirements).toContain('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
-    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.')
+  })
+
+  it('keeps a focused professional dispute memo single-agent and narrative-first', () => {
+    const contract = buildTaskContractFromMessage({
+      message: '充分调研一下 COLTO 关于 slotted drain cover 的质量验收规范，Engineer 以外观瑕疵拒绝接收是否成立？',
+      documentQualityMode: 'professional_document',
+    })
+
+    expect(contract.documentPlan?.agentPlan).toBeUndefined()
+    expect(contract.documentPlan?.editorialProfile).toEqual({
+      genre: 'technical_dispute_memo',
+      readerDecision: 'Resolve the central technical or contractual dispute and state the conditions that change the answer.',
+      narrativeFirst: true,
+      maxHeadings: 12,
+      maxTables: 2,
+      maxTableLineRatio: 0.25,
+    })
   })
 
   it('creates only an app-native Markdown draft when professional document work has no formal format request', () => {
@@ -629,7 +646,7 @@ describe('buildTaskContractFromMessage', () => {
 
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
     expect(contract.taskType).toBe('document')
-    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document to drive the contract, evidence matrix, chapter plan, and quality audit depth.')
+    expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.')
   })
 
   it('uses strict delivery mode when template and export gates are mandatory', () => {

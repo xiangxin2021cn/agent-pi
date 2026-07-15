@@ -11,6 +11,7 @@
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
+import type { SessionBusinessContext } from '../business-projects/types.ts';
 import type { DocumentDomain, VisualPlan } from '../document-visuals/types.ts';
 import type { StoredAttachment, MessageRole, ToolStatus, AuthRequestType, AuthStatus, CredentialInputMode, StoredMessage } from '@craft-agent/core/types';
 
@@ -34,7 +35,7 @@ export const SESSION_PERSISTENT_FIELDS = [
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
-  'enabledSourceSlugs', 'permissionMode', 'previousPermissionMode', 'workingDirectory',
+  'enabledSourceSlugs', 'permissionMode', 'previousPermissionMode', 'workingDirectory', 'businessContext',
   // Model/Connection
   'model', 'llmConnection', 'connectionLocked', 'thinkingLevel',
   // Sharing
@@ -187,11 +188,31 @@ export interface SessionTaskContract {
   workingDirectory?: string;
 }
 
+export type SessionDocumentGenre =
+  | 'technical_dispute_memo'
+  | 'research_report'
+  | 'analysis_report'
+  | 'method_statement'
+  | 'tender_submission'
+  | 'due_diligence_report'
+  | 'management_brief'
+  | 'general_document';
+
+export interface SessionDocumentEditorialProfile {
+  genre: SessionDocumentGenre;
+  readerDecision: string;
+  narrativeFirst: boolean;
+  maxHeadings: number;
+  maxTables: number;
+  maxTableLineRatio: number;
+}
+
 export interface SessionDocumentPlan {
   title?: string;
   audience?: string;
   tone?: string;
   length?: string;
+  editorialProfile?: SessionDocumentEditorialProfile;
   domain?: DocumentDomain;
   visualPlan?: VisualPlan;
   agentPlan?: SessionDocumentAgentPlan;
@@ -463,6 +484,8 @@ export interface SessionConfig {
   enabledSourceSlugs?: string[];
   /** Working directory for this session (used by agent for bash commands and context) */
   workingDirectory?: string;
+  /** Professional module/project/workflow location for this session. */
+  businessContext?: SessionBusinessContext;
   /** SDK cwd for session storage - set once at creation, never changes. Ensures SDK can find session transcripts regardless of workingDirectory changes. */
   sdkCwd?: string;
   /** Shared viewer URL (if shared via viewer) */
@@ -588,6 +611,8 @@ export interface SessionHeader {
   enabledSourceSlugs?: string[];
   /** Working directory for this session (used by agent for bash commands and context) */
   workingDirectory?: string;
+  /** Professional module/project/workflow location for this session. */
+  businessContext?: SessionBusinessContext;
   /** SDK cwd for session storage - set once at creation, never changes */
   sdkCwd?: string;
   /** Shared viewer URL (if shared via viewer) */
@@ -691,6 +716,8 @@ export interface SessionMetadata {
   sharedId?: string;
   /** Working directory for this session */
   workingDirectory?: string;
+  /** Professional module/project/workflow location for this session. */
+  businessContext?: SessionBusinessContext;
   /** SDK cwd for session storage - set once at creation, never changes */
   sdkCwd?: string;
   /** Role/type of the last message (for badge display without loading messages) */

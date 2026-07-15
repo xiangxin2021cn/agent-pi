@@ -89,11 +89,10 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Use document_artifact for long Markdown deliverables');
     expect(formatted).toContain('init -> write_section -> status -> prepare_merge -> assemble -> validate');
     expect(formatted).toContain('Critical reasoning protocol:');
-    expect(formatted).toContain('Break the problem into three material dimensions and state why each dimension matters.');
-    expect(formatted).toContain('Compare optimistic and pessimistic interpretations for each material dimension.');
-    expect(formatted).toContain('Challenge the draft from a skeptical third-party reviewer view.');
-    expect(formatted).toContain('End with a bounded conclusion that states conditions, risks, and what would change the answer.');
-    expect(formatted).toContain('Use this as private reasoning scaffolding unless the requested deliverable explicitly asks for visible step headings.');
+    expect(formatted).toContain('Test material claims, counterarguments, and evidence gaps privately before drafting.');
+    expect(formatted).toContain('Do not expose reasoning scaffolds as numbered sections, framework tables, or review narration.');
+    expect(formatted).not.toContain('Break the problem into three material dimensions and state why each dimension matters.');
+    expect(formatted).not.toContain('Compare optimistic and pessimistic interpretations for each material dimension.');
     expect(formatted).toContain('</goal_contract>');
     expect(formatted).not.toContain('4. List implementation recommendations.');
   });

@@ -25,6 +25,27 @@ commercial narratives. Use `tender_capability` as the cost-cash-flow system of r
 - A stale capability pack is not ready.
 - Do not spawn nested agents.
 
+## Five-Step BOQ Item Build-Up
+
+Every BOQ item must be derived separately through all five steps. Do not replace item-level work with
+section totals, representative items, or a single blended rate.
+
+1. **Scope and quantity basis** - identify the exact BOQ reference, description, unit, quantity,
+   specification clause, drawing or schedule locator, inclusions, exclusions, and measurement basis.
+2. **Method and productivity** - define the construction method, work sequence, crew or plant
+   arrangement, production cycle, productivity basis, constraints, and supporting source.
+3. **Resource consumption** - calculate labour, plant, material, subcontract, waste, transport, and
+   other resource consumption per BOQ unit using explicit units and exact arithmetic.
+4. **Sourced rates and direct cost** - apply source-traced rates with currency and effective date,
+   calculate each direct-cost component, and reconcile the item direct cost.
+5. **Reconciliation, conditions, and risk** - reconcile the build-up to the BOQ unit and quantity,
+   state commercial conditions and exclusions, identify unresolved inputs, and label unsupported
+   values `scenario` or `unverified` rather than presenting them as facts.
+
+An item is incomplete when any step is missing. Unresolved values may produce conditional branches,
+but they must not be promoted to the recommended rate until the required user decision or evidence is
+recorded.
+
 ## Workflow
 
 1. Call `tender_workspace` with `status`, then call `tender_capability` with `status` for

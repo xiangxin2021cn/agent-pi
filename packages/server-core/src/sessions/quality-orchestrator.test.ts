@@ -476,6 +476,58 @@ describe('runGoalQualityCouncilReview', () => {
       .toContain('Check source integrity, template fidelity, export evidence, visual evidence, and final formatting gates.')
   })
 
+  it('uses an editorial reviewer for professional reader-facing documents', async () => {
+    const requests: LLMQueryRequest[] = []
+    const reviewedGoal = goal()
+    reviewedGoal.taskContract = {
+      originalRequest: 'Determine whether the Engineer may reject the drain cover.',
+      taskType: 'research',
+      documentQualityMode: 'professional_document',
+      deliverables: ['Technical dispute memorandum'],
+      mustPreserve: [],
+      evidenceRequirements: ['Ground material claims in sources.'],
+      outputFormats: ['MD'],
+      acceptanceCriteria: ['[coverage] Produce a readable professional memorandum.'],
+      forbiddenShortcuts: ['Do not expose internal audit artifacts.'],
+    } as SessionGoalState['taskContract']
+    const queryLlm = async (request: LLMQueryRequest): Promise<LLMQueryResult> => {
+      requests.push(request)
+      return {
+        text: JSON.stringify({
+          status: 'pass',
+          summary: 'Reviewer did not find additional gaps.',
+          missingCriteria: [],
+        }),
+        model: 'local-reviewer',
+      }
+    }
+
+    await runGoalQualityCouncilReview({
+      input: {
+        goalState: reviewedGoal,
+        messages: [
+          message('u1', 'user', 'write the memorandum'),
+          message('a1', 'assistant', 'Memorandum complete.'),
+        ],
+        finalAssistant: message('a1', 'assistant', 'Memorandum complete.'),
+        result: {
+          iteration: 1,
+          status: 'uncertain',
+          summary: 'Deterministic audit needs editorial review.',
+          missingCriteria: [],
+          evidence: [],
+          createdAt: 1,
+        },
+      },
+      queryLlm,
+    })
+
+    const editorialPrompt = requests.find(request => request.prompt.includes('Role: document_editor_reviewer'))?.prompt
+    expect(editorialPrompt).toContain('genre and audience fit')
+    expect(editorialPrompt).toContain('direct answer')
+    expect(editorialPrompt).toContain('internal control artifacts')
+  })
+
   it('adds synthesis consistency reviewer for multi-agent deep document workflow contracts', async () => {
     const requests: LLMQueryRequest[] = []
     const reviewedGoal = goal()

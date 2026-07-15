@@ -33,6 +33,8 @@ export type {
   SessionRequirementLedgerEntry,
   SessionRequirementLedger,
   SessionTaskContract,
+  SessionDocumentGenre,
+  SessionDocumentEditorialProfile,
   SessionDocumentPlan,
   SessionDocumentInternalArtifactKind,
   SessionDocumentArtifactVisibilityPlan,

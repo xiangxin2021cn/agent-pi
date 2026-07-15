@@ -241,6 +241,12 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.tenderWorkspace.GET,
   RPC_CHANNELS.tenderWorkspace.MUTATE,
 
+  // business projects — workspace-owned pointers to professional project shells
+  RPC_CHANNELS.businessProjects.LIST,
+  RPC_CHANNELS.businessProjects.CREATE,
+  RPC_CHANNELS.businessProjects.UPDATE_INPUTS,
+  RPC_CHANNELS.businessProjects.UNREGISTER,
+
   // sessions — core session runtime
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,

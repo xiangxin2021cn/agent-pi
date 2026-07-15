@@ -1725,6 +1725,10 @@ function AppShellContent({
     navigate(routes.view.tenderWorkspaces(projectId))
   }, [])
 
+  const handleTenderWorkspaceSessionSelect = useCallback((projectId: string, sessionId: string) => {
+    navigate(routes.view.tenderWorkspaces(projectId, sessionId))
+  }, [])
+
   const handleDeliveryWorkspacesClick = useCallback(() => {
     navigate(routes.view.deliveryWorkspaces())
   }, [])
@@ -1733,12 +1737,20 @@ function AppShellContent({
     navigate(routes.view.deliveryWorkspaces(projectId))
   }, [])
 
+  const handleDeliveryWorkspaceSessionSelect = useCallback((projectId: string, sessionId: string) => {
+    navigate(routes.view.deliveryWorkspaces(projectId, sessionId))
+  }, [])
+
   const handleInvestmentWorkspacesClick = useCallback(() => {
     navigate(routes.view.investmentWorkspaces())
   }, [])
 
   const handleInvestmentWorkspaceSelect = useCallback((projectId: string) => {
     navigate(routes.view.investmentWorkspaces(projectId))
+  }, [])
+
+  const handleInvestmentWorkspaceSessionSelect = useCallback((projectId: string, sessionId: string) => {
+    navigate(routes.view.investmentWorkspaces(projectId, sessionId))
   }, [])
 
   // Handlers for automations view
@@ -3291,23 +3303,29 @@ function AppShellContent({
             )}
             {isTenderNavigation(navState) && (
               <TenderWorkspaceListPanel
-                workingDirectory={activeSessionWorkingDirectory}
+                workspaceRootPath={activeWorkspace?.rootPath}
                 selectedProjectId={navState.details?.projectId ?? null}
+                selectedSessionId={navState.details?.sessionId ?? null}
                 onProjectClick={handleTenderWorkspaceSelect}
+                onSessionClick={handleTenderWorkspaceSessionSelect}
               />
             )}
             {isDeliveryNavigation(navState) && (
               <DeliveryWorkspaceListPanel
-                workingDirectory={activeSessionWorkingDirectory}
+                workspaceRootPath={activeWorkspace?.rootPath}
                 selectedProjectId={navState.details?.projectId ?? null}
+                selectedSessionId={navState.details?.sessionId ?? null}
                 onProjectClick={handleDeliveryWorkspaceSelect}
+                onSessionClick={handleDeliveryWorkspaceSessionSelect}
               />
             )}
             {isInvestmentNavigation(navState) && (
               <InvestmentWorkspaceListPanel
-                workingDirectory={activeSessionWorkingDirectory}
+                workspaceRootPath={activeWorkspace?.rootPath}
                 selectedProjectId={navState.details?.projectId ?? null}
+                selectedSessionId={navState.details?.sessionId ?? null}
                 onProjectClick={handleInvestmentWorkspaceSelect}
+                onSessionClick={handleInvestmentWorkspaceSessionSelect}
               />
             )}
             {isSettingsNavigation(navState) && (

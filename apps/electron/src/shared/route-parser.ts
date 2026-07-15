@@ -50,6 +50,7 @@ export interface ParsedCompoundRoute {
   details: {
     type: string
     id: string
+    sessionId?: string
   } | null
 }
 
@@ -111,7 +112,8 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   if (first === 'tender-workspaces') {
     if (segments.length === 1) return { navigator: 'tender', details: null }
     if (segments[1] === 'project' && segments[2]) {
-      return { navigator: 'tender', details: { type: 'tenderWorkspace', id: segments[2] } }
+      const sessionId = segments[3] === 'session' ? segments[4] : undefined
+      return { navigator: 'tender', details: { type: 'tenderWorkspace', id: segments[2], sessionId } }
     }
     return null
   }
@@ -119,7 +121,8 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   if (first === 'delivery-workspaces') {
     if (segments.length === 1) return { navigator: 'delivery', details: null }
     if (segments[1] === 'project' && segments[2]) {
-      return { navigator: 'delivery', details: { type: 'deliveryWorkspace', id: segments[2] } }
+      const sessionId = segments[3] === 'session' ? segments[4] : undefined
+      return { navigator: 'delivery', details: { type: 'deliveryWorkspace', id: segments[2], sessionId } }
     }
     return null
   }
@@ -127,7 +130,8 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   if (first === 'investment-workspaces') {
     if (segments.length === 1) return { navigator: 'investment', details: null }
     if (segments[1] === 'project' && segments[2]) {
-      return { navigator: 'investment', details: { type: 'investmentWorkspace', id: segments[2] } }
+      const sessionId = segments[3] === 'session' ? segments[4] : undefined
+      return { navigator: 'investment', details: { type: 'investmentWorkspace', id: segments[2], sessionId } }
     }
     return null
   }
@@ -331,15 +335,21 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
 
   if (parsed.navigator === 'tender') {
     if (!parsed.details) return 'tender-workspaces'
-    return `tender-workspaces/project/${parsed.details.id}`
+    return parsed.details.sessionId
+      ? `tender-workspaces/project/${parsed.details.id}/session/${parsed.details.sessionId}`
+      : `tender-workspaces/project/${parsed.details.id}`
   }
   if (parsed.navigator === 'delivery') {
     if (!parsed.details) return 'delivery-workspaces'
-    return `delivery-workspaces/project/${parsed.details.id}`
+    return parsed.details.sessionId
+      ? `delivery-workspaces/project/${parsed.details.id}/session/${parsed.details.sessionId}`
+      : `delivery-workspaces/project/${parsed.details.id}`
   }
   if (parsed.navigator === 'investment') {
     if (!parsed.details) return 'investment-workspaces'
-    return `investment-workspaces/project/${parsed.details.id}`
+    return parsed.details.sessionId
+      ? `investment-workspaces/project/${parsed.details.id}/session/${parsed.details.sessionId}`
+      : `investment-workspaces/project/${parsed.details.id}`
   }
 
   // Sessions navigator
@@ -467,15 +477,15 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
 
   if (compound.navigator === 'tender') {
     if (!compound.details) return { type: 'view', name: 'tender-workspaces', params: {} }
-    return { type: 'view', name: 'tender-workspace', id: compound.details.id, params: {} }
+    return { type: 'view', name: 'tender-workspace', id: compound.details.id, params: compound.details.sessionId ? { sessionId: compound.details.sessionId } : {} }
   }
   if (compound.navigator === 'delivery') {
     if (!compound.details) return { type: 'view', name: 'delivery-workspaces', params: {} }
-    return { type: 'view', name: 'delivery-workspace', id: compound.details.id, params: {} }
+    return { type: 'view', name: 'delivery-workspace', id: compound.details.id, params: compound.details.sessionId ? { sessionId: compound.details.sessionId } : {} }
   }
   if (compound.navigator === 'investment') {
     if (!compound.details) return { type: 'view', name: 'investment-workspaces', params: {} }
-    return { type: 'view', name: 'investment-workspace', id: compound.details.id, params: {} }
+    return { type: 'view', name: 'investment-workspace', id: compound.details.id, params: compound.details.sessionId ? { sessionId: compound.details.sessionId } : {} }
   }
 
   // Sessions
@@ -615,15 +625,15 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
 
   if (compound.navigator === 'tender') {
     if (!compound.details) return { navigator: 'tender', details: null }
-    return { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: compound.details.id } }
+    return { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: compound.details.id, sessionId: compound.details.sessionId } }
   }
   if (compound.navigator === 'delivery') {
     if (!compound.details) return { navigator: 'delivery', details: null }
-    return { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: compound.details.id } }
+    return { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: compound.details.id, sessionId: compound.details.sessionId } }
   }
   if (compound.navigator === 'investment') {
     if (!compound.details) return { navigator: 'investment', details: null }
-    return { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: compound.details.id } }
+    return { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: compound.details.id, sessionId: compound.details.sessionId } }
   }
 
   // Sessions
@@ -707,19 +717,19 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'tender', details: null }
     case 'tender-workspace':
       return parsed.id
-        ? { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: parsed.id } }
+        ? { navigator: 'tender', details: { type: 'tenderWorkspace', projectId: parsed.id, sessionId: parsed.params.sessionId } }
         : { navigator: 'tender', details: null }
     case 'delivery-workspaces':
       return { navigator: 'delivery', details: null }
     case 'delivery-workspace':
       return parsed.id
-        ? { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: parsed.id } }
+        ? { navigator: 'delivery', details: { type: 'deliveryWorkspace', projectId: parsed.id, sessionId: parsed.params.sessionId } }
         : { navigator: 'delivery', details: null }
     case 'investment-workspaces':
       return { navigator: 'investment', details: null }
     case 'investment-workspace':
       return parsed.id
-        ? { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: parsed.id } }
+        ? { navigator: 'investment', details: { type: 'investmentWorkspace', projectId: parsed.id, sessionId: parsed.params.sessionId } }
         : { navigator: 'investment', details: null }
     case 'session':
       if (parsed.id) {
@@ -832,19 +842,19 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
   if (state.navigator === 'tender') {
     return {
       navigator: 'tender',
-      details: state.details ? { type: 'tenderWorkspace', id: state.details.projectId } : null,
+      details: state.details ? { type: 'tenderWorkspace', id: state.details.projectId, sessionId: state.details.sessionId } : null,
     }
   }
   if (state.navigator === 'delivery') {
     return {
       navigator: 'delivery',
-      details: state.details ? { type: 'deliveryWorkspace', id: state.details.projectId } : null,
+      details: state.details ? { type: 'deliveryWorkspace', id: state.details.projectId, sessionId: state.details.sessionId } : null,
     }
   }
   if (state.navigator === 'investment') {
     return {
       navigator: 'investment',
-      details: state.details ? { type: 'investmentWorkspace', id: state.details.projectId } : null,
+      details: state.details ? { type: 'investmentWorkspace', id: state.details.projectId, sessionId: state.details.sessionId } : null,
     }
   }
 

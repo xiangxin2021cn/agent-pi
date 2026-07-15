@@ -11,13 +11,21 @@
  * Run: bun scripts/copy-assets.ts
  */
 
-import { cpSync, copyFileSync, mkdirSync } from 'fs';
+import { cpSync, copyFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 // Copy all resources (icons, themes, docs, permissions, tool-icons, etc.)
 cpSync('resources', 'dist/resources', { recursive: true });
 
 console.log('✓ Copied resources/ → dist/resources/');
+
+// Ship Agent Pi's built-in business workflow skills. User global, workspace,
+// and project skills still override these bundled defaults at runtime.
+const bundledSkillsSrc = join('..', '..', '.agents', 'skills');
+const bundledSkillsDest = join('dist', 'resources', 'skills');
+rmSync(bundledSkillsDest, { recursive: true, force: true });
+cpSync(bundledSkillsSrc, bundledSkillsDest, { recursive: true });
+console.log('✓ Copied .agents/skills/ → dist/resources/skills/');
 
 // Copy PowerShell parser script (for Windows command validation in Explore mode)
 // Source: packages/shared/src/agent/powershell-parser.ps1

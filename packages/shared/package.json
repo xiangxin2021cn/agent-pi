@@ -60,6 +60,7 @@
     "./validation": "./src/validation/index.ts",
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
+    "./business-projects": "./src/business-projects/index.ts",
     "./feature-flags": "./src/feature-flags.ts",
     "./interceptor": "./src/interceptor-common.ts",
     "./search": "./src/search/index.ts",
@@ -90,7 +91,7 @@
     "@earendil-works/pi-coding-agent": "0.80.6"
   },
   "peerDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.206",
+    "@anthropic-ai/claude-agent-sdk": "0.3.209",
     "@modelcontextprotocol/sdk": ">=1.29.0",
     "zod": ">=4.0.0"
   },

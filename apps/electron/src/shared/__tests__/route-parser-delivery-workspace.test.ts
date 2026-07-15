@@ -16,4 +16,13 @@ describe('route-parser: delivery workspace routes', () => {
       details: { type: 'deliveryWorkspace', projectId: 'n3-delivery' },
     })).toBe('delivery-workspaces/project/n3-delivery');
   });
+
+  test('round-trips a session without leaving the delivery project route', () => {
+    const state = {
+      navigator: 'delivery' as const,
+      details: { type: 'deliveryWorkspace' as const, projectId: 'n3-delivery', sessionId: 'session-2' },
+    };
+    expect(buildRouteFromNavigationState(state)).toBe('delivery-workspaces/project/n3-delivery/session/session-2');
+    expect(parseRouteToNavigationState('delivery-workspaces/project/n3-delivery/session/session-2')).toEqual(state);
+  });
 });

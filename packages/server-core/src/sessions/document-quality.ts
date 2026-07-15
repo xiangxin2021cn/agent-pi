@@ -1,5 +1,5 @@
 import { basename, extname } from 'path'
-import type { SessionDocumentInternalArtifactKind } from '@craft-agent/shared/sessions'
+import type { SessionDocumentEditorialProfile, SessionDocumentInternalArtifactKind } from '@craft-agent/shared/sessions'
 
 export interface DocumentQualityReport {
   passed: boolean
@@ -24,6 +24,7 @@ export interface DocumentQualityReport {
     sourceReferenceCount: number
     numericClaimCount: number
     tableMarkerCount: number
+    tableCount: number
     placeholderCount: number
     internalControlMarkerCount: number
     tableLineRatio: number
@@ -36,6 +37,7 @@ export interface AnalyzeDocumentQualityInput {
   strict?: boolean
   allowVisibleInternalArtifacts?: SessionDocumentInternalArtifactKind[]
   tableLed?: boolean
+  editorialProfile?: SessionDocumentEditorialProfile
 }
 
 const CITATION_MARKER_PATTERN = /来源|依据|引用|参考|条款|章节|第\s*\d+\s*页|source|according to|based on|citation|cite|clause|section|page|§|\[[^\]]+\]/gi
@@ -44,12 +46,13 @@ const PLACEHOLDER_PATTERN = /待补充|待确认|TODO|TBD|placeholder|lorem ipsu
 const SPECIFICATION_PATTERN = /规范|标准|条款|合同|招标|投标|清单|工程量|boq|specification|standard|clause|contract|tender|requirement/gi
 const RISK_PATTERN = /风险|问题|缺口|假设|建议|控制|复核|risk|gap|assumption|mitigation|recommendation|review/gi
 const INTERNAL_CONTROL_HEADING_PATTERNS: Array<{ kind: SessionDocumentInternalArtifactKind; pattern: RegExp }> = [
-  { kind: 'evidence_matrix', pattern: /(?:^|\n)\s*#{1,6}\s*(?:\d+[.、]\s*)?(?:证据矩阵|evidence matrix)\s*(?=\n|$|\/)/gi },
+  { kind: 'evidence_matrix', pattern: /(?:^|\n)\s*#{1,6}\s*(?:\d+(?:\.\d+)*(?:[.、])?\s*)?(?:证据矩阵|evidence matrix)\s*(?=\n|$|\/)/gi },
   { kind: 'goal_audit', pattern: /(?:^|\n)\s*#{1,6}\s*(?:目标审计|goal audit|document expert review)\s*(?=\n|$|\/)/gi },
   { kind: 'assumption_register', pattern: /(?:^|\n)\s*#{1,6}\s*(?:假设登记|假设台账|assumption register)\s*(?=\n|$|\/)/gi },
   { kind: 'visual_manifest', pattern: /(?:^|\n)\s*#{1,6}\s*(?:视觉清单|图表清单|visual manifest)\s*(?=\n|$|\/)/gi },
 ]
 const EDITORIAL_PROCESS_PATTERN = /(?:goal audit requested improvement|内部审计结果|编制过程记录|审计指出缺少|以下为审计过程|document expert review)/gi
+const ORCHESTRATION_METADATA_PATTERN = /(?:跨\s*Agent\s*一致性审查|cross[-\s]?agent consistency|Session\s*ID|handoff_ready|final_synthesis_owner|chapter-agent|(?:^|[\\/])\.agent-pi(?:[\\/]|$)|Agent\s*框架|生成元数据|generation metadata)/gim
 
 export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): DocumentQualityReport {
   const raw = input.contents.map(content => content.trim()).filter(Boolean).join('\n\n')
@@ -65,11 +68,13 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     .length
   const numericClaimCount = countMatches(raw, NUMERIC_CLAIM_PATTERN)
   const tableMarkerCount = countTableMarkers(raw)
+  const tableCount = countMarkdownTables(raw)
   const placeholderCount = countMatches(raw, PLACEHOLDER_PATTERN)
   const specificationMarkerCount = countMatches(raw, SPECIFICATION_PATTERN)
   const riskMarkerCount = countMatches(raw, RISK_PATTERN)
   const internalControlMarkerCount = countInternalControlMarkers(raw, input.allowVisibleInternalArtifacts ?? [])
     + countMatches(raw, EDITORIAL_PROCESS_PATTERN)
+    + countMatches(raw, ORCHESTRATION_METADATA_PATTERN)
   const tableLineRatio = calculateTableLineRatio(raw)
 
   const issues: string[] = []
@@ -116,7 +121,13 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     strengths.push('包含可审查的数字性表述。')
   }
 
-  if (tableMarkerCount > 0) {
+  const tableCountBudgetFailed = !input.tableLed
+    && input.editorialProfile?.narrativeFirst === true
+    && tableCount > input.editorialProfile.maxTables
+  if (tableCountBudgetFailed) {
+    score -= 15
+    issues.push('表格数量超过当前文体预算，影响连续阅读。')
+  } else if (tableCount > 0) {
     strengths.push('包含表格或清单化结构。')
   }
 
@@ -130,10 +141,21 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     issues.push('正文包含内部审计或编制过程内容。')
   }
 
-  const tableBalanceFailed = !input.tableLed && tableLineRatio > 0.45
+  const maximumTableLineRatio = input.editorialProfile?.narrativeFirst
+    ? input.editorialProfile.maxTableLineRatio
+    : 0.45
+  const tableBalanceFailed = !input.tableLed && tableLineRatio > maximumTableLineRatio
   if (tableBalanceFailed) {
     score -= 15
     issues.push('表格占比过高，正文叙述不足。')
+  }
+
+  const headingBudgetFailed = !input.tableLed
+    && input.editorialProfile?.narrativeFirst === true
+    && headingCount > input.editorialProfile.maxHeadings
+  if (headingBudgetFailed) {
+    score -= 10
+    issues.push('章节层级超过当前文体预算，正文被切分得过碎。')
   }
 
   const threshold = input.strict ? 75 : 70
@@ -150,7 +172,9 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     passed: clampedScore >= threshold
       && placeholderCount === 0
       && internalControlMarkerCount === 0
+      && !tableCountBudgetFailed
       && !tableBalanceFailed
+      && !headingBudgetFailed
       && !(sourceFilePaths.length > 0 && groundingCount === 0),
     score: clampedScore,
     threshold,
@@ -165,6 +189,7 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
       sourceReferenceCount,
       numericClaimCount,
       tableMarkerCount,
+      tableCount,
       placeholderCount,
       internalControlMarkerCount,
       tableLineRatio,
@@ -190,7 +215,7 @@ export function formatDocumentQualityReport(report: DocumentQualityReport): stri
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `score: ${report.score}/${report.threshold}`,
     `dimensions: ${dimensionsText}`,
-    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, numericClaims=${report.metrics.numericClaimCount}, tables=${report.metrics.tableMarkerCount}, tableLineRatio=${report.metrics.tableLineRatio.toFixed(2)}, placeholders=${report.metrics.placeholderCount}, internalControlMarkers=${report.metrics.internalControlMarkerCount}`,
+    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, tableRowsAndLists=${report.metrics.tableMarkerCount}, tables=${report.metrics.tableCount}, numericClaims=${report.metrics.numericClaimCount}, tableLineRatio=${report.metrics.tableLineRatio.toFixed(2)}, placeholders=${report.metrics.placeholderCount}, internalControlMarkers=${report.metrics.internalControlMarkerCount}`,
     report.issues.length > 0 ? `issues:\n${report.issues.map(issue => `- ${issue}`).join('\n')}` : 'issues: none',
     report.strengths.length > 0 ? `strengths:\n${report.strengths.map(strength => `- ${strength}`).join('\n')}` : 'strengths: none',
   ].join('\n')
@@ -198,7 +223,10 @@ export function formatDocumentQualityReport(report: DocumentQualityReport): stri
 
 function countHeadings(content: string): number {
   const markdownHeadings = content.match(/(?:^|\n)\s*#{1,6}\s+\S/g)?.length ?? 0
-  const numberedHeadings = content.match(/(?:^|\n)\s*(?:\d+[.)、]|[一二三四五六七八九十]+[、.．])\s*\S/g)?.length ?? 0
+  const numberedHeadings = content
+    .split(/\r?\n/)
+    .filter(line => /^\s*(?:\d+(?:\.\d+)*[.)、]|[一二三四五六七八九十]+[、.．])\s*(?:\*\*[^*\n]{2,80}\*\*|[^。！？!?；;：:\n]{2,80})\s*$/.test(line))
+    .length
   const boldHeadings = content.match(/(?:^|\n)\s*\*\*[^*\n]{2,80}\*\*\s*$/g)?.length ?? 0
   return markdownHeadings + numberedHeadings + boldHeadings
 }
@@ -207,6 +235,13 @@ function countTableMarkers(content: string): number {
   const markdownTableRows = content.match(/(?:^|\n)\s*\|.+\|\s*(?=\n|$)/g)?.length ?? 0
   const listRows = content.match(/(?:^|\n)\s*(?:[-*]|\d+[.)、])\s+\S.{10,}/g)?.length ?? 0
   return markdownTableRows + listRows
+}
+
+function countMarkdownTables(content: string): number {
+  return content
+    .split(/\r?\n/)
+    .filter(line => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
+    .length
 }
 
 function calculateTableLineRatio(content: string): number {

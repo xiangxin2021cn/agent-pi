@@ -970,6 +970,8 @@ interface ManagedSession {
   labels?: string[]
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
+  // Professional module/project/workflow location for this session.
+  businessContext?: import('@craft-agent/shared/protocol').SessionBusinessContext
   // SDK cwd for session storage - set once at creation, never changes.
   // Ensures SDK can find session transcripts regardless of workingDirectory changes.
   sdkCwd?: string
@@ -3857,6 +3859,7 @@ export class SessionManager implements ISessionManager {
       goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
+      businessContext: options?.businessContext,
     })
 
     // Branch: copy messages from source session up to and including the branch point
@@ -3945,6 +3948,7 @@ export class SessionManager implements ISessionManager {
       goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
+      businessContext: options?.businessContext,
       branchFromMessageId: validatedBranch?.sourceMessageId,
       branchContextStrategy: validatedBranch?.branchContextStrategy,
       branchFromSdkSessionId: validatedBranch?.branchFromSdkSessionId,

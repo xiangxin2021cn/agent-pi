@@ -1618,20 +1618,32 @@ export default function App() {
       return
     }
 
-    const session = await handleCreateSession(windowWorkspaceId)
+    const session = await handleCreateSession(windowWorkspaceId, {
+      name: params.name,
+      workingDirectory: params.workingDirectory,
+      businessContext: params.businessContext,
+    })
 
-    if (params.name) {
-      await window.electronAPI.sessionCommand(session.id, { type: 'rename', name: params.name })
+    if (params.businessContext) {
+      const { module, projectId } = params.businessContext
+      const route = module === 'tender'
+        ? routes.view.tenderWorkspaces(projectId, session.id)
+        : module === 'delivery'
+          ? routes.view.deliveryWorkspaces(projectId, session.id)
+          : routes.view.investmentWorkspaces(projectId, session.id)
+      navigate(route)
+    } else {
+      navigate(routes.view.allSessions(session.id))
     }
 
-    // Navigate to the chat view - this sets both selectedSession and activeView
-    navigate(routes.view.allSessions(session.id))
-
-    // Pre-fill input if provided (after a small delay to ensure component is mounted)
-    if (params.input) {
-      setTimeout(() => handleInputChange(session.id, params.input!), 100)
+    // Pre-fill the project brief and explicit source files after the chat mounts.
+    if (params.input || params.attachments?.length) {
+      setTimeout(() => {
+        if (params.input) handleInputChange(session.id, params.input)
+        if (params.attachments?.length) handleAttachmentsChange(session.id, params.attachments)
+      }, 100)
     }
-  }, [windowWorkspaceId, handleCreateSession, handleInputChange])
+  }, [windowWorkspaceId, handleCreateSession, handleInputChange, handleAttachmentsChange])
 
   const handleRespondToPermission = useCallback(async (
     sessionId: string,

@@ -183,14 +183,26 @@ export const routes = {
     automationsAgentic: (automationId?: string) =>
       automationId ? `automations/agentic/automation/${automationId}` as const : 'automations/agentic' as const,
 
-    tenderWorkspaces: (projectId?: string) =>
-      projectId ? `tender-workspaces/project/${projectId}` as const : 'tender-workspaces' as const,
+    tenderWorkspaces: (projectId?: string, sessionId?: string) =>
+      projectId
+        ? sessionId
+          ? `tender-workspaces/project/${projectId}/session/${sessionId}` as const
+          : `tender-workspaces/project/${projectId}` as const
+        : 'tender-workspaces' as const,
 
-    deliveryWorkspaces: (projectId?: string) =>
-      projectId ? `delivery-workspaces/project/${projectId}` as const : 'delivery-workspaces' as const,
+    deliveryWorkspaces: (projectId?: string, sessionId?: string) =>
+      projectId
+        ? sessionId
+          ? `delivery-workspaces/project/${projectId}/session/${sessionId}` as const
+          : `delivery-workspaces/project/${projectId}` as const
+        : 'delivery-workspaces' as const,
 
-    investmentWorkspaces: (projectId?: string) =>
-      projectId ? `investment-workspaces/project/${projectId}` as const : 'investment-workspaces' as const,
+    investmentWorkspaces: (projectId?: string, sessionId?: string) =>
+      projectId
+        ? sessionId
+          ? `investment-workspaces/project/${projectId}/session/${sessionId}` as const
+          : `investment-workspaces/project/${projectId}` as const
+        : 'investment-workspaces' as const,
 
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
     settings: (subpage?: SettingsSubpage) =>

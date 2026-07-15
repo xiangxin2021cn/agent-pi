@@ -358,6 +358,7 @@ export async function createSession(
     isFlagged?: boolean;
     parentSessionId?: string;
     parentSessionKind?: SessionConfig['parentSessionKind'];
+    businessContext?: SessionConfig['businessContext'];
   }
 ): Promise<SessionConfig> {
   ensureSessionsDir(workspaceRootPath);
@@ -392,6 +393,7 @@ export async function createSession(
     isFlagged: options?.isFlagged,
     parentSessionId: options?.parentSessionId,
     parentSessionKind: options?.parentSessionKind,
+    businessContext: options?.businessContext,
   };
 
   // Save empty session

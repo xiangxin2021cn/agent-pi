@@ -14,6 +14,7 @@ import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { CompactSessionMenu } from '@/components/app-shell/CompactSessionMenu'
 import { SessionInfoPanel, SessionInfoPopover } from '@/components/app-shell/SessionInfoPopover'
+import { BusinessWorkflowBar } from '@/components/app-shell/BusinessWorkflowBar'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
@@ -832,6 +833,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         <>
           <div className="h-full flex flex-col">
             <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+            <BusinessWorkflowBar context={sessionMeta.businessContext} workingDirectory={sessionMeta.workingDirectory} />
             <div className="flex-1 flex min-h-0">
               <div className="min-w-0 flex-1 flex flex-col">
                 <ChatDisplay
@@ -915,6 +917,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     <>
       <div className="h-full flex flex-col">
         <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        <BusinessWorkflowBar context={session.businessContext ?? sessionMeta?.businessContext} workingDirectory={session.workingDirectory} />
         <div className="flex-1 flex min-h-0">
           <div className="min-w-0 flex-1 flex flex-col">
             <ChatDisplay
