@@ -462,6 +462,8 @@ export interface SessionSpawnStatus {
   reportPathExists: boolean;
   reportSize?: number;
   handoffStatus: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed';
+  parentAction: 'not_applicable' | 'wait' | 'merge' | 'user_review';
+  takeoverAllowed: false;
   lastActivityAt?: number;
   idleMs?: number;
   staleAfterMs?: number;

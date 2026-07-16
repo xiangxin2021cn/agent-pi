@@ -1222,6 +1222,7 @@ export class PiAgent extends BaseAgent {
       prerequisiteManager: this.prerequisiteManager,
       rtkContext,
       orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
+      orchestrationState: this.config.session?.goalState?.orchestration,
       onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
     });
 
@@ -1296,6 +1297,7 @@ export class PiAgent extends BaseAgent {
           prerequisiteManager: this.prerequisiteManager,
           rtkContext,
           orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
+          orchestrationState: this.config.session?.goalState?.orchestration,
           onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
         });
 

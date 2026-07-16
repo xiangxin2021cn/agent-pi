@@ -211,6 +211,8 @@ describe('attachSessionSelfManagementBindings', () => {
           reportPathExists: true,
           reportSize: 1024,
           handoffStatus: 'ready',
+          parentAction: 'merge',
+          takeoverAllowed: false,
           lastActivityAt: 300,
         };
       },

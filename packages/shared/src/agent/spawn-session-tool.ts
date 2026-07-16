@@ -51,7 +51,7 @@ Optional overrides: model, llmConnection, permissionMode, thinkingLevel, enabled
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
-The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, wait at least pollAfterMs and call get_spawn_status for the session; do not treat user status values such as "todo" as failure.
+The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, call get_spawn_status after pollAfterMs. The parent must not perform delegated work or write the child report while the handoff is pending. The runtime resumes the parent after all terminal reports are ready; a failed child requires retry or explicit user review, never automatic parent takeover.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
     {
       help: z.boolean().optional()

@@ -360,6 +360,131 @@ describe('runPreToolUseChecks', () => {
     });
   });
 
+  describe('step 2c: delegated handoff barrier', () => {
+    const pendingOrchestration = {
+      version: 1 as const,
+      phase: 'plan' as const,
+      createdAt: 1,
+      updatedAt: 2,
+      policy: {
+        selectedSourceSlugs: [],
+        forbidWorkingDirectoryDiscovery: false,
+        requireStructuredHandoff: true,
+        requireUserConfirmationPause: true,
+        maxAutomaticRepairPasses: 2,
+      },
+      taskBoard: { tasks: [] },
+      subAgents: [{
+        sessionId: 'child-1',
+        taskId: 'task-1',
+        status: 'started' as const,
+        sourceSlugs: [],
+        reportPath: 'C:/test/workspace/orchestration/reports/task-1.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }],
+    };
+
+    it.each([
+      ['Read', { file_path: 'C:/test/workspace/source.pdf' }],
+      ['Write', { file_path: 'C:/test/workspace/output.md', content: 'parent synthesis' }],
+      ['Bash', { command: 'python derive_cost.py' }],
+      ['mcp__session__call_llm', { prompt: 'derive the delegated BOQ items' }],
+      ['mcp__anysearch__batch_search', { query: 'market rates' }],
+    ])('blocks %s while a structured child handoff is pending', (toolName, input) => {
+      const result = runPreToolUseChecks(createInput({
+        toolName,
+        input,
+        activeSourceSlugs: toolName.startsWith('mcp__anysearch') ? ['anysearch'] : [],
+        allSourceSlugs: toolName.startsWith('mcp__anysearch') ? ['anysearch'] : [],
+        orchestrationState: pendingOrchestration,
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('delegated handoff barrier');
+        expect(result.reason).toContain('child-1');
+        expect(result.reason).toContain('must not perform or synthesize delegated work');
+      }
+    });
+
+    it('enforces an actual report-path handoff even when the mode policy is false', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/source.pdf' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          policy: {
+            ...pendingOrchestration.policy,
+            requireStructuredHandoff: false,
+          },
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('delegated handoff barrier');
+      }
+    });
+
+    it.each([
+      'mcp__session__spawn_session',
+      'mcp__session__get_spawn_status',
+      'mcp__session__get_session_info',
+      'mcp__session__list_sessions',
+      'mcp__session__send_agent_message',
+    ])('allows coordination tool %s while children are pending', (toolName) => {
+      const result = runPreToolUseChecks(createInput({
+        toolName,
+        input: {},
+        orchestrationState: pendingOrchestration,
+      }));
+
+      expect(result.type).not.toBe('block');
+    });
+
+    it('lifts the analysis barrier after every child handoff is received', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/orchestration/reports/task-1.md' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [{
+            ...pendingOrchestration.subAgents[0]!,
+            status: 'handoff_received' as const,
+            reportSize: 1024,
+          }],
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
+    it('never lets the parent write a child-owned report path', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Write',
+        input: {
+          file_path: 'C:/test/workspace/orchestration/reports/task-1.md',
+          content: 'fabricated child handoff',
+        },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [{
+            ...pendingOrchestration.subAgents[0]!,
+            status: 'handoff_received' as const,
+            reportSize: 1024,
+          }],
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('child-owned report');
+      }
+    });
+  });
+
   // ============================================================
   // Step 3: Prerequisite check
   // ============================================================

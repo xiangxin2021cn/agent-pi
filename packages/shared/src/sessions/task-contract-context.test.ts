@@ -190,9 +190,8 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
     expect(formatted).toContain('If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.');
     expect(formatted).toContain('Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.');
-    expect(formatted).toContain('use get_spawn_status to check handoffStatus/reportPathExists/reportSize');
-    expect(formatted).toContain('never replace this with an arbitrary fixed timeout');
-    expect(formatted).toContain('lastActivityAt/isStale');
+    expect(formatted).toContain('use get_spawn_status and follow parentAction');
+    expect(formatted).toContain('the runtime pauses and resumes the parent only after every terminal handoff is ready');
     expect(formatted).toContain('Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
@@ -236,7 +235,8 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('run xlsx-tool info first to inventory worksheets, tables, dimensions, and candidate item ranges');
     expect(formatted).toContain('Do not read or export the full pricing workbook in one pass for derivation');
     expect(formatted).toContain('Spawn one sheet-pricing agent per worksheet or BOQ table');
-    expect(formatted).toContain('that sheet agent must spawn item-range agents before deriving every BOQ item');
+    expect(formatted).toContain('the main session must split it into bounded item ranges and spawn those range agents itself');
+    expect(formatted).toContain('child agents must return a split request instead of spawning nested sessions');
     expect(formatted).toContain('The final pricing synthesis owner merges sheet handoffs');
   });
 
@@ -271,8 +271,9 @@ describe('formatTaskContractContext', () => {
 
     expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
     expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
-    expect(formatted).toContain('After spawning, use get_spawn_status, lastActivityAt, isStale, and report_path readiness for helper progress');
-    expect(formatted).toContain('The main session remains the final synthesis owner and must read, compare, and resolve helper handoffs before writing the final deliverable.');
+    expect(formatted).toContain('After spawning, use get_spawn_status and follow parentAction');
+    expect(formatted).toContain('Automatic parent takeover is forbidden');
+    expect(formatted).toContain('The main session remains the final synthesis owner, but it may only read, compare, and resolve terminal helper handoffs before writing the final deliverable.');
   });
 
   it('includes document evidence matrix entries when available', () => {

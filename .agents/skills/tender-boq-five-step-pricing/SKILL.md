@@ -18,6 +18,7 @@ Use `tender_capability` as the BOQ five-step pricing system of record. This skil
 - Unverified assumptions may not enter the core conclusion as facts.
 - Use controlled sub-agents only from the main session. Child agents must not call `spawn_session`.
 - Child agents write structured handoff reports only; the main session owns merging, contradiction checks, and the final capability pack.
+- A child retains exclusive ownership of its assigned BOQ range until its terminal structured handoff is ready. The main session must wait, retry, or request user review; it must never derive substitute rows or write the child report after a timeout.
 
 ## Workflow
 
@@ -30,7 +31,7 @@ Use `tender_capability` as the BOQ five-step pricing system of record. This skil
    - labour, material, plant, subcontract, temporary works, and indirect resource consumption where applicable;
    - quantity, rate, amount, source type, source locator, and verification status for each cost component;
    - direct cost and unresolved assumptions.
-5. Merge handoff reports. Run contradiction checks for duplicate item ownership, unit mismatch, quantity mismatch, unsupported productivity, and rate-source conflicts.
+5. Wait until `get_spawn_status.parentAction` is `merge` for every assigned child, then merge handoff reports. Run contradiction checks for duplicate item ownership, unit mismatch, quantity mismatch, unsupported productivity, and rate-source conflicts.
 6. Call `tender_capability` with `configure` for `boq_five_step_pricing`.
 7. Call `tender_capability` with `init`, or `replace` with the current `expectedRevision`.
 8. Call `validate`. Resolve missing build-ups, incomplete five-step records, broken source refs, and arithmetic mismatches before downstream planning.

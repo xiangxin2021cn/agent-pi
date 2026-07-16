@@ -134,6 +134,88 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'complete')).toBe(false)
   })
 
+  it('keeps the parent paused for a structured child regardless of the mode policy', async () => {
+    const parentSessionId = 'goal-waits-for-child'
+    const childSessionId = 'goal-active-child'
+    const reportPath = join(tmpRoot, 'sessions', parentSessionId, 'orchestration', 'reports', 'child.md')
+    const parent = buildSession(parentSessionId, {
+      goalState: goal({
+        criteria: [],
+        orchestration: {
+          version: 1,
+          phase: 'plan',
+          createdAt: 1,
+          updatedAt: 1,
+          policy: {
+            selectedSourceSlugs: ['kb-coto'],
+            forbidWorkingDirectoryDiscovery: true,
+            requireStructuredHandoff: false,
+            requireUserConfirmationPause: true,
+            maxAutomaticRepairPasses: 2,
+          },
+          taskBoard: { tasks: [] },
+          subAgents: [{
+            sessionId: childSessionId,
+            taskId: 'price-sheet-c1',
+            status: 'started',
+            sourceSlugs: ['kb-coto'],
+            reportPath,
+            createdAt: 1,
+            updatedAt: 1,
+            lastActivityAt: 1,
+            expectedHandoff: ['report'],
+          }],
+        },
+      }),
+    })
+    const child = createManagedSession({
+      id: childSessionId,
+      name: 'active pricing child',
+      parentSessionId,
+      parentSessionKind: 'spawn',
+    }, parent.workspace, { messagesLoaded: true })
+    child.isProcessing = true
+    child.messages.push(message('child-a1', 'assistant', 'Progress update while tools are still running.'))
+    sessionIds.push(childSessionId)
+    ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(childSessionId, child)
+    const events = captureEvents()
+
+    ;(sm as unknown as {
+      scheduleSpawnHandoffMonitor: (session: unknown) => void
+    }).scheduleSpawnHandoffMonitor = () => undefined
+
+    await (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(parentSessionId, 'complete')
+
+    expect(parent.spawnHandoffWait?.childSessionIds).toEqual([childSessionId])
+    expect(parent.goalState?.orchestration?.subAgents[0].status).toBe('started')
+    expect(parent.goalState?.status).toBe('running')
+    expect(events.some(event => event.type === 'goal_audit_started')).toBe(false)
+    expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
+
+    const continuationPrompts: string[] = []
+    ;(sm as unknown as {
+      scheduleSpawnHandoffContinuation: (session: unknown, prompt: string) => void
+    }).scheduleSpawnHandoffContinuation = (_session, prompt) => {
+      continuationPrompts.push(prompt)
+    }
+    mkdirSync(join(tmpRoot, 'sessions', parentSessionId, 'orchestration', 'reports'), { recursive: true })
+    writeFileSync(reportPath, '# Child handoff\n\nVerified pricing evidence.', 'utf8')
+    child.isProcessing = false
+    child.lastMessageAt = Date.now()
+
+    ;(sm as unknown as {
+      checkWaitingParentSpawnHandoffs: (sessionId: string) => void
+    }).checkWaitingParentSpawnHandoffs(parentSessionId)
+
+    expect(parent.goalState?.orchestration?.subAgents[0].status).toBe('handoff_received')
+    expect(parent.spawnHandoffWait?.resumeScheduled).toBe(true)
+    expect(continuationPrompts).toHaveLength(1)
+    expect(continuationPrompts[0]).toContain(reportPath)
+    expect(continuationPrompts[0]).toContain('Do not repeat delegated source analysis')
+  })
+
   it('does not complete a professional Markdown goal without a validated transactional artifact', async () => {
     const sessionId = 'goal-professional-artifact-gate'
     const managed = buildSession(sessionId, {

@@ -48,6 +48,7 @@ import {
 import { permissionsConfigCache, type PermissionsContext } from '../permissions-config.ts';
 import type { PrerequisiteCheckResult } from './prerequisite-manager.ts';
 import { rewriteBashWithRtk } from './rtk-rewrite.ts';
+import type { SessionOrchestrationState } from '../../sessions/types.ts';
 
 // ============================================================
 // TYPES
@@ -643,6 +644,8 @@ export interface PreToolUseInput {
     selectedSourceSlugs?: string[];
     forbidWorkingDirectoryDiscovery?: boolean;
   };
+  /** Full parent orchestration state used to enforce delegated-work ownership. */
+  orchestrationState?: SessionOrchestrationState;
   /** Debug callback */
   onDebug?: (message: string) => void;
 }
@@ -675,6 +678,91 @@ const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 /** Tools that can turn a directory into an implicit source corpus. */
 const DIRECTORY_DISCOVERY_TOOLS = new Set(['Glob', 'Grep']);
+const DELEGATION_COORDINATION_TOOLS = new Set([
+  'mcp__session__spawn_session',
+  'mcp__session__get_spawn_status',
+  'mcp__session__get_session_info',
+  'mcp__session__list_sessions',
+  'mcp__session__send_agent_message',
+]);
+
+function getDelegatedHandoffBlock(input: {
+  toolName: string;
+  input: Record<string, unknown>;
+  workingDirectory?: string;
+  workspaceRootPath: string;
+  orchestrationState?: SessionOrchestrationState;
+}): string | null {
+  const orchestration = input.orchestrationState;
+  if (!orchestration || orchestration.subAgents.length === 0) {
+    return null;
+  }
+  const hasStructuredDelegation = orchestration.policy.requireStructuredHandoff
+    || orchestration.subAgents.some(agent => Boolean(agent.reportPath));
+  if (!hasStructuredDelegation) {
+    return null;
+  }
+
+  const targetPath = getToolTargetPath(input.input);
+  const childOwner = targetPath
+    ? orchestration.subAgents.find(agent => (
+        agent.reportPath && isSameResolvedPath(targetPath, agent.reportPath, input.workingDirectory ?? input.workspaceRootPath)
+      ))
+    : undefined;
+  if (childOwner && FILE_WRITE_TOOLS.has(input.toolName)) {
+    return [
+      'STOP. The target is a child-owned report path.',
+      `Child session ${childOwner.sessionId} exclusively owns ${childOwner.reportPath}.`,
+      'The parent must not create, edit, repair, or replace a delegated handoff report.',
+    ].join(' ');
+  }
+
+  const unresolved = orchestration.subAgents.filter(agent => (
+    agent.status !== 'handoff_received' && agent.status !== 'completed'
+  ));
+  if (unresolved.length === 0) return null;
+  if (DELEGATION_COORDINATION_TOOLS.has(input.toolName)) return null;
+  if (FILE_WRITE_TOOLS.has(input.toolName) && targetPath && isOrchestrationBriefPath(
+    targetPath,
+    orchestration,
+    input.workingDirectory ?? input.workspaceRootPath,
+  )) {
+    return null;
+  }
+
+  const reviewRequired = unresolved.some(agent => agent.status === 'needs_review' || agent.status === 'failed');
+  return [
+    'STOP. The delegated handoff barrier is active.',
+    `Unresolved child sessions: ${unresolved.map(agent => `${agent.sessionId} (${agent.status})`).join(', ')}.`,
+    'The parent must not perform or synthesize delegated work, inspect original sources, calculate substitutes, or write child reports.',
+    reviewRequired
+      ? 'Retry the failed child or pause for explicit user review; automatic parent takeover is forbidden.'
+      : 'Use get_spawn_status or send_agent_message and continue waiting until every structured handoff is ready.',
+  ].join(' ');
+}
+
+function getToolTargetPath(input: Record<string, unknown>): string | undefined {
+  for (const key of ['file_path', 'path', 'notebook_path', 'outputPath', 'output_path']) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function isSameResolvedPath(candidate: string, expected: string, basePath: string): boolean {
+  return resolve(basePath, candidate).replace(/\\/g, '/').toLowerCase()
+    === resolve(basePath, expected).replace(/\\/g, '/').toLowerCase();
+}
+
+function isOrchestrationBriefPath(
+  candidate: string,
+  orchestration: SessionOrchestrationState,
+  basePath: string,
+): boolean {
+  const briefsPath = orchestration.artifacts?.briefsPath;
+  if (briefsPath) return isSameOrChildPath(resolve(basePath, candidate), resolve(basePath, briefsPath));
+  return /(?:^|[\\/])orchestration[\\/]briefs[\\/]/i.test(candidate);
+}
 
 function getWorkingDirectoryDiscoveryBlock(input: {
   toolName: string;
@@ -775,9 +863,10 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     permissionManager,
     prerequisiteManager,
     backendMetadata,
-    orchestrationPolicy,
+    orchestrationState,
     onDebug,
   } = ctx;
+  const orchestrationPolicy = ctx.orchestrationPolicy ?? orchestrationState?.policy;
 
   // Build permissions context for custom permissions.json rules
   const permissionsContext: PermissionsContext = {
@@ -823,6 +912,18 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   if (workspaceDiscoveryBlock) {
     onDebug?.(`Orchestration policy blocked ${toolName}: ${workspaceDiscoveryBlock}`);
     return { type: 'block', reason: workspaceDiscoveryBlock };
+  }
+
+  const delegatedHandoffBlock = getDelegatedHandoffBlock({
+    toolName,
+    input,
+    workspaceRootPath,
+    workingDirectory,
+    orchestrationState,
+  });
+  if (delegatedHandoffBlock) {
+    onDebug?.(`Orchestration handoff barrier blocked ${toolName}: ${delegatedHandoffBlock}`);
+    return { type: 'block', reason: delegatedHandoffBlock };
   }
 
   // ============================================================

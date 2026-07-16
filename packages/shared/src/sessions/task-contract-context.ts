@@ -151,7 +151,7 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
     `3. Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
     `4. If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.`,
     `5. Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.`,
-    `6. After spawn_session returns, wait at least pollAfterMs when provided and use get_spawn_status to check handoffStatus/reportPathExists/reportSize/lastActivityAt/isStale; continue polling while activity advances, and never replace this with an arbitrary fixed timeout.`,
+    `6. After spawn_session returns, use get_spawn_status and follow parentAction. While it is "wait", do not inspect original sources, calculate substitutes, or write child reports; the runtime pauses and resumes the parent only after every terminal handoff is ready.`,
     `7. Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.`,
     `8. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
     `9. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
@@ -169,8 +169,8 @@ function appendComplexAgentOrchestrationProtocol(lines: string[], contract: Sess
 
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
-  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status, lastActivityAt, isStale, and report_path readiness for helper progress; do not use an arbitrary fixed timeout or treat status "todo" as failed execution.`);
-  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner and must read, compare, and resolve helper handoffs before writing the final deliverable.`);
+  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status and follow parentAction. Pending helpers retain exclusive ownership of their assigned work; do not replace them after a fixed timeout or treat status "todo" as failure.`);
+  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner, but it may only read, compare, and resolve terminal helper handoffs before writing the final deliverable. Automatic parent takeover is forbidden.`);
   return startIndex + 4;
 }
 
@@ -180,7 +180,7 @@ function appendBoqPricingWorkbookProtocol(lines: string[], contract: SessionTask
   lines.push(`${startIndex}. For BOQ/pricing workbook tasks, run xlsx-tool info first to inventory worksheets, tables, dimensions, and candidate item ranges before any pricing derivation.`);
   lines.push(`${startIndex + 1}. Do not read or export the full pricing workbook in one pass for derivation; use xlsx-tool read with --sheet, --range, and bounded reads.`);
   lines.push(`${startIndex + 2}. Spawn one sheet-pricing agent per worksheet or BOQ table, but keep active sheet agents in small batches to avoid memory pressure.`);
-  lines.push(`${startIndex + 3}. If a sheet is still too large, that sheet agent must spawn item-range agents before deriving every BOQ item.`);
+  lines.push(`${startIndex + 3}. If a sheet is still too large, the main session must split it into bounded item ranges and spawn those range agents itself; child agents must return a split request instead of spawning nested sessions.`);
   lines.push(`${startIndex + 4}. Each sheet or item-range agent returns a handoff only: sheet/range, items covered, unit-rate method, quantity/resource/productivity/rate/formula evidence, source gaps, and unresolved assumptions.`);
   lines.push(`${startIndex + 5}. The final pricing synthesis owner merges sheet handoffs, checks missing worksheets/items, and must not invent rates where evidence is missing.`);
   return startIndex + 6;

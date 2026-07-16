@@ -12,4 +12,20 @@ describe('business project session tree', () => {
 
     expect(sessionsForBusinessProject(sessions, 'tender', 'n3').map((session) => session.id)).toEqual(['t1'])
   })
+
+  test('includes spawned descendants whose project context is inherited through the parent session', () => {
+    const sessions = [
+      { id: 'parent', lastMessageAt: 10, businessContext: { module: 'tender', projectId: 'n3', workflowId: 'tender-main', stageId: 'boq-pricing' } },
+      { id: 'child', lastMessageAt: 20, parentSessionId: 'parent', parentSessionKind: 'spawn' },
+      { id: 'grandchild', lastMessageAt: 30, parentSessionId: 'child', parentSessionKind: 'spawn' },
+      { id: 'other-parent', lastMessageAt: 40, businessContext: { module: 'tender', projectId: 'other', workflowId: 'tender-main', stageId: 'boq-pricing' } },
+      { id: 'other-child', lastMessageAt: 50, parentSessionId: 'other-parent', parentSessionKind: 'spawn' },
+    ] as const
+
+    expect(sessionsForBusinessProject(sessions, 'tender', 'n3').map((session) => session.id)).toEqual([
+      'grandchild',
+      'child',
+      'parent',
+    ])
+  })
 })

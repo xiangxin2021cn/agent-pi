@@ -1744,12 +1744,12 @@ function requiresFullTextArtifactAudit(goalState: SessionGoalState): boolean {
 }
 
 function hasCompletedSpawnedHandoff(session: GoalSpawnedSessionSummary): boolean {
-  return session.hasFinalAssistant
-    || (
-      session.handoffStatus === 'ready'
+  if (session.reportPath) {
+    return session.handoffStatus === 'ready'
       && session.reportPathExists === true
       && (session.reportSize ?? 0) > 0
-    )
+  }
+  return session.hasFinalAssistant
 }
 
 function getRequiredSpawnedSessionCount(assignmentCount: number): number {

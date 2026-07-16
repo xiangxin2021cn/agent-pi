@@ -2118,6 +2118,68 @@ describe('GoalController', () => {
     }
   })
 
+  test('does not count a final assistant message as a completed structured handoff', async () => {
+    const controller = new GoalController()
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Use one child agent and merge its report.',
+        taskType: 'document',
+        documentQualityMode: 'multi_agent_deep',
+        documentPlan: {
+          sections: ['Analysis'],
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: [],
+          agentPlan: {
+            mode: 'chapter_agents',
+            finalSynthesisOwner: 'final_synthesis_owner',
+            assignments: [{
+              id: 'chapter-agent-1',
+              title: 'Analysis',
+              role: 'analysis_agent',
+              reviewFocus: 'item-level derivation',
+            }],
+            reviewStages: ['Cross-chapter consistency review before final synthesis.'],
+            guardrails: ['Wait for the structured handoff.'],
+          },
+        },
+        deliverables: ['Merged report.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: [],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+    }), {
+      messages: [
+        message('u1', 'user', 'Use one child agent and merge its report.'),
+        message('a1', 'assistant', 'I will wait for the child handoff.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      spawnedSessions: [{
+        id: 'child-1',
+        name: 'Analysis',
+        taskId: 'chapter-agent-1',
+        messageCount: 2,
+        hasFinalAssistant: true,
+        reportPath: 'C:/session/orchestration/reports/chapter-agent-1.md',
+        reportPathExists: false,
+        reportSize: 0,
+        handoffStatus: 'pending',
+      }],
+    })
+
+    expect(decision.action).toBe('needs_review')
+    if (decision.action === 'needs_review') {
+      const audit = decision.result.evidence.find(item => item.label === 'document_agent_plan_audit')
+      expect(audit?.detail).toContain('completedSpawnHandoffs: 0/1')
+    }
+  })
+
   test('does not accept reviewer pass when explicit required user item is missing', async () => {
     const controller = new GoalController()
     const reviewPrompts: string[] = []

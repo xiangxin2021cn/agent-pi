@@ -19,6 +19,55 @@ export interface SpawnActivityState {
   idleMs?: number
 }
 
+export interface SpawnReportReadinessInput {
+  reportExists: boolean
+  reportSize?: number
+  isProcessing: boolean
+  queueLength: number
+}
+
+export interface ParentSpawnHandoffStatus {
+  sessionId: string
+  handoffStatus: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed'
+}
+
+export interface ParentSpawnHandoffBarrierDecision {
+  action: 'none' | 'wait' | 'resume' | 'review'
+  pendingSessionIds: string[]
+  reviewSessionIds: string[]
+}
+
+export function isSpawnReportReady(input: SpawnReportReadinessInput): boolean {
+  return input.reportExists
+    && (input.reportSize ?? 0) > 0
+    && !input.isProcessing
+    && input.queueLength === 0
+}
+
+export function resolveParentSpawnHandoffBarrier(input: {
+  requireStructuredHandoff: boolean
+  statuses: readonly ParentSpawnHandoffStatus[]
+}): ParentSpawnHandoffBarrierDecision {
+  if (!input.requireStructuredHandoff || input.statuses.length === 0) {
+    return { action: 'none', pendingSessionIds: [], reviewSessionIds: [] }
+  }
+
+  const reviewSessionIds = input.statuses
+    .filter(status => status.handoffStatus === 'failed' || status.handoffStatus === 'missing')
+    .map(status => status.sessionId)
+  const pendingSessionIds = input.statuses
+    .filter(status => status.handoffStatus !== 'ready' && !reviewSessionIds.includes(status.sessionId))
+    .map(status => status.sessionId)
+
+  if (reviewSessionIds.length > 0) {
+    return { action: 'review', pendingSessionIds, reviewSessionIds }
+  }
+  if (pendingSessionIds.length > 0) {
+    return { action: 'wait', pendingSessionIds, reviewSessionIds: [] }
+  }
+  return { action: 'resume', pendingSessionIds: [], reviewSessionIds: [] }
+}
+
 export function resolveSpawnActivityState(input: ResolveSpawnActivityStateInput): SpawnActivityState {
   const idleMs = input.lastActivityAt === undefined
     ? undefined
@@ -29,6 +78,8 @@ export function resolveSpawnActivityState(input: ResolveSpawnActivityStateInput)
     || input.fallbackLifecycleStatus === 'running'
     || input.fallbackLifecycleStatus === 'handoff_received'
   const isStale = !input.reportReady
+    && !input.isProcessing
+    && input.queueLength === 0
     && active
     && idleMs !== undefined
     && idleMs > input.staleAfterMs

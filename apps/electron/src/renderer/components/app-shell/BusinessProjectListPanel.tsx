@@ -1,14 +1,18 @@
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
-import { ChevronDown, ChevronRight, FilePlus2, FolderKanban, MessageSquarePlus, Plus } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, FilePlus2, FolderKanban, MessageSquarePlus, Plus } from 'lucide-react'
 import { toast } from 'sonner'
+import { Spinner } from '@craft-agent/ui'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import { Button } from '@/components/ui/button'
 import { useAppShellContext } from '@/context/AppShellContext'
-import { sessionMetaMapAtom } from '@/atoms/sessions'
+import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
 import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
 import { getBusinessWorkflow } from '@/pages/business-workflows'
 import { cn } from '@/lib/utils'
+import { getStateIcon, getStateIconStyle, getStateLabel } from '@/config/session-status-config'
+import { getSessionStatus } from '@/utils/session'
+import { buildSessionHierarchy } from '@/utils/session-hierarchy'
 import { BusinessProjectDialog } from './BusinessProjectDialog'
 import { sessionsForBusinessProject } from './business-project-view-model'
 
@@ -29,11 +33,13 @@ export function BusinessProjectListPanel({
   onProjectClick,
   onSessionClick,
 }: BusinessProjectListPanelProps) {
-  const { openNewChat } = useAppShellContext()
+  const { openNewChat, sessionStatuses } = useAppShellContext()
+  const availableSessionStatuses = sessionStatuses ?? []
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const workflow = getBusinessWorkflow(moduleId)
   const [projects, setProjects] = React.useState<BusinessProjectRecord[]>([])
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set())
+  const [collapsedSessionThreads, setCollapsedSessionThreads] = React.useState<Set<string>>(new Set())
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -70,6 +76,15 @@ export function BusinessProjectListPanel({
       const next = new Set(current)
       if (next.has(projectId)) next.delete(projectId)
       else next.add(projectId)
+      return next
+    })
+  }
+
+  const toggleSessionThread = (sessionId: string) => {
+    setCollapsedSessionThreads((current) => {
+      const next = new Set(current)
+      if (next.has(sessionId)) next.delete(sessionId)
+      else next.add(sessionId)
       return next
     })
   }
@@ -114,7 +129,81 @@ export function BusinessProjectListPanel({
         )}
         {projects.map((project) => {
           const projectSessions = sessionsForBusinessProject(sessionMetaMap.values(), moduleId, project.projectId)
+          const sessionHierarchy = buildSessionHierarchy(projectSessions)
+          const childSessionCount = sessionHierarchy.parentIdByChildId.size
           const isExpanded = expanded.has(project.projectId)
+          const renderSessions = (sessions: SessionMeta[], depth = 0, seen = new Set<string>()): React.ReactNode[] => sessions.map((session) => {
+            if (seen.has(session.id)) return null
+            const nextSeen = new Set(seen).add(session.id)
+            const children = sessionHierarchy.childrenByParentId.get(session.id) ?? []
+            const descendantCount = sessionHierarchy.descendantCountBySessionId.get(session.id) ?? 0
+            const isThreadCollapsed = collapsedSessionThreads.has(session.id)
+            const statusId = getSessionStatus(session)
+            const statusLabel = session.isProcessing
+              ? '运行中'
+              : session.hasUnread
+                ? '有新输出'
+                : getStateLabel(statusId, availableSessionStatuses)
+            const messageLabel = session.messageCount ? ` · ${session.messageCount} 条消息` : ''
+
+            return (
+              <React.Fragment key={session.id}>
+                <div
+                  className={cn(
+                    'group/session flex items-center gap-1 rounded px-1 py-1',
+                    selectedSessionId === session.id && 'bg-muted',
+                  )}
+                  data-session-id={session.id}
+                  data-session-depth={depth}
+                >
+                  {descendantCount > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-6 shrink-0"
+                      title={isThreadCollapsed ? `展开 ${descendantCount} 个子智能体` : `折叠 ${descendantCount} 个子智能体`}
+                      onClick={() => toggleSessionThread(session.id)}
+                    >
+                      {isThreadCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    </Button>
+                  ) : (
+                    <span className="size-6 shrink-0" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onSessionClick(project.projectId, session.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left hover:bg-muted/60"
+                  >
+                    <span
+                      className="flex size-4 shrink-0 items-center justify-center text-xs [&>svg]:size-4"
+                      style={getStateIconStyle(statusId, availableSessionStatuses)}
+                      title={statusLabel}
+                    >
+                      {session.isProcessing ? <Spinner className="text-accent" /> : getStateIcon(statusId, availableSessionStatuses)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-sm">{session.name || session.preview || '未命名任务'}</span>
+                        {session.parentSessionKind === 'spawn' && (
+                          <Bot className="size-3.5 shrink-0 text-success" aria-label="子智能体" />
+                        )}
+                      </span>
+                      <span className={cn('block truncate text-xs text-muted-foreground', session.isProcessing && 'text-accent')}>
+                        {session.parentSessionKind === 'spawn' ? '子智能体 · ' : ''}{statusLabel}{messageLabel}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+                {!isThreadCollapsed && children.length > 0 && (
+                  <div className="ml-3 border-l pl-2">
+                    {renderSessions(children, depth + 1, nextSeen)}
+                  </div>
+                )}
+              </React.Fragment>
+            )
+          }).filter((node): node is React.ReactElement => node !== null)
+
           return (
             <div key={project.projectId} className="mb-1">
               <div className={cn('group flex items-center gap-1 rounded px-1 py-1', selectedProjectId === project.projectId && 'bg-muted')}>
@@ -125,7 +214,10 @@ export function BusinessProjectListPanel({
                   <FolderKanban className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{project.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{project.inputPaths.length} 份资料 · {projectSessions.length} 个任务</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {project.inputPaths.length} 份资料 · {sessionHierarchy.rootItems.length} 个任务
+                      {childSessionCount > 0 ? ` · ${childSessionCount} 个子智能体` : ''}
+                    </span>
                   </span>
                 </button>
                 <Button type="button" variant="ghost" size="icon" className="size-7 opacity-70 group-hover:opacity-100" title="添加项目资料" onClick={() => void handleAddInputs(project)}>
@@ -137,17 +229,8 @@ export function BusinessProjectListPanel({
               </div>
               {isExpanded && (
                 <div className="ml-8 border-l pl-2">
-                  {projectSessions.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">暂无任务</p>}
-                  {projectSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      onClick={() => onSessionClick(project.projectId, session.id)}
-                      className={cn('block w-full truncate rounded px-2 py-1.5 text-left text-sm hover:bg-muted/60', selectedSessionId === session.id && 'bg-muted')}
-                    >
-                      {session.name || session.preview || '未命名任务'}
-                    </button>
-                  ))}
+                  {sessionHierarchy.rootItems.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">暂无任务</p>}
+                  {renderSessions(sessionHierarchy.rootItems)}
                 </div>
               )}
             </div>

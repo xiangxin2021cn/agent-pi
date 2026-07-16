@@ -122,7 +122,13 @@ import type { SessionSpawnStatus } from '@craft-agent/session-tools-core'
 import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
 import { enforceGoalCompletionGates } from './goal-completion-gates'
 import { getAgentSessionStatusGateError } from './goal-completion-gate'
-import { getSpawnActivityTimeoutMs, resolveSpawnActivityState } from './spawn-lifecycle'
+import {
+  getSpawnActivityTimeoutMs,
+  isSpawnReportReady,
+  resolveParentSpawnHandoffBarrier,
+  resolveSpawnActivityState,
+  type ParentSpawnHandoffBarrierDecision,
+} from './spawn-lifecycle'
 import { verifyDocumentArtifactReadiness } from './document-artifact-readiness'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
@@ -909,6 +915,12 @@ interface ManagedSession {
   workspace: Workspace
   agent: AgentInstance | null  // Lazy-loaded - null until first message
   idleRuntimeDisposeTimer?: ReturnType<typeof setTimeout>
+  spawnHandoffMonitorTimer?: ReturnType<typeof setTimeout>
+  spawnHandoffWait?: {
+    childSessionIds: string[]
+    startedAt: number
+    resumeScheduled: boolean
+  }
   messages: Message[]
   isProcessing: boolean
   /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
@@ -1314,7 +1326,7 @@ const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
 ])
 
 const SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT = 4
-const SPAWN_SESSION_HANDOFF_TIMEOUT_MS = 30 * 60 * 1000
+const SPAWN_HANDOFF_MONITOR_INTERVAL_MS = 5_000
 
 function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriterionKind {
   return typeof value === 'string' && SESSION_GOAL_CRITERION_KINDS.has(value as SessionGoalCriterionKind)
@@ -6076,11 +6088,18 @@ export class SessionManager implements ISessionManager {
     const parent = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined
     const lifecycle = parent?.goalState?.orchestration?.subAgents.find(item => item.sessionId === session.id)
     const report = this.getReportFileState(lifecycle?.reportPath)
-    const ready = report.exists && (report.size ?? 0) > 0
+    const ready = isSpawnReportReady({
+      reportExists: report.exists,
+      reportSize: report.size,
+      isProcessing: session.isProcessing,
+      queueLength: session.messageQueue.length,
+    })
     const failedHandoff = lifecycle?.status === 'needs_review' || lifecycle?.status === 'failed'
     const activityTimestamps = [session.lastMessageAt, lifecycle?.lastActivityAt, lifecycle?.updatedAt]
       .filter((value): value is number => typeof value === 'number')
-    const lastActivityAt = activityTimestamps.length > 0 ? Math.max(...activityTimestamps) : undefined
+    const lastActivityAt = session.isProcessing
+      ? Date.now()
+      : activityTimestamps.length > 0 ? Math.max(...activityTimestamps) : undefined
     const staleAfterMs = getSpawnActivityTimeoutMs(process.env.CRAFT_SPAWN_ACTIVITY_TIMEOUT_MS)
     const activityState = resolveSpawnActivityState({
       now: Date.now(),
@@ -6094,6 +6113,15 @@ export class SessionManager implements ISessionManager {
       fallbackLifecycleStatus: lifecycle?.status ?? (session.parentSessionKind === 'spawn' ? 'started' : 'unknown'),
     })
 
+    const handoffStatus = session.parentSessionKind !== 'spawn' ? 'not_applicable' : activityState.handoffStatus
+    const parentAction = handoffStatus === 'not_applicable'
+      ? 'not_applicable'
+      : handoffStatus === 'ready'
+        ? 'merge'
+        : handoffStatus === 'pending'
+          ? 'wait'
+          : 'user_review'
+
     return {
       sessionId: session.id,
       parentSessionId: session.parentSessionId,
@@ -6106,7 +6134,9 @@ export class SessionManager implements ISessionManager {
       reportPath: lifecycle?.reportPath,
       reportPathExists: report.exists,
       reportSize: report.size,
-      handoffStatus: session.parentSessionKind !== 'spawn' ? 'not_applicable' : activityState.handoffStatus,
+      handoffStatus,
+      parentAction,
+      takeoverAllowed: false,
       lastActivityAt,
       idleMs: activityState.idleMs,
       staleAfterMs,
@@ -6128,6 +6158,176 @@ export class SessionManager implements ISessionManager {
       }).length
   }
 
+  private getParentSpawnHandoffBarrierDecision(parent: ManagedSession): ParentSpawnHandoffBarrierDecision {
+    const orchestration = parent.goalState?.orchestration
+    if (!orchestration) {
+      return { action: 'none', pendingSessionIds: [], reviewSessionIds: [] }
+    }
+
+    return resolveParentSpawnHandoffBarrier({
+      requireStructuredHandoff: orchestration.policy.requireStructuredHandoff
+        || orchestration.subAgents.some(agent => Boolean(agent.reportPath)),
+      statuses: orchestration.subAgents.map(agent => {
+        const runtime = this.getSpawnStatus(agent.sessionId)
+        if (runtime) {
+          return { sessionId: agent.sessionId, handoffStatus: runtime.handoffStatus }
+        }
+
+        const report = this.getReportFileState(agent.reportPath)
+        const persistedReady = (agent.status === 'handoff_received' || agent.status === 'completed')
+          && report.exists
+          && (report.size ?? 0) > 0
+        return {
+          sessionId: agent.sessionId,
+          handoffStatus: persistedReady
+            ? 'ready' as const
+            : agent.status === 'needs_review' || agent.status === 'failed'
+              ? 'failed' as const
+              : 'missing' as const,
+        }
+      }),
+    })
+  }
+
+  private enterSpawnHandoffWait(parent: ManagedSession, childSessionIds: string[]): void {
+    const firstWait = !parent.spawnHandoffWait
+    parent.spawnHandoffWait = {
+      childSessionIds,
+      startedAt: parent.spawnHandoffWait?.startedAt ?? Date.now(),
+      resumeScheduled: false,
+    }
+
+    if (firstWait) {
+      const infoMessage: Message = {
+        id: generateMessageId(),
+        role: 'info',
+        content: `Waiting for ${childSessionIds.length} structured child handoff(s). The parent is paused and will resume automatically after every child finishes; parent takeover is disabled.`,
+        timestamp: this.monotonic(),
+        infoLevel: 'info',
+      }
+      parent.messages.push(infoMessage)
+      this.sendEvent({
+        type: 'info',
+        sessionId: parent.id,
+        message: infoMessage.content,
+        level: infoMessage.infoLevel,
+        timestamp: infoMessage.timestamp,
+      }, parent.workspace.id)
+    }
+
+    this.persistSession(parent)
+    this.scheduleSpawnHandoffMonitor(parent)
+  }
+
+  private clearSpawnHandoffWait(parent: ManagedSession): void {
+    if (parent.spawnHandoffMonitorTimer) {
+      clearTimeout(parent.spawnHandoffMonitorTimer)
+      parent.spawnHandoffMonitorTimer = undefined
+    }
+    parent.spawnHandoffWait = undefined
+  }
+
+  private scheduleSpawnHandoffMonitor(parent: ManagedSession, delayMs = SPAWN_HANDOFF_MONITOR_INTERVAL_MS): void {
+    if (!parent.spawnHandoffWait || parent.spawnHandoffMonitorTimer) return
+
+    parent.spawnHandoffMonitorTimer = setTimeout(() => {
+      parent.spawnHandoffMonitorTimer = undefined
+      this.checkWaitingParentSpawnHandoffs(parent.id)
+    }, delayMs)
+    ;(parent.spawnHandoffMonitorTimer as { unref?: () => void }).unref?.()
+  }
+
+  private checkWaitingParentSpawnHandoffs(parentSessionId: string): void {
+    const parent = this.sessions.get(parentSessionId)
+    if (!parent?.spawnHandoffWait) return
+
+    const decision = this.getParentSpawnHandoffBarrierDecision(parent)
+    if (decision.action === 'wait') {
+      parent.spawnHandoffWait.childSessionIds = decision.pendingSessionIds
+      this.scheduleSpawnHandoffMonitor(parent)
+      return
+    }
+    if (decision.action === 'review') {
+      this.pauseParentForSpawnHandoffReview(parent, decision.reviewSessionIds)
+      return
+    }
+    if (decision.action !== 'resume') {
+      this.clearSpawnHandoffWait(parent)
+      return
+    }
+
+    if (parent.isProcessing || parent.messageQueue.length > 0) {
+      this.scheduleSpawnHandoffMonitor(parent)
+      return
+    }
+    if (parent.spawnHandoffWait.resumeScheduled) return
+
+    parent.spawnHandoffWait.resumeScheduled = true
+    const reports = parent.goalState?.orchestration?.subAgents
+      .filter(agent => agent.reportPath && (agent.status === 'handoff_received' || agent.status === 'completed'))
+      .map(agent => `- ${agent.taskId ?? agent.sessionId}: ${agent.reportPath}`)
+      .join('\n') ?? ''
+    const prompt = [
+      '<spawn-handoffs-ready>',
+      'All delegated agents have finished and their structured handoffs are ready.',
+      'Read and merge only the handoff reports listed below. Do not repeat delegated source analysis, calculations, searches, or child report writing.',
+      reports || '(No report paths were recorded.)',
+      'Resolve any contradictions explicitly. If a handoff is incomplete or contradictory, pause for user review instead of substituting parent-generated data.',
+      '</spawn-handoffs-ready>',
+    ].join('\n')
+    this.scheduleSpawnHandoffContinuation(parent, prompt)
+  }
+
+  private scheduleSpawnHandoffContinuation(parent: ManagedSession, prompt: string): void {
+    const iteration = parent.goalState?.iteration ?? 0
+    setImmediate(() => {
+      this.runGoalContinuation(parent.id, prompt, iteration, 0, 'spawn_handoff').catch(error => {
+        sessionLog.error('spawn handoff continuation failed', {
+          sessionId: parent.id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        sessionRuntimeHooks.captureException(error, { errorSource: 'spawn-handoff-continuation', sessionId: parent.id })
+        void this.onProcessingStopped(parent.id, 'error')
+      })
+    })
+  }
+
+  private pauseParentForSpawnHandoffReview(parent: ManagedSession, childSessionIds: string[]): void {
+    this.clearSpawnHandoffWait(parent)
+    const current = parent.goalState
+    if (!current) return
+
+    const now = Date.now()
+    const pauseTransition = current.orchestration
+      ? transitionOrchestrationPhase(current.orchestration, 'paused', { now })
+      : undefined
+    const nextGoalState: SessionGoalState = {
+      ...current,
+      status: 'needs_review',
+      orchestration: pauseTransition?.ok ? pauseTransition.orchestration : current.orchestration,
+      updatedAt: now,
+    }
+    parent.goalState = nextGoalState
+    parent.agent?.updateSessionGoalState?.(nextGoalState)
+    this.persistSession(parent)
+    this.persistOrchestrationLedgerInBackground(parent)
+    this.sendEvent({ type: 'goal_state_changed', sessionId: parent.id, goalState: nextGoalState }, parent.workspace.id)
+    this.sendEvent({
+      type: 'goal_needs_review',
+      sessionId: parent.id,
+      goalId: nextGoalState.id,
+      goalState: nextGoalState,
+      reason: `Structured child handoff requires user review: ${childSessionIds.join(', ')}. Automatic parent takeover is disabled.`,
+    }, parent.workspace.id)
+    this.sendEvent({
+      type: 'complete',
+      sessionId: parent.id,
+      tokenUsage: parent.tokenUsage,
+      hasUnread: parent.hasUnread,
+    }, parent.workspace.id)
+    this.scheduleIdleRuntimeDispose(parent)
+  }
+
   private refreshParentSpawnHandoffFromChild(child: ManagedSession): void {
     if (child.parentSessionKind !== 'spawn' || !child.parentSessionId) return
 
@@ -6140,7 +6340,12 @@ export class SessionManager implements ISessionManager {
 
     const now = Date.now()
     const report = this.getReportFileState(lifecycle.reportPath)
-    const reportReady = report.exists && Boolean(report.size && report.size > 0)
+    const reportReady = isSpawnReportReady({
+      reportExists: report.exists,
+      reportSize: report.size,
+      isProcessing: child.isProcessing,
+      queueLength: child.messageQueue.length,
+    })
     if (!reportReady) {
       const hasFinalAssistant = child.messages.some(message =>
         message.role === 'assistant'
@@ -6148,10 +6353,25 @@ export class SessionManager implements ISessionManager {
         && message.content.trim().length > 0
       )
       const hasError = child.messages.some(message => message.role === 'error')
-      const timedOut = now - lifecycle.createdAt >= SPAWN_SESSION_HANDOFF_TIMEOUT_MS
       const alreadyNeedsReview = lifecycle.status === 'needs_review' || lifecycle.status === 'failed'
+      const childTurnFinished = !child.isProcessing && child.messageQueue.length === 0
+      const activityTimestamps = [child.lastMessageAt, lifecycle.lastActivityAt, lifecycle.updatedAt]
+        .filter((value): value is number => typeof value === 'number')
+      const activityState = resolveSpawnActivityState({
+        now,
+        lastActivityAt: child.isProcessing
+          ? now
+          : activityTimestamps.length > 0 ? Math.max(...activityTimestamps) : undefined,
+        staleAfterMs: getSpawnActivityTimeoutMs(process.env.CRAFT_SPAWN_ACTIVITY_TIMEOUT_MS),
+        isProcessing: child.isProcessing,
+        queueLength: child.messageQueue.length,
+        reportReady: false,
+        failedLifecycle: alreadyNeedsReview,
+        hasReportPath: true,
+        fallbackLifecycleStatus: lifecycle.status,
+      })
 
-      if (!alreadyNeedsReview && (hasFinalAssistant || hasError || timedOut)) {
+      if (!alreadyNeedsReview && ((childTurnFinished && (hasFinalAssistant || hasError)) || activityState.isStale)) {
         const updatedOrchestration = markSubAgentHandoffNeedsReview(orchestration, {
           sessionId: child.id,
           now,
@@ -6171,6 +6391,7 @@ export class SessionManager implements ISessionManager {
           sessionId: parent.id,
           goalState: parent.goalState,
         }, parent.workspace.id)
+        this.scheduleSpawnHandoffMonitor(parent, 0)
       }
       return
     }
@@ -6196,6 +6417,7 @@ export class SessionManager implements ISessionManager {
       sessionId: parent.id,
       goalState: parent.goalState,
     }, parent.workspace.id)
+    this.scheduleSpawnHandoffMonitor(parent, 0)
   }
 
   private getReportFileState(reportPath: string | undefined): { exists: boolean; size?: number } {
@@ -7094,6 +7316,7 @@ export class SessionManager implements ISessionManager {
     this.pendingDeltas.delete(sessionId)
     this.clearAdminRememberApprovalsForSession(sessionId)
     this.clearPendingPermissionRequestsForSession(sessionId)
+    this.clearSpawnHandoffWait(managed)
 
     // Cancel any pending persistence write (session is being deleted, no need to save)
     sessionPersistenceQueue.cancel(sessionId)
@@ -8003,6 +8226,30 @@ export class SessionManager implements ISessionManager {
         doneBpm.unbindAllForSession(sessionId)
       }
 
+      if (reason === 'complete') {
+        const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
+        if (spawnBarrier.action === 'wait') {
+          this.enterSpawnHandoffWait(managed, spawnBarrier.pendingSessionIds)
+          this.sendEvent({
+            type: 'complete',
+            sessionId,
+            tokenUsage: managed.tokenUsage,
+            hasUnread: managed.hasUnread,
+          }, managed.workspace.id)
+          this.scheduleIdleRuntimeDispose(managed)
+          this.persistSession(managed)
+          return
+        }
+        if (spawnBarrier.action === 'review') {
+          this.pauseParentForSpawnHandoffReview(managed, spawnBarrier.reviewSessionIds)
+          this.persistSession(managed)
+          return
+        }
+        if (spawnBarrier.action === 'resume' && managed.spawnHandoffWait) {
+          this.clearSpawnHandoffWait(managed)
+        }
+      }
+
       const goalStateBeforeAudit = managed.goalState
       let goalStateForAudit = goalStateBeforeAudit
       let auditTransitionBlockReason: string | undefined
@@ -8588,22 +8835,34 @@ export class SessionManager implements ISessionManager {
     return attachments
   }
 
-  private async runGoalContinuation(sessionId: string, prompt: string, iteration: number, activeRetryCount = 0): Promise<void> {
+  private async runGoalContinuation(
+    sessionId: string,
+    prompt: string,
+    iteration: number,
+    activeRetryCount = 0,
+    continuationKind: 'goal' | 'spawn_handoff' = 'goal',
+  ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
 
     if (managed.messageQueue.length > 0) {
-      sessionLog.info('goal continuation yielded to queued user work', {
+      sessionLog.info(`${continuationKind} continuation yielded to queued user work`, {
         sessionId,
         iteration,
         queueLength: managed.messageQueue.length,
       })
+      if (continuationKind === 'spawn_handoff') this.clearSpawnHandoffWait(managed)
       this.processNextQueuedMessage(sessionId)
       return
     }
 
-    if (!managed.goalState || managed.goalState.status !== 'improving' || managed.goalState.iteration !== iteration) {
-      sessionLog.info('goal continuation skipped because goal state changed', {
+    const validGoalContinuation = continuationKind === 'goal'
+      && managed.goalState?.status === 'improving'
+      && managed.goalState.iteration === iteration
+    const validSpawnContinuation = continuationKind === 'spawn_handoff'
+      && managed.spawnHandoffWait?.resumeScheduled === true
+    if (!validGoalContinuation && !validSpawnContinuation) {
+      sessionLog.info(`${continuationKind} continuation skipped because state changed`, {
         sessionId,
         iteration,
         goalIteration: managed.goalState?.iteration,
@@ -8620,6 +8879,11 @@ export class SessionManager implements ISessionManager {
     }
 
     if (managed.isProcessing) {
+      if (continuationKind === 'spawn_handoff') {
+        if (managed.spawnHandoffWait) managed.spawnHandoffWait.resumeScheduled = false
+        this.scheduleSpawnHandoffMonitor(managed)
+        return
+      }
       if (activeRetryCount < GOAL_CONTINUATION_MAX_ACTIVE_RETRIES) {
         sessionLog.warn('goal continuation delayed because the session is still active', {
           sessionId,
@@ -8628,7 +8892,7 @@ export class SessionManager implements ISessionManager {
           queueLength: managed.messageQueue.length,
         })
         setTimeout(() => {
-          this.runGoalContinuation(sessionId, prompt, iteration, activeRetryCount + 1).catch(err => {
+          this.runGoalContinuation(sessionId, prompt, iteration, activeRetryCount + 1, continuationKind).catch(err => {
             sessionLog.error('goal continuation retry failed', {
               sessionId,
               iteration,
@@ -8665,7 +8929,9 @@ export class SessionManager implements ISessionManager {
     const infoMessage: Message = {
       id: generateMessageId(),
       role: 'info',
-      content: `Goal audit requested improvement pass ${iteration + 1}.`,
+      content: continuationKind === 'spawn_handoff'
+        ? 'All structured child handoffs are ready. Resuming the parent for audited merge only.'
+        : `Goal audit requested improvement pass ${iteration + 1}.`,
       timestamp: this.monotonic(),
       infoLevel: 'info',
     }
@@ -8677,6 +8943,8 @@ export class SessionManager implements ISessionManager {
       level: infoMessage.infoLevel,
       timestamp: infoMessage.timestamp,
     }, managed.workspace.id)
+
+    if (continuationKind === 'spawn_handoff') this.clearSpawnHandoffWait(managed)
 
     managed.lastMessageAt = Date.now()
     this.setProcessing(managed, true)
@@ -8693,7 +8961,7 @@ export class SessionManager implements ISessionManager {
       toolMetadataStore.setSessionDir(chatSessionDir)
       const agent = await this.getOrCreateAgent(managed)
 
-      sessionLog.info('Starting goal continuation for session:', sessionId)
+      sessionLog.info(`Starting ${continuationKind} continuation for session:`, sessionId)
       const chatIterator = agent.chat(prompt, this.getGoalContinuationAttachments(managed))
 
       for await (const event of chatIterator) {
@@ -10668,6 +10936,7 @@ export class SessionManager implements ISessionManager {
     // watchers are torn down.
     await Promise.all([...this.sessions.values()].map(async (managed) => {
       try {
+        this.clearSpawnHandoffWait(managed)
         if (managed.autoRetryTimer) {
           clearTimeout(managed.autoRetryTimer)
           managed.autoRetryTimer = undefined

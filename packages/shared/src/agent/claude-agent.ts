@@ -1130,6 +1130,7 @@ export class ClaudeAgent extends BaseAgent {
                 prerequisiteManager: this.prerequisiteManager,
                 rtkContext,
                 orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
+                orchestrationState: this.config.session?.goalState?.orchestration,
                 onDebug: (msg) => this.onDebug?.(msg),
               });
 

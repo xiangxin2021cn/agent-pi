@@ -72,8 +72,11 @@ V2.2.1 收紧文档质量路由，并将投标工作台从彼此孤立的阶段�
 | Tender pipeline | Stages now follow document analysis -> BOQ five-step pricing -> WORK PLAN AND PROPOSED METHODOLOGY -> programme/resources/cost/cash flow -> formal submission documents -> audit. | 阶段调整为标书分析 -> BOQ 五步法组价 -> WORK PLAN AND PROPOSED METHODOLOGY -> 进度/资源/成本/现金流 -> 正式递交文件 -> 审查。 |
 | BOQ five-step pricing | A dedicated capability pack and skill require item-by-item scope, productivity, resource consumption, sourced rates, direct cost, and risk reconciliation. | 新增专用能力包和 skill，要求逐项记录范围、生产率、资源消耗、询源单价、直接成本和风险复核。 |
 | Controlled sub-agents | Large BOQ scopes can dispatch child agents with narrow briefs, allowed sources, assigned items, and report paths; child agents cannot spawn further agents. | 大型清单可派发受控子智能体，brief 仅包含允许来源、分配条目和报告路径；子智能体禁止继续派生。 |
+| Reliable child lifecycle | Active child agents remain authoritative until their structured reports are ready. The parent waits, monitors activity, and merges completed handoffs instead of taking over after a fixed timeout. | 活跃子智能体在结构化报告就绪前始终保持任务所有权；主会话持续等待并监控活动，只合并已完成交接，不再固定超时后自行接管。 |
+| Workbench agent visibility | Tender Workbench now shows inherited child agents as a nested status tree with live state and message counts. | 投标工作台以嵌套状态树显示所属子智能体，并展示实时状态和消息数量。 |
 | Formal submission documents | After planning, Agent Pi compiles required tender deliverables such as methodology, construction programme, labour/material/plant plan, and cash-flow plan. | 施工策划后编制投标要求的正式递交文件，包括方法论、施工进度计划、人材机计划和现金流计划。 |
 | Quality routing | Native Quick stays close to upstream lightweight execution, while Guarded Quick and professional modes keep source boundaries and checks for higher-risk tasks. | 原生快速模式保留接近上游的轻量执行；受控快速和专业模式继续用于高风险任务的来源边界与检查。 |
+| Core runtime | Claude Agent SDK is updated to 0.3.211 and Pi to 0.80.7; Anthropic SDK remains current at 0.111.0. | Claude Agent SDK 升级到 0.3.211，Pi 升级到 0.80.7；Anthropic SDK 保持当前最新版 0.111.0。 |
 
 ### V2.2.0 Enterprise Workbenches and Document Quality / V2.2.0 企业工作台与文档质量
 
