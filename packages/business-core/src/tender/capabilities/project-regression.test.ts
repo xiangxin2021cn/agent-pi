@@ -13,7 +13,7 @@ describe('V2.2 tender project regression gate', () => {
     const complete = fixture('complete-project');
     const expected: TenderCapabilityId[] = [
       'document_analysis', 'evaluation_strategy', 'boq_reconciliation',
-      'boq_five_step_pricing', 'execution_plan', 'schedule_resources',
+      'boq_five_step_pricing', 'bidder_commitments', 'execution_plan', 'schedule_resources',
       'cost_cashflow', 'submission_documents', 'submission_audit',
     ];
 

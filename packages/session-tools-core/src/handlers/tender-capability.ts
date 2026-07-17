@@ -3,6 +3,7 @@ import {
   auditTenderEvaluationStrategy,
   auditTenderBoqReconciliation,
   auditTenderBoqFiveStepPricing,
+  auditTenderBidderCommitments,
   auditTenderExecutionPlan,
   auditTenderScheduleResources,
   auditTenderCostCashFlow,
@@ -16,6 +17,7 @@ import {
   parseTenderEvaluationStrategyData,
   parseTenderBoqReconciliationData,
   parseTenderBoqFiveStepPricingData,
+  parseTenderBidderCommitmentsData,
   parseTenderExecutionPlanData,
   parseTenderScheduleResourceData,
   parseTenderCostCashFlowData,
@@ -32,6 +34,7 @@ import {
   type TenderEvaluationStrategyAudit,
   type TenderBoqReconciliationAudit,
   type TenderBoqFiveStepPricingAudit,
+  type TenderBidderCommitmentsAudit,
   type TenderExecutionPlanAudit,
   type TenderScheduleResourceAudit,
   type TenderCostCashFlowAudit,
@@ -63,6 +66,7 @@ type ImplementedAudit =
   | TenderEvaluationStrategyAudit
   | TenderBoqReconciliationAudit
   | TenderBoqFiveStepPricingAudit
+  | TenderBidderCommitmentsAudit
   | TenderExecutionPlanAudit
   | TenderScheduleResourceAudit
   | TenderCostCashFlowAudit
@@ -75,6 +79,7 @@ const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
   boq_five_step_pricing: 'boq-five-step-pricing',
+  bidder_commitments: 'bidder-commitments',
   execution_plan: 'execution-plan',
   schedule_resources: 'schedule-resources',
   cost_cashflow: 'cost-cashflow',
@@ -209,6 +214,7 @@ function isImplementedCapability(
   | 'evaluation_strategy'
   | 'boq_reconciliation'
   | 'boq_five_step_pricing'
+  | 'bidder_commitments'
   | 'execution_plan'
   | 'schedule_resources'
   | 'cost_cashflow'
@@ -218,6 +224,7 @@ function isImplementedCapability(
     || capability === 'evaluation_strategy'
     || capability === 'boq_reconciliation'
     || capability === 'boq_five_step_pricing'
+    || capability === 'bidder_commitments'
     || capability === 'execution_plan'
     || capability === 'schedule_resources'
     || capability === 'cost_cashflow'
@@ -234,6 +241,7 @@ async function parseCapabilityData(
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
   if (capability === 'boq_five_step_pricing') return parseTenderBoqFiveStepPricingData(data);
+  if (capability === 'bidder_commitments') return parseTenderBidderCommitmentsData(data);
   if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
   if (capability === 'schedule_resources') return parseTenderScheduleResourceData(data);
   if (capability === 'cost_cashflow') return parseTenderCostCashFlowData(data);
@@ -298,6 +306,9 @@ function auditCapability(
   }
   if (capability === 'boq_five_step_pricing') {
     return auditTenderBoqFiveStepPricing(workspace, upstreamData.boq_reconciliation, data, generatedAt);
+  }
+  if (capability === 'bidder_commitments') {
+    return auditTenderBidderCommitments(workspace, upstreamData.boq_five_step_pricing, data, generatedAt);
   }
   if (capability === 'execution_plan') {
     return auditTenderExecutionPlan(workspace, upstreamData.boq_reconciliation, data, generatedAt);

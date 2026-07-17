@@ -3,6 +3,7 @@ export type TenderCapabilityId =
   | 'evaluation_strategy'
   | 'boq_reconciliation'
   | 'boq_five_step_pricing'
+  | 'bidder_commitments'
   | 'execution_plan'
   | 'schedule_resources'
   | 'cost_cashflow'

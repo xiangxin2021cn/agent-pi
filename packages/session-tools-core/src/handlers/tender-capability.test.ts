@@ -132,6 +132,9 @@ function boqPricingData() {
   });
   return {
     currency: 'ZAR',
+    pricingStandard: 'c51_pure_direct_cost_v1',
+    vatTreatment: 'exclusive',
+    indirectCostPolicy: 'excluded_from_item_direct_cost',
     pricingStatus: 'reviewed',
     itemBuildUps: [
       {
@@ -144,8 +147,46 @@ function boqPricingData() {
           sourcedRatesDirectCost: step('Direct cost uses registered source evidence.', 'spec'),
           reconciliationRisk: step('The build-up is reconciled to the BOQ unit and scope.', 'spec'),
         },
+        itemIdentity: {
+          code: '52.01', description: 'Concrete side drain', unit: 'm', quantity: '1250.5',
+          sourceRef: { documentId: 'boq', sheet: 'Drainage', cell: 'B18:F18' },
+        },
+        scopeBasis: {
+          specificationRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+          measurementRuleRefs: [{ documentId: 'spec', page: 24, clause: '5.2.4' }],
+          inclusions: ['Scheduled concrete side drain scope'],
+          exclusions: ['General overhead and profit'],
+          testingRequirements: ['Concrete acceptance and line/level inspection'],
+          methodConstraints: ['Construct to DRAIN-01 and clause 5.2'],
+        },
+        productivityBasis: {
+          methodSequence: ['Excavate', 'Prepare foundation', 'Place concrete', 'Finish and inspect'],
+          crew: [{
+            id: 'crew-drainage', kind: 'labour', description: 'Drainage crew', count: '8', assumptionStatus: 'sourced',
+            sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+          }],
+          workingHoursPerDay: '8', bottleneck: 'Concrete placement cycle', theoreticalProductionRate: '200',
+          calculationFormula: '200 m/day theoretical x effective factor',
+          scenarios: [
+            { scenario: 'optimistic', productionRate: '120', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.6', basis: 'Continuous access', assumptionStatus: 'scenario', sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }] },
+            { scenario: 'base', productionRate: '100', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.5', basis: 'Normal production', assumptionStatus: 'sourced', sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }] },
+            { scenario: 'pessimistic', productionRate: '80', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.4', basis: 'Restricted access', assumptionStatus: 'scenario', sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }] },
+          ],
+        },
+        resourceCoverage: [
+          { kind: 'labour', applicability: 'included', basis: 'Direct drainage crew' },
+          { kind: 'plant', applicability: 'not_applicable', basis: 'Plant covered by adjacent measured item' },
+          { kind: 'material', applicability: 'not_applicable', basis: 'Concrete covered by separate supply item' },
+          { kind: 'subcontract', applicability: 'not_applicable', basis: 'Self-performed' },
+          { kind: 'transport', applicability: 'not_applicable', basis: 'Transport included in separate supply rate' },
+          { kind: 'waste', applicability: 'not_applicable', basis: 'No material in this labour-only fixture' },
+        ],
         resourceConsumptions: [
-          { id: 'resource-crew', kind: 'labour', description: 'Drainage crew', quantity: '2', unit: 'h/m', assumptionStatus: 'sourced' },
+          {
+            id: 'resource-crew', kind: 'labour', description: 'Drainage crew', quantity: '2', unit: 'h/m', assumptionStatus: 'sourced',
+            quantityBasis: 'per_boq_unit', calculationBasis: 'Crew hours divided by 100 m/day output',
+            costComponentId: 'cost-crew', sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+          },
         ],
         planningBasis: {
           methodId: 'concrete-side-drain',
@@ -162,15 +203,29 @@ function boqPricingData() {
           period: '2026-08',
           activityId: 'excavate',
           weight: '1',
-          amount: '500',
+          amount: '625250',
           basis: 'Initial allocation follows the priced work activity.',
           assumptionStatus: 'sourced',
           sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
         }],
         costComponents: [
-          { id: 'cost-crew', kind: 'labour', description: 'Drainage crew', quantity: '1', unit: 'item', rate: '500', amount: '500', rateSourceRef: { documentId: 'spec', page: 1 }, assumptionStatus: 'sourced' },
+          {
+            id: 'cost-crew', kind: 'labour', description: 'Drainage crew', quantity: '2', unit: 'h/m',
+            rate: '250', amount: '500', rateSourceRef: { documentId: 'spec', page: 1 },
+            rateBasis: { sourceType: 'published_schedule', acquisitionMode: 'not_applicable', location: 'Durban', effectiveDate: '2026-07-17', vatTreatment: 'exclusive' },
+            assumptionStatus: 'sourced',
+          },
         ],
         directCost: '500',
+        directCostSummary: {
+          labour: '500', plant: '0', material: '0', subcontract: '0', transport: '0', waste: '0', other: '0',
+          unitDirectCost: '500', boqQuantity: '1250.5', itemDirectCost: '625250',
+        },
+        riskScenarios: [{
+          id: 'risk-drainage-productivity', variable: 'Daily drain output', optimistic: '120 m/day', base: '100 m/day',
+          pessimistic: '80 m/day', trigger: 'Restricted workfront access', treatment: 'Open a second workfront',
+          assumptionStatus: 'sourced', sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+        }],
         conditions: [],
         riskNotes: [],
       },
@@ -179,6 +234,33 @@ function boqPricingData() {
       { kind: 'labour', description: 'Drainage crew', quantity: '2501', unit: 'h' },
     ],
     assumptions: [],
+  };
+}
+
+function bidderCommitmentsData() {
+  const categories = [
+    'labour', 'management', 'plant', 'materials', 'temporary_facilities',
+    'method', 'productivity', 'sequence_timing', 'subcontracting',
+  ];
+  return {
+    confirmation: {
+      confirmed: true,
+      confirmedBy: 'Bid Manager',
+      confirmedAt: '2026-07-17T08:00:00.000Z',
+      basisStatement: 'Confirmed bidder planning inputs for the tender methodology.',
+    },
+    commitments: categories.map((category) => ({
+      id: `commitment-${category}`,
+      category,
+      subject: category,
+      decision: `Confirmed ${category} basis.`,
+      status: 'confirmed',
+      appliesToAllBoqItems: true,
+      affectedBoqItemIds: [],
+      inputReference: 'User confirmation in bidder commitments stage',
+      sourceRefs: [],
+    })),
+    openItems: [],
   };
 }
 
@@ -610,6 +692,9 @@ describe('tender_capability handler', () => {
     await handler(context, {
       action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData(),
     });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'bidder_commitments', data: bidderCommitmentsData(),
+    });
 
     const result = await handler(context, {
       action: 'init',
@@ -628,6 +713,7 @@ describe('tender_capability handler', () => {
       { capability: 'document_analysis', revision: 1 },
       { capability: 'boq_reconciliation', revision: 1 },
       { capability: 'boq_five_step_pricing', revision: 1 },
+      { capability: 'bidder_commitments', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'execution-plan.json'));
   });
@@ -679,6 +765,7 @@ describe('tender_capability handler', () => {
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'bidder_commitments', data: bidderCommitmentsData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
 
     const result = await handler(context, {
@@ -750,6 +837,7 @@ describe('tender_capability handler', () => {
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'bidder_commitments', data: bidderCommitmentsData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'schedule_resources', data: scheduleData() });
 

@@ -18,11 +18,17 @@ describe('tender capability registry', () => {
       'document_analysis',
       'boq_reconciliation',
     ]);
+    expect(dependencies('bidder_commitments')).toEqual([
+      'core',
+      'document_analysis',
+      'boq_five_step_pricing',
+    ]);
     expect(dependencies('execution_plan')).toEqual([
       'core',
       'document_analysis',
       'boq_reconciliation',
       'boq_five_step_pricing',
+      'bidder_commitments',
     ]);
     expect(dependencies('schedule_resources')).toEqual([
       'core',
@@ -46,6 +52,7 @@ describe('tender capability registry', () => {
       'evaluation_strategy',
       'boq_reconciliation',
       'boq_five_step_pricing',
+      'bidder_commitments',
       'execution_plan',
       'schedule_resources',
       'cost_cashflow',
@@ -57,6 +64,7 @@ describe('tender capability registry', () => {
       'evaluation_strategy',
       'boq_reconciliation',
       'boq_five_step_pricing',
+      'bidder_commitments',
       'execution_plan',
       'schedule_resources',
       'cost_cashflow',

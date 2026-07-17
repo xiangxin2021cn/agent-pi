@@ -30,7 +30,7 @@ describe('tender stage pipeline RPC integration', () => {
     if (root) rmSync(root, { recursive: true, force: true })
   })
 
-  test('registers project sources, completes document batches, and merges two BOQ pricing batches', async () => {
+  test('registers project sources, completes document batches, and merges controlled BOQ pricing batches', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-stage-pipeline-'))
     const workspaceRootPath = join(root, 'workspace')
     const projectRoot = join(root, 'project')
@@ -109,11 +109,11 @@ describe('tender stage pipeline RPC integration', () => {
     }) as any
     expect(pricingStarted.status).toBe('running')
     expect(pricingStarted.batchProgress).toEqual(expect.objectContaining({
-      batchType: 'boq_five_step_pricing', itemCount: 41, batchCount: 2, completedBatches: 0,
+      batchType: 'boq_five_step_pricing', itemCount: 41, batchCount: 4, completedBatches: 0,
     }))
 
     const pricingManifest = readJson<any>(pricingStarted.paths.boqBatchManifestPath)
-    expect(pricingManifest.batches.map((batch: any) => batch.itemIds.length)).toEqual([40, 1])
+    expect(pricingManifest.batches.map((batch: any) => batch.itemIds.length)).toEqual([12, 12, 12, 5])
     const allBuildUps: any[] = []
     for (const batch of pricingManifest.batches) {
       const brief = readJson<any>(batch.briefPath)
@@ -132,6 +132,9 @@ describe('tender stage pipeline RPC integration', () => {
 
     await writeCapability(mutateTender, projectRoot, 'boq_five_step_pricing', {
       currency: 'ZAR',
+      pricingStandard: 'c51_pure_direct_cost_v1',
+      vatTreatment: 'exclusive',
+      indirectCostPolicy: 'excluded_from_item_direct_cost',
       pricingStatus: 'reviewed',
       itemBuildUps: allBuildUps,
       resourceSummary: [],
@@ -143,7 +146,7 @@ describe('tender stage pipeline RPC integration', () => {
     }) as any
     expect(pricingCompleted.status).toBe('complete')
     expect(pricingCompleted.batchProgress).toEqual(expect.objectContaining({
-      batchCount: 2, completedBatches: 2, missingItemCount: 0,
+      batchCount: 4, completedBatches: 4, missingItemCount: 0,
     }))
     expect(pricingCompleted.missingItems).toEqual([])
   })
@@ -196,13 +199,16 @@ function buildBoq(boqDocumentId: string, tenderDocumentId: string) {
 }
 
 function buildUp(boqItemId: string, boqDocumentId: string, tenderDocumentId: string) {
+  const number = Number(boqItemId.split('-').at(-1))
+  const rowSource = { documentId: boqDocumentId, sheet: 'C5.1', cell: `A${number}:F${number}` }
+  const specificationSource = { documentId: tenderDocumentId, page: 1, clause: 'C5.1' }
   const boqStep = {
     narrative: 'Quantity and scope are traced to the assigned BOQ item.',
-    sourceRefs: [{ documentId: boqDocumentId, sheet: 'C5.1', cell: 'A1:F41' }],
+    sourceRefs: [rowSource],
   }
   const tenderStep = {
     narrative: 'Method, productivity, consumption, rates, and risk are supported by the registered tender source.',
-    sourceRefs: [{ documentId: tenderDocumentId, page: 1, clause: 'C5.1' }],
+    sourceRefs: [specificationSource],
   }
   return {
     boqItemId,
@@ -214,7 +220,38 @@ function buildUp(boqItemId: string, boqDocumentId: string, tenderDocumentId: str
       sourcedRatesDirectCost: tenderStep,
       reconciliationRisk: tenderStep,
     },
-    resourceConsumptions: [],
+    itemIdentity: {
+      code: `5.1.${number}`, description: `BOQ item ${number}`, unit: 'm', quantity: '1', sourceRef: rowSource,
+    },
+    scopeBasis: {
+      specificationRefs: [specificationSource], measurementRuleRefs: [specificationSource],
+      inclusions: ['Assigned BOQ scope'], exclusions: ['General overhead and profit'],
+      testingRequirements: ['Acceptance check'], methodConstraints: ['Execute to specification'],
+    },
+    productivityBasis: {
+      methodSequence: ['Set out', 'Execute', 'Inspect'],
+      crew: [{ id: `${boqItemId}-crew`, kind: 'labour', description: 'Work crew', count: '1', assumptionStatus: 'sourced', sourceRefs: [specificationSource] }],
+      workingHoursPerDay: '8', bottleneck: 'Crew output', theoreticalProductionRate: '2',
+      calculationFormula: '2 m/day x effective factor',
+      scenarios: [
+        { scenario: 'optimistic', productionRate: '1.2', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.6', basis: 'Good conditions', assumptionStatus: 'scenario', sourceRefs: [specificationSource] },
+        { scenario: 'base', productionRate: '1', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.5', basis: 'Normal conditions', assumptionStatus: 'sourced', sourceRefs: [specificationSource] },
+        { scenario: 'pessimistic', productionRate: '0.8', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.4', basis: 'Constrained conditions', assumptionStatus: 'scenario', sourceRefs: [specificationSource] },
+      ],
+    },
+    resourceCoverage: [
+      { kind: 'labour', applicability: 'included', basis: 'Direct crew' },
+      { kind: 'plant', applicability: 'not_applicable', basis: 'No plant' },
+      { kind: 'material', applicability: 'not_applicable', basis: 'No material' },
+      { kind: 'subcontract', applicability: 'not_applicable', basis: 'Self-performed' },
+      { kind: 'transport', applicability: 'not_applicable', basis: 'No transport' },
+      { kind: 'waste', applicability: 'not_applicable', basis: 'No waste' },
+    ],
+    resourceConsumptions: [{
+      id: `${boqItemId}-labour-consumption`, kind: 'labour', description: 'Labour', quantity: '1', unit: 'hour/m',
+      assumptionStatus: 'sourced', quantityBasis: 'per_boq_unit', calculationBasis: 'One hour per metre',
+      costComponentId: `${boqItemId}-labour`, sourceRefs: [specificationSource],
+    }],
     planningBasis: {
       methodId: 'linear-installation',
       productionRate: '1',
@@ -224,7 +261,7 @@ function buildUp(boqItemId: string, boqDocumentId: string, tenderDocumentId: str
       calendarId: 'calendar-standard',
       activityId: `activity-${boqItemId}`,
       assumptionStatus: 'sourced',
-      sourceRefs: [{ documentId: tenderDocumentId, page: 1, clause: 'C5.1' }],
+      sourceRefs: [specificationSource],
     },
     initialCashFlow: [{
       period: '2026-08',
@@ -233,20 +270,33 @@ function buildUp(boqItemId: string, boqDocumentId: string, tenderDocumentId: str
       amount: '10',
       basis: 'Single-period initial allocation.',
       assumptionStatus: 'sourced',
-      sourceRefs: [{ documentId: tenderDocumentId, page: 1, clause: 'C5.1' }],
+      sourceRefs: [specificationSource],
     }],
     costComponents: [{
       id: `${boqItemId}-labour`,
       kind: 'labour',
       description: 'Labour',
       quantity: '1',
-      unit: 'hour',
+      unit: 'hour/m',
       rate: '10',
       amount: '10',
       rateSourceRef: { documentId: tenderDocumentId, page: 1 },
+      rateBasis: {
+        sourceType: 'published_schedule', acquisitionMode: 'not_applicable', location: 'Durban',
+        effectiveDate: '2026-07-16', vatTreatment: 'exclusive',
+      },
       assumptionStatus: 'sourced',
     }],
     directCost: '10',
+    directCostSummary: {
+      labour: '10', plant: '0', material: '0', subcontract: '0', transport: '0', waste: '0', other: '0',
+      unitDirectCost: '10', boqQuantity: '1', itemDirectCost: '10',
+    },
+    riskScenarios: [{
+      id: `${boqItemId}-risk`, variable: 'Crew productivity', optimistic: '1.2 m/day', base: '1 m/day',
+      pessimistic: '0.8 m/day', trigger: 'Restricted access', treatment: 'Rebalance crew',
+      assumptionStatus: 'sourced', sourceRefs: [specificationSource],
+    }],
     conditions: [],
     riskNotes: [],
   }

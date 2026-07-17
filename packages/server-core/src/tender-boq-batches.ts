@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
+  inspectTenderBoqItemC51Quality,
   parseTenderBoqFiveStepPricingData,
   decimalStringsEqual,
   type TenderBoqReconciliationData,
@@ -23,7 +24,15 @@ export interface TenderBoqBatchBrief {
     lastCell?: string;
   };
   itemIds: string[];
+  items: Array<{
+    item: TenderBoqReconciliationData['items'][number];
+    scopeLink?: TenderBoqReconciliationData['scopeLinks'][number];
+  }>;
   allowedSources: Array<{ documentId: string; path?: string }>;
+  qualityStandard: {
+    id: 'c51_pure_direct_cost_v1';
+    rules: string[];
+  };
   outputSchema: Record<string, unknown>;
   reportPath: string;
   spawnPolicy: 'forbidden';
@@ -53,7 +62,7 @@ export interface TenderBoqBatchManifest {
   manifestPath: string;
 }
 
-const MAX_ITEMS_PER_BATCH = 40;
+const MAX_ITEMS_PER_BATCH = 12;
 
 export function createOrRefreshBoqBatchManifest(
   projectDirectory: string,
@@ -99,20 +108,37 @@ export function createOrRefreshBoqBatchManifest(
         schemaVersion: 1,
         projectId,
         batchId,
-        objective: 'Produce complete five-step pricing build-ups for exactly the assigned BOQ item IDs.',
+        objective: 'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register.',
         scope,
         itemIds,
+        items: chunk.map((item) => ({
+          item,
+          ...(scopeLinkByItemId.get(item.id) ? { scopeLink: scopeLinkByItemId.get(item.id) } : {}),
+        })),
         allowedSources: allowedDocumentIds.map((documentId) => ({
           documentId,
           ...(sourcePathByDocumentId.get(documentId) ? { path: sourcePathByDocumentId.get(documentId) } : {}),
         })),
+        qualityStandard: {
+          id: 'c51_pure_direct_cost_v1',
+          rules: [
+            'One complete workpaper per BOQ item; preserve code, description, unit, quantity, and row source exactly.',
+            'Step 1 must cite specification and measurement/payment clauses and state inclusions, exclusions, testing, and method constraints.',
+            'Step 2 must state method sequence, labour/plant crew, bottleneck formula, working hours, and optimistic/base/pessimistic productivity.',
+            'Step 3 must calculate every included resource consumption per BOQ unit and link it to a cost component.',
+            'Step 4 must use dated, located, VAT-exclusive rates with acquisition mode and source type; item rate is pure direct cost only.',
+            'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
+            'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
+            'Every numeric fact is sourced, an explicit scenario, or unverified; unverified values cannot be marked reviewed.',
+          ],
+        },
         outputSchema: batchReportSchema(batchId, itemIds),
         reportPath,
         spawnPolicy: 'forbidden',
         finalArtifactPolicy: 'report-only',
       };
       atomicWriteJson(briefPath, brief);
-      const validation = validateBatchReport(reportPath, batchId, itemIds);
+      const validation = validateBatchReport(reportPath, batchId, itemIds, chunk, scopeLinkByItemId);
       batches.push({
         batchId,
         source: scope,
@@ -214,10 +240,12 @@ function validateBatchReport(
   reportPath: string,
   batchId: string,
   itemIds: string[],
+  items: TenderBoqReconciliationData['items'],
+  scopeLinkByItemId: Map<string, TenderBoqReconciliationData['scopeLinks'][number]>,
 ): { status: TenderBoqBatchRecord['status']; errors: string[] } {
   if (!existsSync(reportPath)) return { status: 'pending', errors: [] };
   try {
-    const { errors } = readBatchReport(reportPath, batchId, itemIds);
+    const { errors } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
     return { status: errors.length === 0 ? 'complete' : 'invalid', errors };
   } catch (error) {
     return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)] };
@@ -228,6 +256,8 @@ function readBatchReport(
   reportPath: string,
   batchId: string,
   itemIds: string[],
+  expectedItems?: TenderBoqReconciliationData['items'],
+  scopeLinkByItemId: Map<string, TenderBoqReconciliationData['scopeLinks'][number]> = new Map(),
 ): { itemBuildUps: TenderBoqFiveStepItemBuildUp[]; errors: string[] } {
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as {
     schemaVersion?: unknown;
@@ -246,6 +276,9 @@ function readBatchReport(
   try {
     itemBuildUps = parseTenderBoqFiveStepPricingData({
       currency: 'USD',
+      pricingStandard: 'c51_pure_direct_cost_v1',
+      vatTreatment: 'exclusive',
+      indirectCostPolicy: 'excluded_from_item_direct_cost',
       pricingStatus: 'reviewed',
       itemBuildUps: report.itemBuildUps,
       resourceSummary: [],
@@ -254,10 +287,17 @@ function readBatchReport(
   } catch (error) {
     errors.push(`itemBuildUps schema is invalid: ${error instanceof Error ? error.message : String(error)}`);
   }
-  for (const buildUp of itemBuildUps) {
-    if (!buildUp.planningBasis) errors.push(`BOQ item ${buildUp.boqItemId} is missing planningBasis`);
-    if (!buildUp.initialCashFlow || buildUp.initialCashFlow.length === 0) {
-      errors.push(`BOQ item ${buildUp.boqItemId} is missing initialCashFlow`);
+  if (expectedItems) {
+    const expectedById = new Map(expectedItems.map((item) => [item.id, item]));
+    for (const buildUp of itemBuildUps) {
+      const item = expectedById.get(buildUp.boqItemId);
+      if (!item) continue;
+      if (buildUp.status !== 'reviewed') {
+        errors.push(`BOQ item ${buildUp.boqItemId} must be reviewed before the child batch can complete`);
+      }
+      errors.push(...inspectTenderBoqItemC51Quality(item, scopeLinkByItemId.get(item.id), buildUp)
+        .filter((issue) => issue.severity === 'error')
+        .map((issue) => `${issue.code}: ${issue.message}`));
     }
   }
   const actualIds = itemBuildUps.map((item) => item.boqItemId);
@@ -278,6 +318,22 @@ function createBatchId(documentId: string, sheet: string, batchNumber: number): 
 }
 
 function batchReportSchema(batchId: string, itemIds: string[]): Record<string, unknown> {
+  const decimal = { type: 'string', pattern: '^(?:0|[1-9]\\d*)(?:\\.\\d+)?$' };
+  const positiveDecimal = { type: 'string', pattern: '^(?=.*[1-9])(?:0|[1-9]\\d*)(?:\\.\\d+)?$' };
+  const sourceRef = {
+    type: 'object',
+    required: ['documentId'],
+    properties: { documentId: { type: 'string' } },
+  };
+  const step = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['narrative', 'sourceRefs'],
+    properties: {
+      narrative: { type: 'string', minLength: 1 },
+      sourceRefs: { type: 'array', minItems: 1, items: sourceRef },
+    },
+  };
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
@@ -294,17 +350,145 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
           type: 'object',
           additionalProperties: false,
           required: [
-            'boqItemId', 'status', 'steps', 'resourceConsumptions', 'planningBasis',
-            'initialCashFlow', 'costComponents', 'directCost', 'conditions', 'riskNotes',
+            'boqItemId', 'status', 'steps', 'itemIdentity', 'scopeBasis', 'productivityBasis',
+            'resourceCoverage', 'resourceConsumptions', 'planningBasis', 'costComponents',
+            'directCost', 'directCostSummary', 'riskScenarios', 'conditions', 'riskNotes',
           ],
           properties: {
             boqItemId: { enum: itemIds },
             status: { enum: ['draft', 'reviewed', 'blocked'] },
             steps: {
               type: 'object',
+              additionalProperties: false,
               required: ['scopeQuantity', 'methodProductivity', 'resourceConsumption', 'sourcedRatesDirectCost', 'reconciliationRisk'],
+              properties: {
+                scopeQuantity: step,
+                methodProductivity: step,
+                resourceConsumption: step,
+                sourcedRatesDirectCost: step,
+                reconciliationRisk: step,
+              },
             },
-            resourceConsumptions: { type: 'array' },
+            itemIdentity: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['code', 'description', 'unit', 'quantity', 'sourceRef'],
+              properties: {
+                code: { type: 'string', minLength: 1 },
+                description: { type: 'string', minLength: 1 },
+                unit: { type: 'string', minLength: 1 },
+                quantity: decimal,
+                sourceRef,
+              },
+            },
+            scopeBasis: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'specificationRefs', 'measurementRuleRefs', 'inclusions', 'exclusions',
+                'testingRequirements', 'methodConstraints',
+              ],
+              properties: {
+                specificationRefs: { type: 'array', minItems: 1, items: sourceRef },
+                measurementRuleRefs: { type: 'array', minItems: 1, items: sourceRef },
+                inclusions: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+                exclusions: { type: 'array', items: { type: 'string', minLength: 1 } },
+                testingRequirements: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+                methodConstraints: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+              },
+            },
+            productivityBasis: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'methodSequence', 'crew', 'workingHoursPerDay', 'bottleneck',
+                'theoreticalProductionRate', 'calculationFormula', 'scenarios',
+              ],
+              properties: {
+                methodSequence: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+                crew: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['id', 'kind', 'description', 'count', 'assumptionStatus', 'sourceRefs'],
+                    properties: {
+                      id: { type: 'string' },
+                      kind: { enum: ['labour', 'plant'] },
+                      description: { type: 'string', minLength: 1 },
+                      count: positiveDecimal,
+                      assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
+                      sourceRefs: { type: 'array', items: sourceRef },
+                    },
+                  },
+                },
+                workingHoursPerDay: positiveDecimal,
+                bottleneck: { type: 'string', minLength: 1 },
+                theoreticalProductionRate: positiveDecimal,
+                calculationFormula: { type: 'string', minLength: 1 },
+                scenarios: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: [
+                      'scenario', 'productionRate', 'quantityUnit', 'timeUnit', 'effectiveFactor',
+                      'basis', 'assumptionStatus', 'sourceRefs',
+                    ],
+                    properties: {
+                      scenario: { enum: ['optimistic', 'base', 'pessimistic'] },
+                      productionRate: positiveDecimal,
+                      quantityUnit: { type: 'string', minLength: 1 },
+                      timeUnit: { enum: ['hour', 'shift', 'working_day', 'week'] },
+                      effectiveFactor: { type: 'string' },
+                      basis: { type: 'string', minLength: 1 },
+                      assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
+                      sourceRefs: { type: 'array', items: sourceRef },
+                    },
+                  },
+                },
+              },
+            },
+            resourceCoverage: {
+              type: 'array',
+              minItems: 6,
+              maxItems: 6,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['kind', 'applicability', 'basis'],
+                properties: {
+                  kind: { enum: ['labour', 'plant', 'material', 'subcontract', 'transport', 'waste'] },
+                  applicability: { enum: ['included', 'not_applicable'] },
+                  basis: { type: 'string', minLength: 1 },
+                },
+              },
+            },
+            resourceConsumptions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'id', 'kind', 'description', 'quantity', 'unit', 'assumptionStatus',
+                  'quantityBasis', 'calculationBasis', 'costComponentId', 'sourceRefs',
+                ],
+                properties: {
+                  id: { type: 'string' },
+                  kind: { enum: ['labour', 'plant', 'material', 'subcontract', 'transport', 'waste', 'other'] },
+                  description: { type: 'string', minLength: 1 },
+                  quantity: decimal,
+                  unit: { type: 'string', minLength: 1 },
+                  assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
+                  quantityBasis: { const: 'per_boq_unit' },
+                  calculationBasis: { type: 'string', minLength: 1 },
+                  costComponentId: { type: 'string' },
+                  sourceRefs: { type: 'array', minItems: 1, items: sourceRef },
+                },
+              },
+            },
             planningBasis: {
               type: 'object',
               additionalProperties: false,
@@ -326,7 +510,6 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
             },
             initialCashFlow: {
               type: 'array',
-              minItems: 1,
               items: {
                 type: 'object',
                 additionalProperties: false,
@@ -342,8 +525,88 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
                 },
               },
             },
-            costComponents: { type: 'array' },
-            directCost: { type: 'string' },
+            costComponents: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'id', 'kind', 'description', 'quantity', 'unit', 'rate', 'amount',
+                  'rateBasis', 'assumptionStatus',
+                ],
+                properties: {
+                  id: { type: 'string' },
+                  kind: { enum: ['labour', 'plant', 'material', 'subcontract', 'transport', 'waste', 'other'] },
+                  description: { type: 'string', minLength: 1 },
+                  quantity: decimal,
+                  unit: { type: 'string', minLength: 1 },
+                  rate: decimal,
+                  amount: decimal,
+                  rateSourceRef: sourceRef,
+                  rateBasis: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['sourceType', 'acquisitionMode', 'location', 'effectiveDate', 'vatTreatment'],
+                    properties: {
+                      sourceType: { enum: [
+                        'supplier_quote', 'historical_purchase', 'internal_ledger', 'published_schedule',
+                        'rental_quote', 'owned_cost_model', 'subcontract_quote', 'market_evidence', 'scenario',
+                      ] },
+                      acquisitionMode: { enum: ['owned', 'rented', 'purchased', 'subcontracted', 'internal_transfer', 'not_applicable'] },
+                      location: { type: 'string', minLength: 1 },
+                      effectiveDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+                      vatTreatment: { const: 'exclusive' },
+                    },
+                  },
+                  assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
+                },
+              },
+            },
+            directCost: decimal,
+            directCostSummary: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'labour', 'plant', 'material', 'subcontract', 'transport', 'waste',
+                'other', 'unitDirectCost', 'boqQuantity', 'itemDirectCost',
+              ],
+              properties: {
+                labour: decimal,
+                plant: decimal,
+                material: decimal,
+                subcontract: decimal,
+                transport: decimal,
+                waste: decimal,
+                other: decimal,
+                unitDirectCost: decimal,
+                boqQuantity: decimal,
+                itemDirectCost: decimal,
+              },
+            },
+            riskScenarios: {
+              type: 'array',
+              minItems: 1,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'id', 'variable', 'optimistic', 'base', 'pessimistic', 'trigger',
+                  'treatment', 'assumptionStatus', 'sourceRefs',
+                ],
+                properties: {
+                  id: { type: 'string' },
+                  variable: { type: 'string', minLength: 1 },
+                  optimistic: { type: 'string', minLength: 1 },
+                  base: { type: 'string', minLength: 1 },
+                  pessimistic: { type: 'string', minLength: 1 },
+                  trigger: { type: 'string', minLength: 1 },
+                  treatment: { type: 'string', minLength: 1 },
+                  assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
+                  sourceRefs: { type: 'array', items: sourceRef },
+                },
+              },
+            },
             conditions: { type: 'array', items: { type: 'string' } },
             riskNotes: { type: 'array', items: { type: 'string' } },
           },

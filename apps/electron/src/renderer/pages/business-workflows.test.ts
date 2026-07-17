@@ -10,6 +10,7 @@ describe('business workflows', () => {
       'project-setup',
       'tender-document-analysis',
       'boq-five-step-pricing',
+      'bidder-commitments',
       'work-plan-methodology',
       'schedule-resource-planning',
       'cost-cashflow-planning',
@@ -26,8 +27,14 @@ describe('business workflows', () => {
       .toEqual(['boq_five_step_pricing'])
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.dispatchPolicy)
       .toEqual('controlled-subagents')
+    expect(workflow.stages.find((stage) => stage.id === 'bidder-commitments')?.requiredCapabilities)
+      .toEqual(['document_analysis', 'boq_five_step_pricing'])
+    expect(workflow.stages.find((stage) => stage.id === 'bidder-commitments')?.producesCapabilities)
+      .toEqual(['bidder_commitments'])
+    expect(workflow.stages.find((stage) => stage.id === 'bidder-commitments')?.prompt)
+      .toContain('不得由模型替用户补齐或默认确认')
     expect(workflow.stages.find((stage) => stage.id === 'work-plan-methodology')?.requiredCapabilities)
-      .toEqual(['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'])
+      .toEqual(['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing', 'bidder_commitments'])
     expect(workflow.stages.find((stage) => stage.id === 'schedule-resource-planning')?.requiredCapabilities)
       .toEqual(['execution_plan', 'boq_five_step_pricing'])
     expect(workflow.stages.find((stage) => stage.id === 'schedule-resource-planning')?.producesCapabilities)
@@ -52,6 +59,8 @@ describe('business workflows', () => {
       .toBe('tender-execution-planning')
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.skillSlug)
       .toBe('tender-boq-five-step-pricing')
+    expect(workflow.stages.find((stage) => stage.id === 'bidder-commitments')?.skillSlug)
+      .toBe('tender-bidder-commitments')
   })
 
   test.each(['tender', 'delivery', 'investment'] as const)('%s has a stable first stage', (moduleId) => {

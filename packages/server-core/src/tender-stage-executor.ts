@@ -259,7 +259,7 @@ async function dispatchPendingTasks(
     try {
       const result = await execution.spawnSession(parentSessionId, {
         name: spec.name,
-        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Use only the allowed sources attached to this task. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
+        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. Use only the allowed sources attached to this task. For BOQ pricing, complete one C5.1 pure-direct-cost workpaper per assigned item; a resource database or summary report is not a valid substitute. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
         workingDirectory: options.workingDirectory,
         briefPath: spec.briefPath,
         reportPath: spec.reportPath,

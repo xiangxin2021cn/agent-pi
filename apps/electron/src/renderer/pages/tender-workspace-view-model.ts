@@ -7,6 +7,7 @@ export type TenderWorkspaceTabId =
   | 'evaluation'
   | 'boq'
   | 'pricing'
+  | 'commitments'
   | 'execution'
   | 'schedule'
   | 'cost'
@@ -52,6 +53,7 @@ const TAB_DEFINITIONS: Array<{
   { id: 'evaluation', label: 'Evaluation', capability: 'evaluation_strategy' },
   { id: 'boq', label: 'BOQ Reconciliation', capability: 'boq_reconciliation' },
   { id: 'pricing', label: 'BOQ Five-Step Pricing', capability: 'boq_five_step_pricing' },
+  { id: 'commitments', label: 'Bidder Commitments', capability: 'bidder_commitments' },
   { id: 'execution', label: 'Execution Plan', capability: 'execution_plan' },
   { id: 'schedule', label: 'Programme and Resources', capability: 'schedule_resources' },
   { id: 'cost', label: 'Cost and Cash Flow', capability: 'cost_cashflow' },
@@ -120,6 +122,7 @@ function rowsForTab(
   if (tab === 'evaluation') return mapRows(data.strategies, (item) => text(item.responseTheme, text(item.criterionId)), 'criterionId');
   if (tab === 'boq') return mapRows(data.items, (item) => `${text(item.code)} ${text(item.description)}`.trim(), 'id');
   if (tab === 'pricing') return mapRows(data.itemBuildUps, (item) => `BOQ ${text(item.boqItemId)} · ${text(item.directCost)}`, 'boqItemId');
+  if (tab === 'commitments') return mapRows(data.commitments, (item) => text(item.subject, text(item.category)), 'id');
   if (tab === 'execution') return mapRows(data.workPackages, (item) => text(item.title), 'id');
   if (tab === 'schedule') return mapRows(data.activities, (item) => text(item.name), 'id');
   if (tab === 'cost') return mapRows(data.buildUps, (item) => `BOQ ${text(item.boqItemId)} · ${text(item.total)}`, 'boqItemId');

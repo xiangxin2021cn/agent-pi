@@ -19,12 +19,14 @@ describe('Tender Workspace view model', () => {
           { capability: 'document_analysis', readiness: 'ready', stale: false, issueCount: 0 },
           { capability: 'boq_reconciliation', readiness: 'ready', stale: true, issueCount: 0 },
           { capability: 'boq_five_step_pricing', readiness: 'needs_review', stale: false, issueCount: 1 },
+          { capability: 'bidder_commitments', readiness: 'ready', stale: false, issueCount: 0 },
         ],
       },
       packs: {
         document_analysis: { data: { sections: [{ id: 'doc-1', title: 'Specification analysis' }] } },
         boq_reconciliation: { data: { items: [{ id: 'boq-1', code: '52.01', description: 'Drain' }] } },
         boq_five_step_pricing: { data: { itemBuildUps: [{ boqItemId: 'boq-1', directCost: '1200' }] } },
+        bidder_commitments: { data: { commitments: [{ id: 'plant-1', category: 'plant', subject: 'Plant fleet', status: 'confirmed' }] } },
       },
       packAudits: {},
       paths: { projectDirectory: 'C:/project', modelPath: 'C:/project/model.json', auditPath: 'C:/project/audit.json', indexPath: 'C:/project/index.json' },
@@ -32,7 +34,7 @@ describe('Tender Workspace view model', () => {
 
     expect(view.tabs.map((tab) => tab.id)).toEqual([
       'sources', 'compliance', 'analysis', 'evaluation', 'boq', 'pricing',
-      'execution', 'schedule', 'cost', 'submissionDocuments', 'submission',
+      'commitments', 'execution', 'schedule', 'cost', 'submissionDocuments', 'submission',
     ]);
     expect(view.tabs.find((tab) => tab.id === 'sources')?.count).toBe(1);
     expect(view.tabs.find((tab) => tab.id === 'compliance')?.count).toBe(2);
@@ -40,6 +42,7 @@ describe('Tender Workspace view model', () => {
     expect(view.tabs.find((tab) => tab.id === 'boq')?.rows[0]?.title).toContain('52.01');
     expect(view.tabs.find((tab) => tab.id === 'boq')?.stale).toBe(true);
     expect(view.tabs.find((tab) => tab.id === 'pricing')?.rows[0]?.title).toContain('1200');
+    expect(view.tabs.find((tab) => tab.id === 'commitments')?.rows[0]?.title).toBe('Plant fleet');
     expect(view.readiness).toBe('needs_review');
   });
 });

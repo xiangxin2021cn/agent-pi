@@ -30,6 +30,7 @@ const CAPABILITY_FILES: Record<TenderCapabilityId, string> = {
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
   boq_five_step_pricing: 'boq-five-step-pricing',
+  bidder_commitments: 'bidder-commitments',
   execution_plan: 'execution-plan',
   schedule_resources: 'schedule-resources',
   cost_cashflow: 'cost-cashflow',

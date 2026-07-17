@@ -22,6 +22,7 @@ export type BusinessCapabilityId =
   | 'evaluation_strategy'
   | 'boq_reconciliation'
   | 'boq_five_step_pricing'
+  | 'bidder_commitments'
   | 'execution_plan'
   | 'schedule_resources'
   | 'cost_cashflow'
@@ -45,18 +46,26 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
       {
         id: 'boq-five-step-pricing',
         label: 'BOQ 逐项五步法成本分解组价',
-        prompt: '基于已完成的招标文件分析、合同要求、专用条款修订、规范工作范围定义和 BOQ 项，对每一条清单项无遗漏执行五步法：范围与工程量依据、施工方法与生产率、人材机资源消耗、询源单价与直接成本、复核与条件风险。必须汇总人材机数量、形成成本分解，并为后续工期、资源和现金流推定提供结构化依据。',
+        prompt: '按 C5.1 纯直接费标准，对每一条 BOQ 清单项无遗漏形成独立工作底稿：原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；使用注明日期、地点、来源类型、取得方式且不含 VAT 的费率；复核分类小计、纯直接单价、清单合价、工期及项目特定风险。通用人材机数据库、市场价格汇总、章节叙述或未组价范围清单只能作为输入，不能作为本阶段产物。间接费、利润、一般预备费和调价不得计入逐项纯直接费；逐项现金流留到后续阶段。',
         skillSlug: 'tender-boq-five-step-pricing',
         requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
         producesCapabilities: ['boq_five_step_pricing'],
         dispatchPolicy: 'controlled-subagents',
       },
       {
+        id: 'bidder-commitments',
+        label: '投标投入条件与策划约束确认',
+        prompt: '在 BOQ 五步法计算需求基础上，由用户确认本项目实际拟投入条件。可通过本对话输入或上传文件，逐项确认劳动力与管理人员总量、机械设备数量及自有调拨/新购/当地租赁方式、材料询价与历史采购依据、营地投入及位置、施工方法与生产率修订、初步施工顺序和时间方向、分包决策。必须明确区分“BOQ 计算需求”与“投标人拟投入承诺”；不得由模型替用户补齐或默认确认。九类条件均须确认、接受为显式假设或标记不适用，形成 bidder_commitments 能力包后才能进入施工总策划。',
+        skillSlug: 'tender-bidder-commitments',
+        requiredCapabilities: ['document_analysis', 'boq_five_step_pricing'],
+        producesCapabilities: ['bidder_commitments'],
+      },
+      {
         id: 'work-plan-methodology',
         label: '施工总策划 / WORK PLAN AND PROPOSED METHODOLOGY',
-        prompt: '基于招标工期要求、项目所在地工作时间/节假日规定、BOQ 五步法推导、人材机约束和可参考知识库模板，编制投标施工总策划与 WORK PLAN AND PROPOSED METHODOLOGY。内容应覆盖施工总体部署、关键施工方法、分区分段顺序、组织资源、质量安全环保、交通/接口/临设/风险措施，并匹配标书评审要求。',
+        prompt: '基于招标工期要求、项目所在地工作时间/节假日规定、BOQ 五步法推导以及用户已确认的 bidder_commitments 投入条件与策划约束，编制投标施工总策划与 WORK PLAN AND PROPOSED METHODOLOGY。内容应覆盖施工总体部署、关键施工方法、分区分段顺序、组织资源、质量安全环保、交通/接口/临设/风险措施，并匹配标书评审要求。用户确认的资源、采购、营地、生产率、顺序和分包决策优先于模型推算；差异必须显式说明。',
         skillSlug: 'tender-execution-planning',
-        requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'],
+        requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing', 'bidder_commitments'],
         producesCapabilities: ['execution_plan'],
       },
       {

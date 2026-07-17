@@ -121,7 +121,8 @@ Monitor the exact task_board_path and document_analysis_batch_manifest_path. Wai
   return `
 <controlled_subagent_dispatch>
 The backend stage controller owns BOQ batch dispatch, bounded concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, directly price an unfinished child range, or create substitute reports.
-Monitor the exact task_board_path and boq_batch_manifest_path. Wait until every child report is schema-valid, then merge only those reports, run conflict and full-item coverage checks, and write the boq_five_step_pricing capability pack before downstream planning.
+Each child must follow the C5.1 pure-direct-cost quality standard embedded in its brief. A resource database, market-rate summary, chapter narrative, or unpriced scope register is input evidence only and cannot satisfy a batch.
+Monitor the exact task_board_path and boq_batch_manifest_path. Wait until every child report is schema-valid and C5.1-complete, then merge only those reports, run conflict and full-item coverage checks, and write the boq_five_step_pricing capability pack before downstream planning.
 </controlled_subagent_dispatch>
 `
 }

@@ -134,8 +134,13 @@ const STAGES: TenderStageDefinition[] = [
     producedCapabilities: ['boq_five_step_pricing'],
   },
   {
+    id: 'bidder-commitments',
+    requiredCapabilities: ['document_analysis', 'boq_five_step_pricing'],
+    producedCapabilities: ['bidder_commitments'],
+  },
+  {
     id: 'work-plan-methodology',
-    requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'],
+    requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing', 'bidder_commitments'],
     producedCapabilities: ['execution_plan'],
   },
   {

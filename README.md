@@ -51,15 +51,30 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.3.**
+**Current release: V2.2.4.**
 
-**当前发布版：V2.2.3。**
+**当前发布版：V2.2.4。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.4 C5.1 BOQ Pricing and Bidder Commitments / V2.2.4 C5.1 组价与投标人条件确认
+
+V2.2.4 makes the C5.1 item-level workpaper the readiness standard for Tender Workbench BOQ pricing. Each item must retain its original BOQ identity and sources, define scope and payment rules, derive crew and three-scenario productivity, calculate resource consumption, apply traceable VAT-exclusive rates, and reconcile pure direct unit cost and item total. Backend-controlled batches are limited to 12 items and reject generic databases or summary reports as substitutes. A new user-confirmed bidder-commitment stage binds proposed resources, procurement, camp, method, productivity, sequence, timing, and subcontract decisions before methodology planning. The release also fixes persistent child-session unread indicators, focuses the primary navigation, and refreshes the Claude and Pi runtimes.
+
+V2.2.4 将 C5.1 逐项工作底稿设为投标工作台 BOQ 组价的就绪标准。每条清单必须保留原始身份及来源，明确范围和计量支付规则，推导班组及三情景工效，核算资源消耗，采用可追溯且不含增值税的费率，并校核纯直接费单价与条目总价。后端受控批次最多 12 条，通用人材机数据库或摘要报告不能替代逐项推导。新增由用户确认的“投标人条件”阶段，在施工策划前锁定拟投入资源、采购、营地、工法、工效、顺序、时间和分包决策。本版同时修复子会话未读状态反复出现的问题、精简主导航并更新 Claude 与 Pi 运行时。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| C5.1 BOQ pricing | Structured item identity, scope clauses, crew and bottleneck productivity, six resource categories, rate metadata, pure direct-cost arithmetic, and item-specific risk are mandatory. | 强制校验条目身份、范围条款、班组与瓶颈工效、六类资源、费率元数据、纯直接费计算和条目特定风险。 |
+| Controlled batches | At most 12 immutable BOQ items per child brief; full coverage, schema, arithmetic, source, and cross-batch conflict gates must pass before merge. | 每份子智能体简报最多包含 12 条不可变清单；合并前必须通过全覆盖、结构、算术、来源及跨批次冲突门禁。 |
+| Bidder commitments | User-confirmed labour, management, equipment, material-price, camp, method, productivity, sequence, timing, and subcontract decisions gate construction methodology. | 用户确认的人力、管理、设备、材料价格、营地、工法、工效、顺序、时间和分包决策成为施工策划前置门禁。 |
+| Thread-aware read state | Parent and descendant sessions share a consistent read boundary, including child completion while the parent is being viewed. | 主会话与全部后代会话采用一致的已读边界，包括查看主会话期间完成的子智能体。 |
+| Focused navigation | Scheduled tasks, event triggers, and agent events are removed from the main sidebar; existing automation data and backend services are not deleted. | 主侧栏不再显示定时任务、事件触发和智能体事件；已有自动化数据及后端服务不会被删除。 |
+| Core runtime | Claude Agent SDK 0.3.212, Anthropic SDK 0.112.2, and Pi 0.80.10. | Claude Agent SDK 升级至 0.3.212，Anthropic SDK 升级至 0.112.2，Pi 升级至 0.80.10。 |
 
 ### V2.2.3 Calculable BOQ Production Pack / V2.2.3 可计算 BOQ 生产包
 
@@ -86,23 +101,6 @@ V2.2.2 即使多个专业工作台使用同一物理项目文件夹，也会保�
 | Memory boundary | Every business conversation and child agent has a session-scoped Project Memory Lite namespace. | 每个业务会话及其子智能体拥有会话级 Project Memory Lite 命名空间。 |
 | Large attachments | Native file-picker attachments support path-backed files up to 2 GiB; 200+ MiB PDFs are copied on disk rather than Base64 encoded. | 系统文件选择器支持至 2 GiB 的路径型附件；200 MiB 以上 PDF 通过磁盘复制而非 Base64 编码。 |
 | Continuation and handoff | Goal Loop and child-agent handoff preserve large files as explicit path references. | Goal Loop 续跑及子智能体交接继续以明确路径引用大型文件。 |
-
-### V2.2.1 Tender Production Pipeline / V2.2.1 投标生产流水线
-
-V2.2.1 tightens document quality routing and upgrades Tender Workbench from isolated stage prompts into a dependent production pipeline. Tender analysis, BOQ five-step pricing, construction methodology, programme/resource/cost/cash-flow planning, formal submission documents, and final audit now have clearer handoffs and capability gates.
-
-V2.2.1 收紧文档质量路由，并将投标工作台从彼此孤立的阶段提示升级为有依赖关系的生产流水线。标书分析、BOQ 逐项五步法组价、施工方法论、进度/资源/成本/现金流计划、正式递交文件和最终审查均有更清晰的交接与能力门禁。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Tender pipeline | Stages now follow document analysis -> BOQ five-step pricing -> WORK PLAN AND PROPOSED METHODOLOGY -> programme/resources/cost/cash flow -> formal submission documents -> audit. | 阶段调整为标书分析 -> BOQ 五步法组价 -> WORK PLAN AND PROPOSED METHODOLOGY -> 进度/资源/成本/现金流 -> 正式递交文件 -> 审查。 |
-| BOQ five-step pricing | A dedicated capability pack and skill require item-by-item scope, productivity, resource consumption, sourced rates, direct cost, and risk reconciliation. | 新增专用能力包和 skill，要求逐项记录范围、生产率、资源消耗、询源单价、直接成本和风险复核。 |
-| Controlled sub-agents | Large BOQ scopes can dispatch child agents with narrow briefs, allowed sources, assigned items, and report paths; child agents cannot spawn further agents. | 大型清单可派发受控子智能体，brief 仅包含允许来源、分配条目和报告路径；子智能体禁止继续派生。 |
-| Reliable child lifecycle | Active child agents remain authoritative until their structured reports are ready. The parent waits, monitors activity, and merges completed handoffs instead of taking over after a fixed timeout. | 活跃子智能体在结构化报告就绪前始终保持任务所有权；主会话持续等待并监控活动，只合并已完成交接，不再固定超时后自行接管。 |
-| Workbench agent visibility | Tender Workbench now shows inherited child agents as a nested status tree with live state and message counts. | 投标工作台以嵌套状态树显示所属子智能体，并展示实时状态和消息数量。 |
-| Formal submission documents | After planning, Agent Pi compiles required tender deliverables such as methodology, construction programme, labour/material/plant plan, and cash-flow plan. | 施工策划后编制投标要求的正式递交文件，包括方法论、施工进度计划、人材机计划和现金流计划。 |
-| Quality routing | Native Quick stays close to upstream lightweight execution, while Guarded Quick and professional modes keep source boundaries and checks for higher-risk tasks. | 原生快速模式保留接近上游的轻量执行；受控快速和专业模式继续用于高风险任务的来源边界与检查。 |
-| Core runtime | Claude Agent SDK is updated to 0.3.211 and Pi to 0.80.7; Anthropic SDK remains current at 0.111.0. | Claude Agent SDK 升级到 0.3.211，Pi 升级到 0.80.7；Anthropic SDK 保持当前最新版 0.111.0。 |
 
 Older release details are available on GitHub Releases.
 

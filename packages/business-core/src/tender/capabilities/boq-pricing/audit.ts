@@ -3,6 +3,7 @@ import { parseTenderBoqReconciliationData } from '../boq/schema.ts';
 import type { TenderBoqReconciliationData } from '../boq/types.ts';
 import type { TenderCapabilityAuditIssue } from '../types.ts';
 import { compareDecimalStrings, decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
+import { inspectTenderBoqItemC51Quality } from './quality.ts';
 import { parseTenderBoqFiveStepPricingData } from './schema.ts';
 import type { TenderBoqFiveStepItemBuildUp, TenderBoqFiveStepPricingAudit, TenderBoqFiveStepPricingData } from './types.ts';
 
@@ -26,7 +27,9 @@ export function auditTenderBoqFiveStepPricing(
   const documentById = new Map(workspace.documents.map((document) => [document.id, document]));
   const itemIds = new Set(boq.items.map((item) => item.id));
   const itemById = new Map(boq.items.map((item) => [item.id, item]));
+  const scopeLinkByItemId = new Map(boq.scopeLinks.map((link) => [link.boqItemId, link]));
   const buildUpByItemId = new Map(data.itemBuildUps.map((buildUp) => [buildUp.boqItemId, buildUp]));
+  const completeItemIds = new Set<string>();
 
   if (boq.items.length === 0 || data.itemBuildUps.length === 0) {
     issues.push({
@@ -43,6 +46,30 @@ export function auditTenderBoqFiveStepPricing(
       severity: 'error',
       entityType: 'boq_pricing',
       message: `BOQ pricing currency ${data.currency} does not match project currency ${workspace.project.currency}.`,
+    });
+  }
+  if (data.pricingStandard !== 'c51_pure_direct_cost_v1') {
+    issues.push({
+      code: 'boq_pricing_standard_missing',
+      severity: 'error',
+      entityType: 'boq_pricing',
+      message: 'BOQ pricing must declare the C5.1 pure direct-cost standard.',
+    });
+  }
+  if (data.vatTreatment !== 'exclusive') {
+    issues.push({
+      code: 'boq_pricing_vat_basis_invalid',
+      severity: 'error',
+      entityType: 'boq_pricing',
+      message: 'C5.1 BOQ direct-cost rates must be VAT exclusive.',
+    });
+  }
+  if (data.indirectCostPolicy !== 'excluded_from_item_direct_cost') {
+    issues.push({
+      code: 'boq_pricing_indirect_cost_policy_invalid',
+      severity: 'error',
+      entityType: 'boq_pricing',
+      message: 'Indirect cost and profit must be excluded from item pure direct cost and handled downstream.',
     });
   }
   if (data.pricingStatus === 'blocked') {
@@ -64,6 +91,7 @@ export function auditTenderBoqFiveStepPricing(
   }
 
   for (const buildUp of data.itemBuildUps) {
+    const itemIssueStart = issues.length;
     if (!itemIds.has(buildUp.boqItemId)) {
       issues.push({
         code: 'boq_pricing_unknown_item',
@@ -72,6 +100,21 @@ export function auditTenderBoqFiveStepPricing(
         entityId: buildUp.boqItemId,
         message: `BOQ pricing build-up references missing item ${buildUp.boqItemId}.`,
       });
+    }
+
+    const boqItem = itemById.get(buildUp.boqItemId);
+    if (boqItem) {
+      for (const qualityIssue of inspectTenderBoqItemC51Quality(
+        boqItem,
+        scopeLinkByItemId.get(buildUp.boqItemId),
+        buildUp,
+      )) {
+        issues.push({
+          ...qualityIssue,
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+        });
+      }
     }
     if (buildUp.status === 'blocked') {
       issues.push({
@@ -115,10 +158,10 @@ export function auditTenderBoqFiveStepPricing(
           message: `Resource consumption ${resource.id} is unverified.`,
         });
       }
+      resource.sourceRefs?.forEach((source) => inspectSource(documentById, source, issues, resource.id));
     }
 
     const planningBasis = buildUp.planningBasis;
-    const boqItem = itemById.get(buildUp.boqItemId);
     if (!planningBasis) {
       issues.push({
         code: 'boq_pricing_planning_basis_missing',
@@ -179,15 +222,8 @@ export function auditTenderBoqFiveStepPricing(
     }
 
     const cashFlow = buildUp.initialCashFlow;
-    if (!cashFlow || cashFlow.length === 0) {
-      issues.push({
-        code: 'boq_pricing_cash_flow_missing',
-        severity: 'error',
-        entityType: 'boq_pricing_build_up',
-        entityId: buildUp.boqItemId,
-        message: `BOQ item ${buildUp.boqItemId} has no initial period cash-flow allocation.`,
-      });
-    } else {
+    if (cashFlow && cashFlow.length > 0) {
+      const itemDirectCost = buildUp.directCostSummary?.itemDirectCost ?? buildUp.directCost;
       for (const allocation of cashFlow) {
         if (planningBasis && allocation.activityId !== planningBasis.activityId) {
           issues.push({
@@ -217,7 +253,7 @@ export function auditTenderBoqFiveStepPricing(
             message: `BOQ item ${buildUp.boqItemId} cash-flow period ${allocation.period} is unverified.`,
           });
         }
-        const expectedAmount = multiplyDecimalStrings(buildUp.directCost, allocation.weight);
+        const expectedAmount = multiplyDecimalStrings(itemDirectCost, allocation.weight);
         if (!decimalStringsEqual(expectedAmount, allocation.amount)) {
           issues.push({
             code: 'boq_pricing_cash_flow_allocation_mismatch',
@@ -237,13 +273,13 @@ export function auditTenderBoqFiveStepPricing(
           message: `BOQ item ${buildUp.boqItemId} cash-flow allocation weights must total 1.`,
         });
       }
-      if (!decimalStringsEqual(sumDecimalStrings(cashFlow.map((allocation) => allocation.amount)), buildUp.directCost)) {
+      if (!decimalStringsEqual(sumDecimalStrings(cashFlow.map((allocation) => allocation.amount)), itemDirectCost)) {
         issues.push({
           code: 'boq_pricing_cash_flow_amount_mismatch',
           severity: 'error',
           entityType: 'boq_pricing_build_up',
           entityId: buildUp.boqItemId,
-          message: `BOQ item ${buildUp.boqItemId} cash-flow allocation amounts must total direct cost ${buildUp.directCost}.`,
+          message: `BOQ item ${buildUp.boqItemId} cash-flow allocation amounts must total item direct cost ${itemDirectCost}.`,
         });
       }
     }
@@ -292,6 +328,28 @@ export function auditTenderBoqFiveStepPricing(
         message: `BOQ item ${buildUp.boqItemId} direct cost ${buildUp.directCost} does not equal ${calculatedDirectCost}.`,
       });
     }
+
+    buildUp.itemIdentity && inspectSource(documentById, buildUp.itemIdentity.sourceRef, issues, buildUp.boqItemId);
+    buildUp.scopeBasis?.specificationRefs.forEach((source) => inspectSource(documentById, source, issues, buildUp.boqItemId));
+    buildUp.scopeBasis?.measurementRuleRefs.forEach((source) => inspectSource(documentById, source, issues, buildUp.boqItemId));
+    buildUp.productivityBasis?.crew.forEach((crew) => crew.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, crew.id)));
+    buildUp.productivityBasis?.scenarios.forEach((scenario) => scenario.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, buildUp.boqItemId)));
+    buildUp.riskScenarios?.forEach((risk) => {
+      risk.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, risk.id));
+      if (risk.assumptionStatus === 'unverified') {
+        issues.push({
+          code: 'boq_pricing_risk_unverified',
+          severity: 'warning',
+          entityType: 'boq_pricing_risk',
+          entityId: risk.id,
+          message: `BOQ item ${buildUp.boqItemId} risk scenario ${risk.id} is unverified.`,
+        });
+      }
+    });
+
+    if (buildUp.status === 'reviewed' && !issues.slice(itemIssueStart).some((issue) => issue.severity === 'error')) {
+      completeItemIds.add(buildUp.boqItemId);
+    }
   }
 
   for (const assumption of data.assumptions) {
@@ -330,19 +388,14 @@ export function auditTenderBoqFiveStepPricing(
     readiness,
     summary: {
       items: boq.items.length,
-      completeItems: boq.items.filter((item) => {
-        const buildUp = buildUpByItemId.get(item.id);
-        return buildUp
-          && STEP_KEYS.every((key) => buildUp.steps[key].narrative.trim() && buildUp.steps[key].sourceRefs.length > 0)
-          && Boolean(buildUp.planningBasis)
-          && Boolean(buildUp.initialCashFlow?.length);
-      }).length,
+      completeItems: completeItemIds.size,
       blockedItems: data.itemBuildUps.filter((buildUp) => buildUp.status === 'blocked').length,
       unverifiedComponents: data.itemBuildUps.reduce(
         (sum, buildUp) => sum + buildUp.costComponents.filter((component) => component.assumptionStatus === 'unverified').length,
         0,
       ),
-      estimatedDirectCost: sumDecimalStrings(data.itemBuildUps.map((buildUp) => buildUp.directCost)),
+      estimatedUnitRateSum: sumDecimalStrings(data.itemBuildUps.map((buildUp) => buildUp.directCost)),
+      estimatedDirectCost: sumDecimalStrings(data.itemBuildUps.map((buildUp) => buildUp.directCostSummary?.itemDirectCost ?? '0')),
     },
     issues,
   };

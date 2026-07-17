@@ -7,14 +7,19 @@ description: Build and validate tender-stage construction work packages, method 
 
 Translate reconciled tender scope into controlled work packages. Use `tender_capability` as the tender execution-plan system of record. Use the document-delivery kernel separately when the user requests formal method statements or proposal chapters.
 
-The formal tender deliverable is **WORK PLAN AND PROPOSED METHODOLOGY**. Produce it only from an
-approved project-planning basis, validated work packages, and the user-selected tender sources.
+The formal tender deliverable is **WORK PLAN AND PROPOSED METHODOLOGY**. Produce it only from a
+ready user-confirmed `bidder_commitments` pack, validated work packages, and the user-selected
+tender sources.
 
 ## Guardrails
 
 - Use only user-selected sources and registered Tender Workspace records.
 - Do not scan the working directory.
-- Require ready, non-stale `evaluation_strategy` and `boq_reconciliation` packs.
+- Require ready, non-stale `document_analysis`, `boq_reconciliation`, `boq_five_step_pricing`, and
+  `bidder_commitments` packs.
+- Treat bidder-confirmed resource, procurement, camp, method, productivity, sequence, and
+  subcontract decisions as binding planning inputs. Explain conflicts with calculated BOQ demand;
+  do not silently replace the user decision with a model estimate.
 - Assign every reconciled BOQ item to exactly one primary work package.
 - Trace every work package to registered BOQ items, requirements, and source locators.
 - Do not invent productivity, resource quantities, engineering controls, or temporary works.
@@ -28,8 +33,10 @@ approved project-planning basis, validated work packages, and the user-selected 
 ## Workflow
 
 1. Call `tender_workspace` with `status`, then call `tender_capability` with `status` for
-   `evaluation_strategy` and `boq_reconciliation`.
-2. Confirm that both upstream packs are ready and that the selected BOQ scope is complete. Pause for user confirmation when method ownership, engineering interpretation, temporary works, source
+   `document_analysis`, `boq_reconciliation`, `boq_five_step_pricing`, and `bidder_commitments`.
+2. Confirm that all upstream packs are ready, the selected BOQ scope is complete, and the bidder
+   commitments are explicitly user-confirmed. Pause for user confirmation when method ownership,
+   resource deviation, engineering interpretation, temporary works, source
    precedence, or construction constraints are ambiguous.
 3. Call `tender_capability` with `configure` for `execution_plan`.
 4. Build one primary work package per coherent execution scope. For each package record:

@@ -10,6 +10,10 @@ export type TenderBoqPricingResourceKind =
   | 'waste'
   | 'other';
 
+export type TenderBoqPricingAssumptionStatus = 'sourced' | 'scenario' | 'unverified';
+
+export type TenderBoqDirectResourceKind = Exclude<TenderBoqPricingResourceKind, 'other'>;
+
 export interface TenderBoqPricingStep {
   narrative: string;
   sourceRefs: TenderSourceLocator[];
@@ -29,7 +33,106 @@ export interface TenderBoqResourceConsumption {
   description: string;
   quantity: string;
   unit: string;
-  assumptionStatus: 'sourced' | 'scenario' | 'unverified';
+  assumptionStatus: TenderBoqPricingAssumptionStatus;
+  quantityBasis?: 'per_boq_unit';
+  calculationBasis?: string;
+  costComponentId?: string;
+  sourceRefs?: TenderSourceLocator[];
+}
+
+export interface TenderBoqItemIdentity {
+  code: string;
+  description: string;
+  unit: string;
+  quantity: string;
+  sourceRef: TenderSourceLocator;
+}
+
+export interface TenderBoqScopeBasis {
+  specificationRefs: TenderSourceLocator[];
+  measurementRuleRefs: TenderSourceLocator[];
+  inclusions: string[];
+  exclusions: string[];
+  testingRequirements: string[];
+  methodConstraints: string[];
+}
+
+export interface TenderBoqCrewResource {
+  id: string;
+  kind: 'labour' | 'plant';
+  description: string;
+  count: string;
+  assumptionStatus: TenderBoqPricingAssumptionStatus;
+  sourceRefs: TenderSourceLocator[];
+}
+
+export interface TenderBoqProductivityScenario {
+  scenario: 'optimistic' | 'base' | 'pessimistic';
+  productionRate: string;
+  quantityUnit: string;
+  timeUnit: 'hour' | 'shift' | 'working_day' | 'week';
+  effectiveFactor: string;
+  basis: string;
+  assumptionStatus: TenderBoqPricingAssumptionStatus;
+  sourceRefs: TenderSourceLocator[];
+}
+
+export interface TenderBoqProductivityBasis {
+  methodSequence: string[];
+  crew: TenderBoqCrewResource[];
+  workingHoursPerDay: string;
+  bottleneck: string;
+  theoreticalProductionRate: string;
+  calculationFormula: string;
+  scenarios: TenderBoqProductivityScenario[];
+}
+
+export interface TenderBoqResourceCoverage {
+  kind: TenderBoqDirectResourceKind;
+  applicability: 'included' | 'not_applicable';
+  basis: string;
+}
+
+export interface TenderBoqRateBasis {
+  sourceType:
+    | 'supplier_quote'
+    | 'historical_purchase'
+    | 'internal_ledger'
+    | 'published_schedule'
+    | 'rental_quote'
+    | 'owned_cost_model'
+    | 'subcontract_quote'
+    | 'market_evidence'
+    | 'scenario';
+  acquisitionMode: 'owned' | 'rented' | 'purchased' | 'subcontracted' | 'internal_transfer' | 'not_applicable';
+  location: string;
+  effectiveDate: string;
+  vatTreatment: 'exclusive';
+}
+
+export interface TenderBoqDirectCostSummary {
+  labour: string;
+  plant: string;
+  material: string;
+  subcontract: string;
+  transport: string;
+  waste: string;
+  other: string;
+  unitDirectCost: string;
+  boqQuantity: string;
+  itemDirectCost: string;
+}
+
+export interface TenderBoqRiskScenario {
+  id: string;
+  variable: string;
+  optimistic: string;
+  base: string;
+  pessimistic: string;
+  trigger: string;
+  treatment: string;
+  assumptionStatus: TenderBoqPricingAssumptionStatus;
+  sourceRefs: TenderSourceLocator[];
 }
 
 export interface TenderBoqPricingCostComponent {
@@ -41,7 +144,8 @@ export interface TenderBoqPricingCostComponent {
   rate: string;
   amount: string;
   rateSourceRef?: TenderSourceLocator;
-  assumptionStatus: 'sourced' | 'scenario' | 'unverified';
+  rateBasis?: TenderBoqRateBasis;
+  assumptionStatus: TenderBoqPricingAssumptionStatus;
 }
 
 export interface TenderBoqPlanningBasis {
@@ -70,11 +174,17 @@ export interface TenderBoqFiveStepItemBuildUp {
   boqItemId: string;
   status: 'draft' | 'reviewed' | 'blocked';
   steps: TenderBoqFiveStepRecord;
+  itemIdentity?: TenderBoqItemIdentity;
+  scopeBasis?: TenderBoqScopeBasis;
+  productivityBasis?: TenderBoqProductivityBasis;
+  resourceCoverage?: TenderBoqResourceCoverage[];
   resourceConsumptions: TenderBoqResourceConsumption[];
   planningBasis?: TenderBoqPlanningBasis;
   initialCashFlow?: TenderBoqInitialCashFlowAllocation[];
   costComponents: TenderBoqPricingCostComponent[];
   directCost: string;
+  directCostSummary?: TenderBoqDirectCostSummary;
+  riskScenarios?: TenderBoqRiskScenario[];
   conditions: string[];
   riskNotes: string[];
 }
@@ -95,6 +205,9 @@ export interface TenderBoqPricingAssumption {
 
 export interface TenderBoqFiveStepPricingData {
   currency: string;
+  pricingStandard?: 'c51_pure_direct_cost_v1';
+  vatTreatment?: 'exclusive';
+  indirectCostPolicy?: 'excluded_from_item_direct_cost';
   pricingStatus: 'draft' | 'reviewed' | 'blocked';
   itemBuildUps: TenderBoqFiveStepItemBuildUp[];
   resourceSummary: TenderBoqPricingResourceSummary[];
@@ -113,6 +226,7 @@ export interface TenderBoqFiveStepPricingAudit {
     completeItems: number;
     blockedItems: number;
     unverifiedComponents: number;
+    estimatedUnitRateSum: string;
     estimatedDirectCost: string;
   };
   issues: TenderCapabilityAuditIssue[];

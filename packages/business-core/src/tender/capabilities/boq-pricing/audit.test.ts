@@ -51,6 +51,9 @@ const boqData: TenderBoqReconciliationData = {
 
 const completePricing: TenderBoqFiveStepPricingData = {
   currency: 'ZAR',
+  pricingStandard: 'c51_pure_direct_cost_v1',
+  vatTreatment: 'exclusive',
+  indirectCostPolicy: 'excluded_from_item_direct_cost',
   pricingStatus: 'reviewed',
   itemBuildUps: [{
     boqItemId: 'b6100-1',
@@ -77,9 +80,71 @@ const completePricing: TenderBoqFiveStepPricingData = {
         sourceRefs: [{ documentId: 'spec', clause: '6108', page: 31 }],
       },
     },
+    itemIdentity: {
+      code: '1/61.02(a)(i)',
+      description: 'Excavate 0-2m',
+      unit: 'm3',
+      quantity: '100',
+      sourceRef: { documentId: 'boq', sheet: 'B6100', cell: 'A12:F12' },
+    },
+    scopeBasis: {
+      specificationRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+      measurementRuleRefs: [{ documentId: 'spec', clause: '6108', page: 31 }],
+      inclusions: ['Excavation and trimming'],
+      exclusions: ['Disposal outside the specified free-haul distance'],
+      testingRequirements: ['Survey and formation acceptance before payment'],
+      methodConstraints: ['Excavate in controlled layers and protect accepted formation'],
+    },
+    productivityBasis: {
+      methodSequence: ['Set out', 'Excavate', 'Trim formation', 'Inspect and accept'],
+      crew: [
+        {
+          id: 'crew-labour', kind: 'labour', description: 'Excavation and trimming crew', count: '4',
+          assumptionStatus: 'sourced', sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+        },
+        {
+          id: 'crew-plant', kind: 'plant', description: 'Excavator', count: '1',
+          assumptionStatus: 'sourced', sourceRefs: [{ documentId: 'quote', page: 1 }],
+        },
+      ],
+      workingHoursPerDay: '8',
+      bottleneck: 'Excavator cycle output',
+      theoreticalProductionRate: '20',
+      calculationFormula: '20 m3/day theoretical x effective factor',
+      scenarios: [
+        {
+          scenario: 'optimistic', productionRate: '12', quantityUnit: 'm3', timeUnit: 'working_day', effectiveFactor: '0.6',
+          basis: 'Good access and balanced truck cycle', assumptionStatus: 'scenario', sourceRefs: [{ documentId: 'quote', page: 1 }],
+        },
+        {
+          scenario: 'base', productionRate: '10', quantityUnit: 'm3', timeUnit: 'working_day', effectiveFactor: '0.5',
+          basis: 'Normal constrained production', assumptionStatus: 'sourced', sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+        },
+        {
+          scenario: 'pessimistic', productionRate: '8', quantityUnit: 'm3', timeUnit: 'working_day', effectiveFactor: '0.4',
+          basis: 'Restricted access and trimming rework', assumptionStatus: 'scenario', sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+        },
+      ],
+    },
+    resourceCoverage: [
+      { kind: 'labour', applicability: 'included', basis: 'Direct excavation and trimming crew' },
+      { kind: 'plant', applicability: 'included', basis: 'Excavator production plant' },
+      { kind: 'material', applicability: 'not_applicable', basis: 'No permanent material incorporated' },
+      { kind: 'subcontract', applicability: 'not_applicable', basis: 'Self-performed activity' },
+      { kind: 'transport', applicability: 'not_applicable', basis: 'Free-haul is excluded from this item' },
+      { kind: 'waste', applicability: 'not_applicable', basis: 'No material consumption waste' },
+    ],
     resourceConsumptions: [
-      { id: 'res-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h/m3', assumptionStatus: 'sourced' },
-      { id: 'res-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h/m3', assumptionStatus: 'sourced' },
+      {
+        id: 'res-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h/m3', assumptionStatus: 'sourced',
+        quantityBasis: 'per_boq_unit', calculationBasis: '20 crew-hours/day / 10 m3/day', costComponentId: 'cost-labour',
+        sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+      },
+      {
+        id: 'res-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h/m3', assumptionStatus: 'sourced',
+        quantityBasis: 'per_boq_unit', calculationBasis: '5 machine-hours/day / 10 m3/day', costComponentId: 'cost-plant',
+        sourceRefs: [{ documentId: 'quote', page: 1 }],
+      },
     ],
     planningBasis: {
       methodId: 'small-plant-excavation',
@@ -97,7 +162,7 @@ const completePricing: TenderBoqFiveStepPricingData = {
         period: '2026-08',
         activityId: 'activity-b6100-1',
         weight: '0.6',
-        amount: '300',
+        amount: '30000',
         basis: 'Mobilisation and first production period.',
         assumptionStatus: 'sourced',
         sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
@@ -106,17 +171,42 @@ const completePricing: TenderBoqFiveStepPricingData = {
         period: '2026-09',
         activityId: 'activity-b6100-1',
         weight: '0.4',
-        amount: '200',
+        amount: '20000',
         basis: 'Remaining production period.',
         assumptionStatus: 'sourced',
         sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
       },
     ],
     costComponents: [
-      { id: 'cost-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h', rate: '100', amount: '200', rateSourceRef: { documentId: 'quote', page: 1 }, assumptionStatus: 'sourced' },
-      { id: 'cost-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h', rate: '600', amount: '300', rateSourceRef: { documentId: 'quote', page: 1 }, assumptionStatus: 'sourced' },
+      {
+        id: 'cost-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h/m3', rate: '100', amount: '200',
+        rateSourceRef: { documentId: 'quote', page: 1 },
+        rateBasis: { sourceType: 'published_schedule', acquisitionMode: 'not_applicable', location: 'Durban', effectiveDate: '2026-07-15', vatTreatment: 'exclusive' },
+        assumptionStatus: 'sourced',
+      },
+      {
+        id: 'cost-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h/m3', rate: '600', amount: '300',
+        rateSourceRef: { documentId: 'quote', page: 1 },
+        rateBasis: { sourceType: 'rental_quote', acquisitionMode: 'rented', location: 'Durban', effectiveDate: '2026-07-15', vatTreatment: 'exclusive' },
+        assumptionStatus: 'sourced',
+      },
     ],
     directCost: '500',
+    directCostSummary: {
+      labour: '200', plant: '300', material: '0', subcontract: '0', transport: '0', waste: '0', other: '0',
+      unitDirectCost: '500', boqQuantity: '100', itemDirectCost: '50000',
+    },
+    riskScenarios: [{
+      id: 'risk-productivity',
+      variable: 'Excavator production rate',
+      optimistic: '12 m3/working_day',
+      base: '10 m3/working_day',
+      pessimistic: '8 m3/working_day',
+      trigger: 'Restricted access or trimming rework',
+      treatment: 'Rebalance trucks and add trimming support before extending shifts',
+      assumptionStatus: 'sourced',
+      sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+    }],
     conditions: [],
     riskNotes: [],
   }],
@@ -134,7 +224,8 @@ describe('tender BOQ five-step pricing audit', () => {
     expect(audit.readiness).toBe('ready');
     expect(audit.summary.items).toBe(1);
     expect(audit.summary.completeItems).toBe(1);
-    expect(audit.summary.estimatedDirectCost).toBe('500');
+    expect(audit.summary.estimatedUnitRateSum).toBe('500');
+    expect(audit.summary.estimatedDirectCost).toBe('50000');
   });
 
   test('rejects missing item build-ups and incomplete five-step derivations', () => {
@@ -159,7 +250,7 @@ describe('tender BOQ five-step pricing audit', () => {
     expect(incomplete.issues.map((issue) => issue.code)).toContain('boq_pricing_step_incomplete');
   });
 
-  test('rejects a reviewed item without a calculable planning or initial cash-flow basis', () => {
+  test('rejects a reviewed item without a calculable planning basis but allows cash flow to be deferred', () => {
     const item = completePricing.itemBuildUps[0]!;
     const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
       ...completePricing,
@@ -168,7 +259,7 @@ describe('tender BOQ five-step pricing audit', () => {
 
     expect(audit.readiness).toBe('not_ready');
     expect(audit.issues.map((issue) => issue.code)).toContain('boq_pricing_planning_basis_missing');
-    expect(audit.issues.map((issue) => issue.code)).toContain('boq_pricing_cash_flow_missing');
+    expect(audit.issues.map((issue) => issue.code)).not.toContain('boq_pricing_cash_flow_missing');
   });
 
   test('rejects duration capacity that cannot produce the BOQ quantity', () => {
@@ -192,7 +283,7 @@ describe('tender BOQ five-step pricing audit', () => {
       itemBuildUps: [{
         ...item,
         initialCashFlow: item.initialCashFlow!.map((allocation, index) => index === 0
-          ? { ...allocation, weight: '0.5', amount: '250' }
+          ? { ...allocation, weight: '0.5', amount: '25000' }
           : allocation),
       }],
     }, '2026-07-15T00:00:00.000Z');
@@ -201,5 +292,96 @@ describe('tender BOQ five-step pricing audit', () => {
     expect(audit.readiness).toBe('not_ready');
     expect(issueCodes).toContain('boq_pricing_cash_flow_weight_mismatch');
     expect(issueCodes).toContain('boq_pricing_cash_flow_amount_mismatch');
+  });
+
+  test('rejects a generic resource database or prose-only record that lacks C5.1 item controls', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        itemIdentity: undefined,
+        scopeBasis: undefined,
+        productivityBasis: undefined,
+        resourceCoverage: undefined,
+        directCostSummary: undefined,
+        riskScenarios: undefined,
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    const issueCodes = audit.issues.map((issue) => issue.code);
+    expect(audit.readiness).toBe('not_ready');
+    expect(issueCodes).toContain('boq_pricing_item_identity_missing');
+    expect(issueCodes).toContain('boq_pricing_scope_basis_missing');
+    expect(issueCodes).toContain('boq_pricing_productivity_basis_missing');
+    expect(issueCodes).toContain('boq_pricing_resource_coverage_incomplete');
+    expect(issueCodes).toContain('boq_pricing_direct_cost_summary_missing');
+    expect(issueCodes).toContain('boq_pricing_item_risk_scenarios_missing');
+  });
+
+  test('rejects indirect markups and rate evidence without C5.1 basis metadata', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        costComponents: [
+          ...item.costComponents.map((component, index) => index === 0 ? { ...component, rateBasis: undefined } : component),
+          {
+            id: 'cost-overhead', kind: 'overhead', description: 'General overhead', quantity: '1', unit: 'item',
+            rate: '50', amount: '50', assumptionStatus: 'scenario',
+          },
+        ],
+        directCost: '550',
+        directCostSummary: { ...item.directCostSummary!, unitDirectCost: '550', itemDirectCost: '55000' },
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    const issueCodes = audit.issues.map((issue) => issue.code);
+    expect(audit.readiness).toBe('not_ready');
+    expect(issueCodes).toContain('boq_pricing_rate_basis_missing');
+    expect(issueCodes).toContain('boq_pricing_indirect_cost_in_unit_rate');
+  });
+
+  test('rejects a resource consumption that does not match its direct-cost component', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        resourceConsumptions: item.resourceConsumptions.map((resource, index) => index === 0
+          ? { ...resource, quantity: '1.5', unit: 'day/m3' }
+          : resource),
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    const issueCodes = audit.issues.map((issue) => issue.code);
+    expect(audit.readiness).toBe('not_ready');
+    expect(issueCodes).toContain('boq_pricing_resource_component_quantity_mismatch');
+    expect(issueCodes).toContain('boq_pricing_resource_component_unit_mismatch');
+  });
+
+  test('rejects reviewed pricing with unverified core rates or inconsistent productivity arithmetic', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        productivityBasis: {
+          ...item.productivityBasis!,
+          scenarios: item.productivityBasis!.scenarios.map((scenario) => scenario.scenario === 'base'
+            ? { ...scenario, effectiveFactor: '0.4' }
+            : scenario),
+        },
+        costComponents: item.costComponents.map((component, index) => index === 0
+          ? { ...component, assumptionStatus: 'unverified' as const }
+          : component),
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    const issueCodes = audit.issues.map((issue) => issue.code);
+    expect(audit.readiness).toBe('not_ready');
+    expect(issueCodes).toContain('boq_pricing_productivity_formula_mismatch');
+    expect(issueCodes).toContain('boq_pricing_reviewed_core_unverified');
   });
 });

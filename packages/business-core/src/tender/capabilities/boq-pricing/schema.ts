@@ -12,6 +12,10 @@ const AllocationWeightSchema = z.string().regex(
 );
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/, 'Expected an ISO currency code.');
 const ResourceKindSchema = z.enum(['labour', 'plant', 'material', 'subcontract', 'transport', 'waste', 'other']);
+const DirectResourceKindSchema = z.enum(['labour', 'plant', 'material', 'subcontract', 'transport', 'waste']);
+const AssumptionStatusSchema = z.enum(['sourced', 'scenario', 'unverified']);
+const TimeUnitSchema = z.enum(['hour', 'shift', 'working_day', 'week']);
+const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.');
 
 const TenderBoqPricingStepSchema = z.object({
   narrative: z.string(),
@@ -32,7 +36,100 @@ const TenderBoqResourceConsumptionSchema = z.object({
   description: NonEmptyString,
   quantity: DecimalString,
   unit: NonEmptyString,
-  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  assumptionStatus: AssumptionStatusSchema,
+  quantityBasis: z.literal('per_boq_unit').optional(),
+  calculationBasis: NonEmptyString.optional(),
+  costComponentId: EntityIdSchema.optional(),
+  sourceRefs: z.array(TenderSourceLocatorSchema).optional(),
+}).strict();
+
+const TenderBoqItemIdentitySchema = z.object({
+  code: NonEmptyString,
+  description: NonEmptyString,
+  unit: NonEmptyString,
+  quantity: DecimalString,
+  sourceRef: TenderSourceLocatorSchema,
+}).strict();
+
+const TenderBoqScopeBasisSchema = z.object({
+  specificationRefs: z.array(TenderSourceLocatorSchema),
+  measurementRuleRefs: z.array(TenderSourceLocatorSchema),
+  inclusions: z.array(NonEmptyString),
+  exclusions: z.array(NonEmptyString),
+  testingRequirements: z.array(NonEmptyString),
+  methodConstraints: z.array(NonEmptyString),
+}).strict();
+
+const TenderBoqCrewResourceSchema = z.object({
+  id: EntityIdSchema,
+  kind: z.enum(['labour', 'plant']),
+  description: NonEmptyString,
+  count: PositiveDecimalString,
+  assumptionStatus: AssumptionStatusSchema,
+  sourceRefs: z.array(TenderSourceLocatorSchema),
+}).strict();
+
+const TenderBoqProductivityScenarioSchema = z.object({
+  scenario: z.enum(['optimistic', 'base', 'pessimistic']),
+  productionRate: PositiveDecimalString,
+  quantityUnit: NonEmptyString,
+  timeUnit: TimeUnitSchema,
+  effectiveFactor: AllocationWeightSchema.refine((value) => /[1-9]/.test(value), 'Expected an effective factor above zero.'),
+  basis: NonEmptyString,
+  assumptionStatus: AssumptionStatusSchema,
+  sourceRefs: z.array(TenderSourceLocatorSchema),
+}).strict();
+
+const TenderBoqProductivityBasisSchema = z.object({
+  methodSequence: z.array(NonEmptyString),
+  crew: uniqueBy(TenderBoqCrewResourceSchema, 'id'),
+  workingHoursPerDay: PositiveDecimalString,
+  bottleneck: NonEmptyString,
+  theoreticalProductionRate: PositiveDecimalString,
+  calculationFormula: NonEmptyString,
+  scenarios: uniqueBy(TenderBoqProductivityScenarioSchema, 'scenario'),
+}).strict();
+
+const TenderBoqResourceCoverageSchema = z.object({
+  kind: DirectResourceKindSchema,
+  applicability: z.enum(['included', 'not_applicable']),
+  basis: NonEmptyString,
+}).strict();
+
+const TenderBoqRateBasisSchema = z.object({
+  sourceType: z.enum([
+    'supplier_quote', 'historical_purchase', 'internal_ledger', 'published_schedule',
+    'rental_quote', 'owned_cost_model', 'subcontract_quote', 'market_evidence', 'scenario',
+  ]),
+  acquisitionMode: z.enum(['owned', 'rented', 'purchased', 'subcontracted', 'internal_transfer', 'not_applicable']),
+  location: NonEmptyString,
+  effectiveDate: DateSchema,
+  vatTreatment: z.literal('exclusive'),
+}).strict();
+
+const TenderBoqDirectCostSummarySchema = z.object({
+  labour: DecimalString,
+  plant: DecimalString,
+  material: DecimalString,
+  subcontract: DecimalString,
+  transport: DecimalString,
+  waste: DecimalString,
+  other: DecimalString,
+  unitDirectCost: DecimalString,
+  boqQuantity: DecimalString,
+  itemDirectCost: DecimalString,
+}).strict();
+
+const TenderBoqRiskScenarioSchema = z.object({
+  id: EntityIdSchema,
+  variable: NonEmptyString,
+  optimistic: NonEmptyString,
+  base: NonEmptyString,
+  pessimistic: NonEmptyString,
+  trigger: NonEmptyString,
+  treatment: NonEmptyString,
+  assumptionStatus: AssumptionStatusSchema,
+  sourceRefs: z.array(TenderSourceLocatorSchema),
 }).strict();
 
 const TenderBoqPricingCostComponentSchema = z.object({
@@ -44,18 +141,19 @@ const TenderBoqPricingCostComponentSchema = z.object({
   rate: DecimalString,
   amount: DecimalString,
   rateSourceRef: TenderSourceLocatorSchema.optional(),
-  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  rateBasis: TenderBoqRateBasisSchema.optional(),
+  assumptionStatus: AssumptionStatusSchema,
 }).strict();
 
 const TenderBoqPlanningBasisSchema = z.object({
   methodId: EntityIdSchema,
   productionRate: PositiveDecimalString,
   quantityUnit: NonEmptyString,
-  timeUnit: z.enum(['hour', 'shift', 'working_day', 'week']),
+  timeUnit: TimeUnitSchema,
   duration: PositiveDecimalString,
   calendarId: EntityIdSchema,
   activityId: EntityIdSchema,
-  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  assumptionStatus: AssumptionStatusSchema,
   sourceRefs: z.array(TenderSourceLocatorSchema).default([]),
 }).strict();
 
@@ -65,7 +163,7 @@ const TenderBoqInitialCashFlowAllocationSchema = z.object({
   weight: AllocationWeightSchema,
   amount: DecimalString,
   basis: NonEmptyString,
-  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  assumptionStatus: AssumptionStatusSchema,
   sourceRefs: z.array(TenderSourceLocatorSchema).default([]),
 }).strict();
 
@@ -73,11 +171,17 @@ const TenderBoqFiveStepItemBuildUpSchema = z.object({
   boqItemId: EntityIdSchema,
   status: z.enum(['draft', 'reviewed', 'blocked']),
   steps: TenderBoqFiveStepRecordSchema,
+  itemIdentity: TenderBoqItemIdentitySchema.optional(),
+  scopeBasis: TenderBoqScopeBasisSchema.optional(),
+  productivityBasis: TenderBoqProductivityBasisSchema.optional(),
+  resourceCoverage: uniqueBy(TenderBoqResourceCoverageSchema, 'kind').optional(),
   resourceConsumptions: z.array(TenderBoqResourceConsumptionSchema).default([]),
   planningBasis: TenderBoqPlanningBasisSchema.optional(),
   initialCashFlow: uniqueBy(TenderBoqInitialCashFlowAllocationSchema, 'period').optional(),
-  costComponents: z.array(TenderBoqPricingCostComponentSchema).default([]),
+  costComponents: uniqueBy(TenderBoqPricingCostComponentSchema, 'id').default([]),
   directCost: DecimalString,
+  directCostSummary: TenderBoqDirectCostSummarySchema.optional(),
+  riskScenarios: uniqueBy(TenderBoqRiskScenarioSchema, 'id').optional(),
   conditions: z.array(NonEmptyString).default([]),
   riskNotes: z.array(NonEmptyString).default([]),
 }).strict();
@@ -98,6 +202,9 @@ const TenderBoqPricingAssumptionSchema = z.object({
 
 export const TenderBoqFiveStepPricingDataSchema = z.object({
   currency: CurrencySchema,
+  pricingStandard: z.literal('c51_pure_direct_cost_v1').optional(),
+  vatTreatment: z.literal('exclusive').optional(),
+  indirectCostPolicy: z.literal('excluded_from_item_direct_cost').optional(),
   pricingStatus: z.enum(['draft', 'reviewed', 'blocked']),
   itemBuildUps: uniqueBy(TenderBoqFiveStepItemBuildUpSchema, 'boqItemId'),
   resourceSummary: z.array(TenderBoqPricingResourceSummarySchema).default([]),

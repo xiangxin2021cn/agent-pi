@@ -150,6 +150,7 @@ import {
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
 import { resolveTenderStageParentBarrier } from '../tender-stage-executor'
+import { collectSessionThreadIds, isSessionInsideViewedThread } from './unread-thread'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -6610,7 +6611,11 @@ export class SessionManager implements ISessionManager {
    * Check if a session is currently being viewed by the user
    */
   private isSessionBeingViewed(sessionId: string, workspaceId: string): boolean {
-    return this.activeViewingSession.get(workspaceId) === sessionId
+    return isSessionInsideViewedThread(
+      sessionId,
+      this.activeViewingSession.get(workspaceId),
+      this.sessions,
+    )
   }
 
   /**
@@ -6618,35 +6623,34 @@ export class SessionManager implements ISessionManager {
    * Called when user navigates to a session (and it's not processing).
    */
   async markSessionRead(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) return
+    if (!this.sessions.has(sessionId)) return
 
-    // Only mark as read if not currently processing
-    // (user is viewing but we want to wait for processing to complete)
-    if (managed.isProcessing) return
+    const persistOperations: Promise<void>[] = []
+    for (const threadSessionId of collectSessionThreadIds(sessionId, this.sessions.values())) {
+      const managed = this.sessions.get(threadSessionId)
+      if (!managed || managed.isProcessing) continue
 
-    let needsPersist = false
-    const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
+      const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
+      const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages) ?? managed.lastFinalMessageId
+      if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
+        managed.lastReadMessageId = lastFinalId
+        updates.lastReadMessageId = lastFinalId
+      }
 
-    // Update lastReadMessageId for legacy/manual unread functionality
-    const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages) ?? managed.lastFinalMessageId
-    if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
-      managed.lastReadMessageId = lastFinalId
-      updates.lastReadMessageId = lastFinalId
-      needsPersist = true
+      if (managed.hasUnread) {
+        managed.hasUnread = false
+        updates.hasUnread = false
+      }
+
+      if (Object.keys(updates).length > 0) {
+        persistOperations.push(
+          updateSessionMetadata(managed.workspace.rootPath, managed.id, updates),
+        )
+      }
     }
 
-    // Clear hasUnread flag (primary source of truth for NEW badge)
-    if (managed.hasUnread) {
-      managed.hasUnread = false
-      updates.hasUnread = false
-      needsPersist = true
-    }
-
-    // Persist changes
-    if (needsPersist) {
-      const workspaceRootPath = managed.workspace.rootPath
-      await updateSessionMetadata(workspaceRootPath, sessionId, updates)
+    if (persistOperations.length > 0) {
+      await Promise.all(persistOperations)
       this.emitUnreadSummaryChanged()
     }
   }

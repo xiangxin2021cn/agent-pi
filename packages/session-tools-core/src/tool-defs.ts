@@ -247,11 +247,15 @@ export const TenderCapabilityToolSchema = z.object({
   projectId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
     .describe('Filesystem-safe Tender Workspace project ID.'),
   capability: z.enum([
+    'document_analysis',
     'evaluation_strategy',
     'boq_reconciliation',
+    'boq_five_step_pricing',
+    'bidder_commitments',
     'execution_plan',
     'schedule_resources',
     'cost_cashflow',
+    'submission_documents',
     'submission_audit',
   ]).describe('Tender capability pack to operate on.'),
   data: z.unknown().optional().describe('Complete capability data required by init and replace.'),

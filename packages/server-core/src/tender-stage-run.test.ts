@@ -76,6 +76,43 @@ describe('tender stage runner', () => {
     expect(result.missingItems).toContain('capability:boq_reconciliation');
   });
 
+  test('requires user-confirmed bidder commitments before construction methodology planning', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
+    const entry = (capability: string) => ({
+      capability, enabled: true, required: true, revision: 1, readiness: 'ready',
+      issueCount: 0, stale: false, updatedAt: '2026-07-17T00:00:00.000Z',
+    });
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      coreRevision: 2,
+      capabilities: [
+        entry('document_analysis'),
+        entry('boq_reconciliation'),
+        entry('boq_five_step_pricing'),
+      ],
+    }));
+
+    const commitments = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'bidder-commitments',
+    });
+    const methodology = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'work-plan-methodology',
+    });
+
+    expect(commitments.status).toBe('running');
+    expect(commitments.producedCapabilities).toEqual(['bidder_commitments']);
+    expect(methodology.status).toBe('blocked');
+    expect(methodology.missingItems).toContain('capability:bidder_commitments');
+  });
+
   test('keeps schedule/resources and cost/cashflow as separate gated stages', async () => {
     const fixture = createFixture();
     await runTenderStage({
@@ -386,7 +423,9 @@ describe('tender stage runner', () => {
 
   function pricingData(itemBuildUps: unknown[]) {
     return {
-      currency: 'ZAR', pricingStatus: 'reviewed', itemBuildUps, resourceSummary: [], assumptions: [],
+      currency: 'ZAR', pricingStandard: 'c51_pure_direct_cost_v1', vatTreatment: 'exclusive',
+      indirectCostPolicy: 'excluded_from_item_direct_cost', pricingStatus: 'reviewed',
+      itemBuildUps, resourceSummary: [], assumptions: [],
     };
   }
 
@@ -395,6 +434,8 @@ describe('tender stage runner', () => {
       narrative: 'Evidence-linked derivation.',
       sourceRefs: [{ documentId, sheet: 'C5.1', cell: 'A1:F1' }],
     };
+    const sourceRef = { documentId, sheet: 'C5.1', cell: 'A1:F1' };
+    const clauseRef = { documentId, clause: '5.1.1' };
     return {
       boqItemId,
       status: 'reviewed',
@@ -405,7 +446,36 @@ describe('tender stage runner', () => {
         sourcedRatesDirectCost: step,
         reconciliationRisk: step,
       },
-      resourceConsumptions: [],
+      itemIdentity: { code: '5.1.1', description: 'BOQ item', unit: 'm', quantity: '1', sourceRef },
+      scopeBasis: {
+        specificationRefs: [clauseRef], measurementRuleRefs: [{ documentId, clause: '5.1.1-payment' }],
+        inclusions: ['Complete measured work'], exclusions: ['General overhead and profit'],
+        testingRequirements: ['Acceptance check'], methodConstraints: ['Execute to specification'],
+      },
+      productivityBasis: {
+        methodSequence: ['Set out', 'Execute', 'Inspect'],
+        crew: [{ id: 'item-1-crew', kind: 'labour', description: 'Work crew', count: '1', assumptionStatus: 'sourced', sourceRefs: [clauseRef] }],
+        workingHoursPerDay: '8', bottleneck: 'Crew output', theoreticalProductionRate: '2',
+        calculationFormula: '2 m/day x effective factor',
+        scenarios: [
+          { scenario: 'optimistic', productionRate: '1.2', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.6', basis: 'Good conditions', assumptionStatus: 'scenario', sourceRefs: [clauseRef] },
+          { scenario: 'base', productionRate: '1', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.5', basis: 'Normal conditions', assumptionStatus: 'sourced', sourceRefs: [clauseRef] },
+          { scenario: 'pessimistic', productionRate: '0.8', quantityUnit: 'm', timeUnit: 'working_day', effectiveFactor: '0.4', basis: 'Constrained conditions', assumptionStatus: 'scenario', sourceRefs: [clauseRef] },
+        ],
+      },
+      resourceCoverage: [
+        { kind: 'labour', applicability: 'included', basis: 'Direct crew' },
+        { kind: 'plant', applicability: 'not_applicable', basis: 'No plant' },
+        { kind: 'material', applicability: 'not_applicable', basis: 'No material' },
+        { kind: 'subcontract', applicability: 'not_applicable', basis: 'Self-performed' },
+        { kind: 'transport', applicability: 'not_applicable', basis: 'No transport' },
+        { kind: 'waste', applicability: 'not_applicable', basis: 'No waste' },
+      ],
+      resourceConsumptions: [{
+        id: `${boqItemId}-labour-consumption`, kind: 'labour', description: 'Labour', quantity: '1', unit: 'hour/m',
+        assumptionStatus: 'sourced', quantityBasis: 'per_boq_unit', calculationBasis: 'One hour per metre',
+        costComponentId: `${boqItemId}-labour`, sourceRefs: [clauseRef],
+      }],
       planningBasis: {
         methodId: 'linear-installation', productionRate: '1', quantityUnit: 'm', timeUnit: 'working_day',
         duration: '1', calendarId: 'calendar-standard', activityId: `activity-${boqItemId}`,
@@ -417,11 +487,21 @@ describe('tender stage runner', () => {
         sourceRefs: [{ documentId, sheet: 'C5.1', cell: 'A1:F1' }],
       }],
       costComponents: [{
-        id: `${boqItemId}-labour`, kind: 'labour', description: 'Labour', quantity: '1', unit: 'hour',
-        rate: '10', amount: '10', rateSourceRef: { documentId, sheet: 'C5.1', cell: 'A1:F1' },
+        id: `${boqItemId}-labour`, kind: 'labour', description: 'Labour', quantity: '1', unit: 'hour/m',
+        rate: '10', amount: '10', rateSourceRef: sourceRef,
+        rateBasis: { sourceType: 'published_schedule', acquisitionMode: 'not_applicable', location: 'Durban', effectiveDate: '2026-07-16', vatTreatment: 'exclusive' },
         assumptionStatus: 'sourced',
       }],
       directCost: '10',
+      directCostSummary: {
+        labour: '10', plant: '0', material: '0', subcontract: '0', transport: '0', waste: '0', other: '0',
+        unitDirectCost: '10', boqQuantity: '1', itemDirectCost: '10',
+      },
+      riskScenarios: [{
+        id: `${boqItemId}-risk`, variable: 'Crew productivity', optimistic: '1.2 m/day', base: '1 m/day',
+        pessimistic: '0.8 m/day', trigger: 'Restricted access', treatment: 'Rebalance crew',
+        assumptionStatus: 'sourced', sourceRefs: [clauseRef],
+      }],
       conditions: [],
       riskNotes: [],
     };

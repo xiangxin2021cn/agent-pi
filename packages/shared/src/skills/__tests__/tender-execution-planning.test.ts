@@ -14,6 +14,8 @@ describe('Tender Execution Planning project skill', () => {
     expect(skill!.content).toContain('Use only user-selected sources and registered Tender Workspace records.');
     expect(skill!.content).toContain('Do not scan the working directory.');
     expect(skill!.content).toContain('Use `tender_capability` as the tender execution-plan system of record.');
+    expect(skill!.content).toContain('ready user-confirmed `bidder_commitments` pack');
+    expect(skill!.content).toContain('Treat bidder-confirmed resource, procurement, camp, method, productivity, sequence, and');
     expect(skill!.content).toContain('Assign every reconciled BOQ item to exactly one primary work package.');
     expect(skill!.content).toContain('Do not invent productivity, resource quantities, engineering controls, or temporary works.');
     expect(skill!.content).toContain('Keep HSE controls, environmental controls, interfaces, constraints, and hold points explicit.');
