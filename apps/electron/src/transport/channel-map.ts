@@ -57,6 +57,7 @@ export const CHANNEL_MAP = {
   listTenderWorkspaces: invoke(RPC_CHANNELS.tenderWorkspace.LIST),
   getTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.GET),
   mutateTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.MUTATE),
+  runTenderStage: invoke(RPC_CHANNELS.tenderWorkspace.STAGE_RUN),
   listDeliveryWorkspaces: invoke(RPC_CHANNELS.deliveryWorkspace.LIST),
   getDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.GET),
   mutateDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.MUTATE),

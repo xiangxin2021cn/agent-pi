@@ -44,11 +44,35 @@ export interface TenderBoqPricingCostComponent {
   assumptionStatus: 'sourced' | 'scenario' | 'unverified';
 }
 
+export interface TenderBoqPlanningBasis {
+  methodId: string;
+  productionRate: string;
+  quantityUnit: string;
+  timeUnit: 'hour' | 'shift' | 'working_day' | 'week';
+  duration: string;
+  calendarId: string;
+  activityId: string;
+  assumptionStatus: 'sourced' | 'scenario' | 'unverified';
+  sourceRefs: TenderSourceLocator[];
+}
+
+export interface TenderBoqInitialCashFlowAllocation {
+  period: string;
+  activityId: string;
+  weight: string;
+  amount: string;
+  basis: string;
+  assumptionStatus: 'sourced' | 'scenario' | 'unverified';
+  sourceRefs: TenderSourceLocator[];
+}
+
 export interface TenderBoqFiveStepItemBuildUp {
   boqItemId: string;
   status: 'draft' | 'reviewed' | 'blocked';
   steps: TenderBoqFiveStepRecord;
   resourceConsumptions: TenderBoqResourceConsumption[];
+  planningBasis?: TenderBoqPlanningBasis;
+  initialCashFlow?: TenderBoqInitialCashFlowAllocation[];
   costComponents: TenderBoqPricingCostComponent[];
   directCost: string;
   conditions: string[];

@@ -21,7 +21,7 @@ import type { StoredAttachment } from '@craft-agent/core/types'
 import { CONFIG_DIR, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath } from '@craft-agent/shared/sessions'
+import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath, type ProjectMemoryScope } from '@craft-agent/shared/sessions'
 import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
 import {
   handleFileMemorySourceCreate,
@@ -50,6 +50,7 @@ interface ClientSessionWatchState {
   watchers: import('fs').FSWatcher[]
   sessionId: string
   debounceTimer: ReturnType<typeof setTimeout> | null
+  disposed: boolean
 }
 
 // Per-client session file watcher state (supports concurrent windows/clients safely)
@@ -82,6 +83,8 @@ function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>)
 export function cleanupSessionFileWatchForClient(clientId: string): void {
   const state = clientSessionWatches.get(clientId)
   if (!state) return
+
+  state.disposed = true
 
   if (state.debounceTimer) {
     clearTimeout(state.debounceTimer)
@@ -121,7 +124,10 @@ function getOutputScope(sessionPath: string, outputPath: string): SessionOutputD
   return pathStartsWith(outputPath, sessionPath) ? 'session' : 'working-directory'
 }
 
-async function getProjectMemoryStatusForWorkingDirectory(workingDirectory?: string): Promise<ProjectMemorySessionStatusResult> {
+async function getProjectMemoryStatusForWorkingDirectory(
+  workingDirectory?: string,
+  scope: ProjectMemoryScope = {},
+): Promise<ProjectMemorySessionStatusResult> {
   if (!workingDirectory) {
     return {
       status: 'missing_working_directory',
@@ -129,7 +135,7 @@ async function getProjectMemoryStatusForWorkingDirectory(workingDirectory?: stri
     }
   }
 
-  const brainPath = getProjectBrainPath(workingDirectory)
+  const brainPath = getProjectBrainPath(workingDirectory, scope)
   if (!brainPath || !(await pathExists(brainPath))) {
     return {
       status: 'not_initialized',
@@ -757,7 +763,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.sessions.GET_PROJECT_MEMORY_STATUS, async (_ctx, sessionId: string): Promise<ProjectMemorySessionStatusResult | null> => {
     const session = sessionManager.getSessions().find(s => s.id === sessionId)
     if (!session) return null
-    return getProjectMemoryStatusForWorkingDirectory(session.workingDirectory)
+    return getProjectMemoryStatusForWorkingDirectory(session.workingDirectory, {
+      sessionId,
+      businessContext: session.businessContext,
+    })
   })
 
   server.handle(RPC_CHANNELS.sessions.RESET_PROJECT_MEMORY_QUALITY_TELEMETRY, async (_ctx, sessionId: string): Promise<ProjectMemoryQualityTelemetryResetResult | null> => {
@@ -770,7 +779,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       }
     }
 
-    const result = await resetProjectMemoryQualityTelemetry(session.workingDirectory)
+    const result = await resetProjectMemoryQualityTelemetry(session.workingDirectory, {
+      sessionId,
+      businessContext: session.businessContext,
+    })
     return {
       status: 'reset',
       message: `Reset ${result.removedCount} learned quality telemetry facts.`,
@@ -809,6 +821,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         await recordProjectMemoryFormalOutput({
           workingDirectory: session.workingDirectory,
           sessionId,
+          businessContext: session.businessContext,
           sourcePath,
           outputPath,
           reason: 'user_promoted',
@@ -895,9 +908,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         watchers: [],
         sessionId,
         debounceTimer: null,
+        disposed: false,
       }
 
       const notifyChanged = (filename: string | Buffer | null) => {
+        if (state.disposed) return
         // Ignore internal files and hidden files
         const name = filename?.toString()
         if (name && (name.includes('session.jsonl') || name.startsWith('.'))) {
@@ -910,6 +925,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         }
 
         state.debounceTimer = setTimeout(() => {
+          if (state.disposed || clientSessionWatches.get(clientId) !== state) return
           pushTyped(server, RPC_CHANNELS.sessions.FILES_CHANGED, { to: 'client', clientId }, state.sessionId)
         }, 100)
       }

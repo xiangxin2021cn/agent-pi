@@ -1,6 +1,6 @@
 {
   "name": "@agent-pi/business-core",
-  "version": "2.2.1",
+  "version": "2.2.3",
   "license": "Apache-2.0",
   "description": "Pure enterprise business models and deterministic audits for Agent Pi",
   "type": "module",

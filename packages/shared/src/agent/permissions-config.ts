@@ -36,8 +36,9 @@ import {
 // App-level Permissions Directory
 // ============================================================
 
-// Track if permissions have been initialized this session (prevents re-init on hot reload)
-let permissionsInitialized = false;
+// Track the initialized source/destination pair. This prevents redundant hot
+// reload work while still allowing a changed config root to initialize.
+let permissionsInitializationKey: string | undefined;
 
 /**
  * Get the app-level permissions directory.
@@ -59,24 +60,27 @@ export function getAppPermissionsDir(): string {
  * User customizations in workspace/source permissions.json files
  * are never touched by this function.
  */
-export function ensureDefaultPermissions(): void {
-  // Skip if already initialized this session (prevents re-init on hot reload)
-  if (permissionsInitialized) {
+export function ensureDefaultPermissions(options?: {
+  permissionsDir?: string;
+  bundledPermissionsDir?: string;
+}): void {
+  const permissionsDir = options?.permissionsDir ?? getAppPermissionsDir();
+
+  // Resolve bundled permissions directory via shared asset resolver
+  const bundledPermissionsDir = options?.bundledPermissionsDir ?? getBundledAssetsDir('permissions');
+  if (!bundledPermissionsDir) {
     return;
   }
-  permissionsInitialized = true;
 
-  const permissionsDir = getAppPermissionsDir();
+  const initializationKey = `${permissionsDir}\0${bundledPermissionsDir}`;
+  if (permissionsInitializationKey === initializationKey) {
+    return;
+  }
+  permissionsInitializationKey = initializationKey;
 
   // Create permissions directory if it doesn't exist
   if (!existsSync(permissionsDir)) {
     mkdirSync(permissionsDir, { recursive: true });
-  }
-
-  // Resolve bundled permissions directory via shared asset resolver
-  const bundledPermissionsDir = getBundledAssetsDir('permissions');
-  if (!bundledPermissionsDir) {
-    return;
   }
 
   const destPath = join(permissionsDir, 'default.json');

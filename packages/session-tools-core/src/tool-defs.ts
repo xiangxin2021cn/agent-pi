@@ -195,6 +195,8 @@ export const SpawnSessionSchema = z.object({
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the workspace default.'),
   labels: z.array(z.string()).optional().describe('Labels for the new session'),
   workingDirectory: z.string().optional().describe('Working directory for the new session'),
+  briefPath: z.string().optional().describe('Existing runtime-generated task brief to execute verbatim. Must be paired with reportPath and stay inside the child working directory.'),
+  reportPath: z.string().optional().describe('Exclusive structured handoff path for the child. Must be paired with briefPath and stay inside the child working directory.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
@@ -676,6 +678,7 @@ When spawning, the 'prompt' parameter is required.
 
 Optional overrides: \`model\`, \`llmConnection\`, \`permissionMode\`, \`thinkingLevel\`, \`enabledSourceSlugs\`, \`labels\`, \`workingDirectory\`. Omitted fields inherit from the spawning session or the workspace default.
 For document multi-agent deep mode, omit \`workingDirectory\` unless the user explicitly names a different folder, and either omit \`enabledSourceSlugs\` to inherit the selected sources or pass exactly the user-selected knowledge-base/source slugs.
+For runtime-generated bounded tasks, pass both \`briefPath\` and \`reportPath\` exactly as supplied by the stage manifest. Do not restate or broaden the brief in \`prompt\`.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 

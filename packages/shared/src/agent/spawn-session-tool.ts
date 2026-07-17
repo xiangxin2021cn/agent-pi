@@ -49,6 +49,8 @@ When spawning, the 'prompt' parameter is required.
 
 Optional overrides: model, llmConnection, permissionMode, thinkingLevel, enabledSourceSlugs, labels, workingDirectory. Omitted fields inherit from the spawning session. In particular, omit workingDirectory to use the current session's working directory.
 
+For runtime-generated bounded tasks, pass both briefPath and reportPath exactly as supplied by the stage manifest. The child will receive only that brief, the allowed sources, and the exclusive report path; do not summarize or rewrite the brief into prompt.
+
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
 The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, call get_spawn_status after pollAfterMs. The parent must not perform delegated work or write the child report while the handoff is pending. The runtime resumes the parent after all terminal reports are ready; a failed child requires retry or explicit user review, never automatic parent takeover.
@@ -74,6 +76,10 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         .describe('Labels for the new session'),
       workingDirectory: z.string().optional()
         .describe('Working directory for the new session'),
+      briefPath: z.string().optional()
+        .describe('Existing runtime-generated task brief to execute verbatim. Must be paired with reportPath and stay inside the child working directory.'),
+      reportPath: z.string().optional()
+        .describe('Exclusive structured handoff path for the child. Must be paired with briefPath and stay inside the child working directory.'),
       attachments: z.array(z.object({
         path: z.string().describe('Absolute file path on disk'),
         name: z.string().optional().describe('Display name (defaults to file basename)'),

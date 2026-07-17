@@ -8,6 +8,7 @@ import { getSessionTitle, getSessionStatus } from "@/utils/session"
 import type { SessionMeta } from "@/atoms/sessions"
 import type { ViewConfig } from "@craft-agent/shared/views"
 import type { SessionFilter } from "@/contexts/NavigationContext"
+import { getSessionProjectGroupKey } from '@/utils/session-project-grouping'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,21 +121,10 @@ function groupSessionsByDate(sessions: SessionMeta[]): DateGroup[] {
     }))
 }
 
-function normalizeProjectPath(path?: string): string | null {
-  const trimmed = path?.trim()
-  if (!trimmed) return null
-  return trimmed.replace(/[\\/]+$/, '')
-}
-
-function getProjectGroupKey(item: SessionMeta): string {
-  const normalized = normalizeProjectPath(item.workingDirectory)
-  return normalized ? `project-${normalized}` : 'project-none'
-}
-
 function getCollapseGroupKey(item: SessionMeta, groupingMode?: 'date' | 'status' | 'unread' | 'project'): string {
   if (groupingMode === 'status') return `status-${getSessionStatus(item)}`
   if (groupingMode === 'unread') return item.hasUnread ? 'unread-yes' : 'unread-no'
-  if (groupingMode === 'project') return getProjectGroupKey(item)
+  if (groupingMode === 'project') return getSessionProjectGroupKey(item)
   return startOfDay(new Date(item.lastMessageAt || 0)).toISOString()
 }
 

@@ -147,7 +147,7 @@ export interface AppShellContextType {
   onSessionSourcesChange?: (sessionId: string, sourceSlugs: string[]) => void
 
   // Open a new chat with optional agent, name, and pre-filled input
-  openNewChat?: (params?: NewChatActionParams) => Promise<void>
+  openNewChat?: (params?: NewChatActionParams) => Promise<Session | undefined>
 
   // Right sidebar button (for page headers)
   rightSidebarButton?: React.ReactNode

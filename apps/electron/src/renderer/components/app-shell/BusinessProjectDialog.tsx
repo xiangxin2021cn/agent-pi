@@ -13,6 +13,7 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import { slugify } from '@/lib/slugify'
 import { cn } from '@/lib/utils'
 import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
+import { preflightTenderStageLaunch, startTenderStageLaunch, summarizeTenderStage } from '@/pages/business-tender-stage'
 import { getBusinessWorkflow } from '@/pages/business-workflows'
 
 const MODULE_TITLE: Record<BusinessModuleId, string> = {
@@ -126,7 +127,17 @@ export function BusinessProjectDialog({
       onOpenChange(false)
 
       const firstStage = workflow.stages[0]!
-      await openNewChat?.({
+      const launch = moduleId === 'tender'
+        ? await preflightTenderStageLaunch(window.electronAPI.runTenderStage, {
+            workspaceRootPath, projectId: project.projectId, stageId: firstStage.id,
+          })
+        : undefined
+      if (launch && !launch.ok) {
+        const summary = summarizeTenderStage(launch.result)
+        toast.warning(`项目已创建，阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+        return
+      }
+      const parentSession = await openNewChat?.({
         name: `${project.name} · ${firstStage.label}`,
         workingDirectory: project.rootPath,
         businessContext: {
@@ -136,8 +147,17 @@ export function BusinessProjectDialog({
           stageId: firstStage.id,
         },
         attachments,
-        input: buildBusinessTaskDraft(moduleId, project, firstStage),
+        input: buildBusinessTaskDraft(moduleId, project, firstStage, launch?.result),
       })
+      if (moduleId === 'tender' && parentSession) {
+        const started = await startTenderStageLaunch(window.electronAPI.runTenderStage, {
+          workspaceRootPath, projectId: project.projectId, stageId: firstStage.id,
+        }, parentSession.id)
+        if (!started.ok) {
+          const summary = summarizeTenderStage(started.result)
+          toast.warning(`项目已创建，阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       setIsSaving(false)

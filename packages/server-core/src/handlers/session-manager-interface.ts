@@ -10,7 +10,7 @@ import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@craft-agent/c
 import type { StoredAttachment, AnnotationV1 } from '@craft-agent/core/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/mode-types'
 import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
-import type { AuthResult } from '@craft-agent/shared/agent'
+import type { AuthResult, SpawnSessionRequest, SpawnSessionResult } from '@craft-agent/shared/agent'
 import type {
   Session,
   SessionStatus,
@@ -49,6 +49,7 @@ export interface ISessionManager {
   getSessions(workspaceId?: string): Session[]
   getSession(sessionId: string): Promise<Session | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
+  spawnSession(parentSessionId: string, request: SpawnSessionRequest): Promise<SpawnSessionResult>
   deleteSession(sessionId: string): Promise<void>
 
   // ---------------------------------------------------------------------------

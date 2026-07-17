@@ -16,4 +16,14 @@ describe('exact tender cost decimal arithmetic', () => {
     expect((tender.sumDecimalStrings as (values: string[]) => string)(['0.1', '0.20', '12817.625']))
       .toBe('12817.925');
   });
+
+  test('compares decimal values with different scales exactly', async () => {
+    const tender = await import('../../index.ts') as Record<string, unknown>;
+    expect(typeof tender.compareDecimalStrings).toBe('function');
+
+    const compare = tender.compareDecimalStrings as (left: string, right: string) => number;
+    expect(compare('10.00', '10')).toBe(0);
+    expect(compare('10.01', '10')).toBe(1);
+    expect(compare('9.99', '10')).toBe(-1);
+  });
 });

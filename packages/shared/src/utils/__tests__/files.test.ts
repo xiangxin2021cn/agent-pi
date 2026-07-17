@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Buffer } from 'node:buffer'
@@ -96,5 +96,26 @@ describe('readFileAttachment — audio fixture', () => {
     expect(att?.type).toBe('text')
     expect(att?.text).toBe('hello world')
     expect(att?.base64).toBeUndefined()
+  })
+})
+
+describe('readFileAttachment — large path-backed files', () => {
+  test('can return metadata-only PDF attachments when the caller explicitly opts in', () => {
+    const dir = makeTmp()
+    const path = join(dir, 'large-volume.pdf')
+    writeFileSync(path, '')
+    truncateSync(path, 21 * 1024 * 1024)
+
+    const att = readFileAttachment(path, { allowPathBackedLargeFile: true })
+
+    expect(att).toMatchObject({
+      type: 'pdf',
+      path,
+      name: 'large-volume.pdf',
+      mimeType: 'application/pdf',
+      size: 21 * 1024 * 1024,
+    })
+    expect(att?.base64).toBeUndefined()
+    expect(att?.text).toBeUndefined()
   })
 })

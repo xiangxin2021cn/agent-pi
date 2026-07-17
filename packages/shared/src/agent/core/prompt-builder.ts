@@ -123,7 +123,14 @@ export class PromptBuilder {
       getSessionDataPath(this.workspaceRootPath, sessionId);
     const outputFolderPath = options.outputFolderPath ??
       getSessionOutputPath(this.workspaceRootPath, sessionId, this.config.session?.workingDirectory);
-    const projectBrainPath = getProjectBrainPath(this.config.session?.workingDirectory);
+    const projectMemoryScope = {
+      sessionId,
+      businessContext: this.config.session?.businessContext,
+    };
+    const projectBrainPath = getProjectBrainPath(
+      this.config.session?.workingDirectory,
+      projectMemoryScope,
+    );
     parts.push(formatSessionState(sessionId, {
       workingDirectory: this.config.session?.workingDirectory,
       plansFolderPath,
@@ -133,7 +140,10 @@ export class PromptBuilder {
       consumeModeChangeUserSignal: true,
     }));
 
-    const projectMemoryContext = loadProjectMemoryContextForSession(this.config.session?.workingDirectory);
+    const projectMemoryContext = loadProjectMemoryContextForSession(
+      this.config.session?.workingDirectory,
+      projectMemoryScope,
+    );
     if (projectMemoryContext) {
       parts.push(projectMemoryContext);
     }

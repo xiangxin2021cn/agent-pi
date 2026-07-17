@@ -124,4 +124,38 @@ describe('computeCollapsedPagination', () => {
     expect(result.paginatedItems.map(s => s.id)).toEqual(['visible'])
     expect(result.collapsedGroupsMeta.map(meta => meta.key)).toEqual(['project-C:\\repo\\project'])
   })
+
+  it('keeps workbench projects separate when they use the same working directory', () => {
+    const workingDirectory = 'C:\\repo\\shared-tender-files'
+    const sessions = [
+      makeSession('tender-a', {
+        workingDirectory,
+        businessContext: {
+          module: 'tender',
+          projectId: 'tender-a',
+          workflowId: 'tender-main',
+          stageId: 'document-analysis',
+        },
+      }),
+      makeSession('tender-b', {
+        workingDirectory,
+        businessContext: {
+          module: 'tender',
+          projectId: 'tender-b',
+          workflowId: 'tender-main',
+          stageId: 'boq-pricing',
+        },
+      }),
+    ]
+
+    const result = computeCollapsedPagination(
+      sessions,
+      50,
+      new Set(['project-business-tender-tender-a']),
+      'project'
+    )
+
+    expect(result.paginatedItems.map(session => session.id)).toEqual(['tender-b'])
+    expect(result.collapsedGroupsMeta.map(meta => meta.key)).toEqual(['project-business-tender-tender-a'])
+  })
 })

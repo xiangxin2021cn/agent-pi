@@ -9,6 +9,7 @@
  * on the request would be silently dropped.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { normalize } from 'node:path';
 import type { SpawnSessionRequest, SpawnSessionResult } from '../base-agent.ts';
 import { TestAgent, createMockBackendConfig } from './test-utils.ts';
 
@@ -73,5 +74,16 @@ describe('spawn_session thinkingLevel forwarding', () => {
     expect(captured[0]?.permissionMode).toBe('ask');
     expect(captured[0]?.model).toBe('claude-opus-4-7');
     expect(captured[0]?.labels).toEqual(['test']);
+  });
+
+  it('forwards explicit orchestration brief and report paths', async () => {
+    await agent.invokeSpawn({
+      prompt: 'Execute the assigned BOQ batch.',
+      briefPath: 'C:/project/.agent-pi/business/tender/t-1/orchestration/briefs/boq-pricing/batch-1.json',
+      reportPath: 'C:/project/.agent-pi/business/tender/t-1/orchestration/reports/boq-pricing/batch-1.json',
+    });
+
+    expect(captured[0]?.briefPath).toBe(normalize('C:/project/.agent-pi/business/tender/t-1/orchestration/briefs/boq-pricing/batch-1.json'));
+    expect(captured[0]?.reportPath).toBe(normalize('C:/project/.agent-pi/business/tender/t-1/orchestration/reports/boq-pricing/batch-1.json'));
   });
 });

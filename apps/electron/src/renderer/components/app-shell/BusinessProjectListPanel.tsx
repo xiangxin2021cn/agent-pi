@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
 import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
+import { preflightTenderStageLaunch, startTenderStageLaunch, summarizeTenderStage } from '@/pages/business-tender-stage'
 import { getBusinessWorkflow } from '@/pages/business-workflows'
 import { cn } from '@/lib/utils'
 import { getStateIcon, getStateIconStyle, getStateLabel } from '@/config/session-status-config'
@@ -100,13 +101,33 @@ export function BusinessProjectListPanel({
   }
 
   const handleNewTask = async (project: BusinessProjectRecord) => {
+    if (!workspaceRootPath) return
     const firstStage = workflow.stages[0]!
-    await openNewChat?.({
+    const launch = moduleId === 'tender'
+      ? await preflightTenderStageLaunch(window.electronAPI.runTenderStage, {
+          workspaceRootPath, projectId: project.projectId, stageId: firstStage.id,
+        })
+      : undefined
+    if (launch && !launch.ok) {
+      const summary = summarizeTenderStage(launch.result)
+      toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+      return
+    }
+    const parentSession = await openNewChat?.({
       name: `${project.name} · ${firstStage.label}`,
       workingDirectory: project.rootPath,
       businessContext: { module: moduleId, projectId: project.projectId, workflowId: project.workflowId, stageId: firstStage.id },
-      input: buildBusinessTaskDraft(moduleId, project, firstStage),
+      input: buildBusinessTaskDraft(moduleId, project, firstStage, launch?.result),
     })
+    if (moduleId === 'tender' && parentSession) {
+      const started = await startTenderStageLaunch(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId: project.projectId, stageId: firstStage.id,
+      }, parentSession.id)
+      if (!started.ok) {
+        const summary = summarizeTenderStage(started.result)
+        toast.error(`阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+      }
+    }
   }
 
   return (

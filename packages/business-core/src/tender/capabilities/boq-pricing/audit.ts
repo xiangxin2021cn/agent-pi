@@ -2,7 +2,7 @@ import type { TenderSourceLocator, TenderWorkspace } from '../../types.ts';
 import { parseTenderBoqReconciliationData } from '../boq/schema.ts';
 import type { TenderBoqReconciliationData } from '../boq/types.ts';
 import type { TenderCapabilityAuditIssue } from '../types.ts';
-import { decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
+import { compareDecimalStrings, decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
 import { parseTenderBoqFiveStepPricingData } from './schema.ts';
 import type { TenderBoqFiveStepItemBuildUp, TenderBoqFiveStepPricingAudit, TenderBoqFiveStepPricingData } from './types.ts';
 
@@ -25,7 +25,17 @@ export function auditTenderBoqFiveStepPricing(
   const issues: TenderCapabilityAuditIssue[] = [];
   const documentById = new Map(workspace.documents.map((document) => [document.id, document]));
   const itemIds = new Set(boq.items.map((item) => item.id));
+  const itemById = new Map(boq.items.map((item) => [item.id, item]));
   const buildUpByItemId = new Map(data.itemBuildUps.map((buildUp) => [buildUp.boqItemId, buildUp]));
+
+  if (boq.items.length === 0 || data.itemBuildUps.length === 0) {
+    issues.push({
+      code: 'boq_pricing_items_empty',
+      severity: 'error',
+      entityType: 'boq_pricing',
+      message: 'BOQ five-step pricing requires reconciled BOQ items and at least one item build-up.',
+    });
+  }
 
   if (workspace.project.currency && workspace.project.currency !== data.currency) {
     issues.push({
@@ -103,6 +113,137 @@ export function auditTenderBoqFiveStepPricing(
           entityType: 'boq_resource_consumption',
           entityId: resource.id,
           message: `Resource consumption ${resource.id} is unverified.`,
+        });
+      }
+    }
+
+    const planningBasis = buildUp.planningBasis;
+    const boqItem = itemById.get(buildUp.boqItemId);
+    if (!planningBasis) {
+      issues.push({
+        code: 'boq_pricing_planning_basis_missing',
+        severity: 'error',
+        entityType: 'boq_pricing_build_up',
+        entityId: buildUp.boqItemId,
+        message: `BOQ item ${buildUp.boqItemId} has no calculable production and duration basis.`,
+      });
+    } else {
+      if (boqItem && normalizeUnit(planningBasis.quantityUnit) !== normalizeUnit(boqItem.unit)) {
+        issues.push({
+          code: 'boq_pricing_planning_unit_mismatch',
+          severity: 'error',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} planning unit ${planningBasis.quantityUnit} does not match BOQ unit ${boqItem.unit}.`,
+        });
+      }
+      if (planningBasis.sourceRefs.length === 0) {
+        issues.push({
+          code: 'boq_pricing_planning_source_missing',
+          severity: 'error',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} planning basis has no source reference.`,
+        });
+      }
+      planningBasis.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, buildUp.boqItemId));
+      if (planningBasis.assumptionStatus === 'unverified') {
+        issues.push({
+          code: 'boq_pricing_planning_unverified',
+          severity: 'warning',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} planning basis is unverified.`,
+        });
+      }
+      if (boqItem && boqItem.quantity) {
+        const capacity = multiplyDecimalStrings(planningBasis.productionRate, planningBasis.duration);
+        if (compareDecimalStrings(capacity, boqItem.quantity) < 0) {
+          issues.push({
+            code: 'boq_pricing_duration_capacity_shortfall',
+            severity: 'error',
+            entityType: 'boq_pricing_build_up',
+            entityId: buildUp.boqItemId,
+            message: `BOQ item ${buildUp.boqItemId} planned capacity ${capacity} ${planningBasis.quantityUnit} is below quantity ${boqItem.quantity}.`,
+          });
+        }
+      } else if (boqItem) {
+        issues.push({
+          code: 'boq_pricing_quantity_missing_for_planning',
+          severity: 'error',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} has no quantity for duration validation.`,
+        });
+      }
+    }
+
+    const cashFlow = buildUp.initialCashFlow;
+    if (!cashFlow || cashFlow.length === 0) {
+      issues.push({
+        code: 'boq_pricing_cash_flow_missing',
+        severity: 'error',
+        entityType: 'boq_pricing_build_up',
+        entityId: buildUp.boqItemId,
+        message: `BOQ item ${buildUp.boqItemId} has no initial period cash-flow allocation.`,
+      });
+    } else {
+      for (const allocation of cashFlow) {
+        if (planningBasis && allocation.activityId !== planningBasis.activityId) {
+          issues.push({
+            code: 'boq_pricing_cash_flow_activity_mismatch',
+            severity: 'error',
+            entityType: 'boq_cash_flow_allocation',
+            entityId: `${buildUp.boqItemId}:${allocation.period}`,
+            message: `BOQ item ${buildUp.boqItemId} cash-flow activity ${allocation.activityId} does not match ${planningBasis.activityId}.`,
+          });
+        }
+        if (allocation.sourceRefs.length === 0) {
+          issues.push({
+            code: 'boq_pricing_cash_flow_source_missing',
+            severity: 'error',
+            entityType: 'boq_cash_flow_allocation',
+            entityId: `${buildUp.boqItemId}:${allocation.period}`,
+            message: `BOQ item ${buildUp.boqItemId} cash-flow period ${allocation.period} has no source reference.`,
+          });
+        }
+        allocation.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, buildUp.boqItemId));
+        if (allocation.assumptionStatus === 'unverified') {
+          issues.push({
+            code: 'boq_pricing_cash_flow_unverified',
+            severity: 'warning',
+            entityType: 'boq_cash_flow_allocation',
+            entityId: `${buildUp.boqItemId}:${allocation.period}`,
+            message: `BOQ item ${buildUp.boqItemId} cash-flow period ${allocation.period} is unverified.`,
+          });
+        }
+        const expectedAmount = multiplyDecimalStrings(buildUp.directCost, allocation.weight);
+        if (!decimalStringsEqual(expectedAmount, allocation.amount)) {
+          issues.push({
+            code: 'boq_pricing_cash_flow_allocation_mismatch',
+            severity: 'error',
+            entityType: 'boq_cash_flow_allocation',
+            entityId: `${buildUp.boqItemId}:${allocation.period}`,
+            message: `BOQ item ${buildUp.boqItemId} cash-flow amount ${allocation.amount} does not equal weighted amount ${expectedAmount}.`,
+          });
+        }
+      }
+      if (!decimalStringsEqual(sumDecimalStrings(cashFlow.map((allocation) => allocation.weight)), '1')) {
+        issues.push({
+          code: 'boq_pricing_cash_flow_weight_mismatch',
+          severity: 'error',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} cash-flow allocation weights must total 1.`,
+        });
+      }
+      if (!decimalStringsEqual(sumDecimalStrings(cashFlow.map((allocation) => allocation.amount)), buildUp.directCost)) {
+        issues.push({
+          code: 'boq_pricing_cash_flow_amount_mismatch',
+          severity: 'error',
+          entityType: 'boq_pricing_build_up',
+          entityId: buildUp.boqItemId,
+          message: `BOQ item ${buildUp.boqItemId} cash-flow allocation amounts must total direct cost ${buildUp.directCost}.`,
         });
       }
     }
@@ -191,7 +332,10 @@ export function auditTenderBoqFiveStepPricing(
       items: boq.items.length,
       completeItems: boq.items.filter((item) => {
         const buildUp = buildUpByItemId.get(item.id);
-        return buildUp && STEP_KEYS.every((key) => buildUp.steps[key].narrative.trim() && buildUp.steps[key].sourceRefs.length > 0);
+        return buildUp
+          && STEP_KEYS.every((key) => buildUp.steps[key].narrative.trim() && buildUp.steps[key].sourceRefs.length > 0)
+          && Boolean(buildUp.planningBasis)
+          && Boolean(buildUp.initialCashFlow?.length);
       }).length,
       blockedItems: data.itemBuildUps.filter((buildUp) => buildUp.status === 'blocked').length,
       unverifiedComponents: data.itemBuildUps.reduce(
@@ -202,6 +346,10 @@ export function auditTenderBoqFiveStepPricing(
     },
     issues,
   };
+}
+
+function normalizeUnit(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, '').replace(/³/g, '3').replace(/²/g, '2');
 }
 
 function inspectSource(

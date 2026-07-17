@@ -255,6 +255,8 @@ import type {
   TenderWorkspaceSummaryDto,
   TenderWorkspaceBundleDto,
   TenderWorkspaceMutationRequest,
+  TenderStageRunRequest,
+  TenderStageRunResultDto,
   DeliveryWorkspaceLocationRequest,
   DeliveryWorkspaceSummaryDto,
   DeliveryWorkspaceBundleDto,
@@ -326,6 +328,7 @@ export interface ElectronAPI {
   listTenderWorkspaces(request: TenderWorkspaceLocationRequest): Promise<TenderWorkspaceSummaryDto[]>
   getTenderWorkspace(request: TenderWorkspaceLocationRequest & { projectId: string }): Promise<TenderWorkspaceBundleDto>
   mutateTenderWorkspace(request: TenderWorkspaceMutationRequest): Promise<Record<string, unknown>>
+  runTenderStage(request: TenderStageRunRequest): Promise<TenderStageRunResultDto>
   listDeliveryWorkspaces(request: DeliveryWorkspaceLocationRequest): Promise<DeliveryWorkspaceSummaryDto[]>
   getDeliveryWorkspace(request: DeliveryWorkspaceLocationRequest & { projectId: string }): Promise<DeliveryWorkspaceBundleDto>
   mutateDeliveryWorkspace(request: DeliveryWorkspaceMutationRequest): Promise<Record<string, unknown>>

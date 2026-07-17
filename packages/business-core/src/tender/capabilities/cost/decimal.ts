@@ -22,6 +22,15 @@ export function decimalStringsEqual(left: string, right: string): boolean {
   return formatDecimal(parseDecimal(left)) === formatDecimal(parseDecimal(right));
 }
 
+export function compareDecimalStrings(left: string, right: string): -1 | 0 | 1 {
+  const leftValue = parseDecimal(left);
+  const rightValue = parseDecimal(right);
+  const scale = Math.max(leftValue.scale, rightValue.scale);
+  const leftCoefficient = leftValue.coefficient * 10n ** BigInt(scale - leftValue.scale);
+  const rightCoefficient = rightValue.coefficient * 10n ** BigInt(scale - rightValue.scale);
+  return leftCoefficient < rightCoefficient ? -1 : leftCoefficient > rightCoefficient ? 1 : 0;
+}
+
 function parseDecimal(value: string): ParsedDecimal {
   if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
     throw new Error(`Invalid decimal string: ${value}`);

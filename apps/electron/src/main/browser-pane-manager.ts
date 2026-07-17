@@ -2103,11 +2103,19 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       return
     }
 
+    const cleanup = (label: string, action: () => void): void => {
+      try {
+        action()
+      } catch (error) {
+        mainLog.warn(`[browser-pane] finalize cleanup failed id=${instance.id} step=${label} error=${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
     this.destroyingIds.delete(instance.id)
-    this.closePopupsForParent(instance.id, 'parent_destroy')
-    this.applyAgentControlLock(instance, false)
-    this.updateNativeOverlayState(instance)
-    instance.cdp.detach()
+    cleanup('closePopupsForParent', () => this.closePopupsForParent(instance.id, 'parent_destroy'))
+    cleanup('applyAgentControlLock', () => this.applyAgentControlLock(instance, false))
+    cleanup('updateNativeOverlayState', () => this.updateNativeOverlayState(instance))
+    cleanup('cdp.detach', () => instance.cdp.detach())
     this.instances.delete(instance.id)
     this.removedCallback?.(instance.id)
     mainLog.info(`[browser-pane] Destroyed instance: ${instance.id} (${source})`)
@@ -3507,7 +3515,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     })
 
     pageWc.on('did-create-window', (popupWindow, details) => {
-      const popupUrl = details?.url || popupWindow.webContents.getURL?.() || 'about:blank'
+      const popupUrl = details?.url || popupWindow.webContents?.getURL?.() || 'about:blank'
       this.registerPopupWindow(instance, popupWindow, popupUrl)
     })
 

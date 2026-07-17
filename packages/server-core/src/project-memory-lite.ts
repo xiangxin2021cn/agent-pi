@@ -5,8 +5,9 @@ import {
   type MineruCitationBlock,
   type MineruExtractionManifest,
 } from '@craft-agent/shared/document-extraction/mineru'
-import type { ProjectMemoryContextEntry, SessionGoalAuditEvidence, SessionGoalAuditResult, SessionGoalState } from '@craft-agent/shared/sessions'
+import type { ProjectMemoryContextEntry, ProjectMemoryScope, SessionGoalAuditEvidence, SessionGoalAuditResult, SessionGoalState } from '@craft-agent/shared/sessions'
 import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath } from '@craft-agent/shared/sessions'
+import type { SessionBusinessContext } from '@craft-agent/shared/protocol'
 import { pathStartsWith } from '@craft-agent/shared/utils'
 
 export interface ProjectMemoryLiteInitResult {
@@ -18,6 +19,7 @@ export interface ProjectMemoryLiteInitResult {
 export interface ProjectMemoryGoalAuditInput {
   workingDirectory: string
   sessionId: string
+  businessContext?: SessionBusinessContext
   goalState: SessionGoalState
   result: SessionGoalAuditResult
 }
@@ -25,6 +27,7 @@ export interface ProjectMemoryGoalAuditInput {
 export interface ProjectMemoryFormalOutputInput {
   workingDirectory: string
   sessionId: string
+  businessContext?: SessionBusinessContext
   sourcePath?: string
   outputPath: string
   reason?: 'user_promoted' | 'formal_output'
@@ -34,6 +37,7 @@ export interface ProjectMemoryFormalOutputInput {
 export interface ProjectMemoryDocumentExtractionInput {
   workingDirectory: string
   sessionId: string
+  businessContext?: SessionBusinessContext
   manifestPath: string
   manifest: MineruExtractionManifest
   createdAt?: number
@@ -62,8 +66,11 @@ const DECISIONS_TEMPLATE = [
   '',
 ].join('\n')
 
-export async function ensureProjectMemoryLite(workingDirectory: string): Promise<ProjectMemoryLiteInitResult> {
-  const brainPath = getProjectBrainPath(workingDirectory)
+export async function ensureProjectMemoryLite(
+  workingDirectory: string,
+  scope: ProjectMemoryScope = {},
+): Promise<ProjectMemoryLiteInitResult> {
+  const brainPath = getProjectBrainPath(workingDirectory, scope)
   if (!brainPath) {
     throw new Error('Cannot initialize project memory without a working directory.')
   }
@@ -91,7 +98,8 @@ export async function ensureProjectMemoryLite(workingDirectory: string): Promise
 }
 
 export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAuditInput): Promise<void> {
-  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory)
+  const scope = { sessionId: input.sessionId, businessContext: input.businessContext }
+  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory, scope)
   const auditId = `${input.sessionId}:${input.goalState.id}:${input.result.iteration}`
   const documentQuality = parseDocumentQualityEvidence(input.result.evidence)
   const qualityReviewerFacts = parseQualityReviewerEvidence(input.result.evidence)
@@ -281,11 +289,12 @@ export async function recordProjectMemoryGoalAudit(input: ProjectMemoryGoalAudit
     })
   }
 
-  await writeProjectMemoryLite(input.workingDirectory, memoryEntries)
+  await writeProjectMemoryLite(input.workingDirectory, memoryEntries, scope)
 }
 
 export async function recordProjectMemoryFormalOutput(input: ProjectMemoryFormalOutputInput): Promise<void> {
-  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory)
+  const scope = { sessionId: input.sessionId, businessContext: input.businessContext }
+  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory, scope)
   const createdAt = input.createdAt ?? Date.now()
   const artifactId = `${input.sessionId}:formal-output:${input.outputPath}`
 
@@ -329,11 +338,12 @@ export async function recordProjectMemoryFormalOutput(input: ProjectMemoryFormal
     path: input.outputPath,
     sourcePaths: input.sourcePath ? [input.sourcePath] : [],
     createdAt,
-  }])
+  }], scope)
 }
 
 export async function recordProjectMemoryDocumentExtraction(input: ProjectMemoryDocumentExtractionInput): Promise<void> {
-  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory)
+  const scope = { sessionId: input.sessionId, businessContext: input.businessContext }
+  const { brainPath } = await ensureProjectMemoryLite(input.workingDirectory, scope)
   const createdAt = input.createdAt ?? parseManifestCreatedAt(input.manifest.createdAt)
   const id = `${input.sessionId}:document-extraction:${input.manifest.sourcePath}`
   const sourcePaths = [
@@ -414,7 +424,7 @@ export async function recordProjectMemoryDocumentExtraction(input: ProjectMemory
     path: input.manifest.markdownPath,
     sourcePaths,
     createdAt,
-  }])
+  }], scope)
 }
 
 export function extractProjectMemoryEntries(
@@ -531,9 +541,10 @@ export function extractProjectMemoryEntries(
 export async function writeProjectMemoryLite(
   workingDirectory: string,
   entries: ProjectMemoryContextEntry[],
+  scope: ProjectMemoryScope = {},
 ): Promise<ProjectMemoryLiteWriteResult | undefined> {
   if (entries.length === 0) return undefined
-  const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+  const { brainPath } = await ensureProjectMemoryLite(workingDirectory, scope)
   const entriesPath = join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME)
   for (const entry of entries) {
     await appendJsonl(entriesPath, entry)
@@ -548,8 +559,9 @@ export async function writeProjectMemoryLite(
 export async function loadProjectMemoryReviewerPerformanceSummary(
   workingDirectory: string | undefined,
   limit = 8,
+  scope: ProjectMemoryScope = {},
 ): Promise<string | undefined> {
-  const brainPath = workingDirectory ? getProjectBrainPath(workingDirectory) : undefined
+  const brainPath = workingDirectory ? getProjectBrainPath(workingDirectory, scope) : undefined
   if (!brainPath || limit <= 0) return undefined
 
   let content: string
@@ -595,8 +607,9 @@ export async function loadProjectMemoryReviewerPerformanceSummary(
 
 export async function resetProjectMemoryQualityTelemetry(
   workingDirectory: string,
+  scope: ProjectMemoryScope = {},
 ): Promise<ProjectMemoryQualityTelemetryResetResult> {
-  const { brainPath } = await ensureProjectMemoryLite(workingDirectory)
+  const { brainPath } = await ensureProjectMemoryLite(workingDirectory, scope)
   const factsPath = join(brainPath, 'facts.jsonl')
   const content = await readFile(factsPath, 'utf8')
   const retainedLines: string[] = []

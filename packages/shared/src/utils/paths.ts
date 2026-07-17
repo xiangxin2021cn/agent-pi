@@ -33,9 +33,10 @@ export function expandPath(inputPath: string, basePath?: string): string {
     return home;
   }
 
-  // Handle ~/ prefix
-  if (expanded.startsWith('~/')) {
-    expanded = join(home, expanded.slice(2));
+  // Handle ~/ and ~\ prefixes. Portable paths can be read on a different OS,
+  // and old Windows writes may contain a backslash after the tilde.
+  if (/^~[\\/]/.test(expanded)) {
+    expanded = join(home, ...expanded.slice(2).split(/[\\/]+/).filter(Boolean));
   }
 
   // Handle ${HOME} and $HOME variables
@@ -65,6 +66,13 @@ export function expandPath(inputPath: string, basePath?: string): string {
  */
 export function toPortablePath(absolutePath: string): string {
   if (!absolutePath) return absolutePath;
+
+  // Keep the conversion idempotent. Session persistence may normalize the
+  // same field more than once before it reaches the JSONL header.
+  if (absolutePath === '~') return '~';
+  if (/^~[\\/]/.test(absolutePath)) {
+    return '~/' + normalizePath(absolutePath.slice(2));
+  }
 
   const home = homedir();
   const normalized = normalize(absolutePath);

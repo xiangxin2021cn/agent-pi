@@ -92,7 +92,7 @@ describe('buildCallLlmRequest()', () => {
       { prompt: 'Summarize', attachments: [join(TMP_DIR, 'test.ts')] },
       { backendName: 'Test' }
     );
-    expect(result.prompt).toContain('<file path="test.ts">');
+    expect(result.prompt).toContain(`<file path="${join(TMP_DIR, 'test.ts')}">`);
     expect(result.prompt).toContain('const x = 1;');
     expect(result.prompt).toContain('Summarize');
   });

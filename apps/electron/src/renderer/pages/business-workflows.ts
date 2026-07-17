@@ -5,6 +5,7 @@ export interface BusinessWorkflowStage {
   label: string
   prompt: string
   skillSlug?: string
+  skillSlugs?: string[]
   requiredCapabilities?: BusinessCapabilityId[]
   producesCapabilities?: BusinessCapabilityId[]
   dispatchPolicy?: 'controlled-subagents'
@@ -39,6 +40,7 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
         prompt: '按册/卷拆解招标文件，产出项目认知、项目基本信息、硬性递交要求、评分点、专用条款及修订、答疑分析、BOQ 清单解析和工程量特征。每一类结论必须保留来源，不得提前进入施工策划或组价。',
         skillSlug: 'tender-evaluation-strategy',
         producesCapabilities: ['document_analysis', 'evaluation_strategy', 'boq_reconciliation'],
+        dispatchPolicy: 'controlled-subagents',
       },
       {
         id: 'boq-five-step-pricing',
@@ -58,12 +60,20 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
         producesCapabilities: ['execution_plan'],
       },
       {
-        id: 'programme-resources-cost-cashflow',
-        label: '进度、资源、成本与现金流',
-        prompt: '在施工总策划基础上细化施工总进度计划、人材机资源计划、成本计划和现金流计划。进度计划必须依据工期要求、作业日历、生产率和施工逻辑；资源和现金流必须追溯到 BOQ 五步法组价和施工部署。',
-        skillSlug: 'tender-schedule-resource-planning',
+        id: 'schedule-resource-planning',
+        label: '进度与资源计划',
+        prompt: '在施工总策划基础上细化施工总进度计划和人材机资源计划。计划必须依据招标工期、作业日历、BOQ 五步法生产率、施工逻辑和资源约束，并生成可审阅的结构化 schedule_resources 能力包；需要专业计划文件时，再依据该能力包生成 P6、Project 或 Candy 导入文件。',
+        skillSlugs: ['tender-schedule-resource-planning', 'construction-schedule-planner'],
         requiredCapabilities: ['execution_plan', 'boq_five_step_pricing'],
-        producesCapabilities: ['schedule_resources', 'cost_cashflow'],
+        producesCapabilities: ['schedule_resources'],
+      },
+      {
+        id: 'cost-cashflow-planning',
+        label: '成本与现金流计划',
+        prompt: '基于 BOQ 对账、逐项五步法成本包和已审定进度资源计划，形成成本计划、时间分布成本和现金流计划。每项金额必须可追溯到 BOQ 项、资源费率、计划活动或明确假设，写入独立 cost_cashflow 能力包。',
+        skillSlugs: ['tender-cost-cashflow-planning'],
+        requiredCapabilities: ['boq_reconciliation', 'boq_five_step_pricing', 'schedule_resources'],
+        producesCapabilities: ['cost_cashflow'],
       },
       {
         id: 'tender-submission-documents',

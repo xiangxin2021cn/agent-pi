@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { getSessionFilePath } from '@craft-agent/shared/sessions/storage'
@@ -110,5 +110,73 @@ describe('sendMessage durability', () => {
 
     expect(ackedMessageId).not.toBeNull()
     expect(onDiskAtAck).toBe(true)
+  })
+
+  it('queues a tender parent message while backend batch tasks are still running', async () => {
+    const sessionId = 'tender-parent-wait'
+    const managed = buildSession(sessionId)
+    const projectRoot = join(tmpRoot, 'project')
+    const taskBoardPath = join(
+      projectRoot,
+      '.agent-pi',
+      'business',
+      'tender',
+      'n3-tender',
+      'orchestration',
+      'task-boards',
+      'tender-document-analysis.json',
+    )
+    mkdirSync(join(taskBoardPath, '..'), { recursive: true })
+    const taskBoard = {
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      stageId: 'tender-document-analysis',
+      parentSessionId: sessionId,
+      maxConcurrency: 4,
+      updatedAt: new Date().toISOString(),
+      taskBoardPath,
+      tasks: [{
+        batchId: 'document-1',
+        name: 'Document 1',
+        status: 'running',
+        briefPath: join(projectRoot, 'brief.json'),
+        reportPath: join(projectRoot, 'report.json'),
+        allowedSourcePaths: [],
+        sessionId: 'child-1',
+        attemptCount: 1,
+        updatedAt: new Date().toISOString(),
+      }],
+    }
+    writeFileSync(taskBoardPath, JSON.stringify(taskBoard))
+    managed.workingDirectory = projectRoot
+    managed.businessContext = {
+      module: 'tender',
+      projectId: 'n3-tender',
+      workflowId: 'tender-main',
+      stageId: 'tender-document-analysis',
+    }
+    ;(sm as unknown as { scheduleSpawnHandoffMonitor: () => void }).scheduleSpawnHandoffMonitor = () => undefined
+
+    await expect(sm.sendMessage(sessionId, 'Merge the completed batch reports.')).resolves.toBeUndefined()
+
+    expect(managed.isProcessing).toBe(false)
+    expect(managed.agent).toBeNull()
+    expect(managed.messageQueue).toHaveLength(1)
+    expect(managed.messageQueue[0]?.message).toBe('Merge the completed batch reports.')
+    expect(managed.spawnHandoffWait?.childSessionIds).toEqual(['child-1'])
+
+    writeFileSync(taskBoardPath, JSON.stringify({
+      ...taskBoard,
+      tasks: taskBoard.tasks.map((task) => ({ ...task, status: 'complete' })),
+    }))
+    const resumed: string[] = []
+    ;(sm as unknown as { processNextQueuedMessage: (id: string) => void }).processNextQueuedMessage = (id) => {
+      resumed.push(id)
+    }
+    ;(sm as unknown as { checkWaitingParentSpawnHandoffs: (id: string) => void })
+      .checkWaitingParentSpawnHandoffs(sessionId)
+
+    expect(resumed).toEqual([sessionId])
+    expect(managed.spawnHandoffWait).toBeUndefined()
   })
 })

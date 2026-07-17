@@ -10,6 +10,8 @@ import { CraftMcpClient } from './client.js';
 import { debug } from '../utils/debug.ts';
 import { normalizeMcpUrl } from '../sources/server-builder.ts';
 import type { McpTransport } from '../sources/types.ts';
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 export interface InvalidProperty {
   toolName: string;
@@ -315,6 +317,18 @@ export async function validateStdioMcpConnection(
   config: StdioValidationConfig
 ): Promise<McpValidationResult> {
   const { command, args = [], env = {}, timeout = 30000 } = config;
+
+  const isPathCommand = isAbsolute(command)
+    || command.startsWith('.')
+    || command.includes('/')
+    || command.includes('\\');
+  if (isPathCommand && !existsSync(command)) {
+    return {
+      success: false,
+      error: `Command not found: "${command}". Install the required dependency and try again.`,
+      errorType: 'failed',
+    };
+  }
 
   // Two-watchdog connect phase. Most "MCP doesn't work" failures never
   // complete the `initialize` handshake, so we want fast diagnostics — but

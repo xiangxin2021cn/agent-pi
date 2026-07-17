@@ -51,7 +51,7 @@ export function registerCoreRpcHandlers(
   registerTransferHandlers(server)
   registerWorkspaceCoreHandlers(server, deps)
   registerMessagingHandlers(server, deps)
-  registerTenderWorkspaceHandlers(server)
+  registerTenderWorkspaceHandlers(server, deps)
   registerDeliveryWorkspaceHandlers(server)
   registerInvestmentWorkspaceHandlers(server)
   registerBusinessProjectHandlers(server)

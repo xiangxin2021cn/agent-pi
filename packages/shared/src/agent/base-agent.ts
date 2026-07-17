@@ -100,6 +100,10 @@ export interface SpawnSessionRequest {
   thinkingLevel?: ThinkingLevel;
   labels?: string[];
   workingDirectory?: string;
+  /** Existing, runtime-generated task brief that the child must execute verbatim. */
+  briefPath?: string;
+  /** Exclusive structured handoff path owned by the spawned child. */
+  reportPath?: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
 
@@ -1202,6 +1206,12 @@ ${formattedMessages}
       labels: input.labels as string[] | undefined,
       workingDirectory: typeof input.workingDirectory === 'string' && input.workingDirectory
         ? expandPath(input.workingDirectory)
+        : undefined,
+      briefPath: typeof input.briefPath === 'string' && input.briefPath
+        ? expandPath(input.briefPath)
+        : undefined,
+      reportPath: typeof input.reportPath === 'string' && input.reportPath
+        ? expandPath(input.reportPath)
         : undefined,
       attachments: input.attachments as SpawnSessionRequest['attachments'],
     };

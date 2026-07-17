@@ -52,11 +52,96 @@ describe('business module launcher', () => {
 
     expect(draft).toContain('<controlled_subagent_dispatch>')
     expect(draft).toContain('spawn_session')
-    expect(draft).toContain('child agents must not call spawn_session')
-    expect(draft).toContain('orchestration/briefs')
-    expect(draft).toContain('orchestration/reports')
+    expect(draft).toContain('backend stage controller owns BOQ batch dispatch')
+    expect(draft).toContain('main session must not call spawn_session')
+    expect(draft).toContain('task_board_path')
+    expect(draft).toContain('boq_batch_manifest_path')
+    expect(draft).toContain('must not call spawn_session, rewrite child briefs')
     expect(draft).toContain('boq_five_step_pricing')
     expect(draft).toContain('document_analysis')
     expect(draft).toContain('boq_reconciliation')
+  })
+
+  test('document analysis stage dispatches exact per-source manifest briefs', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'tender-document-analysis')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/tender.pdf'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage)
+
+    expect(draft).toContain('backend stage controller owns document batch dispatch')
+    expect(draft).toContain('document_analysis_batch_manifest_path')
+    expect(draft).toContain('main session must not call spawn_session')
+    expect(draft).toContain('document_analysis')
+  })
+
+  test('schedule stage deterministically activates planning and export skills', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'schedule-resource-planning')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/boq.xlsx'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage)
+
+    expect(draft).toContain('[skill:tender-schedule-resource-planning]')
+    expect(draft).toContain('[skill:construction-schedule-planner]')
+  })
+
+  test('stage draft includes exact backend control paths instead of asking the model to discover them', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'boq-five-step-pricing')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/boq.xlsx'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage, {
+      schemaVersion: 1,
+      projectId: 'n3',
+      stageId: stage.id,
+      status: 'running',
+      requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
+      producedCapabilities: ['boq_five_step_pricing'],
+      generatedPacks: ['document_analysis', 'boq_reconciliation'],
+      missingItems: [],
+      batchProgress: {
+        batchType: 'boq_five_step_pricing', itemCount: 80, batchCount: 2, completedBatches: 0,
+        missingItemCount: 80, manifestPath: 'C:/projects/n3/.agent-pi/business/tender/n3/boq-batch-manifest.json',
+        taskBoardPath: 'C:/projects/n3/.agent-pi/business/tender/n3/orchestration/task-boards/boq-five-step-pricing.json',
+        pendingBatches: 0, runningBatches: 2, failedBatches: 0, blockedBatches: 0, tasks: [],
+      },
+      sourceBoundary: { schemaVersion: 1, projectId: 'n3', generatedAt: '2026-07-16T00:00:00.000Z', registeredCount: 1, missingPaths: [], files: [] },
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      paths: {
+        projectDirectory: 'C:/projects/n3/.agent-pi/business/tender/n3',
+        workspacePath: 'C:/projects/n3/.agent-pi/business/tender/n3/tender-workspace.json',
+        sourceBoundaryPath: 'C:/projects/n3/.agent-pi/business/tender/n3/source-boundary.json',
+        stageStatePath: 'C:/projects/n3/.agent-pi/business/tender/n3/stage-state.json',
+        boqBatchManifestPath: 'C:/projects/n3/.agent-pi/business/tender/n3/boq-batch-manifest.json',
+        taskBoardPath: 'C:/projects/n3/.agent-pi/business/tender/n3/orchestration/task-boards/boq-five-step-pricing.json',
+      },
+    })
+
+    expect(draft).toContain('C:/projects/n3/.agent-pi/business/tender/n3/source-boundary.json')
+    expect(draft).toContain('C:/projects/n3/.agent-pi/business/tender/n3/boq-batch-manifest.json')
+    expect(draft).toContain('C:/projects/n3/.agent-pi/business/tender/n3/orchestration/task-boards/boq-five-step-pricing.json')
+    expect(draft).toContain('document_analysis, boq_reconciliation')
   })
 })

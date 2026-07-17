@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
@@ -32,6 +32,8 @@ describe('business project RPC', () => {
     root = mkdtempSync(join(tmpdir(), 'business-project-rpc-'))
     const workspaceRootPath = join(root, 'workspace')
     const projectRoot = join(root, 'n3')
+    const tenderPath = join(root, 'tender.pdf')
+    writeFileSync(tenderPath, 'tender')
     const handlers = harness()
 
     const created = await handlers.get(RPC_CHANNELS.businessProjects.CREATE)!(context, {
@@ -42,12 +44,15 @@ describe('business project RPC', () => {
       rootPath: projectRoot,
       workflowId: 'tender-main',
       createDirectory: true,
-      inputPaths: [join(root, 'tender.pdf')],
+      inputPaths: [tenderPath],
     }) as any
     const listed = await handlers.get(RPC_CHANNELS.businessProjects.LIST)!(context, { workspaceRootPath, module: 'tender' }) as any[]
 
     expect(created.projectId).toBe('n3')
     expect(listed).toEqual([created])
+    const sourceBoundaryPath = join(projectRoot, '.agent-pi', 'business', 'tender', 'n3', 'source-boundary.json')
+    expect(existsSync(sourceBoundaryPath)).toBe(true)
+    expect(JSON.parse(readFileSync(sourceBoundaryPath, 'utf8')).registeredCount).toBe(1)
   })
 
   test('updates registered inputs without treating the project root as an input', async () => {

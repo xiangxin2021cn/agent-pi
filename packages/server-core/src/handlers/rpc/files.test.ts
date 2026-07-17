@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, open, rm, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { buildAttachmentDialogSpec, canExportMarkdownPreviewSource, collectAttachmentDialogFiles } from './files'
 
@@ -18,6 +18,26 @@ afterEach(async () => {
 })
 
 describe('collectAttachmentDialogFiles', () => {
+  test('accepts large path-backed PDFs without loading them into memory', async () => {
+    const root = await makeTempRoot()
+    const selected = join(root, 'large-tender-volume.pdf')
+    const handle = await open(selected, 'w')
+    await handle.truncate(300 * 1024 * 1024)
+    await handle.close()
+
+    const result = await collectAttachmentDialogFiles([selected])
+
+    expect(result.attachments).toHaveLength(1)
+    expect(result.attachments[0]).toMatchObject({
+      type: 'pdf',
+      path: selected,
+      name: 'large-tender-volume.pdf',
+      size: 300 * 1024 * 1024,
+    })
+    expect(result.attachments[0]?.base64).toBeUndefined()
+    expect(result.skippedCount).toBe(0)
+  })
+
   test('keeps selected folders as path-only references instead of uploading their files', async () => {
     const root = await makeTempRoot()
     const selected = join(root, 'Project Docs')

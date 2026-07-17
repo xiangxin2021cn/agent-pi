@@ -1615,7 +1615,7 @@ export default function App() {
   const openNewChat = useCallback(async (params: NewChatActionParams = {}) => {
     if (!windowWorkspaceId) {
       console.warn('[App] Cannot open new chat: no workspace ID')
-      return
+      return undefined
     }
 
     const session = await handleCreateSession(windowWorkspaceId, {
@@ -1643,6 +1643,7 @@ export default function App() {
         if (params.attachments?.length) handleAttachmentsChange(session.id, params.attachments)
       }, 100)
     }
+    return session
   }, [windowWorkspaceId, handleCreateSession, handleInputChange, handleAttachmentsChange])
 
   const handleRespondToPermission = useCallback(async (

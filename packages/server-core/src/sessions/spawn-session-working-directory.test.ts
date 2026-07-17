@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import { buildSpawnedSessionGovernancePrompt, resolveSpawnedSessionWorkingDirectory } from './SessionManager'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  buildSpawnedSessionGovernancePrompt,
+  resolveExplicitSpawnDispatchPaths,
+  resolveSpawnedSessionWorkingDirectory,
+} from './SessionManager'
 
 describe('spawn_session working directory inheritance', () => {
   it('uses an explicit spawned-session working directory when provided', () => {
@@ -68,5 +75,39 @@ describe('spawn_session working directory inheritance', () => {
     expect(prompt).toContain('report_path: C:/session/orchestration/reports/task-1.md')
     expect(prompt).toContain('evidence_packages_path: C:/session/orchestration/evidence-packages')
     expect(prompt).not.toContain('Original broad prompt that should be externalized.')
+  })
+
+  it('enforces an explicit brief contract even when the parent has no goal orchestration state', () => {
+    const prompt = buildSpawnedSessionGovernancePrompt('Do not expose this broad fallback.', {
+      taskBriefPath: 'C:/project/brief.json',
+      reportPath: 'C:/project/report.json',
+    })
+
+    expect(prompt).toContain('brief_path: C:/project/brief.json')
+    expect(prompt).toContain('report_path: C:/project/report.json')
+    expect(prompt).toContain('spawn_session: forbidden')
+    expect(prompt).not.toContain('Do not expose this broad fallback.')
+  })
+
+  it('accepts paired explicit dispatch paths inside the child working directory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-spawn-dispatch-'))
+    const briefPath = join(root, 'orchestration', 'briefs', 'batch.json')
+    const reportPath = join(root, 'orchestration', 'reports', 'batch.json')
+    mkdirSync(join(root, 'orchestration', 'briefs'), { recursive: true })
+    writeFileSync(briefPath, '{}', { flag: 'wx' })
+
+    expect(resolveExplicitSpawnDispatchPaths({ briefPath, reportPath }, root)).toEqual({ briefPath, reportPath })
+  })
+
+  it('rejects incomplete or out-of-bound explicit dispatch paths', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-spawn-dispatch-'))
+    const briefPath = join(root, 'brief.json')
+    writeFileSync(briefPath, '{}', { flag: 'wx' })
+
+    expect(() => resolveExplicitSpawnDispatchPaths({ briefPath }, root)).toThrow('must be provided together')
+    expect(() => resolveExplicitSpawnDispatchPaths({
+      briefPath,
+      reportPath: join(root, '..', 'outside-report.json'),
+    }, root)).toThrow('inside the spawned session working directory')
   })
 })

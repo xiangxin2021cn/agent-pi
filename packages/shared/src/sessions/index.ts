@@ -59,7 +59,7 @@ export type {
   SessionOrchestrationState,
 } from './types.ts';
 
-export type { ProjectMemoryContextEntry } from './storage.ts';
+export type { ProjectMemoryContextEntry, ProjectMemoryScope } from './storage.ts';
 
 // Field constants
 export { SESSION_PERSISTENT_FIELDS } from './types.ts';

@@ -87,6 +87,31 @@ export async function validateFilePath(
     throw new Error('Only absolute file paths are allowed')
   }
 
+  const allowedDirs = [
+    homedir(),
+    tmpdir(),
+    ...(additionalAllowedDirs ?? []),
+  ].filter(Boolean)
+
+  const isWithinAllowedDir = (candidate: string): boolean => {
+    const comparableCandidate = process.platform === 'win32'
+      ? normalize(candidate).toLowerCase()
+      : normalize(candidate)
+    return allowedDirs.some(dir => {
+      const comparableDir = process.platform === 'win32'
+        ? normalize(dir).toLowerCase()
+        : normalize(dir)
+      return comparableCandidate === comparableDir
+        || comparableCandidate.startsWith(comparableDir + sep)
+    })
+  }
+
+  // Reject obvious out-of-bound paths before realpath. On Windows, resolving a
+  // missing drive can block for several seconds while the OS probes the volume.
+  if (!isWithinAllowedDir(normalizedPath)) {
+    throw new Error('Access denied: file path is outside allowed directories')
+  }
+
   // Resolve symlinks to get the real path
   let realFilePath: string
   try {
@@ -96,21 +121,7 @@ export async function validateFilePath(
     realFilePath = normalizedPath
   }
 
-  // Define allowed base directories
-  const allowedDirs = [
-    homedir(),
-    tmpdir(),
-    ...(additionalAllowedDirs ?? []),
-  ].filter(Boolean)
-
-  // Check if the real path is within an allowed directory (cross-platform)
-  const isAllowed = allowedDirs.some(dir => {
-    const normalizedDir = normalize(dir)
-    const normalizedReal = normalize(realFilePath)
-    return normalizedReal.startsWith(normalizedDir + sep) || normalizedReal === normalizedDir
-  })
-
-  if (!isAllowed) {
+  if (!isWithinAllowedDir(realFilePath)) {
     throw new Error('Access denied: file path is outside allowed directories')
   }
 

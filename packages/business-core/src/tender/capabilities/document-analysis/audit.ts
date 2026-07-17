@@ -13,6 +13,15 @@ export function auditTenderDocumentAnalysis(
   const documentById = new Map(workspace.documents.map((document) => [document.id, document]));
   const coveredDocuments = new Set<string>();
 
+  if (data.sections.length === 0) {
+    issues.push({
+      code: 'document_analysis_empty',
+      severity: 'error',
+      entityType: 'document_analysis',
+      message: 'Document analysis requires at least one analysed document section.',
+    });
+  }
+
   for (const section of data.sections) {
     const document = documentById.get(section.documentId);
     if (!document) {

@@ -4,11 +4,11 @@ import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
-import { basename, dirname, extname, join } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
 import { closeSync, constants as FS_CONSTANTS, existsSync, openSync, readSync, statSync } from 'fs'
 import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
+import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary, type SpawnSessionRequest, type SpawnSessionResult } from '@craft-agent/shared/agent'
 import {
   resolveSessionConnection,
   createBackendFromConnection,
@@ -80,6 +80,7 @@ import {
   type SessionGoalFailureCategory,
   type SessionDocumentQualityMode,
   type SessionOrchestrationState,
+  type ProjectMemoryScope,
   buildSessionOrchestrationState,
   appendSubAgentLifecycleEntry,
   attachOrchestrationArtifacts,
@@ -148,6 +149,7 @@ import {
 } from './knowledge-base-category-suggestion'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
+import { resolveTenderStageParentBarrier } from '../tender-stage-executor'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -851,6 +853,42 @@ export function resolveSpawnedSessionWorkingDirectory(
   return parentWorkingDirectory ?? 'none'
 }
 
+export function resolveExplicitSpawnDispatchPaths(
+  request: { briefPath?: string; reportPath?: string },
+  workingDirectory: CreateSessionOptions['workingDirectory'],
+): { briefPath?: string; reportPath?: string } {
+  const hasBrief = Boolean(request.briefPath)
+  const hasReport = Boolean(request.reportPath)
+  if (!hasBrief && !hasReport) return {}
+  if (!hasBrief || !hasReport) {
+    throw new Error('spawn_session briefPath and reportPath must be provided together.')
+  }
+  if (!workingDirectory || workingDirectory === 'none') {
+    throw new Error('Explicit spawn dispatch requires a working directory.')
+  }
+
+  const root = resolve(workingDirectory)
+  const briefPath = resolve(root, request.briefPath!)
+  const reportPath = resolve(root, request.reportPath!)
+  const isWithinRoot = (candidate: string): boolean => {
+    const child = relative(root, candidate)
+    return child === '' || (child !== '..' && !child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(child))
+  }
+  if (!isWithinRoot(briefPath) || !isWithinRoot(reportPath)) {
+    throw new Error('spawn_session briefPath and reportPath must stay inside the spawned session working directory.')
+  }
+  if (!existsSync(briefPath) || !statSync(briefPath).isFile()) {
+    throw new Error(`spawn_session briefPath does not reference an existing file: ${briefPath}`)
+  }
+  if (briefPath === reportPath) {
+    throw new Error('spawn_session reportPath must be different from briefPath.')
+  }
+  if (existsSync(reportPath) && !statSync(reportPath).isFile()) {
+    throw new Error(`spawn_session reportPath must reference a file path: ${reportPath}`)
+  }
+  return { briefPath, reportPath }
+}
+
 export function buildSpawnedSessionGovernancePrompt(
   prompt: string,
   options: {
@@ -861,15 +899,15 @@ export function buildSpawnedSessionGovernancePrompt(
     evidencePackagesPath?: string
   } = {},
 ): string {
-  if (!options.orchestration) return prompt
+  const hasBriefDispatch = Boolean(options.taskBriefPath && options.reportPath)
+  if (!options.orchestration && !hasBriefDispatch) return prompt
 
-  const selectedSources = options.orchestration.policy.selectedSourceSlugs.length > 0
+  const selectedSources = options.orchestration?.policy.selectedSourceSlugs.length
     ? options.orchestration.policy.selectedSourceSlugs.join(', ')
     : '(inherit selected sources)'
-  const sourceBoundary = options.orchestration.policy.forbidWorkingDirectoryDiscovery
+  const sourceBoundary = options.orchestration?.policy.forbidWorkingDirectoryDiscovery !== false
     ? 'Use only selected sources, user attachments, or explicitly named paths. Do not inventory/search the working directory as a source corpus.'
     : 'Use working-directory discovery only if the parent prompt explicitly asks for it.'
-  const hasBriefDispatch = Boolean(options.taskBriefPath && options.reportPath)
 
   return [
     '<spawned_session_contract>',
@@ -920,6 +958,9 @@ interface ManagedSession {
     childSessionIds: string[]
     startedAt: number
     resumeScheduled: boolean
+    source: 'goal_orchestration' | 'tender_task_board'
+    reportPaths: string[]
+    reviewNotified?: boolean
   }
   messages: Message[]
   isProcessing: boolean
@@ -1327,6 +1368,12 @@ const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
 
 const SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT = 4
 const SPAWN_HANDOFF_MONITOR_INTERVAL_MS = 5_000
+
+interface ParentSpawnHandoffBarrierContext extends ParentSpawnHandoffBarrierDecision {
+  source: 'none' | 'goal_orchestration' | 'tender_task_board'
+  reportPaths: string[]
+  taskBoardPath?: string
+}
 
 function isSessionGoalCriterionKind(value: unknown): value is SessionGoalCriterionKind {
   return typeof value === 'string' && SESSION_GOAL_CRITERION_KINDS.has(value as SessionGoalCriterionKind)
@@ -2111,6 +2158,7 @@ export class SessionManager implements ISessionManager {
 
   private async ensureProjectMemoryForWorkingDirectory(
     workingDirectory: string | undefined,
+    scope: ProjectMemoryScope = {},
   ): Promise<void> {
     if (!workingDirectory) return
 
@@ -2124,7 +2172,7 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      await ensureProjectMemoryLite(workingDirectory)
+      await ensureProjectMemoryLite(workingDirectory, scope)
     } catch (error) {
       sessionLog.warn('Failed to initialize Project Memory Lite', {
         workingDirectory,
@@ -2144,6 +2192,7 @@ export class SessionManager implements ISessionManager {
       await recordProjectMemoryGoalAudit({
         workingDirectory: managed.workingDirectory,
         sessionId: managed.id,
+        businessContext: managed.businessContext,
         goalState,
         result,
       })
@@ -3858,8 +3907,6 @@ export class SessionManager implements ISessionManager {
     const parentSessionId = validatedBranch?.sourceSessionId ?? options?.parentSessionId
     const parentSessionKind = validatedBranch ? 'branch' : options?.parentSessionKind
 
-    await this.ensureProjectMemoryForWorkingDirectory(resolvedWorkingDir)
-
     // Use storage layer to create and persist the session
     const storedSession = await createStoredSession(workspaceRootPath, {
       name: options?.name,
@@ -3872,6 +3919,10 @@ export class SessionManager implements ISessionManager {
       goalState: options?.goalState,
       parentSessionId,
       parentSessionKind,
+      businessContext: options?.businessContext,
+    })
+    await this.ensureProjectMemoryForWorkingDirectory(resolvedWorkingDir, {
+      sessionId: storedSession.id,
       businessContext: options?.businessContext,
     })
 
@@ -4040,6 +4091,14 @@ export class SessionManager implements ISessionManager {
     }
 
     return managedToSession(managed, isBranch ? { messages: managed.messages } : undefined)
+  }
+
+  async spawnSession(parentSessionId: string, request: SpawnSessionRequest): Promise<SpawnSessionResult> {
+    const parent = this.sessions.get(parentSessionId)
+    if (!parent) throw new Error(`Parent session ${parentSessionId} does not exist.`)
+    const agent = await this.getOrCreateAgent(parent)
+    if (!agent.onSpawnSession) throw new Error(`Parent session ${parentSessionId} cannot spawn child sessions.`)
+    return agent.onSpawnSession(request)
   }
 
   private async disposeManagedAgentRuntime(managed: ManagedSession, reason: string): Promise<void> {
@@ -5166,6 +5225,10 @@ export class SessionManager implements ISessionManager {
         }
 
         const spawnedWorkingDirectory = resolveSpawnedSessionWorkingDirectory(request.workingDirectory, managed.workingDirectory)
+        const explicitDispatch = resolveExplicitSpawnDispatchPaths(request, spawnedWorkingDirectory)
+        if (explicitDispatch.reportPath) {
+          await mkdir(dirname(explicitDispatch.reportPath), { recursive: true })
+        }
         const parentOrchestration = managed.goalState?.orchestration
         const artifacts = parentOrchestration
           ? parentOrchestration.artifacts ?? buildOrchestrationArtifactPaths(managed.workspace.rootPath, managed.id)
@@ -5174,7 +5237,8 @@ export class SessionManager implements ISessionManager {
         const allowedSourceSlugs = spawnTask?.allowedSourceSlugs?.length
           ? spawnTask.allowedSourceSlugs
           : request.enabledSourceSlugs ?? managed.enabledSourceSlugs ?? parentOrchestration?.policy.selectedSourceSlugs ?? []
-        const reportPath = artifacts ? getOrchestrationReportPath(artifacts, spawnTask?.id ?? request.name) : undefined
+        const reportPath = explicitDispatch.reportPath
+          ?? (artifacts ? getOrchestrationReportPath(artifacts, spawnTask?.id ?? request.name) : undefined)
         const latestParentAttachments = [...managed.messages].reverse().find(message =>
           message.role === 'user' && (message.attachments?.length ?? 0) > 0
         )?.attachments ?? []
@@ -5186,7 +5250,7 @@ export class SessionManager implements ISessionManager {
           spawnAttachmentRequests.set(attachment.path, attachment)
         }
         const allowedFilePaths = [...spawnAttachmentRequests.keys()]
-        const taskBriefPath = artifacts && reportPath
+        const taskBriefPath = explicitDispatch.briefPath ?? (artifacts && reportPath
           ? await writeOrchestrationTaskBrief({
               artifacts,
               task: spawnTask,
@@ -5197,7 +5261,7 @@ export class SessionManager implements ISessionManager {
               allowedSourceSlugs,
               allowedFilePaths,
             })
-          : undefined
+          : undefined)
         const spawnedPrompt = buildSpawnedSessionGovernancePrompt(request.prompt, {
           parentObjective: managed.goalState?.objective,
           orchestration: parentOrchestration,
@@ -5216,6 +5280,7 @@ export class SessionManager implements ISessionManager {
           workingDirectory: spawnedWorkingDirectory,
           parentSessionId: managed.id,
           parentSessionKind: 'spawn',
+          businessContext: managed.businessContext,
         })
 
         // Build FileAttachment[] from paths (if any)
@@ -5227,9 +5292,10 @@ export class SessionManager implements ISessionManager {
               const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
               if (spawnedWorkingDirectory && spawnedWorkingDirectory !== 'none') extraDirs.push(spawnedWorkingDirectory)
               const safePath = await validateFilePath(a.path, extraDirs)
-              const attachment = readFileAttachment(safePath)
+              const attachment = readFileAttachment(safePath, { allowPathBackedLargeFile: true })
               if (attachment) {
                 if (a.name) attachment.name = a.name
+                attachment.storedPath = safePath
                 attachments.push(attachment)
               } else {
                 sessionLog.warn(`Spawn session: attachment not found: ${a.path}`)
@@ -5415,9 +5481,10 @@ export class SessionManager implements ISessionManager {
               try {
                 const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
                 const safePath = await validateFilePath(a.path, extraDirs)
-                const attachment = readFileAttachment(safePath)
+                const attachment = readFileAttachment(safePath, { allowPathBackedLargeFile: true })
                 if (attachment) {
                   if (a.name) attachment.name = a.name
+                  attachment.storedPath = safePath
                   builtAttachments.push(attachment)
                 }
               } catch (error) {
@@ -6158,13 +6225,28 @@ export class SessionManager implements ISessionManager {
       }).length
   }
 
-  private getParentSpawnHandoffBarrierDecision(parent: ManagedSession): ParentSpawnHandoffBarrierDecision {
-    const orchestration = parent.goalState?.orchestration
-    if (!orchestration) {
-      return { action: 'none', pendingSessionIds: [], reviewSessionIds: [] }
+  private getParentSpawnHandoffBarrierDecision(parent: ManagedSession): ParentSpawnHandoffBarrierContext {
+    const tenderBarrier = resolveTenderStageParentBarrier({
+      workingDirectory: parent.workingDirectory,
+      parentSessionId: parent.id,
+      businessContext: parent.businessContext,
+    })
+    if (tenderBarrier.action !== 'none') {
+      return { ...tenderBarrier, source: 'tender_task_board' }
     }
 
-    return resolveParentSpawnHandoffBarrier({
+    const orchestration = parent.goalState?.orchestration
+    if (!orchestration) {
+      return {
+        action: 'none',
+        pendingSessionIds: [],
+        reviewSessionIds: [],
+        reportPaths: [],
+        source: 'none',
+      }
+    }
+
+    const decision = resolveParentSpawnHandoffBarrier({
       requireStructuredHandoff: orchestration.policy.requireStructuredHandoff
         || orchestration.subAgents.some(agent => Boolean(agent.reportPath)),
       statuses: orchestration.subAgents.map(agent => {
@@ -6187,21 +6269,34 @@ export class SessionManager implements ISessionManager {
         }
       }),
     })
+    return {
+      ...decision,
+      source: 'goal_orchestration',
+      reportPaths: orchestration.subAgents
+        .map((agent) => agent.reportPath)
+        .filter((path): path is string => Boolean(path)),
+    }
   }
 
-  private enterSpawnHandoffWait(parent: ManagedSession, childSessionIds: string[]): void {
+  private enterSpawnHandoffWait(parent: ManagedSession, barrier: ParentSpawnHandoffBarrierContext): void {
     const firstWait = !parent.spawnHandoffWait
     parent.spawnHandoffWait = {
-      childSessionIds,
+      childSessionIds: [...barrier.pendingSessionIds, ...barrier.reviewSessionIds],
       startedAt: parent.spawnHandoffWait?.startedAt ?? Date.now(),
       resumeScheduled: false,
+      source: barrier.source === 'tender_task_board' ? 'tender_task_board' : 'goal_orchestration',
+      reportPaths: barrier.reportPaths,
+      reviewNotified: parent.spawnHandoffWait?.reviewNotified,
     }
 
     if (firstWait) {
+      const childCount = parent.spawnHandoffWait.childSessionIds.length
       const infoMessage: Message = {
         id: generateMessageId(),
         role: 'info',
-        content: `Waiting for ${childSessionIds.length} structured child handoff(s). The parent is paused and will resume automatically after every child finishes; parent takeover is disabled.`,
+        content: barrier.source === 'tender_task_board'
+          ? `Waiting for ${childCount} tender batch handoff(s). The parent instruction is queued and will run only after every batch report passes validation; parent takeover is disabled.`
+          : `Waiting for ${childCount} structured child handoff(s). The parent is paused and will resume automatically after every child finishes; parent takeover is disabled.`,
         timestamp: this.monotonic(),
         infoLevel: 'info',
       }
@@ -6244,29 +6339,65 @@ export class SessionManager implements ISessionManager {
     const decision = this.getParentSpawnHandoffBarrierDecision(parent)
     if (decision.action === 'wait') {
       parent.spawnHandoffWait.childSessionIds = decision.pendingSessionIds
+      parent.spawnHandoffWait.reportPaths = decision.reportPaths
       this.scheduleSpawnHandoffMonitor(parent)
       return
     }
     if (decision.action === 'review') {
+      if (decision.source === 'tender_task_board') {
+        parent.spawnHandoffWait.childSessionIds = decision.reviewSessionIds
+        parent.spawnHandoffWait.reportPaths = decision.reportPaths
+        if (!parent.spawnHandoffWait.reviewNotified) {
+          parent.spawnHandoffWait.reviewNotified = true
+          const content = `Tender batch execution requires review for ${decision.reviewSessionIds.join(', ')}. The parent instruction remains queued; retry or resolve the failed batch instead of substituting parent-generated data.`
+          const infoMessage: Message = {
+            id: generateMessageId(),
+            role: 'info',
+            content,
+            timestamp: this.monotonic(),
+            infoLevel: 'warning',
+          }
+          parent.messages.push(infoMessage)
+          this.sendEvent({
+            type: 'info',
+            sessionId: parent.id,
+            message: content,
+            level: 'warning',
+            timestamp: infoMessage.timestamp,
+          }, parent.workspace.id)
+          this.persistSession(parent)
+        }
+        this.scheduleSpawnHandoffMonitor(parent)
+        return
+      }
       this.pauseParentForSpawnHandoffReview(parent, decision.reviewSessionIds)
       return
     }
     if (decision.action !== 'resume') {
       this.clearSpawnHandoffWait(parent)
+      if (!parent.isProcessing && parent.messageQueue.length > 0) {
+        this.processNextQueuedMessage(parent.id)
+      }
       return
     }
 
-    if (parent.isProcessing || parent.messageQueue.length > 0) {
+    if (parent.isProcessing) {
       this.scheduleSpawnHandoffMonitor(parent)
+      return
+    }
+    if (parent.messageQueue.length > 0) {
+      this.clearSpawnHandoffWait(parent)
+      this.processNextQueuedMessage(parent.id)
+      return
+    }
+    if (parent.spawnHandoffWait.source === 'tender_task_board') {
+      this.clearSpawnHandoffWait(parent)
       return
     }
     if (parent.spawnHandoffWait.resumeScheduled) return
 
     parent.spawnHandoffWait.resumeScheduled = true
-    const reports = parent.goalState?.orchestration?.subAgents
-      .filter(agent => agent.reportPath && (agent.status === 'handoff_received' || agent.status === 'completed'))
-      .map(agent => `- ${agent.taskId ?? agent.sessionId}: ${agent.reportPath}`)
-      .join('\n') ?? ''
+    const reports = decision.reportPaths.map((path) => `- ${path}`).join('\n')
     const prompt = [
       '<spawn-handoffs-ready>',
       'All delegated agents have finished and their structured handoffs are ready.',
@@ -6934,7 +7065,10 @@ export class SessionManager implements ISessionManager {
       }
 
       managed.workingDirectory = path
-      void this.ensureProjectMemoryForWorkingDirectory(path)
+      void this.ensureProjectMemoryForWorkingDirectory(path, {
+        sessionId: managed.id,
+        businessContext: managed.businessContext,
+      })
 
       // Invalidate filesystem caches that depend on working directory
       invalidateContextFileCache(path)
@@ -7391,7 +7525,10 @@ export class SessionManager implements ISessionManager {
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
-    await this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory)
+    await this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory, {
+      sessionId: managed.id,
+      businessContext: managed.businessContext,
+    })
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
     // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
@@ -7558,6 +7695,32 @@ export class SessionManager implements ISessionManager {
       }
 
       this.maybeInitializeGoalStateForUserMessage(managed, message, storedAttachments, options)
+    }
+
+    const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
+    if (spawnBarrier.action === 'wait' || spawnBarrier.action === 'review') {
+      userMessage.isQueued = true
+      if (!managed.messageQueue.some((queued) => queued.messageId === userMessage.id)) {
+        managed.messageQueue.push({
+          message,
+          attachments,
+          storedAttachments,
+          options,
+          messageId: userMessage.id,
+          optimisticMessageId: options?.optimisticMessageId,
+        })
+      }
+      this.enterSpawnHandoffWait(managed, spawnBarrier)
+      this.sendEvent({
+        type: 'user_message',
+        sessionId,
+        message: userMessage,
+        status: 'queued',
+        optimisticMessageId: options?.optimisticMessageId,
+      }, managed.workspace.id)
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      return
     }
 
     // Evaluate auto-label rules against the user message (common path for both
@@ -8229,7 +8392,7 @@ export class SessionManager implements ISessionManager {
       if (reason === 'complete') {
         const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
         if (spawnBarrier.action === 'wait') {
-          this.enterSpawnHandoffWait(managed, spawnBarrier.pendingSessionIds)
+          this.enterSpawnHandoffWait(managed, spawnBarrier)
           this.sendEvent({
             type: 'complete',
             sessionId,
@@ -8478,7 +8641,11 @@ export class SessionManager implements ISessionManager {
         runGoalQualityCouncilReview({
           input: {
             ...input,
-            reviewerPerformanceMemory: await loadProjectMemoryReviewerPerformanceSummary(managed.workingDirectory),
+            reviewerPerformanceMemory: await loadProjectMemoryReviewerPerformanceSummary(
+              managed.workingDirectory,
+              8,
+              { sessionId: managed.id, businessContext: managed.businessContext },
+            ),
           },
           queryLlm: agent.queryLlm.bind(agent),
           route: {
@@ -8492,7 +8659,11 @@ export class SessionManager implements ISessionManager {
     }
 
     return async (input) => {
-      const reviewerPerformanceMemory = await loadProjectMemoryReviewerPerformanceSummary(managed.workingDirectory)
+      const reviewerPerformanceMemory = await loadProjectMemoryReviewerPerformanceSummary(
+        managed.workingDirectory,
+        8,
+        { sessionId: managed.id, businessContext: managed.businessContext },
+      )
       const response = await withTimeout(
         managed.agent!.runMiniCompletion(buildGoalReviewPrompt({
           ...input,
@@ -8822,8 +8993,14 @@ export class SessionManager implements ISessionManager {
     const attachments: FileAttachment[] = []
     for (const stored of storedAttachments) {
       try {
-        const attachment = readFileAttachment(stored.storedPath)
-        if (attachment) attachments.push(attachment)
+        const attachment = readFileAttachment(stored.storedPath, { allowPathBackedLargeFile: true })
+        if (attachment) {
+          attachment.storedPath = stored.storedPath
+          attachment.markdownPath = stored.markdownPath
+          attachment.extractionManifestPath = stored.extractionManifestPath
+          if (stored.resizedBase64) attachment.base64 = stored.resizedBase64
+          attachments.push(attachment)
+        }
       } catch (error) {
         sessionLog.warn('Failed to restore stored attachment for goal continuation', {
           sessionId: managed.id,
@@ -9021,7 +9198,10 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (!managed || managed.messageQueue.length === 0) return
 
-    void this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory)
+    void this.ensureProjectMemoryForWorkingDirectory(managed.workingDirectory, {
+      sessionId: managed.id,
+      businessContext: managed.businessContext,
+    })
 
     const next = managed.messageQueue.shift()!
     sessionLog.info('replay queued', {

@@ -5,7 +5,12 @@ import {
   parseTenderWorkspace,
   type TenderCapabilityId,
 } from '@agent-pi/business-core/tender';
-import { RPC_CHANNELS, type TenderWorkspaceBundleDto, type TenderWorkspaceSummaryDto } from '@craft-agent/shared/protocol';
+import {
+  RPC_CHANNELS,
+  type TenderStageRunRequest,
+  type TenderWorkspaceBundleDto,
+  type TenderWorkspaceSummaryDto,
+} from '@craft-agent/shared/protocol';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
@@ -16,6 +21,8 @@ import {
   type ToolResult,
 } from '@craft-agent/session-tools-core';
 import type { RpcServer } from '../../transport/types.ts';
+import type { HandlerDeps } from '../handler-deps.ts';
+import { runTenderStage } from '../../tender-stage-run.ts';
 
 const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAPABILITY_FILES: Record<TenderCapabilityId, string> = {
@@ -34,9 +41,13 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.tenderWorkspace.LIST,
   RPC_CHANNELS.tenderWorkspace.GET,
   RPC_CHANNELS.tenderWorkspace.MUTATE,
+  RPC_CHANNELS.tenderWorkspace.STAGE_RUN,
 ] as const;
 
-export function registerTenderWorkspaceHandlers(server: RpcServer): void {
+export function registerTenderWorkspaceHandlers(
+  server: RpcServer,
+  deps?: Pick<HandlerDeps, 'sessionManager'>,
+): void {
   server.handle(RPC_CHANNELS.tenderWorkspace.LIST, async (_ctx, request: { workingDirectory: string }) => {
     return listTenderWorkspaces(request.workingDirectory);
   });
@@ -55,6 +66,15 @@ export function registerTenderWorkspaceHandlers(server: RpcServer): void {
       : await handleTenderCapability(context, request.args as never);
     if (result.isError) throw new Error(result.content.map((block) => block.text).join('\n'));
     return parseToolResult(result);
+  });
+  server.handle(RPC_CHANNELS.tenderWorkspace.STAGE_RUN, async (_ctx, request: TenderStageRunRequest) => {
+    const execution = deps?.sessionManager
+      ? {
+          spawnSession: deps.sessionManager.spawnSession.bind(deps.sessionManager),
+          getSession: deps.sessionManager.getSession.bind(deps.sessionManager),
+        }
+      : undefined;
+    return runTenderStage(request, { execution });
   });
 }
 

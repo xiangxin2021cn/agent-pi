@@ -68,6 +68,7 @@ export const RPC_CHANNELS = {
     LIST: 'tenderWorkspace:list',
     GET: 'tenderWorkspace:get',
     MUTATE: 'tenderWorkspace:mutate',
+    STAGE_RUN: 'tenderWorkspace:stageRun',
   },
   deliveryWorkspace: {
     LIST: 'deliveryWorkspace:list',

@@ -538,6 +538,84 @@ export interface TenderWorkspaceMutationRequest {
   args: Record<string, unknown>;
 }
 
+export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'complete';
+export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
+
+export interface TenderStageRunRequest {
+  action: TenderStageRunAction;
+  workspaceRootPath: string;
+  projectId: string;
+  stageId: string;
+  parentSessionId?: string;
+}
+
+export interface TenderStageRunResultDto {
+  schemaVersion: 1;
+  projectId: string;
+  stageId: string;
+  status: TenderStageRunStatus;
+  requiredCapabilities: string[];
+  producedCapabilities: string[];
+  generatedPacks: string[];
+  missingItems: string[];
+  batchProgress?: {
+    batchType: 'document_analysis' | 'boq_five_step_pricing';
+    itemCount: number;
+    batchCount: number;
+    completedBatches: number;
+    missingItemCount: number;
+    manifestPath: string;
+    taskBoardPath?: string;
+    parentSessionId?: string;
+    pendingBatches: number;
+    runningBatches: number;
+    failedBatches: number;
+    blockedBatches: number;
+    tasks: Array<{
+      batchId: string;
+      name: string;
+      status: 'pending' | 'running' | 'complete' | 'failed' | 'blocked';
+      briefPath: string;
+      reportPath: string;
+      allowedSourcePaths: string[];
+      sessionId?: string;
+      attemptCount: number;
+      startedAt?: string;
+      completedAt?: string;
+      updatedAt: string;
+      error?: string;
+    }>;
+  };
+  sourceBoundary: {
+    schemaVersion: 1;
+    projectId: string;
+    generatedAt: string;
+    registeredCount: number;
+    missingPaths: string[];
+    files: Array<{
+      documentId: string;
+      path: string;
+      name: string;
+      kind: string;
+      priority: number;
+      status: 'registered' | 'missing' | 'unsupported';
+      sizeBytes?: number;
+    }>;
+  };
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  paths: {
+    projectDirectory: string;
+    workspacePath: string;
+    sourceBoundaryPath: string;
+    stageStatePath: string;
+    documentAnalysisBatchManifestPath?: string;
+    boqBatchManifestPath?: string;
+    taskBoardPath?: string;
+  };
+}
+
 export interface DeliveryWorkspaceLocationRequest {
   workingDirectory: string;
   projectId?: string;

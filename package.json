@@ -1,6 +1,6 @@
 {
   "name": "agent-pi",
-  "version": "2.2.1",
+  "version": "2.2.3",
   "license": "Apache-2.0",
   "description": "Agent Pi desktop agent application",
   "type": "module",
@@ -21,7 +21,7 @@
     "!apps/online-docs"
   ],
   "scripts": {
-    "test": "bun test && for f in $(find . -name '*.isolated.ts' -not -path './node_modules/*'); do bun test \"$f\" || exit 1; done",
+    "test": "bun test --path-ignore-patterns='apps/electron/release/**' && for f in $(find . -name '*.isolated.ts' -not -path './node_modules/*' -not -path './apps/electron/release/*'); do bun test \"$f\" || exit 1; done",
     "typecheck": "bun run typecheck:shared",
     "typecheck:shared": "cd packages/shared && bun run tsc --noEmit",
     "typecheck:staged": "bash scripts/typecheck-staged.sh",

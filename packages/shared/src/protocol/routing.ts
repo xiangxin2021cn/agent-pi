@@ -240,6 +240,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.tenderWorkspace.LIST,
   RPC_CHANNELS.tenderWorkspace.GET,
   RPC_CHANNELS.tenderWorkspace.MUTATE,
+  RPC_CHANNELS.tenderWorkspace.STAGE_RUN,
 
   // business projects — workspace-owned pointers to professional project shells
   RPC_CHANNELS.businessProjects.LIST,

@@ -37,6 +37,7 @@ import type {
   SessionStatus,
   SessionGoalFailureCategory,
 } from './types.ts';
+import type { SessionBusinessContext } from '../business-projects/types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
 import { debug } from '../utils/debug.ts';
@@ -68,6 +69,16 @@ export interface ProjectMemoryContextEntry {
   missingCriteria?: string[];
   failureCategories?: SessionGoalFailureCategory[];
   createdAt?: number;
+}
+
+export interface ProjectMemoryScope {
+  sessionId?: string;
+  businessContext?: SessionBusinessContext;
+}
+
+export interface ProjectMemoryContextOptions extends ProjectMemoryScope {
+  limit?: number;
+  maxChars?: number;
 }
 
 // ============================================================
@@ -116,22 +127,37 @@ export function getSessionOutputPath(workspaceRootPath: string, sessionId: strin
   return getSessionOutputPathFromSessionPath(getSessionPath(workspaceRootPath, sessionId), workingDirectory);
 }
 
-export function getProjectBrainPath(workingDirectory?: string): string | undefined {
+export function getProjectBrainPath(
+  workingDirectory?: string,
+  scope: ProjectMemoryScope = {},
+): string | undefined {
   if (!workingDirectory) return undefined;
-  return join(workingDirectory, PROJECT_MEMORY_DIR_NAME, PROJECT_MEMORY_BRAIN_DIR_NAME);
+  const root = join(workingDirectory, PROJECT_MEMORY_DIR_NAME, PROJECT_MEMORY_BRAIN_DIR_NAME);
+  if (!scope.businessContext) return root;
+
+  const { module, projectId } = scope.businessContext;
+  const sessionId = scope.sessionId ? sanitizeSessionId(scope.sessionId) : '';
+  if (!sessionId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(projectId)) {
+    return undefined;
+  }
+
+  return join(root, 'business', module, projectId, 'sessions', sessionId);
 }
 
-export function getProjectMemoryEntriesPath(workingDirectory?: string): string | undefined {
-  const brainPath = getProjectBrainPath(workingDirectory);
+export function getProjectMemoryEntriesPath(
+  workingDirectory?: string,
+  scope: ProjectMemoryScope = {},
+): string | undefined {
+  const brainPath = getProjectBrainPath(workingDirectory, scope);
   return brainPath ? join(brainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME) : undefined;
 }
 
 export function loadProjectMemoryContextForSession(
   workingDirectory?: string,
-  options: { limit?: number; maxChars?: number } = {}
+  options: ProjectMemoryContextOptions = {}
 ): string | null {
-  const entriesPath = getProjectMemoryEntriesPath(workingDirectory);
-  const brainPath = getProjectBrainPath(workingDirectory);
+  const entriesPath = getProjectMemoryEntriesPath(workingDirectory, options);
+  const brainPath = getProjectBrainPath(workingDirectory, options);
   if (!entriesPath || !brainPath || !existsSync(entriesPath)) return null;
 
   const limit = Math.max(1, Math.min(options.limit ?? 12, 25));
@@ -147,7 +173,9 @@ export function loadProjectMemoryContextForSession(
   const body = [
     '<project_memory_context>',
     `Memory home: ${brainPath}`,
-    'Scope: These entries are scoped to the current workingDirectory. Use them as project memory leads; verify critical facts against cited source/output paths before final claims.',
+    options.businessContext
+      ? 'Scope: These entries belong only to the current business-workbench conversation. Do not infer memory from other conversations that share the same working directory.'
+      : 'Scope: These entries are scoped to the current workingDirectory. Use them as project memory leads; verify critical facts against cited source/output paths before final claims.',
     'Recent project memory entries:',
     ...lines,
     '</project_memory_context>',

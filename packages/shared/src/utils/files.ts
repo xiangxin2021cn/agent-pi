@@ -352,7 +352,10 @@ export function getMimeType(filePath: string): string {
 /**
  * Read a file and return attachment info
  */
-export function readFileAttachment(filePath: string): FileAttachment | null {
+export function readFileAttachment(
+  filePath: string,
+  options: { allowPathBackedLargeFile?: boolean } = {},
+): FileAttachment | null {
   try {
     const resolved = resolvePath(filePath);
 
@@ -366,10 +369,6 @@ export function readFileAttachment(filePath: string): FileAttachment | null {
       return null;
     }
 
-    if (stats.size > MAX_FILE_SIZE) {
-      throw new Error(`File too large: ${basename(resolved)} (${Math.round(stats.size / 1024 / 1024)}MB > 20MB limit)`);
-    }
-
     const type = getFileType(resolved);
     const mimeType = getMimeType(resolved);
     const name = basename(resolved);
@@ -381,6 +380,11 @@ export function readFileAttachment(filePath: string): FileAttachment | null {
       mimeType,
       size: stats.size,
     };
+
+    if (stats.size > MAX_FILE_SIZE) {
+      if (options.allowPathBackedLargeFile) return attachment;
+      throw new Error(`File too large: ${basename(resolved)} (${Math.round(stats.size / 1024 / 1024)}MB > 20MB limit)`);
+    }
 
     if (type === 'image') {
       // Read as base64 for images

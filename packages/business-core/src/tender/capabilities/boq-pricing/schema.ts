@@ -5,6 +5,11 @@ import type { TenderBoqFiveStepPricingData } from './types.ts';
 const EntityIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i, 'Entity ID must be filesystem-safe.');
 const NonEmptyString = z.string().trim().min(1);
 const DecimalString = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Expected a non-negative unformatted decimal string.');
+const PositiveDecimalString = DecimalString.refine((value) => /[1-9]/.test(value), 'Expected a positive decimal string.');
+const AllocationWeightSchema = z.string().regex(
+  /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/,
+  'Expected a decimal allocation weight between 0 and 1.',
+);
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/, 'Expected an ISO currency code.');
 const ResourceKindSchema = z.enum(['labour', 'plant', 'material', 'subcontract', 'transport', 'waste', 'other']);
 
@@ -42,11 +47,35 @@ const TenderBoqPricingCostComponentSchema = z.object({
   assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
 }).strict();
 
+const TenderBoqPlanningBasisSchema = z.object({
+  methodId: EntityIdSchema,
+  productionRate: PositiveDecimalString,
+  quantityUnit: NonEmptyString,
+  timeUnit: z.enum(['hour', 'shift', 'working_day', 'week']),
+  duration: PositiveDecimalString,
+  calendarId: EntityIdSchema,
+  activityId: EntityIdSchema,
+  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  sourceRefs: z.array(TenderSourceLocatorSchema).default([]),
+}).strict();
+
+const TenderBoqInitialCashFlowAllocationSchema = z.object({
+  period: z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, 'Expected a YYYY-MM period.'),
+  activityId: EntityIdSchema,
+  weight: AllocationWeightSchema,
+  amount: DecimalString,
+  basis: NonEmptyString,
+  assumptionStatus: z.enum(['sourced', 'scenario', 'unverified']),
+  sourceRefs: z.array(TenderSourceLocatorSchema).default([]),
+}).strict();
+
 const TenderBoqFiveStepItemBuildUpSchema = z.object({
   boqItemId: EntityIdSchema,
   status: z.enum(['draft', 'reviewed', 'blocked']),
   steps: TenderBoqFiveStepRecordSchema,
   resourceConsumptions: z.array(TenderBoqResourceConsumptionSchema).default([]),
+  planningBasis: TenderBoqPlanningBasisSchema.optional(),
+  initialCashFlow: uniqueBy(TenderBoqInitialCashFlowAllocationSchema, 'period').optional(),
   costComponents: z.array(TenderBoqPricingCostComponentSchema).default([]),
   directCost: DecimalString,
   conditions: z.array(NonEmptyString).default([]),

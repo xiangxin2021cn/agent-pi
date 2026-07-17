@@ -51,15 +51,41 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.1.**
+**Current release: V2.2.3.**
 
-**当前发布版：V2.2.1。**
+**当前发布版：V2.2.3。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.3 Calculable BOQ Production Pack / V2.2.3 可计算 BOQ 生产包
+
+V2.2.3 upgrades Tender Workbench BOQ pricing from narrative handoffs to machine-verifiable production data. Every priced item now carries a calculable productivity basis, activity/calendar linkage, and initial cash-flow allocation; deterministic merge gates reject incomplete coverage and semantic conflicts before downstream planning starts.
+
+V2.2.3 将投标工作台 BOQ 组价从叙述性交接升级为机器可校验的生产数据。每个已组价条目均须携带可计算工效依据、进度活动/日历关联和初始现金流分期；下游策划启动前，确定性合并门禁会拒绝覆盖不全及语义冲突。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Productivity basis | BOQ items record production rate, duration, calendar, activity, source, and assumptions; capacity must cover the stated quantity. | BOQ 条目记录生产率、持续时间、日历、活动、来源和假设，计算产能必须覆盖对应工程量。 |
+| Initial cash flow | Each item supplies auditable period allocations with amount or weight, source, assumptions, and activity linkage. | 每个条目提供可审计的分期金额或权重，并记录来源、假设和活动关联。 |
+| Cross-batch merge gate | Deterministic checks reject resource-unit, rate-unit, productivity, and activity-calendar contradictions across child-agent reports. | 确定性门禁拒绝子智能体报告之间的资源单位、费率单位、工效及活动日历矛盾。 |
+| Completion readiness | Missing machine fields, incomplete item coverage, extra items, or altered child results prevent the BOQ capability pack from becoming ready. | 缺失机器字段、条目覆盖不全、越界条目或篡改子报告结果时，BOQ 能力包不得进入 ready。 |
+
+### V2.2.2 Workbench Isolation and Large Documents / V2.2.2 工作台隔离与大型文档
+
+V2.2.2 separates professional-workbench conversations even when they use the same physical project folder. Business sessions now have independent memory namespaces, and native path-backed attachments support large tender PDFs without loading them into renderer memory or the model context.
+
+V2.2.2 即使多个专业工作台使用同一物理项目文件夹，也会保持会话隔离。业务会话采用独立记忆命名空间；原生路径型附件支持大型投标 PDF，且不会把文件整体载入渲染器内存或模型上下文。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Workbench grouping | Tender, delivery, and investment conversations are grouped by business project instead of only by working-directory path. | 投标、实施和投资会话按业务项目分组，不再只按工作目录路径混合显示。 |
+| Memory boundary | Every business conversation and child agent has a session-scoped Project Memory Lite namespace. | 每个业务会话及其子智能体拥有会话级 Project Memory Lite 命名空间。 |
+| Large attachments | Native file-picker attachments support path-backed files up to 2 GiB; 200+ MiB PDFs are copied on disk rather than Base64 encoded. | 系统文件选择器支持至 2 GiB 的路径型附件；200 MiB 以上 PDF 通过磁盘复制而非 Base64 编码。 |
+| Continuation and handoff | Goal Loop and child-agent handoff preserve large files as explicit path references. | Goal Loop 续跑及子智能体交接继续以明确路径引用大型文件。 |
 
 ### V2.2.1 Tender Production Pipeline / V2.2.1 投标生产流水线
 
@@ -77,37 +103,6 @@ V2.2.1 收紧文档质量路由，并将投标工作台从彼此孤立的阶段�
 | Formal submission documents | After planning, Agent Pi compiles required tender deliverables such as methodology, construction programme, labour/material/plant plan, and cash-flow plan. | 施工策划后编制投标要求的正式递交文件，包括方法论、施工进度计划、人材机计划和现金流计划。 |
 | Quality routing | Native Quick stays close to upstream lightweight execution, while Guarded Quick and professional modes keep source boundaries and checks for higher-risk tasks. | 原生快速模式保留接近上游的轻量执行；受控快速和专业模式继续用于高风险任务的来源边界与检查。 |
 | Core runtime | Claude Agent SDK is updated to 0.3.211 and Pi to 0.80.7; Anthropic SDK remains current at 0.111.0. | Claude Agent SDK 升级到 0.3.211，Pi 升级到 0.80.7；Anthropic SDK 保持当前最新版 0.111.0。 |
-
-### V2.2.0 Enterprise Workbenches and Document Quality / V2.2.0 企业工作台与文档质量
-
-V2.2.0 adds independent tender, project-delivery, and resource-investment workbenches while keeping the existing conversation engine as the execution surface. It also introduces a Document Quality First patch so focused professional reports prioritize genre, reader decisions, narrative coherence, and clean formal deliverables instead of workflow-heavy prose.
-
-V2.2.0 新增相互独立的投标、项目实施和资源投资工作台，并继续复用现有对话引擎执行专业任务。同时加入“文档质量优先”补丁，让聚焦型专业报告优先匹配文体、读者决策、叙事连贯性和正式成果纯净度，不再被工作流式正文淹没。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Enterprise workbenches | Tender, delivery, and investment projects have dedicated project lists, guided workflow bars, source intake, conversations, and output views. | 投标、实施和投资项目拥有独立项目列表、流程引导、资料输入、会话和成果视图。 |
-| Independent source boundaries | Delivery and investment projects can start from their own inputs without depending on tender-stage data. | 实施和投资项目可直接使用各自输入启动，不依赖投标阶段资料。 |
-| Controlled knowledge sharing | Explicitly approved artifacts are copied into immutable, hash-addressed enterprise knowledge storage for corroborative reuse across workbenches. | 经明确确认的成果复制到不可变、哈希寻址的企业知识库，供不同工作台受控复用和相互印证。 |
-| Document Quality First | Genre-aware editorial profiles, narrative-first planning, and table/heading budgets keep focused reports readable and professional. | 文体感知、叙事优先规划及表格/标题预算让聚焦型报告保持专业和可读。 |
-| Clean formal deliverables | Evidence matrices, handoffs, progress ledgers, and review metadata remain internal; the editorial reviewer checks answer visibility, source applicability, and process leakage. | 证据矩阵、交接、进度台账和审查元数据保持为内部文件；编辑审查检查结论可见性、来源适用性和过程信息泄漏。 |
-| Core runtime | Claude Agent SDK 0.3.209 and Anthropic SDK 0.111.0 are bundled; Pi remains on 0.80.6. | 内置 Claude Agent SDK 0.3.209 和 Anthropic SDK 0.111.0；Pi 保持 0.80.6。 |
-
-### V2.1.1 Controlled Source Analysis / V2.1.1 受控来源分析
-
-V2.1.1 keeps narrow source questions narrow and makes professional delivery gates deterministic. Single-page and single-table analysis no longer expands into a generic five-section report, while evidence, assumptions, sub-agent handoffs, requested formats, and reader-facing quality are checked before completion.
-
-V2.1.1 让局部来源问题保持局部，并把专业交付门槛落实到确定性检查。单页、单表分析不再膨胀为通用五章报告；证据、假设、子智能体交接、指定格式和正文质量均在完成前接受审查。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Quick source analysis | Single-page, single-table, and bounded-range questions default to one result table, one explanation, and one confirmation item without automatic multi-agent expansion. | 单页、单表和局部范围问题默认输出一张结果表、一段解释和一个待确认事项，不自动扩展多智能体。 |
-| Evidence-neutral briefs | Sub-agent briefs contain only the question, scope, allowed sources/files, and report destination; unverified parent conclusions are excluded. | 子智能体 brief 只包含问题、范围、允许来源/文件和报告路径，不携带主会话未经验证的结论。 |
-| Assumption gate | Claims marked `assumption` or `unverified` in the evidence matrix cannot become unconditional core conclusions. | 证据矩阵中标记为 `assumption` 或 `unverified` 的声明不能无条件进入核心结论。 |
-| Handoff lifecycle | Child work uses activity-based stale detection and report readiness instead of a fixed wait; contradictory handoffs block merge. | 子智能体按活动时间和报告就绪状态判断，不再固定等待；交接结论冲突会阻止合并。 |
-| Completion and evidence | Agent-side `done` is rejected until Goal Audit passes; evidence matrices use versioned JSON and zero source coverage cannot pass. | Goal Audit 通过前拒绝智能体设置 `done`；证据矩阵使用版本化 JSON，零来源覆盖不能通过。 |
-| Professional artifacts | Requested Office/data/professional formats are tracked explicitly; PDF is produced only when requested, and DOCX export preserves A3/A4 page intent. | 显式追踪 Office、数据和专业格式；仅在用户要求时输出 PDF，DOCX 导出保留 A3/A4 页面意图。 |
-| Reader-facing quality | Internal evidence matrices and audit records stay out of the body by default; table balance, visual evidence, captions, sources, and export structure are audited. | 内部证据矩阵和审计记录默认不进入正文；表格比例、视觉证据、图注、来源和导出结构均接受审查。 |
 
 Older release details are available on GitHub Releases.
 

@@ -81,6 +81,37 @@ const completePricing: TenderBoqFiveStepPricingData = {
       { id: 'res-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h/m3', assumptionStatus: 'sourced' },
       { id: 'res-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h/m3', assumptionStatus: 'sourced' },
     ],
+    planningBasis: {
+      methodId: 'small-plant-excavation',
+      productionRate: '10',
+      quantityUnit: 'm3',
+      timeUnit: 'working_day',
+      duration: '10',
+      calendarId: 'calendar-standard',
+      activityId: 'activity-b6100-1',
+      assumptionStatus: 'sourced',
+      sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+    },
+    initialCashFlow: [
+      {
+        period: '2026-08',
+        activityId: 'activity-b6100-1',
+        weight: '0.6',
+        amount: '300',
+        basis: 'Mobilisation and first production period.',
+        assumptionStatus: 'sourced',
+        sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+      },
+      {
+        period: '2026-09',
+        activityId: 'activity-b6100-1',
+        weight: '0.4',
+        amount: '200',
+        basis: 'Remaining production period.',
+        assumptionStatus: 'sourced',
+        sourceRefs: [{ documentId: 'spec', clause: '6102', page: 23 }],
+      },
+    ],
     costComponents: [
       { id: 'cost-labour', kind: 'labour', description: 'Excavation crew', quantity: '2', unit: 'h', rate: '100', amount: '200', rateSourceRef: { documentId: 'quote', page: 1 }, assumptionStatus: 'sourced' },
       { id: 'cost-plant', kind: 'plant', description: 'Excavator', quantity: '0.5', unit: 'h', rate: '600', amount: '300', rateSourceRef: { documentId: 'quote', page: 1 }, assumptionStatus: 'sourced' },
@@ -126,5 +157,49 @@ describe('tender BOQ five-step pricing audit', () => {
     expect(missing.issues.map((issue) => issue.code)).toContain('boq_pricing_build_up_missing');
     expect(incomplete.readiness).toBe('not_ready');
     expect(incomplete.issues.map((issue) => issue.code)).toContain('boq_pricing_step_incomplete');
+  });
+
+  test('rejects a reviewed item without a calculable planning or initial cash-flow basis', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{ ...item, planningBasis: undefined, initialCashFlow: [] }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    expect(audit.readiness).toBe('not_ready');
+    expect(audit.issues.map((issue) => issue.code)).toContain('boq_pricing_planning_basis_missing');
+    expect(audit.issues.map((issue) => issue.code)).toContain('boq_pricing_cash_flow_missing');
+  });
+
+  test('rejects duration capacity that cannot produce the BOQ quantity', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        planningBasis: { ...item.planningBasis!, duration: '2' },
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    expect(audit.readiness).toBe('not_ready');
+    expect(audit.issues.map((issue) => issue.code)).toContain('boq_pricing_duration_capacity_shortfall');
+  });
+
+  test('rejects initial cash-flow weights and amounts that do not reconcile', () => {
+    const item = completePricing.itemBuildUps[0]!;
+    const audit = auditTenderBoqFiveStepPricing(workspace, boqData, {
+      ...completePricing,
+      itemBuildUps: [{
+        ...item,
+        initialCashFlow: item.initialCashFlow!.map((allocation, index) => index === 0
+          ? { ...allocation, weight: '0.5', amount: '250' }
+          : allocation),
+      }],
+    }, '2026-07-15T00:00:00.000Z');
+
+    const issueCodes = audit.issues.map((issue) => issue.code);
+    expect(audit.readiness).toBe('not_ready');
+    expect(issueCodes).toContain('boq_pricing_cash_flow_weight_mismatch');
+    expect(issueCodes).toContain('boq_pricing_cash_flow_amount_mismatch');
   });
 });

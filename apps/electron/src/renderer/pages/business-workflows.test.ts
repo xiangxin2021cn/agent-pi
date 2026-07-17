@@ -11,12 +11,15 @@ describe('business workflows', () => {
       'tender-document-analysis',
       'boq-five-step-pricing',
       'work-plan-methodology',
-      'programme-resources-cost-cashflow',
+      'schedule-resource-planning',
+      'cost-cashflow-planning',
       'tender-submission-documents',
       'submission-audit',
     ])
     expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.producesCapabilities)
       .toEqual(['document_analysis', 'evaluation_strategy', 'boq_reconciliation'])
+    expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.dispatchPolicy)
+      .toEqual('controlled-subagents')
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.requiredCapabilities)
       .toEqual(['document_analysis', 'boq_reconciliation'])
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.producesCapabilities)
@@ -25,6 +28,18 @@ describe('business workflows', () => {
       .toEqual('controlled-subagents')
     expect(workflow.stages.find((stage) => stage.id === 'work-plan-methodology')?.requiredCapabilities)
       .toEqual(['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing'])
+    expect(workflow.stages.find((stage) => stage.id === 'schedule-resource-planning')?.requiredCapabilities)
+      .toEqual(['execution_plan', 'boq_five_step_pricing'])
+    expect(workflow.stages.find((stage) => stage.id === 'schedule-resource-planning')?.producesCapabilities)
+      .toEqual(['schedule_resources'])
+    expect(workflow.stages.find((stage) => stage.id === 'schedule-resource-planning')?.skillSlugs)
+      .toEqual(['tender-schedule-resource-planning', 'construction-schedule-planner'])
+    expect(workflow.stages.find((stage) => stage.id === 'cost-cashflow-planning')?.requiredCapabilities)
+      .toEqual(['boq_reconciliation', 'boq_five_step_pricing', 'schedule_resources'])
+    expect(workflow.stages.find((stage) => stage.id === 'cost-cashflow-planning')?.producesCapabilities)
+      .toEqual(['cost_cashflow'])
+    expect(workflow.stages.find((stage) => stage.id === 'cost-cashflow-planning')?.skillSlugs)
+      .toEqual(['tender-cost-cashflow-planning'])
     expect(workflow.stages.find((stage) => stage.id === 'tender-submission-documents')?.requiredCapabilities)
       .toEqual(['execution_plan', 'schedule_resources', 'cost_cashflow'])
     expect(workflow.stages.find((stage) => stage.id === 'tender-submission-documents')?.producesCapabilities)

@@ -10,6 +10,10 @@ function input(overrides: Partial<SdkAutomationInput> = {}): SdkAutomationInput 
   return { hook_event_name: 'test', ...overrides };
 }
 
+function inheritedPath(env: Record<string, string>): string | undefined {
+  return env.PATH ?? env.Path;
+}
+
 describe('sdk-bridge', () => {
   describe('buildEnvFromSdkInput', () => {
     it('should always include CRAFT_EVENT', () => {
@@ -20,7 +24,7 @@ describe('sdk-bridge', () => {
     it('should include process.env variables', () => {
       const env = buildEnvFromSdkInput('PreToolUse', input());
       // PATH should be inherited from process.env
-      expect(env.PATH).toBeDefined();
+      expect(inheritedPath(env)).toBeDefined();
     });
 
     it('should not include undefined values from process.env', () => {
@@ -119,7 +123,7 @@ describe('sdk-bridge', () => {
         const env = buildEnvFromSdkInput('Stop' as any, input());
         expect(env.CRAFT_EVENT).toBe('Stop');
         // Should still have process.env vars
-        expect(env.PATH).toBeDefined();
+        expect(inheritedPath(env)).toBeDefined();
       });
     });
 

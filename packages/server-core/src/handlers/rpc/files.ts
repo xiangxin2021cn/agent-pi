@@ -53,7 +53,10 @@ const TEXT_PREVIEW_MAX_BYTES = 1 * 1024 * 1024
 const SPREADSHEET_PREVIEW_MAX_BYTES = 50 * 1024 * 1024
 const OFFICE_PREVIEW_CONVERT_MAX_BYTES = 12 * 1024 * 1024
 const OFFICE_PREVIEW_TIMEOUT_MS = 20_000
-const PATH_BACKED_ATTACHMENT_MAX_BYTES = 250 * 1024 * 1024
+// Path-backed attachments are copied by the filesystem and are never decoded
+// into renderer memory. Keep a generous disk-safety ceiling while allowing
+// large tender volumes and drawing sets.
+const PATH_BACKED_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 const SPREADSHEET_MAX_DECLARED_ROWS = 20_000
 const SPREADSHEET_MAX_DECLARED_COLS = 200
 const SPREADSHEET_MAX_DECLARED_CELLS = 500_000
@@ -1752,14 +1755,16 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         return null
       }
       const attachment = buildPathBackedAttachment(path, info.size)
-      try {
-        const thumbBuffer = await deps.platform.imageProcessor.process(path, {
-          resize: { width: 200, height: 200 },
-          format: 'png',
-        })
-        ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
-      } catch {
-        // Non-image or corrupt — icon fallback, same as readFileAttachment
+      if (attachment.type === 'image') {
+        try {
+          const thumbBuffer = await deps.platform.imageProcessor.process(path, {
+            resize: { width: 200, height: 200 },
+            format: 'png',
+          })
+          ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
+        } catch {
+          // Corrupt image — use the icon fallback.
+        }
       }
       return attachment
     } catch (error) {
@@ -2023,6 +2028,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
                   await recordProjectMemoryDocumentExtraction({
                     workingDirectory: session.workingDirectory,
                     sessionId,
+                    businessContext: session.businessContext,
                     manifestPath,
                     manifest,
                   })

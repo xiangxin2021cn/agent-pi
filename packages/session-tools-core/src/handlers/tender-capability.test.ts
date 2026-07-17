@@ -42,6 +42,20 @@ function strategyData() {
   };
 }
 
+function documentAnalysisData(documentIds: string[] = ['tender-data']) {
+  return {
+    sections: documentIds.map((documentId) => ({
+      id: `analysis-${documentId}`,
+      documentId,
+      title: `Analysis of ${documentId}`,
+      kind: documentId === 'tender-data' ? 'tender_requirements' : 'other',
+      summary: `Reviewed source content and registered the material facts from ${documentId}.`,
+      sourceRefs: [{ documentId, page: 1 }],
+      status: 'reviewed',
+    })),
+  };
+}
+
 function boqData() {
   return {
     items: [
@@ -108,6 +122,63 @@ function executionData() {
         status: 'reviewed',
       },
     ],
+  };
+}
+
+function boqPricingData() {
+  const step = (narrative: string, documentId: string) => ({
+    narrative,
+    sourceRefs: [{ documentId, page: 1 }],
+  });
+  return {
+    currency: 'ZAR',
+    pricingStatus: 'reviewed',
+    itemBuildUps: [
+      {
+        boqItemId: 'boq-5201',
+        status: 'reviewed',
+        steps: {
+          scopeQuantity: step('Scope and quantity are reconciled to the registered BOQ row.', 'boq'),
+          methodProductivity: step('Method and productivity are derived from the registered specification.', 'spec'),
+          resourceConsumption: step('Resource consumption is calculated from the reviewed work method.', 'spec'),
+          sourcedRatesDirectCost: step('Direct cost uses registered source evidence.', 'spec'),
+          reconciliationRisk: step('The build-up is reconciled to the BOQ unit and scope.', 'spec'),
+        },
+        resourceConsumptions: [
+          { id: 'resource-crew', kind: 'labour', description: 'Drainage crew', quantity: '2', unit: 'h/m', assumptionStatus: 'sourced' },
+        ],
+        planningBasis: {
+          methodId: 'concrete-side-drain',
+          productionRate: '100',
+          quantityUnit: 'm',
+          timeUnit: 'working_day',
+          duration: '12.505',
+          calendarId: 'cal-1',
+          activityId: 'excavate',
+          assumptionStatus: 'sourced',
+          sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+        },
+        initialCashFlow: [{
+          period: '2026-08',
+          activityId: 'excavate',
+          weight: '1',
+          amount: '500',
+          basis: 'Initial allocation follows the priced work activity.',
+          assumptionStatus: 'sourced',
+          sourceRefs: [{ documentId: 'spec', page: 20, clause: '5.2' }],
+        }],
+        costComponents: [
+          { id: 'cost-crew', kind: 'labour', description: 'Drainage crew', quantity: '1', unit: 'item', rate: '500', amount: '500', rateSourceRef: { documentId: 'spec', page: 1 }, assumptionStatus: 'sourced' },
+        ],
+        directCost: '500',
+        conditions: [],
+        riskNotes: [],
+      },
+    ],
+    resourceSummary: [
+      { kind: 'labour', description: 'Drainage crew', quantity: '2501', unit: 'h' },
+    ],
+    assumptions: [],
   };
 }
 
@@ -296,8 +367,30 @@ describe('tender_capability handler', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  test('rejects a capability write while the tender core is not ready', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'init',
+      projectId: 'unready-tender',
+      project: { id: 'unready-tender', title: 'Unready Tender', status: 'active' },
+    });
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'unready-tender',
+      capability: 'document_analysis',
+      data: { sections: [] },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('requires ready tender core');
+  });
+
   test('initializes and persists a ready evaluation strategy pack', async () => {
     const handler = await loadHandler();
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis', data: documentAnalysisData(),
+    });
     const result = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
@@ -324,6 +417,9 @@ describe('tender_capability handler', () => {
 
   test('rejects an optimistic revision conflict without mutating the pack', async () => {
     const handler = await loadHandler();
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis', data: documentAnalysisData(),
+    });
     const initialized = await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
@@ -348,6 +444,9 @@ describe('tender_capability handler', () => {
   test('marks a pack stale after the tender core revision changes', async () => {
     const handler = await loadHandler();
     await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis', data: documentAnalysisData(),
+    });
+    await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'evaluation_strategy',
@@ -365,6 +464,12 @@ describe('tender_capability handler', () => {
           status: 'active',
         },
       ],
+    });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing']),
     });
 
     const result = await handler(context, {
@@ -423,6 +528,12 @@ describe('tender_capability handler', () => {
         },
       ],
     });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing']),
+    });
 
     const result = await handler(context, {
       action: 'init',
@@ -450,7 +561,7 @@ describe('tender_capability handler', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('requires ready upstream capability evaluation_strategy');
+    expect(result.content[0]?.text).toContain('requires ready upstream capability document_analysis');
   });
 
   test('initializes a ready execution plan from ready evaluation and BOQ packs', async () => {
@@ -481,6 +592,10 @@ describe('tender_capability handler', () => {
       ],
     });
     await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing']),
+    });
+    await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'evaluation_strategy',
@@ -491,6 +606,9 @@ describe('tender_capability handler', () => {
       projectId: 'n3-upgrade',
       capability: 'boq_reconciliation',
       data: boqData(),
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData(),
     });
 
     const result = await handler(context, {
@@ -507,8 +625,9 @@ describe('tender_capability handler', () => {
     expect(output.audit.readiness).toBe('ready');
     expect(output.envelope.upstream).toEqual([
       { capability: 'core', revision: 6 },
-      { capability: 'evaluation_strategy', revision: 1 },
+      { capability: 'document_analysis', revision: 1 },
       { capability: 'boq_reconciliation', revision: 1 },
+      { capability: 'boq_five_step_pricing', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'execution-plan.json'));
   });
@@ -553,8 +672,13 @@ describe('tender_capability handler', () => {
         },
       ],
     });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing']),
+    });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
 
     const result = await handler(context, {
@@ -573,6 +697,7 @@ describe('tender_capability handler', () => {
     expect(output.envelope.upstream).toEqual([
       { capability: 'core', revision: 6 },
       { capability: 'execution_plan', revision: 1 },
+      { capability: 'boq_five_step_pricing', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'schedule-resources.json'));
   });
@@ -618,8 +743,13 @@ describe('tender_capability handler', () => {
         },
       ],
     });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing', 'quote']),
+    });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy', data: strategyData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData() });
+    await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'execution_plan', data: executionData() });
     await handler(context, { action: 'init', projectId: 'n3-upgrade', capability: 'schedule_resources', data: scheduleData() });
 
@@ -639,6 +769,7 @@ describe('tender_capability handler', () => {
     expect(output.envelope.upstream).toEqual([
       { capability: 'core', revision: 6 },
       { capability: 'boq_reconciliation', revision: 1 },
+      { capability: 'boq_five_step_pricing', revision: 1 },
       { capability: 'schedule_resources', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'cost-cashflow.json'));
@@ -675,6 +806,9 @@ describe('tender_capability handler', () => {
       ],
     });
     await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis', data: documentAnalysisData(),
+    });
+    await handler(context, {
       action: 'init',
       projectId: 'n3-upgrade',
       capability: 'evaluation_strategy',
@@ -703,6 +837,7 @@ describe('tender_capability handler', () => {
     expect(output.audit.summary.passedSubmissionItems).toBe(1);
     expect(output.envelope.upstream).toEqual([
       { capability: 'core', revision: 6 },
+      { capability: 'document_analysis', revision: 1 },
       { capability: 'evaluation_strategy', revision: 1 },
     ]);
     expect(output.modelPath).toEndWith(join('packs', 'submission-audit.json'));
@@ -724,6 +859,9 @@ describe('tender_capability handler', () => {
         criterionIds: ['criterion-method'], deliverableId: 'methodology',
         evidenceRefs: [{ documentId: 'tender-data', page: 12 }], status: 'verified',
       }],
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis', data: documentAnalysisData(),
     });
     await handler(context, {
       action: 'init', projectId: 'n3-upgrade', capability: 'evaluation_strategy',

@@ -32,6 +32,11 @@ import type { ViewConfig } from "@craft-agent/shared/views"
 import type { SessionStatusId, SessionStatus } from "@/config/session-status-config"
 import { buildCollapsedGroupsScopeSuffix } from "@/utils/session-list-collapse"
 import { buildSessionHierarchy, type SessionThreadKindCounts } from "@/utils/session-hierarchy"
+import {
+  getSessionProjectGroupDescription,
+  getSessionProjectGroupKey,
+  getSessionProjectGroupLabel,
+} from '@/utils/session-project-grouping'
 
 export interface SessionListRow {
   item: SessionMeta
@@ -106,23 +111,6 @@ function formatDateGroupLabel(date: Date, t: (key: string) => string, lang: stri
   if (isToday(date)) return t('common.today')
   if (isYesterday(date)) return t('common.yesterday')
   return format(date, 'MMM d', { locale: getDateLocale(lang) })
-}
-
-function normalizeProjectPath(path?: string): string | null {
-  const trimmed = path?.trim()
-  if (!trimmed) return null
-  return trimmed.replace(/[\\/]+$/, '')
-}
-
-function getProjectGroupKey(item: SessionMeta): string {
-  const normalized = normalizeProjectPath(item.workingDirectory)
-  return normalized ? `project-${normalized}` : 'project-none'
-}
-
-function getProjectGroupLabel(path: string | null, fallback: string): string {
-  if (!path) return fallback
-  const parts = path.split(/[\\/]+/).filter(Boolean)
-  return parts[parts.length - 1] || path
 }
 
 /**
@@ -457,15 +445,17 @@ export function SessionList({
         description?: string
         latestAt: number
       }>()
+      const sourceItemByGroupKey = new Map(
+        sessionSearchItems.map(item => [getSessionProjectGroupKey(item), item] as const),
+      )
 
       for (const row of rows) {
-        const normalizedPath = normalizeProjectPath(row.item.workingDirectory)
-        const key = getProjectGroupKey(row.item)
+        const key = getSessionProjectGroupKey(row.item)
         if (!groupsByKey.has(key)) {
           groupsByKey.set(key, {
             rows: [],
-            label: getProjectGroupLabel(normalizedPath, t('session.noWorkingDirectory')),
-            description: normalizedPath ?? t('session.sessionFolderFallback'),
+            label: getSessionProjectGroupLabel(row.item, t('session.noWorkingDirectory')),
+            description: getSessionProjectGroupDescription(row.item, t('session.sessionFolderFallback')),
             latestAt: 0,
           })
         }
@@ -476,12 +466,15 @@ export function SessionList({
 
       for (const meta of collapsedGroupsMeta) {
         if (!groupsByKey.has(meta.key)) {
-          const rawPath = meta.key === 'project-none' ? null : meta.key.replace(/^project-/, '')
-          const normalizedPath = normalizeProjectPath(rawPath ?? undefined)
+          const sourceItem = sourceItemByGroupKey.get(meta.key)
           groupsByKey.set(meta.key, {
             rows: [],
-            label: getProjectGroupLabel(normalizedPath, t('session.noWorkingDirectory')),
-            description: normalizedPath ?? t('session.sessionFolderFallback'),
+            label: sourceItem
+              ? getSessionProjectGroupLabel(sourceItem, t('session.noWorkingDirectory'))
+              : t('session.noWorkingDirectory'),
+            description: sourceItem
+              ? getSessionProjectGroupDescription(sourceItem, t('session.sessionFolderFallback'))
+              : t('session.sessionFolderFallback'),
             latestAt: meta.latestAt ?? 0,
           })
         }
@@ -650,7 +643,7 @@ export function SessionList({
       const allKeys = new Set(sessionSearchItems.map(item => item.hasUnread ? 'unread-yes' : 'unread-no'))
       setCollapsedGroups(allKeys)
     } else if (groupingMode === 'project') {
-      const allKeys = new Set(sessionSearchItems.map(item => getProjectGroupKey(item)))
+      const allKeys = new Set(sessionSearchItems.map(item => getSessionProjectGroupKey(item)))
       setCollapsedGroups(allKeys)
     } else {
       const allKeys = new Set(sessionSearchItems.map(item =>

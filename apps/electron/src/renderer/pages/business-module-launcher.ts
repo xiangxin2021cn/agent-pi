@@ -1,4 +1,5 @@
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
+import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import type { BusinessWorkflowStage } from './business-workflows'
 
 export type { BusinessModuleId }
@@ -47,11 +48,19 @@ export function buildBusinessTaskDraft(
   moduleId: BusinessModuleId,
   project: BusinessProjectRecord,
   stage: BusinessWorkflowStage,
+  stageRun?: TenderStageRunResultDto,
 ): string {
   const preset = getBusinessModuleLaunchPreset(moduleId)
-  const specialistSkill = stage.skillSlug ? `\n[skill:${stage.skillSlug}]` : ''
+  const specialistSkills = [...new Set([
+    ...(stage.skillSlugs ?? []),
+    ...(stage.skillSlug ? [stage.skillSlug] : []),
+  ])]
+  const specialistSkill = specialistSkills.length > 0
+    ? `\n${specialistSkills.map((slug) => `[skill:${slug}]`).join('\n')}`
+    : ''
   const capabilityBlock = buildCapabilityBlock(stage)
   const dispatchBlock = buildDispatchBlock(stage)
+  const stageControlBlock = buildStageControlBlock(stageRun)
   const registeredInputs = project.inputPaths.length > 0
     ? project.inputPaths.map((path) => `- ${path}`).join('\n')
     : '- 暂无；开始分析前请由用户明确添加资料。'
@@ -61,13 +70,30 @@ export function buildBusinessTaskDraft(
 项目 / Project: ${project.name}
 当前阶段 / Stage: ${stage.label}
 阶段要求: ${stage.prompt}
-${capabilityBlock}${dispatchBlock}
+${capabilityBlock}${stageControlBlock}${dispatchBlock}
 
 用户明确登记的输入资料:
 ${registeredInputs}
 
 只允许使用上述登记资料以及用户在本对话中明确添加的数据源或知识库条目。项目工作目录仅用于保存过程文件和交付物，不得将其扫描为来源。
 
+`
+}
+
+function buildStageControlBlock(stageRun?: TenderStageRunResultDto): string {
+  if (!stageRun) return ''
+  return `
+<tender_stage_control>
+status: ${stageRun.status}
+source_boundary_path: ${stageRun.paths.sourceBoundaryPath}
+stage_state_path: ${stageRun.paths.stageStatePath}
+generated_capability_packs: ${stageRun.generatedPacks.join(', ') || '(none)'}
+missing_items: ${stageRun.missingItems.join(', ') || '(none)'}
+${stageRun.paths.boqBatchManifestPath ? `boq_batch_manifest_path: ${stageRun.paths.boqBatchManifestPath}` : ''}
+${stageRun.paths.documentAnalysisBatchManifestPath ? `document_analysis_batch_manifest_path: ${stageRun.paths.documentAnalysisBatchManifestPath}` : ''}
+${stageRun.paths.taskBoardPath ? `task_board_path: ${stageRun.paths.taskBoardPath}` : ''}
+Use these exact controller paths. Do not discover or replace them by scanning the project working directory.
+</tender_stage_control>
 `
 }
 
@@ -84,14 +110,18 @@ function buildCapabilityBlock(stage: BusinessWorkflowStage): string {
 
 function buildDispatchBlock(stage: BusinessWorkflowStage): string {
   if (stage.dispatchPolicy !== 'controlled-subagents') return ''
+  if (stage.id === 'tender-document-analysis') {
+    return `
+<controlled_subagent_dispatch>
+The backend stage controller owns document batch dispatch, concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, or take over an unfinished batch.
+Monitor the exact task_board_path and document_analysis_batch_manifest_path. Wait until every batch report is schema-valid, then merge only those reports, resolve cross-document conflicts, and write document_analysis, evaluation_strategy, and boq_reconciliation capability packs.
+</controlled_subagent_dispatch>
+`
+  }
   return `
 <controlled_subagent_dispatch>
-Use spawn_session only from the main session when the BOQ item set is too large for a single pass.
-Create orchestration/briefs and orchestration/reports before dispatch.
-Each child brief must contain only: assigned BOQ item IDs, the exact question, allowed sources, report_path, and the target capability boq_five_step_pricing.
-child agents must not call spawn_session or create child sessions.
-Child agents must write only their structured handoff report to report_path; they must not write final synthesis artifacts.
-The main session must merge child reports, run conflict checks, and write the boq_five_step_pricing capability pack before downstream planning.
+The backend stage controller owns BOQ batch dispatch, bounded concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, directly price an unfinished child range, or create substitute reports.
+Monitor the exact task_board_path and boq_batch_manifest_path. Wait until every child report is schema-valid, then merge only those reports, run conflict and full-item coverage checks, and write the boq_five_step_pricing capability pack before downstream planning.
 </controlled_subagent_dispatch>
 `
 }

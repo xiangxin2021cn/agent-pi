@@ -6,10 +6,46 @@ import {
   PROJECT_MEMORY_BRAIN_DIR_NAME,
   PROJECT_MEMORY_DIR_NAME,
   PROJECT_MEMORY_ENTRIES_FILE_NAME,
+  getProjectBrainPath,
   loadProjectMemoryContextForSession,
 } from './storage.ts';
 
 describe('loadProjectMemoryContextForSession', () => {
+  it('isolates business-session memory even when sessions share a working directory', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-business-memory-'));
+    const tenderContext = {
+      module: 'tender' as const,
+      projectId: 'n3-tender',
+      workflowId: 'tender-main',
+      stageId: 'boq-pricing',
+    };
+    const firstScope = { sessionId: '260716-first-task', businessContext: tenderContext };
+    const secondScope = { sessionId: '260716-second-task', businessContext: tenderContext };
+
+    try {
+      const firstBrainPath = getProjectBrainPath(workingDirectory, firstScope)!;
+      const secondBrainPath = getProjectBrainPath(workingDirectory, secondScope)!;
+      expect(secondBrainPath).not.toBe(firstBrainPath);
+
+      await mkdir(firstBrainPath, { recursive: true });
+      await writeFile(join(firstBrainPath, PROJECT_MEMORY_ENTRIES_FILE_NAME), JSON.stringify({
+        type: 'formal_output_created',
+        title: 'First task only',
+        summary: 'This memory must not appear in another workbench conversation.',
+        trust: 'verified',
+        createdAt: 1,
+      }));
+
+      const firstContext = loadProjectMemoryContextForSession(workingDirectory, firstScope);
+      const secondContext = loadProjectMemoryContextForSession(workingDirectory, secondScope);
+
+      expect(firstContext).toContain('First task only');
+      expect(secondContext).toBeNull();
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('filters archived, stale, and unverified entries out of prompt context', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'agent-pi-memory-context-'));
     try {

@@ -18,6 +18,15 @@ export function auditTenderBoqReconciliation(
   const itemById = new Map(data.items.map((item) => [item.id, item]));
   const scopeLinkByItemId = new Map(data.scopeLinks.map((link) => [link.boqItemId, link]));
 
+  if (data.items.length === 0) {
+    issues.push({
+      code: 'boq_items_empty',
+      severity: 'error',
+      entityType: 'boq_reconciliation',
+      message: 'BOQ reconciliation requires at least one registered BOQ item.',
+    });
+  }
+
   const inspectReference = (
     source: TenderSourceLocator,
     entityId: string,

@@ -143,7 +143,7 @@ export async function handleTenderCapability(
 
     if (args.action === 'init' || args.action === 'replace') {
       if (args.data === undefined) return errorResponse(`${args.action} requires data.`);
-      const upstreamError = findUpstreamReadinessError(index, args.capability);
+      const upstreamError = findUpstreamReadinessError(index, args.capability, workspace);
       if (upstreamError) return errorResponse(upstreamError);
       const current = existsSync(paths.modelPath)
         ? parseTenderCapabilityEnvelope(JSON.parse(readFileSync(paths.modelPath, 'utf8')))
@@ -192,7 +192,7 @@ export async function handleTenderCapability(
     );
     const revisions = Object.fromEntries(index.capabilities.map((entry) => [entry.capability, entry.revision]));
     const stale = isTenderCapabilityStale(envelope, workspace.revision, revisions)
-      || findUpstreamReadinessError(index, args.capability) !== undefined;
+      || findUpstreamReadinessError(index, args.capability, workspace) !== undefined;
     index = updateIndexFromAudit(index, args, envelope, audit, stale, workspace.revision);
     atomicWriteJson(paths.indexPath, index);
     if (args.action === 'validate') atomicWriteJson(paths.auditPath, audit);
@@ -326,10 +326,16 @@ function auditCapability(
 function findUpstreamReadinessError(
   index: TenderCapabilityIndex,
   capability: TenderCapabilityId,
+  workspace: TenderWorkspace,
 ): string | undefined {
   const enabled = index.capabilities.filter((entry) => entry.enabled).map((entry) => entry.capability);
   for (const dependency of getTenderCapabilityDependencies(capability, enabled)) {
-    if (dependency === 'core') continue;
+    if (dependency === 'core') {
+      if (!workspace.documents.some((document) => document.status === 'active' && document.path.trim())) {
+        return `Tender capability ${capability} requires ready tender core with at least one active registered source document.`;
+      }
+      continue;
+    }
     const entry = index.capabilities.find((candidate) => candidate.capability === dependency);
     if (!entry || entry.revision === 0 || entry.readiness !== 'ready' || entry.stale) {
       return `Tender capability ${capability} requires ready upstream capability ${dependency}.`;

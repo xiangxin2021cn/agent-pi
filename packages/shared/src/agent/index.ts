@@ -121,6 +121,8 @@ export {
   BaseAgent,
   // Mini agent configuration (centralized for all backends)
   type MiniAgentConfig,
+  type SpawnSessionRequest,
+  type SpawnSessionResult,
   MINI_AGENT_TOOLS,
   MINI_AGENT_MCP_KEYS,
 } from './base-agent.ts';

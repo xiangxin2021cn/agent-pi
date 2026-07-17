@@ -1,16 +1,8 @@
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-
-const originalCwd = process.cwd();
-const originalConfigDir = process.env.CRAFT_CONFIG_DIR;
-
-afterEach(() => {
-  process.chdir(originalCwd);
-  if (originalConfigDir === undefined) delete process.env.CRAFT_CONFIG_DIR;
-  else process.env.CRAFT_CONFIG_DIR = originalConfigDir;
-});
+import { ensureDefaultPermissions } from '../permissions-config.ts';
 
 describe('ensureDefaultPermissions migration', () => {
   it('merges new bundled defaults into existing installed file and preserves customizations', async () => {
@@ -55,11 +47,10 @@ describe('ensureDefaultPermissions migration', () => {
       }, null, 2)
     );
 
-    process.env.CRAFT_CONFIG_DIR = tempConfig;
-    process.chdir(tempRoot);
-
-    const mod = await import(`../permissions-config.ts?case=${Date.now()}`);
-    mod.ensureDefaultPermissions();
+    ensureDefaultPermissions({
+      permissionsDir: installedDir,
+      bundledPermissionsDir: bundledDir,
+    });
 
     const merged = JSON.parse(readFileSync(join(installedDir, 'default.json'), 'utf-8'));
 
