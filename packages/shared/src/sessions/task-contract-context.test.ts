@@ -272,8 +272,8 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
     expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
     expect(formatted).toContain('After spawning, use get_spawn_status and follow parentAction');
-    expect(formatted).toContain('Automatic parent takeover is forbidden');
-    expect(formatted).toContain('The main session remains the final synthesis owner, but it may only read, compare, and resolve terminal helper handoffs before writing the final deliverable.');
+    expect(formatted).toContain('if a helper fails or loses its report, retry it or record an explicit missing-child gap');
+    expect(formatted).toContain('The main session remains the final synthesis owner.');
   });
 
   it('includes document evidence matrix entries when available', () => {

@@ -170,7 +170,7 @@ function appendComplexAgentOrchestrationProtocol(lines: string[], contract: Sess
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
   lines.push(`${startIndex + 2}. After spawning, use get_spawn_status and follow parentAction. Pending helpers retain exclusive ownership of their assigned work; do not replace them after a fixed timeout or treat status "todo" as failure.`);
-  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner, but it may only read, compare, and resolve terminal helper handoffs before writing the final deliverable. Automatic parent takeover is forbidden.`);
+  lines.push(`${startIndex + 3}. The main session remains the final synthesis owner. It may read, compare, and resolve terminal helper handoffs before writing the final deliverable; if a helper fails or loses its report, retry it or record an explicit missing-child gap instead of fabricating the child report.`);
   return startIndex + 4;
 }
 

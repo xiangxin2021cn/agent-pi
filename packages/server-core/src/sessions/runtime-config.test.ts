@@ -13,7 +13,7 @@ const baseCompat: LlmConnection = {
   defaultModel: 'gemma',
   piAuthProvider: 'openai',
   customEndpoint: { api: 'openai-completions', supportsImages: true },
-  models: [{ id: 'gemma', supportsImages: true } as never],
+  models: [{ id: 'gemma', maxTokens: 32_768, supportsImages: true } as never],
 }
 
 function sig(connection: LlmConnection) {
@@ -52,6 +52,16 @@ describe('buildBackendRuntimeSignature', () => {
     })
 
     expect(disabled).not.toBe(enabled)
+  })
+
+  it('changes when a custom endpoint model output limit changes', () => {
+    const base = sig(baseCompat)
+    const changed = sig({
+      ...baseCompat,
+      models: [{ id: 'gemma', maxTokens: 65_536, supportsImages: true } as never],
+    })
+
+    expect(changed).not.toBe(base)
   })
 
   it('ignores non-runtime metadata such as lastUsedAt', () => {

@@ -70,6 +70,35 @@ describe('agent session status goal gate', () => {
 
     expect(getAgentSessionStatusGateError(goal, 'done')).toContain('child-report-1')
   })
+
+  it('does not permanently block done for a failed structured child after recovery review', () => {
+    const goal = makeGoal('passed')
+    goal.orchestration = {
+      version: 1,
+      phase: 'paused',
+      createdAt: 1,
+      updatedAt: 2,
+      policy: {
+        selectedSourceSlugs: [],
+        forbidWorkingDirectoryDiscovery: false,
+        requireStructuredHandoff: true,
+        requireUserConfirmationPause: true,
+        maxAutomaticRepairPasses: 2,
+      },
+      taskBoard: { tasks: [] },
+      subAgents: [{
+        sessionId: 'child-failed',
+        status: 'failed',
+        sourceSlugs: [],
+        reportPath: 'C:/reports/child-failed.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }],
+    }
+
+    expect(getAgentSessionStatusGateError(goal, 'done')).toBeUndefined()
+  })
 })
 
 function makeGoal(status: SessionGoalState['status']): SessionGoalState {

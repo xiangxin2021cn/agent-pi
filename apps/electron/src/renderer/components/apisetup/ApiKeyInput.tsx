@@ -37,11 +37,20 @@ export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
 export type { CustomEndpointApi }
 
+export interface ApiKeyModelOverride {
+  id: string
+  contextWindow?: number
+  maxTokens?: number
+  supportsImages?: boolean
+}
+
+export type ApiKeyModelEntry = string | ApiKeyModelOverride
+
 export interface ApiKeySubmitData {
   apiKey: string
   baseUrl?: string
   connectionDefaultModel?: string
-  models?: string[]
+  models?: ApiKeyModelEntry[]
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
   /** Custom endpoint protocol — set when user configures an arbitrary API endpoint */
@@ -77,7 +86,7 @@ export interface ApiKeyInputProps {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
-    models?: string[]
+    models?: ApiKeyModelEntry[]
     /** Pre-fill the protocol toggle for custom endpoints */
     customApi?: CustomEndpointApi
   }
@@ -164,11 +173,58 @@ function getPresetForUrl(url: string, presets: Preset[]): PresetKey {
   return match?.key ?? 'custom'
 }
 
-function parseModelList(value: string): string[] {
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number(value.replace(/_/g, '').trim())
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
+}
+
+function parseBoolean(value: string | undefined): boolean | undefined {
+  if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (['true', '1', 'yes', 'y', 'image', 'images'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n', 'text'].includes(normalized)) return false
+  return undefined
+}
+
+function parseModelEntry(value: string): ApiKeyModelEntry | null {
+  const [rawId, ...parts] = value.split('@').map((part) => part.trim()).filter(Boolean)
+  if (!rawId) return null
+
+  const override: ApiKeyModelOverride = { id: rawId }
+  for (const part of parts) {
+    const [rawKey, rawValue] = part.split('=').map((item) => item.trim())
+    const key = rawKey?.toLowerCase()
+    if (!key) continue
+    if (['ctx', 'context', 'contextwindow', 'context_window'].includes(key)) {
+      const parsed = parsePositiveInteger(rawValue)
+      if (parsed) override.contextWindow = parsed
+    } else if (['out', 'output', 'max', 'maxtokens', 'max_tokens'].includes(key)) {
+      const parsed = parsePositiveInteger(rawValue)
+      if (parsed) override.maxTokens = parsed
+    } else if (['images', 'image', 'supportsimages', 'supports_images'].includes(key)) {
+      const parsed = parseBoolean(rawValue)
+      if (parsed !== undefined) override.supportsImages = parsed
+    }
+  }
+
+  return Object.keys(override).length > 1 ? override : rawId
+}
+
+export function parseModelList(value: string): ApiKeyModelEntry[] {
   return value
     .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+    .map((entry) => parseModelEntry(entry.trim()))
+    .filter((entry): entry is ApiKeyModelEntry => Boolean(entry))
+}
+
+function modelEntryId(entry: ApiKeyModelEntry | undefined): string | undefined {
+  if (!entry) return undefined
+  return typeof entry === 'string' ? entry : entry.id
+}
+
+function modelEntryIds(entries: ApiKeyModelEntry[] | undefined): string[] | undefined {
+  return entries?.map(modelEntryId).filter((id): id is string => Boolean(id))
 }
 
 // ============================================================
@@ -252,7 +308,7 @@ export function ApiKeyInput({
       setPiModels(result.models)
 
       if (hydratedTierProviderRef.current !== provider) {
-        const tiers = resolveTierModels(result.models, provider === initialPreset ? initialValues?.models : undefined)
+        const tiers = resolveTierModels(result.models, provider === initialPreset ? modelEntryIds(initialValues?.models) : undefined)
         setBestModel(tiers.best)
         setDefaultModel(tiers.default_)
         setCheapModel(tiers.cheap)
@@ -344,7 +400,7 @@ export function ApiKeyInput({
         setModelError('Please select a model for each tier.')
         return
       }
-      const models: string[] = [bestModel, defaultModel, cheapModel]
+      const models: ApiKeyModelEntry[] = [bestModel, defaultModel, cheapModel]
       onSubmit({
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || undefined,
@@ -380,7 +436,7 @@ export function ApiKeyInput({
             ...(awsSessionToken.trim() ? { sessionToken: awsSessionToken.trim() } : {}),
           },
         } : {}),
-        connectionDefaultModel: parsedModels[0],
+        connectionDefaultModel: modelEntryId(parsedModels[0]),
         models: parsedModels.length > 0 ? parsedModels : undefined,
       })
       return
@@ -411,7 +467,7 @@ export function ApiKeyInput({
     onSubmit({
       apiKey: apiKey.trim(),
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
-      connectionDefaultModel: parsedModels[0],
+      connectionDefaultModel: modelEntryId(parsedModels[0]),
       models: parsedModels.length > 0 ? parsedModels : undefined,
       piAuthProvider: resolvedPiAuthProvider,
       modelSelectionMode: isPiApiKeyFlow
@@ -812,7 +868,7 @@ export function ApiKeyInput({
             <p className="text-xs text-destructive">{modelError}</p>
           )}
           <p className="text-xs text-foreground/30">
-            Comma-separated list. The first model is the default. The last is used for summarization.
+            Comma-separated list. The first model is the default. Use model@ctx=1000000@out=384000 for custom context/output overrides.
           </p>
           {(activePreset === 'custom' || !activePreset) && (
             <p className="text-xs text-foreground/30">

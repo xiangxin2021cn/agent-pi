@@ -51,15 +51,28 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.5.**
+**Current release: V2.2.6.**
 
-**当前发布版：V2.2.5。**
+**当前发布版：V2.2.6。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.6 Multi-Agent Recovery and DeepSeek V4 Endpoint Limits / V2.2.6 多智能体恢复与 DeepSeek V4 端点上限
+
+V2.2.6 keeps Tender Workbench multi-agent runs bounded without turning failures into permanent deadlocks. Parent sessions still wait while child agents are actively processing, but failed, stale, or missing child handoffs now move into a recoverable state: retry the child, ask the user, or continue with explicit missing-child gaps. Parent sessions remain blocked from fabricating child-owned report files. Custom endpoint models named `deepseek-v4`, `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-chat`, or `deepseek-reasoner` now register with 1M context and 384K max output defaults, with manual override syntax such as `deepseek-v4-pro@ctx=1000000@out=384000`.
+
+V2.2.6 保持投标工作台多智能体边界，但不再把失败变成永久死锁。子智能体仍在运行时主会话继续等待；子智能体失败、超时或未写出 handoff 时，会进入可恢复状态：重试子任务、询问用户，或在明确记录缺失项后继续。主会话仍禁止伪造子智能体专属报告文件。自定义端点模型名为 `deepseek-v4`、`deepseek-v4-pro`、`deepseek-v4-flash`、`deepseek-chat` 或 `deepseek-reasoner` 时，默认注册 100 万上下文和 38.4 万最大输出，并支持 `deepseek-v4-pro@ctx=1000000@out=384000` 形式的手动覆盖。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Handoff recovery | Active children keep ownership; failed or missing child reports unblock into explicit recovery instead of infinite waiting. | 运行中的子智能体继续拥有任务；失败或缺失报告会解除无限等待，进入显式恢复。 |
+| Report ownership | Parent sessions still cannot create, edit, or replace child-owned handoff report paths. | 主会话仍不能创建、修改或替换子智能体专属 handoff 报告路径。 |
+| DeepSeek V4 endpoints | Known DeepSeek V4 custom model IDs receive 1M context and 384K output defaults; custom overrides can be typed in the model field. | 已知 DeepSeek V4 自定义模型自动获得 100 万上下文与 38.4 万输出默认值；模型输入框支持手动覆盖。 |
+| Core runtime | Claude Agent SDK 0.3.214, Anthropic SDK 0.112.3, and Pi 0.80.10. | Claude Agent SDK 升级至 0.3.214，Anthropic SDK 升级至 0.112.3，Pi 保持最新的 0.80.10。 |
 
 ### V2.2.5 Stability and Responsiveness / V2.2.5 稳定性与流畅性
 
@@ -88,19 +101,6 @@ V2.2.4 将 C5.1 逐项工作底稿设为投标工作台 BOQ 组价的就绪标�
 | Thread-aware read state | Parent and descendant sessions share a consistent read boundary, including child completion while the parent is being viewed. | 主会话与全部后代会话采用一致的已读边界，包括查看主会话期间完成的子智能体。 |
 | Focused navigation | Scheduled tasks, event triggers, and agent events are removed from the main sidebar; existing automation data and backend services are not deleted. | 主侧栏不再显示定时任务、事件触发和智能体事件；已有自动化数据及后端服务不会被删除。 |
 | Core runtime | Claude Agent SDK 0.3.212, Anthropic SDK 0.112.2, and Pi 0.80.10. | Claude Agent SDK 升级至 0.3.212，Anthropic SDK 升级至 0.112.2，Pi 升级至 0.80.10。 |
-
-### V2.2.3 Calculable BOQ Production Pack / V2.2.3 可计算 BOQ 生产包
-
-V2.2.3 upgrades Tender Workbench BOQ pricing from narrative handoffs to machine-verifiable production data. Every priced item now carries a calculable productivity basis, activity/calendar linkage, and initial cash-flow allocation; deterministic merge gates reject incomplete coverage and semantic conflicts before downstream planning starts.
-
-V2.2.3 将投标工作台 BOQ 组价从叙述性交接升级为机器可校验的生产数据。每个已组价条目均须携带可计算工效依据、进度活动/日历关联和初始现金流分期；下游策划启动前，确定性合并门禁会拒绝覆盖不全及语义冲突。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Productivity basis | BOQ items record production rate, duration, calendar, activity, source, and assumptions; capacity must cover the stated quantity. | BOQ 条目记录生产率、持续时间、日历、活动、来源和假设，计算产能必须覆盖对应工程量。 |
-| Initial cash flow | Each item supplies auditable period allocations with amount or weight, source, assumptions, and activity linkage. | 每个条目提供可审计的分期金额或权重，并记录来源、假设和活动关联。 |
-| Cross-batch merge gate | Deterministic checks reject resource-unit, rate-unit, productivity, and activity-calendar contradictions across child-agent reports. | 确定性门禁拒绝子智能体报告之间的资源单位、费率单位、工效及活动日历矛盾。 |
-| Completion readiness | Missing machine fields, incomplete item coverage, extra items, or altered child results prevent the BOQ capability pack from becoming ready. | 缺失机器字段、条目覆盖不全、越界条目或篡改子报告结果时，BOQ 能力包不得进入 ready。 |
 
 Older release details are available on GitHub Releases.
 

@@ -35,10 +35,12 @@ describe('normalizeCustomEndpointModelEntry', () => {
     expect(normalizeCustomEndpointModelEntry({
       id: 'pi/vision-model',
       contextWindow: 262_144,
+      maxTokens: 32_768,
       supportsImages: true,
     })).toEqual({
       id: 'vision-model',
       contextWindow: 262_144,
+      maxTokens: 32_768,
       supportsImages: true,
     })
   })
@@ -61,8 +63,31 @@ describe('buildCustomEndpointModelDef', () => {
   })
 
   it('lets per-model overrides enable image input and custom context window', () => {
-    const model = buildCustomEndpointModelDef('vision-model', undefined, { supportsImages: true, contextWindow: 262_144 })
+    const model = buildCustomEndpointModelDef('vision-model', undefined, { supportsImages: true, contextWindow: 262_144, maxTokens: 32_768 })
     expect(model.input).toEqual(['text', 'image'])
     expect(model.contextWindow).toBe(262_144)
+    expect(model.maxTokens).toBe(32_768)
+  })
+
+  it('uses DeepSeek V4 long-context defaults for custom endpoints', () => {
+    const model = buildCustomEndpointModelDef('deepseek-v4-pro')
+    expect(model.contextWindow).toBe(1_000_000)
+    expect(model.maxTokens).toBe(384_000)
+  })
+
+  it('uses DeepSeek V4 defaults when the model is namespaced', () => {
+    const model = buildCustomEndpointModelDef('deepseek/deepseek-v4-flash')
+    expect(model.contextWindow).toBe(1_000_000)
+    expect(model.maxTokens).toBe(384_000)
+  })
+
+  it('uses DeepSeek V4 defaults for official legacy compatibility names', () => {
+    const chat = buildCustomEndpointModelDef('deepseek-chat')
+    const reasoner = buildCustomEndpointModelDef('deepseek-reasoner')
+
+    expect(chat.contextWindow).toBe(1_000_000)
+    expect(chat.maxTokens).toBe(384_000)
+    expect(reasoner.contextWindow).toBe(1_000_000)
+    expect(reasoner.maxTokens).toBe(384_000)
   })
 })

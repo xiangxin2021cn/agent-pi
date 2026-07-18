@@ -15,7 +15,10 @@ export function getAgentSessionStatusGateError(
   ))
   const unresolvedStructuredHandoffs = hasStructuredDelegation
     ? orchestration!.subAgents.filter(agent => (
-        agent.status !== 'handoff_received' && agent.status !== 'completed'
+        agent.status !== 'handoff_received'
+        && agent.status !== 'completed'
+        && agent.status !== 'needs_review'
+        && agent.status !== 'failed'
       ))
     : []
   if (unresolvedStructuredHandoffs.length > 0) {

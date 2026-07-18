@@ -40,7 +40,7 @@ interface CredentialsStepProps {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
-    models?: string[]
+    models?: ApiKeySubmitData['models']
     customApi?: CustomEndpointApi
   }
 }

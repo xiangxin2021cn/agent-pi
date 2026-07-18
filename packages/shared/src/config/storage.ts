@@ -41,7 +41,7 @@ export type {
 import type { Workspace, AuthType } from '@craft-agent/core/types';
 
 // Import LLM connection types and constants
-import type { LlmConnection } from './llm-connections.ts';
+import type { LlmConnection, LlmConnectionModelEntry } from './llm-connections.ts';
 import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection, isPiProvider, toBedrockNativeId, type LlmProviderType } from './llm-connections.ts';
 import {
   getModelProvider,
@@ -1877,9 +1877,9 @@ function displayNameForMigratedModel(modelId: string): string {
 
 function withUpdatedModelEntry(
   connection: LlmConnection,
-  entry: ModelDefinition | string,
+  entry: LlmConnectionModelEntry,
   nextId: string,
-): ModelDefinition | string {
+): LlmConnectionModelEntry {
   if (typeof entry === 'string') {
     if (connection.providerType === 'anthropic' && nextId === OPUS_DEFAULT_ID) {
       return { ...getModelById(OPUS_DEFAULT_ID)! };
@@ -1887,17 +1887,17 @@ function withUpdatedModelEntry(
     return nextId;
   }
 
-  const nextEntry: ModelDefinition = { ...entry, id: nextId };
+  const nextEntry: LlmConnectionModelEntry = { ...entry, id: nextId };
   if (connection.providerType === 'anthropic' && nextId === OPUS_DEFAULT_ID) {
     return { ...getModelById(OPUS_DEFAULT_ID)! };
   }
-  if (nextEntry.name && /Opus 4\.[56]/.test(nextEntry.name)) {
+  if ('name' in nextEntry && nextEntry.name && /Opus 4\.[56]/.test(nextEntry.name)) {
     nextEntry.name = displayNameForMigratedModel(nextId);
   }
   return nextEntry;
 }
 
-function modelEntryForDefault(connection: LlmConnection, modelId: string): ModelDefinition | string {
+function modelEntryForDefault(connection: LlmConnection, modelId: string): LlmConnectionModelEntry {
   if (connection.providerType === 'anthropic' && modelId === OPUS_DEFAULT_ID) {
     return { ...getModelById(OPUS_DEFAULT_ID)! };
   }
@@ -1931,7 +1931,7 @@ function migrateLegacyOpusToDefaultOpus(config: StoredConfig): boolean {
     }
 
     if (connection.models && Array.isArray(connection.models)) {
-      const nextModels: Array<ModelDefinition | string> = [];
+      const nextModels: LlmConnectionModelEntry[] = [];
       const seen = new Set<string>();
       let connectionModelsChanged = false;
 
@@ -2012,7 +2012,7 @@ function migrateSonnet45ToSonnet46(config: StoredConfig): boolean {
             changed = true;
           } else if (typeof model === 'object' && model.id === SONNET_45_ID) {
             model.id = SONNET_46_ID;
-            if (model.name?.includes('4.5')) {
+            if ('name' in model && typeof model.name === 'string' && model.name.includes('4.5')) {
               model.name = model.name.replace('4.5', '4.6');
             }
             changed = true;

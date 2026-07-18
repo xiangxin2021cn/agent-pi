@@ -50,10 +50,11 @@ import {
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useWorkspaceIcon } from '@/hooks/useWorkspaceIcon'
 import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
+import type { ApiKeySubmitData } from '@/components/apisetup'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType, resolveMidStreamBehavior, type CustomEndpointApi, type MidStreamBehavior } from '@config/llm-connections'
+import { getModelsForProviderType, resolveMidStreamBehavior, type CustomEndpointApi, type LlmConnectionModelEntry, type MidStreamBehavior } from '@config/llm-connections'
 import { toast } from 'sonner'
 
 /**
@@ -83,8 +84,13 @@ function getModelOptionsForConnection(
         return { value: m, label: getModelShortName(m), description: '' }
       }
       // ModelDefinition object
-      const def = m as ModelDefinition
-      return { value: def.id, label: def.name, description: def.description, descriptionKey: def.descriptionKey }
+      const def = m as Partial<ModelDefinition> & { id: string }
+      return {
+        value: def.id,
+        label: def.name ?? getModelShortName(def.id),
+        description: def.description ?? '',
+        descriptionKey: def.descriptionKey,
+      }
     })
   }
 
@@ -96,6 +102,25 @@ function getModelOptionsForConnection(
     description: m.description,
     descriptionKey: m.descriptionKey,
   }))
+}
+
+function formatModelEntryForEdit(model: LlmConnectionModelEntry): string {
+  if (typeof model === 'string') return model
+  const parts = [model.id]
+  if (typeof model.contextWindow === 'number') parts.push(`ctx=${model.contextWindow}`)
+  if (typeof model.maxTokens === 'number') parts.push(`out=${model.maxTokens}`)
+  if (typeof model.supportsImages === 'boolean') parts.push(`images=${model.supportsImages}`)
+  return parts.join('@')
+}
+
+function toApiKeyModelEntry(model: LlmConnectionModelEntry): NonNullable<ApiKeySubmitData['models']>[number] {
+  if (typeof model === 'string') return model
+  return {
+    id: model.id,
+    ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
+    ...(typeof model.maxTokens === 'number' ? { maxTokens: model.maxTokens } : {}),
+    ...(typeof model.supportsImages === 'boolean' ? { supportsImages: model.supportsImages } : {}),
+  }
 }
 
 export const meta: DetailsPageMeta = {
@@ -636,7 +661,7 @@ export default function AiSettingsPage() {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
-    models?: string[]
+    models?: ApiKeySubmitData['models']
     customApi?: CustomEndpointApi
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
@@ -826,12 +851,12 @@ export default function AiSettingsPage() {
 
     // Build model string from connection's models array
     const modelStr = connection.models
-      ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
+      ?.map((m: LlmConnectionModelEntry) => formatModelEntryForEdit(m))
       .join(', ') || connection.defaultModel || ''
 
     // Set initial values before opening overlay so ApiKeyInput mounts with them
-    const modelIds = connection.models
-      ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
+    const modelEntries = connection.models
+      ?.map((m: LlmConnectionModelEntry) => toApiKeyModelEntry(m))
       .filter(Boolean)
 
     const isCustomEndpointConnection = !!connection.customEndpoint && !!connection.baseUrl?.trim()
@@ -841,7 +866,7 @@ export default function AiSettingsPage() {
       baseUrl: connection.baseUrl,
       connectionDefaultModel: modelStr,
       activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
-      models: modelIds,
+      models: modelEntries,
       customApi: connection.customEndpoint?.api,
     })
 

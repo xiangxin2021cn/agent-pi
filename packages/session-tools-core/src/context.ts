@@ -463,7 +463,7 @@ export interface SessionSpawnStatus {
   reportSize?: number;
   handoffStatus: 'not_applicable' | 'pending' | 'ready' | 'missing' | 'failed';
   parentAction: 'not_applicable' | 'wait' | 'merge' | 'user_review';
-  takeoverAllowed: false;
+  takeoverAllowed: boolean;
   lastActivityAt?: number;
   idleMs?: number;
   staleAfterMs?: number;

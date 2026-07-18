@@ -140,7 +140,7 @@ export function apiSetupMethodToConnectionSetup(
     credential?: string
     baseUrl?: string
     connectionDefaultModel?: string
-    models?: string[]
+    models?: ApiKeySubmitData['models']
     piAuthProvider?: string
     modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
     customEndpoint?: CustomEndpointConfig
@@ -247,7 +247,7 @@ export function useOnboarding({
     options?: {
       baseUrl?: string
       connectionDefaultModel?: string
-      models?: string[]
+      models?: ApiKeySubmitData['models']
       piAuthProvider?: string
       modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
       customEndpoint?: CustomEndpointConfig
@@ -452,11 +452,14 @@ export function useOnboarding({
       // Validate connection by spawning a lightweight subprocess test.
       // Custom endpoint protocol routes through PiAgent at runtime, so test with Pi too.
       const setupTestProvider = data.customEndpoint ? 'pi' : (isPiApiKeyFlow ? 'pi' : 'anthropic')
+      const setupTestModel = typeof data.models?.[0] === 'string'
+        ? data.models[0]
+        : data.models?.[0]?.id
       const testResult = await window.electronAPI.testLlmConnectionSetup({
         provider: setupTestProvider,
         apiKey: data.apiKey,
         baseUrl: data.baseUrl,
-        model: data.models?.[0],
+        model: setupTestModel,
         piAuthProvider: data.piAuthProvider,
         customEndpoint: data.customEndpoint,
       })

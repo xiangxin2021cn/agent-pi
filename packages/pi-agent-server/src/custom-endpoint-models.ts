@@ -1,11 +1,18 @@
 export type CustomEndpointInput = 'text' | 'image'
 
+export const CUSTOM_ENDPOINT_DEFAULT_CONTEXT_WINDOW = 131_072
+export const CUSTOM_ENDPOINT_DEFAULT_MAX_TOKENS = 8_192
+export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_000_000
+export const DEEPSEEK_V4_MAX_TOKENS = 384_000
+
 export interface CustomEndpointModelDefaults {
   supportsImages?: boolean
+  maxTokens?: number
 }
 
 export interface CustomEndpointModelOverrides {
   contextWindow?: number
+  maxTokens?: number
   supportsImages?: boolean
 }
 
@@ -16,6 +23,7 @@ export interface CustomEndpointModelEntry extends CustomEndpointModelOverrides {
 export type CustomEndpointModelConfig = string | {
   id: string
   contextWindow?: number
+  maxTokens?: number
   supportsImages?: boolean
 }
 
@@ -39,8 +47,27 @@ export function normalizeCustomEndpointModelEntry(model: CustomEndpointModelConf
   return {
     id: stripPiPrefix(model.id),
     ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+    ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
     ...(model.supportsImages !== undefined ? { supportsImages: model.supportsImages } : {}),
   }
+}
+
+function normalizedCapabilityId(id: string): string {
+  return stripPiPrefix(id).trim().toLowerCase().replace(/[_\s]+/g, '-')
+}
+
+export function getKnownCustomEndpointModelCapabilities(id: string): Pick<CustomEndpointModelOverrides, 'contextWindow' | 'maxTokens'> {
+  const normalized = normalizedCapabilityId(id)
+  const bareId = normalized.includes('/') ? normalized.split('/').at(-1)! : normalized
+
+  if (/^deepseek-v4(?:-(?:pro|flash))?$/.test(bareId) || bareId === 'deepseek-chat' || bareId === 'deepseek-reasoner') {
+    return {
+      contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
+      maxTokens: DEEPSEEK_V4_MAX_TOKENS,
+    }
+  }
+
+  return {}
 }
 
 /**
@@ -56,6 +83,7 @@ export function buildCustomEndpointModelDef(
 ) {
   const supportsImages = overrides?.supportsImages ?? defaults?.supportsImages ?? false
   const input: CustomEndpointInput[] = supportsImages ? ['text', 'image'] : ['text']
+  const knownCapabilities = getKnownCustomEndpointModelCapabilities(id)
 
   return {
     id,
@@ -63,7 +91,7 @@ export function buildCustomEndpointModelDef(
     reasoning: false,
     input,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: overrides?.contextWindow ?? 131_072,
-    maxTokens: 8_192,
+    contextWindow: overrides?.contextWindow ?? knownCapabilities.contextWindow ?? CUSTOM_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: overrides?.maxTokens ?? defaults?.maxTokens ?? knownCapabilities.maxTokens ?? CUSTOM_ENDPOINT_DEFAULT_MAX_TOKENS,
   }
 }

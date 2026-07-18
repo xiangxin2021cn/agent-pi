@@ -44,6 +44,27 @@ import {
 } from './model-picker-helpers'
 import { useModelVisionToggle } from './useModelVisionToggle'
 
+type ModelEntry = NonNullable<LlmConnectionWithStatus['models']>[number]
+
+function getModelEntryName(model: ModelEntry): string {
+  if (typeof model === 'string') {
+    return stripPiPrefixForDisplay(getModelShortName(model))
+  }
+  if ('name' in model && typeof model.name === 'string' && model.name.trim()) {
+    return model.name
+  }
+  return stripPiPrefixForDisplay(model.id)
+}
+
+function isThinkingDisabledForModel(model: ModelEntry | undefined): boolean {
+  return (
+    typeof model === 'object'
+    && model !== null
+    && 'supportsThinking' in model
+    && model.supportsThinking === false
+  )
+}
+
 interface CompactModelSelectorProps {
   currentModel: string
   currentConnection?: string
@@ -121,15 +142,14 @@ export function CompactModelSelector({
       typeof m === 'string' ? m === modelToDisplay : m.id === modelToDisplay,
     )
     if (!model) return stripPiPrefixForDisplay(getModelDisplayName(modelToDisplay))
-    if (typeof model === 'string') return stripPiPrefixForDisplay(model)
-    return model.name ?? stripPiPrefixForDisplay(model.id)
+    return getModelEntryName(model)
   }, [availableModels, currentModel, connectionDefaultModel])
 
   const thinkingDisabled = React.useMemo(() => {
     const model = availableModels.find(
       m => typeof m !== 'string' && m.id === currentModel,
     )
-    return typeof model !== 'string' && model?.supportsThinking === false
+    return isThinkingDisabledForModel(model)
   }, [availableModels, currentModel])
 
   const connectionsByProvider = React.useMemo(
@@ -287,9 +307,7 @@ export function CompactModelSelector({
                         <div className="pl-6 flex flex-col gap-0.5">
                           {(conn.models || ANTHROPIC_MODELS).map(model => {
                             const modelId = typeof model === 'string' ? model : model.id
-                            const modelName = typeof model === 'string'
-                              ? stripPiPrefixForDisplay(getModelShortName(model))
-                              : (model.name ?? stripPiPrefixForDisplay(model.id))
+                            const modelName = getModelEntryName(model)
                             const isSelectedModel =
                               isCurrentConnection && currentModel === modelId
                             const showVision = isCompatProvider(conn.providerType)
@@ -337,9 +355,7 @@ export function CompactModelSelector({
             // 'flat' — list models of the active connection
             availableModels.map(model => {
               const modelId = typeof model === 'string' ? model : model.id
-              const modelName = typeof model === 'string'
-                ? stripPiPrefixForDisplay(getModelShortName(model))
-                : (model.name ?? stripPiPrefixForDisplay(model.id))
+              const modelName = getModelEntryName(model)
               const isSelected = currentModel === modelId
               const descriptionKey =
                 typeof model !== 'string' && 'descriptionKey' in model

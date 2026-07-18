@@ -762,12 +762,19 @@ export interface ClaudeOAuthIdentityDto {
   organization?: { uuid?: string; name?: string }
 }
 
+export interface LlmConnectionSetupModel {
+  id: string
+  contextWindow?: number
+  maxTokens?: number
+  supportsImages?: boolean
+}
+
 export interface LlmConnectionSetup {
   slug: string
   credential?: string
   baseUrl?: string | null
   defaultModel?: string | null
-  models?: string[] | null
+  models?: Array<string | LlmConnectionSetupModel> | null
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
   /** When true, reject setup if the connection doesn't already exist (reauth guard). */

@@ -4,6 +4,7 @@ import {
   resolvePiAuthProviderForSubmit,
   resolvePresetStateForBaseUrlChange,
 } from '../submit-helpers'
+import { parseModelList } from '../ApiKeyInput'
 import { pickTierDefaults, resolveTierModels } from '../tier-models'
 
 const MODELS = [
@@ -11,6 +12,15 @@ const MODELS = [
   { id: 'pi/zai-balanced', name: 'Balanced', costInput: 5, costOutput: 10, contextWindow: 200000, reasoning: true },
   { id: 'pi/zai-fast', name: 'Fast', costInput: 1, costOutput: 2, contextWindow: 128000, reasoning: false },
 ]
+
+describe('ApiKeyInput model override parsing', () => {
+  it('parses custom endpoint context and output token overrides', () => {
+    expect(parseModelList('deepseek-v4-pro@ctx=1000000@out=384000, deepseek-v4-flash')).toEqual([
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxTokens: 384_000 },
+      'deepseek-v4-flash',
+    ])
+  })
+})
 
 describe('ApiKeyInput tier hydration helpers', () => {
   it('resolveTierModels keeps saved tier selections when all are valid', () => {

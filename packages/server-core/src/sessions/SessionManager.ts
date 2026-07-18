@@ -4289,10 +4289,12 @@ export class SessionManager implements ISessionManager {
             customModels: connection.models?.map(model => {
               if (typeof model === 'string') return model
               const supportsImages = typeof model.supportsImages === 'boolean' ? model.supportsImages : undefined
-              if (model.contextWindow || supportsImages !== undefined) {
+              const maxTokens = typeof model.maxTokens === 'number' ? model.maxTokens : undefined
+              if (model.contextWindow || maxTokens || supportsImages !== undefined) {
                 return {
                   id: model.id,
                   ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+                  ...(maxTokens ? { maxTokens } : {}),
                   ...(supportsImages !== undefined ? { supportsImages } : {}),
                 }
               }
@@ -6213,6 +6215,7 @@ export class SessionManager implements ISessionManager {
         : handoffStatus === 'pending'
           ? 'wait'
           : 'user_review'
+    const takeoverAllowed = handoffStatus === 'missing' || handoffStatus === 'failed'
 
     return {
       sessionId: session.id,
@@ -6228,7 +6231,7 @@ export class SessionManager implements ISessionManager {
       reportSize: report.size,
       handoffStatus,
       parentAction,
-      takeoverAllowed: false,
+      takeoverAllowed,
       lastActivityAt,
       idleMs: activityState.idleMs,
       staleAfterMs,
@@ -6320,8 +6323,8 @@ export class SessionManager implements ISessionManager {
         id: generateMessageId(),
         role: 'info',
         content: barrier.source === 'tender_task_board'
-          ? `Waiting for ${childCount} tender batch handoff(s). The parent instruction is queued and will run only after every batch report passes validation; parent takeover is disabled.`
-          : `Waiting for ${childCount} structured child handoff(s). The parent is paused and will resume automatically after every child finishes; parent takeover is disabled.`,
+          ? `Waiting for ${childCount} tender batch handoff(s). The parent instruction is queued and will run after batch reports pass validation.`
+          : `Waiting for ${childCount} structured child handoff(s). The parent is paused and will resume automatically after every child finishes.`,
         timestamp: this.monotonic(),
         infoLevel: 'info',
       }
@@ -6369,32 +6372,6 @@ export class SessionManager implements ISessionManager {
       return
     }
     if (decision.action === 'review') {
-      if (decision.source === 'tender_task_board') {
-        parent.spawnHandoffWait.childSessionIds = decision.reviewSessionIds
-        parent.spawnHandoffWait.reportPaths = decision.reportPaths
-        if (!parent.spawnHandoffWait.reviewNotified) {
-          parent.spawnHandoffWait.reviewNotified = true
-          const content = `Tender batch execution requires review for ${decision.reviewSessionIds.join(', ')}. The parent instruction remains queued; retry or resolve the failed batch instead of substituting parent-generated data.`
-          const infoMessage: Message = {
-            id: generateMessageId(),
-            role: 'info',
-            content,
-            timestamp: this.monotonic(),
-            infoLevel: 'warning',
-          }
-          parent.messages.push(infoMessage)
-          this.sendEvent({
-            type: 'info',
-            sessionId: parent.id,
-            message: content,
-            level: 'warning',
-            timestamp: infoMessage.timestamp,
-          }, parent.workspace.id)
-          this.persistSession(parent)
-        }
-        this.scheduleSpawnHandoffMonitor(parent)
-        return
-      }
       this.pauseParentForSpawnHandoffReview(parent, decision.reviewSessionIds)
       return
     }
@@ -6451,7 +6428,37 @@ export class SessionManager implements ISessionManager {
   private pauseParentForSpawnHandoffReview(parent: ManagedSession, childSessionIds: string[]): void {
     this.clearSpawnHandoffWait(parent)
     const current = parent.goalState
-    if (!current) return
+    if (!current) {
+      const reason = `Structured child handoff needs recovery: ${childSessionIds.join(', ')}. Retry the child session, continue with explicit missing-child gaps, or ask the user; do not fabricate child report files.`
+      const infoMessage: Message = {
+        id: generateMessageId(),
+        role: 'info',
+        content: reason,
+        timestamp: this.monotonic(),
+        infoLevel: 'warning',
+      }
+      parent.messages.push(infoMessage)
+      this.persistSession(parent)
+      this.sendEvent({
+        type: 'info',
+        sessionId: parent.id,
+        message: reason,
+        level: 'warning',
+        timestamp: infoMessage.timestamp,
+      }, parent.workspace.id)
+      if (!parent.isProcessing && parent.messageQueue.length > 0) {
+        this.processNextQueuedMessage(parent.id)
+        return
+      }
+      this.sendEvent({
+        type: 'complete',
+        sessionId: parent.id,
+        tokenUsage: parent.tokenUsage,
+        hasUnread: parent.hasUnread,
+      }, parent.workspace.id)
+      this.scheduleIdleRuntimeDispose(parent)
+      return
+    }
 
     const now = Date.now()
     const pauseTransition = current.orchestration
@@ -6473,8 +6480,12 @@ export class SessionManager implements ISessionManager {
       sessionId: parent.id,
       goalId: nextGoalState.id,
       goalState: nextGoalState,
-      reason: `Structured child handoff requires user review: ${childSessionIds.join(', ')}. Automatic parent takeover is disabled.`,
+      reason: `Structured child handoff needs recovery: ${childSessionIds.join(', ')}. Retry the child session, continue with explicit missing-child gaps, or ask the user; do not fabricate child report files.`,
     }, parent.workspace.id)
+    if (!parent.isProcessing && parent.messageQueue.length > 0) {
+      this.processNextQueuedMessage(parent.id)
+      return
+    }
     this.sendEvent({
       type: 'complete',
       sessionId: parent.id,

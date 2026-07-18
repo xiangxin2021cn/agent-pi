@@ -125,4 +125,18 @@ describe('spawn activity lifecycle', () => {
       reviewSessionIds: ['child-1'],
     })
   })
+
+  it('keeps waiting for active children before reviewing failed children', () => {
+    expect(resolveParentSpawnHandoffBarrier({
+      requireStructuredHandoff: true,
+      statuses: [
+        { sessionId: 'child-1', handoffStatus: 'failed' },
+        { sessionId: 'child-2', handoffStatus: 'pending' },
+      ],
+    })).toEqual({
+      action: 'wait',
+      pendingSessionIds: ['child-2'],
+      reviewSessionIds: ['child-1'],
+    })
+  })
 })

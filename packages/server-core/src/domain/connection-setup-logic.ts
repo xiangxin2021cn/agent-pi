@@ -9,6 +9,7 @@ import type { ModelDefinition } from '@craft-agent/shared/config/models'
 import {
   type LlmConnection,
   type CustomEndpointApi,
+  type LlmConnectionModelEntry,
   getDefaultModelsForConnection,
   getDefaultModelForConnection,
   defaultMidStreamBehavior,
@@ -257,7 +258,7 @@ export function createBuiltInConnection(slug: string, baseUrl?: string | null): 
  * objects, always returning false for Pi connections.
  */
 export function validateModelList(
-  models: Array<ModelDefinition | string>,
+  models: LlmConnectionModelEntry[],
   defaultModel: string | undefined,
 ): { valid: boolean; error?: string; resolvedDefaultModel?: string } {
   if (!models || models.length === 0) {

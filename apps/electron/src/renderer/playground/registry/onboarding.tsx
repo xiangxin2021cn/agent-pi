@@ -8,6 +8,7 @@ import { CompletionStep } from '@/components/onboarding/CompletionStep'
 import { GitBashWarning, type GitBashStatus } from '@/components/onboarding/GitBashWarning'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import type { OnboardingState } from '@/components/onboarding/OnboardingWizard'
+import type { ApiKeySubmitData } from '@/components/apisetup'
 
 const createOnboardingState = (overrides: Partial<OnboardingState> = {}): OnboardingState => ({
   step: 'welcome',
@@ -165,7 +166,7 @@ export const onboardingComponents: ComponentEntry[] = [
     ],
     mockData: () => ({
       apiSetupMethod: 'pi_api_key',
-      onSubmit: (data: { apiKey: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[] }) => console.log('[Playground] Submitted:', data),
+      onSubmit: (data: ApiKeySubmitData) => console.log('[Playground] Submitted:', data),
       onStartOAuth: noopHandler,
       onBack: noopHandler,
     }),
@@ -426,7 +427,7 @@ export const onboardingComponents: ComponentEntry[] = [
       onContinue: noopHandler,
       onBack: noopHandler,
       onSelectApiSetupMethod: (method: string) => console.log('[Playground] Selected method:', method),
-      onSubmitCredential: (data: { apiKey: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[] }) => console.log('[Playground] Submitted:', data),
+      onSubmitCredential: (data: ApiKeySubmitData) => console.log('[Playground] Submitted:', data),
       onStartOAuth: noopHandler,
       onFinish: noopHandler,
       onBrowseGitBash: async () => {

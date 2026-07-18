@@ -96,6 +96,15 @@ export type LlmAuthType =
  */
 export type ModelSelectionMode = 'automaticallySyncedFromProvider' | 'userDefined3Tier';
 
+export interface LlmConnectionModelOverride {
+  id: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  supportsImages?: boolean;
+}
+
+export type LlmConnectionModelEntry = ModelDefinition | LlmConnectionModelOverride | string;
+
 /**
  * Protocol for custom API endpoints.
  * Determines which streaming adapter the Pi SDK uses for requests.
@@ -155,7 +164,7 @@ export interface LlmConnection {
   authType: LlmAuthType;
 
   /** Override available models (for custom endpoints that don't support model listing) */
-  models?: Array<ModelDefinition | string>;
+  models?: LlmConnectionModelEntry[];
 
   /** Default model for this connection */
   defaultModel?: string;
@@ -293,12 +302,12 @@ function findSmallModel(
 ): string | undefined {
   if (!connection.models || connection.models.length === 0) return undefined;
 
-  const toId = (m: ModelDefinition | string) => typeof m === 'string' ? m : m.id;
+  const toId = (m: LlmConnectionModelEntry) => typeof m === 'string' ? m : m.id;
 
-  const toSearchStr = (m: ModelDefinition | string) =>
-    typeof m === 'string' ? m.toLowerCase() : `${m.id} ${m.name} ${m.shortName}`.toLowerCase();
+  const toSearchStr = (m: LlmConnectionModelEntry) =>
+    typeof m === 'string' ? m.toLowerCase() : `${m.id} ${'name' in m ? m.name ?? '' : ''} ${'shortName' in m ? m.shortName ?? '' : ''}`.toLowerCase();
 
-  const isAllowedModel = (m: ModelDefinition | string): boolean =>
+  const isAllowedModel = (m: LlmConnectionModelEntry): boolean =>
     !isDeniedMiniModelId(toId(m), connection.piAuthProvider);
 
   // Provider-aware keyword search
@@ -503,7 +512,7 @@ export function resolveMidStreamBehavior(
  *
  * Pure function — does not mutate the input. Storage round-trip is handled
  * upstream via `saveLlmConnection`. The stored object form for custom-endpoint
- * models is `{ id, name?, shortName?, contextWindow?, supportsImages? }`
+ * models is `{ id, name?, shortName?, contextWindow?, maxTokens?, supportsImages? }`
  * (passthrough-validated by the storage schema). `name` and `shortName` default
  * to the model's `id` when promoting so that downstream renderer surfaces that
  * read `m.name` (the trigger button display, picker row labels) keep showing a
@@ -516,7 +525,7 @@ export function setModelSupportsImages(
   enabled: boolean,
 ): LlmConnection {
   if (!connection.models) return connection;
-  const idOf = (m: ModelDefinition | string) => (typeof m === 'string' ? m : m.id);
+  const idOf = (m: LlmConnectionModelEntry) => (typeof m === 'string' ? m : m.id);
   const idx = connection.models.findIndex(m => idOf(m) === modelId);
   if (idx === -1) return connection;
 
@@ -527,7 +536,7 @@ export function setModelSupportsImages(
       : { ...entry, supportsImages: enabled };
 
   const nextModels = connection.models.slice();
-  nextModels[idx] = nextEntry as ModelDefinition;
+  nextModels[idx] = nextEntry;
   return { ...connection, models: nextModels };
 }
 

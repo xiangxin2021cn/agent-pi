@@ -62,11 +62,12 @@ import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
-import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, type ModelDefinition } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow } from '@config/models'
 import {
   resolveEffectiveConnectionSlug,
   isCompatProvider,
   modelSupportsImages,
+  type LlmConnectionModelEntry,
 } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
@@ -93,6 +94,25 @@ import {
 } from './working-directory-history'
 import { useWorkingDirectoryState } from './use-working-directory-state'
 import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
+
+function getModelEntryName(model: LlmConnectionModelEntry): string {
+  if (typeof model === 'string') {
+    return stripPiPrefixForDisplay(getModelShortName(model))
+  }
+  if ('name' in model && typeof model.name === 'string' && model.name.trim()) {
+    return model.name
+  }
+  return stripPiPrefixForDisplay(model.id)
+}
+
+function isThinkingDisabledForModel(model: LlmConnectionModelEntry | undefined): boolean {
+  return (
+    typeof model === 'object'
+    && model !== null
+    && 'supportsThinking' in model
+    && model.supportsThinking === false
+  )
+}
 import { CompactModelSelector } from './CompactModelSelector'
 import { getDocumentEnhancementViewModel } from '../document-enhancement-view-model'
 import {
@@ -395,7 +415,7 @@ export function FreeFormInput({
   // Disable thinking selector when the current model explicitly doesn't support it
   const thinkingDisabled = React.useMemo(() => {
     const model = availableModels.find(m => typeof m !== 'string' && m.id === currentModel)
-    return typeof model !== 'string' && model?.supportsThinking === false
+    return isThinkingDisabledForModel(model)
   }, [availableModels, currentModel])
 
   // Get display name for current model (full name, not short name)
@@ -412,7 +432,7 @@ export function FreeFormInput({
     // Defensive: partial entries (custom-endpoint user-config or vision-toggle
     // promotions) may lack `name`. Fall back to the id so the trigger button
     // never goes blank.
-    return model.name ?? stripPiPrefixForDisplay(model.id)
+    return getModelEntryName(model)
   }, [availableModels, currentModel, connectionDefaultModel])
 
   // Group connections by provider type for hierarchical dropdown.
@@ -1633,9 +1653,7 @@ export function FreeFormInput({
       if (modelId === currentModel) continue
       if (!modelSupportsImages(effectiveConnectionDetails, modelId)) continue
 
-      const modelName = typeof model === 'string'
-        ? stripPiPrefixForDisplay(getModelShortName(model))
-        : (model.name ?? stripPiPrefixForDisplay(model.id))
+      const modelName = getModelEntryName(model)
       return { id: modelId, name: modelName }
     }
 
@@ -2414,9 +2432,7 @@ export function FreeFormInput({
                               {/* Show models for this connection - use provider-specific models as fallback */}
                               {(conn.models || ANTHROPIC_MODELS).map((model) => {
                                 const modelId = typeof model === 'string' ? model : model.id
-                                const modelName = typeof model === 'string'
-                                  ? stripPiPrefixForDisplay(getModelShortName(model))
-                                  : (model.name ?? stripPiPrefixForDisplay(model.id))
+                                const modelName = getModelEntryName(model)
                                 const isSelectedModel = isCurrentConnection && currentModel === modelId
                                 const showVisionToggle = isCompatProvider(conn.providerType)
                                 const visionOn = showVisionToggle && modelSupportsImages(conn, modelId)
@@ -2505,9 +2521,7 @@ export function FreeFormInput({
                   {/* Model options based on effective connection's provider type */}
                   {availableModels.map((model) => {
                     const modelId = typeof model === 'string' ? model : model.id
-                    const modelName = typeof model === 'string'
-                      ? stripPiPrefixForDisplay(getModelShortName(model))
-                      : (model.name ?? stripPiPrefixForDisplay(model.id))
+                    const modelName = getModelEntryName(model)
                     const isSelected = currentModel === modelId
                     const descriptionKey = typeof model !== 'string' && 'descriptionKey' in model ? (model.descriptionKey as string) : undefined
                     const description = descriptionKey ? t(descriptionKey) : (typeof model !== 'string' && 'description' in model ? (model.description as string) : '')

@@ -461,6 +461,53 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('allow');
     });
 
+    it('allows bounded parent recovery after failed children stop owning active work', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Write',
+        input: {
+          file_path: 'C:/test/workspace/orchestration/reports/recovery-summary.md',
+          content: 'Recovered with explicit gaps.',
+        },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [{
+            ...pendingOrchestration.subAgents[0]!,
+            status: 'failed' as const,
+          }],
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
+    it('keeps active-child blocking when another child has failed', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/source.pdf' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              status: 'failed' as const,
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'child-2',
+              taskId: 'task-2',
+              reportPath: 'C:/test/workspace/orchestration/reports/task-2.md',
+              status: 'started' as const,
+            },
+          ],
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('child-2');
+      }
+    });
+
     it('never lets the parent write a child-owned report path', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'Write',
@@ -474,6 +521,28 @@ describe('runPreToolUseChecks', () => {
             ...pendingOrchestration.subAgents[0]!,
             status: 'handoff_received' as const,
             reportSize: 1024,
+          }],
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('child-owned report');
+      }
+    });
+
+    it('still blocks child-owned report repair after a child failure', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Write',
+        input: {
+          file_path: 'C:/test/workspace/orchestration/reports/task-1.md',
+          content: 'parent-authored replacement handoff',
+        },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [{
+            ...pendingOrchestration.subAgents[0]!,
+            status: 'failed' as const,
           }],
         },
       }));

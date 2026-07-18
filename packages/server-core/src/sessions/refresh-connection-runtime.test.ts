@@ -197,11 +197,11 @@ describe('refreshConnectionRuntime', () => {
     expect(agent.updateRuntimeConfig).toHaveBeenCalledTimes(1)
   })
 
-  it('records customModels with the per-model supportsImages flag in the IPC payload', async () => {
+  it('records customModels with per-model capability overrides in the IPC payload', async () => {
     // End-to-end shape check: when the session's connection resolves to a
-    // pi_compat connection with explicit per-model `supportsImages`, the
-    // helper must forward that field on `customModels` so the Pi subprocess
-    // can re-register the model with `input: ['text', 'image']`.
+    // pi_compat connection with explicit per-model overrides, the helper must
+    // forward those fields on `customModels` so the Pi subprocess can
+    // re-register the model with the right input and output limits.
     const agent = createAgentStub()
     injectSession(sm, 'shape-check', tmpRoot, 'slug-A', agent)
 
@@ -215,13 +215,16 @@ describe('refreshConnectionRuntime', () => {
       runtime: expect.any(Object),
     })
     // The runtime envelope mirrors what `pi-agent.ts:requestRuntimeConfigUpdate`
-    // unpacks — `customModels` shape preserves `supportsImages` when set.
+    // unpacks — `customModels` shape preserves capability fields when set.
     if (payload.runtime?.customModels) {
       for (const m of payload.runtime.customModels) {
         if (typeof m === 'object') {
           expect(typeof m.id).toBe('string')
           if ('supportsImages' in m) {
             expect(typeof m.supportsImages).toBe('boolean')
+          }
+          if ('maxTokens' in m) {
+            expect(typeof m.maxTokens).toBe('number')
           }
         }
       }

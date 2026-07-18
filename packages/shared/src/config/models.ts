@@ -113,6 +113,8 @@ export interface ModelDefinition {
   provider: ModelProvider;
   /** Maximum context window in tokens */
   contextWindow: number;
+  /** Optional maximum output tokens for custom endpoint model capability overrides */
+  maxTokens?: number;
   /** Whether this model supports thinking/reasoning effort. Defaults to true when undefined. */
   supportsThinking?: boolean;
   /** Explicit per-model image input capability hint, primarily for custom endpoints. */

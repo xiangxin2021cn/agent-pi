@@ -730,13 +730,22 @@ function getDelegatedHandoffBlock(input: {
     return null;
   }
 
-  const reviewRequired = unresolved.some(agent => agent.status === 'needs_review' || agent.status === 'failed');
+  const activeUnresolved = unresolved.filter(agent => (
+    agent.status !== 'needs_review' && agent.status !== 'failed'
+  ));
+  const recoverableUnresolved = unresolved.filter(agent => (
+    agent.status === 'needs_review' || agent.status === 'failed'
+  ));
+  if (activeUnresolved.length === 0 && recoverableUnresolved.length > 0) {
+    return null;
+  }
+
   return [
     'STOP. The delegated handoff barrier is active.',
     `Unresolved child sessions: ${unresolved.map(agent => `${agent.sessionId} (${agent.status})`).join(', ')}.`,
     'The parent must not perform or synthesize delegated work, inspect original sources, calculate substitutes, or write child reports.',
-    reviewRequired
-      ? 'Retry the failed child or pause for explicit user review; automatic parent takeover is forbidden.'
+    recoverableUnresolved.length > 0
+      ? 'Continue waiting for active children; failed children can be retried or recovered after active handoffs finish.'
       : 'Use get_spawn_status or send_agent_message and continue waiting until every structured handoff is ready.',
   ].join(' ');
 }

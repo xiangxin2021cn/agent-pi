@@ -241,10 +241,12 @@ export const piDriver: ProviderDriver = {
       const supportsImages = typeof m.supportsImages === 'boolean'
         ? m.supportsImages
         : undefined;
-      if (m.contextWindow || supportsImages !== undefined) {
+      const maxTokens = typeof m.maxTokens === 'number' ? m.maxTokens : undefined;
+      if (m.contextWindow || maxTokens || supportsImages !== undefined) {
         return {
           id: m.id,
           ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+          ...(maxTokens ? { maxTokens } : {}),
           ...(supportsImages !== undefined ? { supportsImages } : {}),
         };
       }

@@ -59,11 +59,11 @@ export function resolveParentSpawnHandoffBarrier(input: {
     .filter(status => status.handoffStatus !== 'ready' && !reviewSessionIds.includes(status.sessionId))
     .map(status => status.sessionId)
 
+  if (pendingSessionIds.length > 0) {
+    return { action: 'wait', pendingSessionIds, reviewSessionIds }
+  }
   if (reviewSessionIds.length > 0) {
     return { action: 'review', pendingSessionIds, reviewSessionIds }
-  }
-  if (pendingSessionIds.length > 0) {
-    return { action: 'wait', pendingSessionIds, reviewSessionIds: [] }
   }
   return { action: 'resume', pendingSessionIds: [], reviewSessionIds: [] }
 }
