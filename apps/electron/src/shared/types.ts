@@ -219,6 +219,7 @@ import type {
   TestLlmConnectionResult,
   SkillFile,
   SessionFile,
+  SessionFilesRequestOptions,
   SessionOutputDirectory,
   PromoteSessionFileResult,
   CreateFileMemorySourceOptions,
@@ -526,7 +527,7 @@ export interface ElectronAPI {
   getAllDrafts(): Promise<Record<string, import('@craft-agent/shared/config').SessionDraft>>
 
   // Session Info Panel
-  getSessionFiles(sessionId: string): Promise<SessionFile[]>
+  getSessionFiles(sessionId: string, options?: SessionFilesRequestOptions): Promise<SessionFile[]>
   getSessionOutputDirectory(sessionId: string): Promise<SessionOutputDirectory | null>
   getSessionProjectMemoryStatus(sessionId: string): Promise<ProjectMemorySessionStatusResult | null>
   resetSessionProjectMemoryQualityTelemetry(sessionId: string): Promise<ProjectMemoryQualityTelemetryResetResult | null>

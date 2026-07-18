@@ -10,6 +10,7 @@ import {
   type SendMessageOptions,
   type SessionEvent,
   type SessionFile,
+  type SessionFilesRequestOptions,
   type SessionFileSource,
   type SessionOutputDirectory,
   type ProjectMemorySessionStatusResult,
@@ -57,6 +58,10 @@ interface ClientSessionWatchState {
 const clientSessionWatches = new Map<string, ClientSessionWatchState>()
 
 const SESSION_GET_LOG_ID_LIMIT = 25
+const SESSION_FILES_CHANGED_DEBOUNCE_MS = 750
+const SESSION_FILES_INITIAL_SCAN_DEPTH = 1
+const SESSION_FILES_CHILD_SCAN_DEPTH = 1
+const SESSION_FILES_MAX_SCAN_DEPTH = 3
 
 function summarizeIds(ids: Iterable<string>, limit = SESSION_GET_LOG_ID_LIMIT) {
   const all = Array.from(ids)
@@ -167,36 +172,74 @@ async function countJsonlEntries(filePath: string): Promise<number> {
   }
 }
 
-// Recursive directory scanner for session files
-// Filters out internal files (session.jsonl) and hidden files (. prefix)
-// Returns only non-empty directories
+interface SessionDirectoryScanOptions {
+  sourceOverride?: SessionFileSource
+  maxDepth?: number
+  depth?: number
+}
+
+function normalizeSessionFilesScanDepth(depth?: number): number {
+  if (typeof depth !== 'number' || !Number.isFinite(depth)) {
+    return SESSION_FILES_INITIAL_SCAN_DEPTH
+  }
+  return Math.max(0, Math.min(SESSION_FILES_MAX_SCAN_DEPTH, Math.floor(depth)))
+}
+
+function isVisibleSessionFileName(name: string): boolean {
+  return name !== 'session.jsonl' && !name.startsWith('.')
+}
+
+async function hasVisibleDirectoryEntries(dirPath: string): Promise<boolean> {
+  const { readdir } = await import('fs/promises')
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    return entries.some(entry => isVisibleSessionFileName(entry.name))
+  } catch {
+    return false
+  }
+}
+
+// Lazy directory scanner for session files.
+// Filters out internal files (session.jsonl) and hidden files (. prefix).
+// Directories beyond maxDepth are returned as collapsed placeholders.
 async function scanSessionDirectory(
   dirPath: string,
   rootPath = dirPath,
-  sourceOverride?: SessionFileSource
+  options: SessionDirectoryScanOptions = {}
 ): Promise<SessionFile[]> {
   const { readdir, stat } = await import('fs/promises')
   const entries = await readdir(dirPath, { withFileTypes: true })
   const files: SessionFile[] = []
+  const maxDepth = normalizeSessionFilesScanDepth(options.maxDepth)
+  const depth = options.depth ?? 0
 
   for (const entry of entries) {
     // Skip internal and hidden files
-    if (entry.name === 'session.jsonl' || entry.name.startsWith('.')) continue
+    if (!isVisibleSessionFileName(entry.name)) continue
 
     const fullPath = join(dirPath, entry.name)
     const relativePath = relative(rootPath, fullPath)
-    const source = sourceOverride ?? classifySessionFileSource(relativePath)
+    const source = options.sourceOverride ?? classifySessionFileSource(relativePath)
 
     if (entry.isDirectory()) {
-      // Recursively scan subdirectory
-      const children = await scanSessionDirectory(fullPath, rootPath, sourceOverride)
-      // Only include non-empty directories
-      if (children.length > 0) {
+      const shouldLoadChildren = depth < maxDepth
+      const children = shouldLoadChildren
+        ? await scanSessionDirectory(fullPath, rootPath, {
+            sourceOverride: options.sourceOverride,
+            maxDepth,
+            depth: depth + 1,
+          })
+        : []
+      const hasMoreChildren = shouldLoadChildren ? false : await hasVisibleDirectoryEntries(fullPath)
+      // Only include directories that contain visible entries or already loaded children.
+      if (children.length > 0 || hasMoreChildren) {
         files.push({
           name: entry.name,
           path: fullPath,
           type: 'directory',
           children,
+          childrenLoaded: shouldLoadChildren,
+          hasMoreChildren,
           source,
           relativePath,
           promoted: source === 'official-output',
@@ -223,10 +266,13 @@ async function scanSessionDirectory(
   })
 }
 
-async function scanExternalOutputDirectory(outputPath: string): Promise<SessionFile | null> {
+async function scanExternalOutputDirectory(outputPath: string, maxDepth = SESSION_FILES_INITIAL_SCAN_DEPTH): Promise<SessionFile | null> {
   if (!await pathExists(outputPath)) return null
 
-  const children = await scanSessionDirectory(outputPath, outputPath, 'official-output')
+  const children = await scanSessionDirectory(outputPath, outputPath, {
+    sourceOverride: 'official-output',
+    maxDepth,
+  })
   if (children.length === 0) return null
 
   return {
@@ -237,7 +283,24 @@ async function scanExternalOutputDirectory(outputPath: string): Promise<SessionF
     relativePath: '',
     promoted: true,
     children,
+    childrenLoaded: true,
+    hasMoreChildren: false,
   }
+}
+
+function resolveSessionFilesParentPath(
+  parentPath: string,
+  sessionPath: string,
+  outputPath: string
+): { path: string; rootPath: string; sourceOverride?: SessionFileSource } | null {
+  const resolvedParentPath = resolve(parentPath)
+  if (pathStartsWith(resolvedParentPath, sessionPath)) {
+    return { path: resolvedParentPath, rootPath: sessionPath }
+  }
+  if (pathStartsWith(resolvedParentPath, outputPath)) {
+    return { path: resolvedParentPath, rootPath: outputPath, sourceOverride: 'official-output' }
+  }
+  return null
 }
 
 function assertPromotableSessionPath(sessionPath: string, filePath: string): string {
@@ -723,18 +786,36 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Session Info Panel (files, notes, file watching)
   // ============================================================
 
-  // Get files in session directory (recursive tree structure)
-  server.handle(RPC_CHANNELS.sessions.GET_FILES, async (_ctx, sessionId: string) => {
+  // Get files in session directory (lazy tree structure)
+  server.handle(RPC_CHANNELS.sessions.GET_FILES, async (_ctx, sessionId: string, options?: SessionFilesRequestOptions) => {
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) return []
 
     try {
       const session = sessionManager.getSessions().find(s => s.id === sessionId)
       const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
-      const files = await scanSessionDirectory(sessionPath)
+      const requestedParentPath = typeof options?.parentPath === 'string' && options.parentPath.trim().length > 0
+        ? options.parentPath
+        : null
+      const scanDepth = normalizeSessionFilesScanDepth(
+        options?.maxDepth ?? (requestedParentPath ? SESSION_FILES_CHILD_SCAN_DEPTH : SESSION_FILES_INITIAL_SCAN_DEPTH)
+      )
+
+      if (requestedParentPath) {
+        const target = resolveSessionFilesParentPath(requestedParentPath, sessionPath, outputPath)
+        if (!target || !await pathExists(target.path)) {
+          return []
+        }
+        return await scanSessionDirectory(target.path, target.rootPath, {
+          sourceOverride: target.sourceOverride,
+          maxDepth: scanDepth,
+        })
+      }
+
+      const files = await scanSessionDirectory(sessionPath, sessionPath, { maxDepth: scanDepth })
 
       if (!pathStartsWith(outputPath, sessionPath)) {
-        const outputTree = await scanExternalOutputDirectory(outputPath)
+        const outputTree = await scanExternalOutputDirectory(outputPath, scanDepth)
         if (outputTree) {
           files.unshift(outputTree)
         }
@@ -919,7 +1000,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           return
         }
 
-        // Debounce: wait 100ms before notifying to batch rapid changes
+        // Long-running document/tender tasks can write many files in bursts.
+        // Batch notifications so the renderer does not repeatedly rescan and rerender
+        // large session/output trees while artifacts are still being written.
         if (state.debounceTimer) {
           clearTimeout(state.debounceTimer)
         }
@@ -927,7 +1010,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         state.debounceTimer = setTimeout(() => {
           if (state.disposed || clientSessionWatches.get(clientId) !== state) return
           pushTyped(server, RPC_CHANNELS.sessions.FILES_CHANGED, { to: 'client', clientId }, state.sessionId)
-        }, 100)
+        }, SESSION_FILES_CHANGED_DEBOUNCE_MS)
       }
 
       state.watchers.push(watch(sessionPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))

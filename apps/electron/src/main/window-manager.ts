@@ -1,5 +1,6 @@
 import { BrowserWindow, shell, nativeTheme, Menu, app } from 'electron'
-import { windowLog } from './logger'
+import { stabilityLog, windowLog } from './logger'
+import { createStabilitySnapshot } from './stability-telemetry'
 import { join, resolve, sep } from 'path'
 import { existsSync } from 'fs'
 import { release } from 'os'
@@ -34,6 +35,45 @@ function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
 
   windowLog.info('Older Windows detected (build ' + buildNumber + '), no transparency')
   return undefined
+}
+
+function getWindowStabilityContext(window: BrowserWindow, workspaceId: string): Record<string, unknown> {
+  let url = ''
+  let title = ''
+  let webContentsId = -1
+  let webContentsDestroyed = true
+  try {
+    webContentsId = window.webContents.id
+    webContentsDestroyed = window.webContents.isDestroyed()
+    url = webContentsDestroyed ? '' : window.webContents.getURL()
+    title = window.isDestroyed() ? '' : window.getTitle()
+  } catch {
+    url = ''
+    title = ''
+  }
+
+  return {
+    workspaceId,
+    webContentsId,
+    windowDestroyed: window.isDestroyed(),
+    webContentsDestroyed,
+    url,
+    title,
+  }
+}
+
+function logWindowStabilityEvent(level: 'info' | 'warn' | 'error', message: string, window: BrowserWindow, workspaceId: string, extra?: unknown): void {
+  void createStabilitySnapshot(app, message, {
+    ...getWindowStabilityContext(window, workspaceId),
+    ...(extra !== undefined ? { extra } : {}),
+  }).then((snapshot) => {
+    stabilityLog[level](message, snapshot)
+  }).catch((error) => {
+    stabilityLog.error('failed to capture window stability snapshot', {
+      message,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
 }
 
 
@@ -265,6 +305,18 @@ export class WindowManager {
     // Show window when first paint is ready (faster perceived startup)
     window.once('ready-to-show', () => {
       window.show()
+    })
+
+    window.webContents.on('render-process-gone', (_event, details) => {
+      logWindowStabilityEvent('error', 'renderer process gone', window, workspaceId, { details })
+    })
+
+    window.webContents.on('unresponsive', () => {
+      logWindowStabilityEvent('warn', 'renderer unresponsive', window, workspaceId)
+    })
+
+    window.webContents.on('responsive', () => {
+      logWindowStabilityEvent('info', 'renderer responsive', window, workspaceId)
     })
 
     // Open external links in default browser, but never hand known-dangerous

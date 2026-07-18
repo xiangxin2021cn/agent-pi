@@ -120,6 +120,23 @@ function workspaceDistribution(sessions: Iterable<{ workspaceId?: string }>): Re
   return distribution
 }
 
+function getPermissionReconcileSessionIds(sessions: Session[], selectedSessionId?: string | null): string[] {
+  const knownIds = new Set(sessions.map(session => session.id))
+  const ids = new Set<string>()
+
+  if (selectedSessionId && knownIds.has(selectedSessionId)) {
+    ids.add(selectedSessionId)
+  }
+
+  for (const session of sessions) {
+    if (session.isProcessing || (session.permissionMode && session.permissionMode !== defaultSessionOptions.permissionMode)) {
+      ids.add(session.id)
+    }
+  }
+
+  return Array.from(ids)
+}
+
 /**
  * Helper to handle background task events from the agent.
  * Updates the backgroundTasksAtomFamily based on event type.
@@ -540,7 +557,7 @@ export default function App() {
       setSessionOptions(optionsMap)
 
       await Promise.allSettled(
-        loadedSessions.map((s) => reconcilePermissionModeState(s.id))
+        getPermissionReconcileSessionIds(loadedSessions, initialSessionId).map(reconcilePermissionModeState)
       )
 
       setSessionsLoaded(true)
@@ -615,7 +632,9 @@ export default function App() {
       for (const session of sessions) {
         syncSessionOptionsFromSession(session)
       }
-      await Promise.allSettled(sessions.map(s => reconcilePermissionModeState(s.id)))
+      await Promise.allSettled(
+        getPermissionReconcileSessionIds(sessions, selectedSessionId).map(reconcilePermissionModeState)
+      )
 
       return nextMetaMap
     } catch (err) {

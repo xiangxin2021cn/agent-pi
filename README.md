@@ -51,15 +51,28 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.4.**
+**Current release: V2.2.5.**
 
-**当前发布版：V2.2.4。**
+**当前发布版：V2.2.5。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.2.5 Stability and Responsiveness / V2.2.5 稳定性与流畅性
+
+V2.2.5 focuses on keeping large Tender Workbench sessions responsive. The session file panel now uses shallow initial scans and loads folder children only when expanded, so large Official Outputs and document-artifact trees no longer trigger full recursive scans on every refresh. Production builds also write an always-on `stability.log` for renderer exits, child-process exits, unresponsive transitions, uncaught exceptions, and memory peaks. Automation services stay dormant unless a workspace actually has `automations.json`, and startup permission reconciliation is scoped to active or explicitly non-default sessions.
+
+V2.2.5 聚焦大型投标工作台会话的稳定性和流畅性。会话文件面板改为初始浅扫，只有展开文件夹时才加载子项，避免大型 Official Outputs 和 document-artifact 树在每次刷新时全量递归扫描。发布版新增常驻 `stability.log`，记录 renderer 退出、子进程退出、无响应转换、未捕获异常和内存峰值。自动化服务仅在工作区确实存在 `automations.json` 时启动，启动阶段权限校准也缩小到活动或显式非默认会话。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Lazy file tree | Initial session-file loading is shallow; folder children are fetched only on expand, with path-boundary checks. | 初始会话文件加载只做浅扫；展开文件夹时才读取子项，并带路径边界检查。 |
+| Stability diagnostics | `~/.agent-pi/logs/stability.log` records renderer crashes, child-process exits, unresponsive/responsive events, exceptions, rejections, and memory peaks. | `~/.agent-pi/logs/stability.log` 记录 renderer 崩溃、子进程退出、卡死/恢复、异常、Promise 拒绝和内存峰值。 |
+| Lower idle load | Automation runtime starts only when configured; permission reconciliation no longer scans every session by default. | 自动化运行时仅在配置存在时启动；权限状态校准不再默认扫描全部会话。 |
+| Regression tests | Added lazy-loading and stability telemetry coverage; watcher tests match the safer debounce window. | 增加懒加载和稳定性遥测测试；watcher 测试匹配更稳妥的 debounce 窗口。 |
 
 ### V2.2.4 C5.1 BOQ Pricing and Bidder Commitments / V2.2.4 C5.1 组价与投标人条件确认
 
@@ -88,19 +101,6 @@ V2.2.3 将投标工作台 BOQ 组价从叙述性交接升级为机器可校验�
 | Initial cash flow | Each item supplies auditable period allocations with amount or weight, source, assumptions, and activity linkage. | 每个条目提供可审计的分期金额或权重，并记录来源、假设和活动关联。 |
 | Cross-batch merge gate | Deterministic checks reject resource-unit, rate-unit, productivity, and activity-calendar contradictions across child-agent reports. | 确定性门禁拒绝子智能体报告之间的资源单位、费率单位、工效及活动日历矛盾。 |
 | Completion readiness | Missing machine fields, incomplete item coverage, extra items, or altered child results prevent the BOQ capability pack from becoming ready. | 缺失机器字段、条目覆盖不全、越界条目或篡改子报告结果时，BOQ 能力包不得进入 ready。 |
-
-### V2.2.2 Workbench Isolation and Large Documents / V2.2.2 工作台隔离与大型文档
-
-V2.2.2 separates professional-workbench conversations even when they use the same physical project folder. Business sessions now have independent memory namespaces, and native path-backed attachments support large tender PDFs without loading them into renderer memory or the model context.
-
-V2.2.2 即使多个专业工作台使用同一物理项目文件夹，也会保持会话隔离。业务会话采用独立记忆命名空间；原生路径型附件支持大型投标 PDF，且不会把文件整体载入渲染器内存或模型上下文。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| Workbench grouping | Tender, delivery, and investment conversations are grouped by business project instead of only by working-directory path. | 投标、实施和投资会话按业务项目分组，不再只按工作目录路径混合显示。 |
-| Memory boundary | Every business conversation and child agent has a session-scoped Project Memory Lite namespace. | 每个业务会话及其子智能体拥有会话级 Project Memory Lite 命名空间。 |
-| Large attachments | Native file-picker attachments support path-backed files up to 2 GiB; 200+ MiB PDFs are copied on disk rather than Base64 encoded. | 系统文件选择器支持至 2 GiB 的路径型附件；200 MiB 以上 PDF 通过磁盘复制而非 Base64 编码。 |
-| Continuation and handoff | Goal Loop and child-agent handoff preserve large files as explicit path references. | Goal Loop 续跑及子智能体交接继续以明确路径引用大型文件。 |
 
 Older release details are available on GitHub Releases.
 

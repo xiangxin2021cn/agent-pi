@@ -104,7 +104,7 @@ describe('sessions file watchers', () => {
 
     writeFileSync(join(sessionDirA, 'a.txt'), `a-${Date.now()}`)
     writeFileSync(join(sessionDirB, 'b.txt'), `b-${Date.now()}`)
-    await wait(500)
+    await wait(1000)
 
     const aEvents = pushed.filter((evt) => evt.target?.to === 'client' && evt.target?.clientId === 'client-a')
     const bEvents = pushed.filter((evt) => evt.target?.to === 'client' && evt.target?.clientId === 'client-b')
@@ -117,7 +117,7 @@ describe('sessions file watchers', () => {
 
     writeFileSync(join(sessionDirA, 'a.txt'), `a2-${Date.now()}`)
     writeFileSync(join(sessionDirB, 'b.txt'), `b2-${Date.now()}`)
-    await wait(500)
+    await wait(1000)
 
     const aEventsAfter = pushed.filter((evt) => evt.target?.clientId === 'client-a')
     const bEventsAfter = pushed.filter((evt) => evt.target?.clientId === 'client-b')
@@ -137,8 +137,36 @@ describe('sessions file watchers', () => {
     pushed.length = 0
 
     writeFileSync(join(sessionDirA, 'after-cleanup.txt'), `x-${Date.now()}`)
-    await wait(300)
+    await wait(1000)
 
     expect(pushed.length).toBe(0)
+  })
+
+  it('loads session files lazily by directory depth', async () => {
+    const getFiles = handlers.get(RPC_CHANNELS.sessions.GET_FILES)
+    expect(getFiles).toBeTruthy()
+
+    mkdirSync(join(sessionDirA, 'data', 'nested'), { recursive: true })
+    writeFileSync(join(sessionDirA, 'root.txt'), 'root')
+    writeFileSync(join(sessionDirA, 'data', 'top.md'), 'top')
+    writeFileSync(join(sessionDirA, 'data', 'nested', 'deep.md'), 'deep')
+
+    const initial = await getFiles!({ clientId: 'client-a' }, 'session-a', { maxDepth: 1 })
+    const data = initial.find((file: any) => file.name === 'data')
+    expect(data).toBeTruthy()
+    expect(data.type).toBe('directory')
+    expect(data.childrenLoaded).toBe(true)
+    expect(data.children.some((file: any) => file.name === 'top.md')).toBe(true)
+    const nested = data.children.find((file: any) => file.name === 'nested')
+    expect(nested).toBeTruthy()
+    expect(nested.childrenLoaded).toBe(false)
+    expect(nested.hasMoreChildren).toBe(true)
+    expect(JSON.stringify(initial)).not.toContain('deep.md')
+
+    const nestedChildren = await getFiles!({ clientId: 'client-a' }, 'session-a', {
+      parentPath: join(sessionDirA, 'data', 'nested'),
+      maxDepth: 1,
+    })
+    expect(nestedChildren.map((file: any) => file.name)).toEqual(['deep.md'])
   })
 })

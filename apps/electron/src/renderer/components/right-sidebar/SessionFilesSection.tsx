@@ -98,23 +98,6 @@ function formatFileSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Collect all directory paths recursively so the tree can start fully expanded. */
-function collectDirectoryPaths(entries: SessionFile[]): string[] {
-  const directories: string[] = []
-  const visit = (items: SessionFile[]) => {
-    for (const item of items) {
-      if (item.type === 'directory') {
-        directories.push(item.path)
-        if (item.children && item.children.length > 0) {
-          visit(item.children)
-        }
-      }
-    }
-  }
-  visit(entries)
-  return directories
-}
-
 /**
  * Get icon for file based on name/type (14x14px matching sidebar)
  */
@@ -293,7 +276,8 @@ interface FileTreeItemProps {
   file: SessionFile
   depth: number
   expandedPaths: Set<string>
-  onToggleExpand: (path: string) => void
+  loadingDirectoryPaths: Set<string>
+  onToggleExpand: (file: SessionFile) => void
   onFileClick: (file: SessionFile) => void
   onFileDoubleClick: (file: SessionFile) => void
   onRevealInFileManager: (path: string) => void
@@ -314,6 +298,7 @@ function FileTreeItem({
   file,
   depth,
   expandedPaths,
+  loadingDirectoryPaths,
   onToggleExpand,
   onFileClick,
   onFileDoubleClick,
@@ -325,11 +310,12 @@ function FileTreeItem({
   const { t } = useTranslation()
   const isDirectory = file.type === 'directory'
   const isExpanded = expandedPaths.has(file.path)
-  const hasChildren = isDirectory && file.children && file.children.length > 0
+  const hasChildren = isDirectory && (((file.children?.length ?? 0) > 0) || file.hasMoreChildren)
+  const isLoadingChildren = loadingDirectoryPaths.has(file.path)
 
   const handleClick = () => {
     if (isDirectory && hasChildren) {
-      onToggleExpand(file.path)
+      onToggleExpand(file)
     } else {
       onFileClick(file)
     }
@@ -343,7 +329,7 @@ function FileTreeItem({
   const handleChevronClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (hasChildren) {
-      onToggleExpand(file.path)
+      onToggleExpand(file)
     }
   }
 
@@ -394,6 +380,9 @@ function FileTreeItem({
 
       {/* File/folder name - min-w-0 required for truncate to work in flex container */}
       <span className="flex-1 min-w-0 truncate">{file.name}</span>
+      {isLoadingChildren && (
+        <span className="shrink-0 text-[10px] text-muted-foreground">{t('common.loading', { defaultValue: 'Loading' })}</span>
+      )}
       <SourcePill file={file} />
     </button>
   )
@@ -461,12 +450,13 @@ function FileTreeItem({
                     className="absolute left-[13px] top-1 bottom-1 w-px bg-foreground/10"
                     aria-hidden="true"
                   />
-                  {file.children!.map((child) => (
+                  {(file.children ?? []).map((child) => (
                     <motion.div key={child.path} variants={itemVariants} className="min-w-0">
                       <FileTreeItem
                         file={child}
                         depth={depth + 1}
                         expandedPaths={expandedPaths}
+                        loadingDirectoryPaths={loadingDirectoryPaths}
                         onToggleExpand={onToggleExpand}
                         onFileClick={onFileClick}
                         onFileDoubleClick={onFileDoubleClick}
@@ -491,6 +481,26 @@ function FileTreeItem({
   return <>{innerContent}</>
 }
 
+function replaceDirectoryChildren(files: SessionFile[], directoryPath: string, children: SessionFile[]): SessionFile[] {
+  return files.map((file) => {
+    if (file.path === directoryPath && file.type === 'directory') {
+      return {
+        ...file,
+        children,
+        childrenLoaded: true,
+        hasMoreChildren: false,
+      }
+    }
+    if (file.children?.length) {
+      return {
+        ...file,
+        children: replaceDirectoryChildren(file.children, directoryPath, children),
+      }
+    }
+    return file
+  })
+}
+
 /**
  * Section displaying session files as a tree
  */
@@ -502,28 +512,25 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [outputDirectory, setOutputDirectory] = useState<SessionOutputDirectory | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
-  const [hasSavedExpandedState, setHasSavedExpandedState] = useState(false)
+  const [loadingDirectoryPaths, setLoadingDirectoryPaths] = useState<Set<string>>(new Set())
   const [pendingKnowledgeBaseFile, setPendingKnowledgeBaseFile] = useState<SessionFile | null>(null)
   const [knowledgeBaseAiSuggestion, setKnowledgeBaseAiSuggestion] = useState<{ category: string; reason?: string; fallback?: boolean } | null>(null)
   const [isSuggestingKnowledgeBaseCategory, setIsSuggestingKnowledgeBaseCategory] = useState(false)
   const mountedRef = useRef(true)
 
   // Load expanded paths from storage when session changes.
-  // If no value exists yet, we default to "expand all" after files load.
+  // If no value exists yet, keep the tree collapsed except for the formal output root.
   useEffect(() => {
     if (sessionId) {
       const raw = storage.getRaw(storage.KEYS.sessionFilesExpandedFolders, sessionId)
       if (raw !== null) {
         const saved = storage.get<string[]>(storage.KEYS.sessionFilesExpandedFolders, [], sessionId)
         setExpandedPaths(new Set(saved))
-        setHasSavedExpandedState(true)
       } else {
         setExpandedPaths(new Set())
-        setHasSavedExpandedState(false)
       }
     } else {
       setExpandedPaths(new Set())
-      setHasSavedExpandedState(false)
     }
   }, [sessionId])
 
@@ -545,12 +552,13 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     setIsLoading(true)
     try {
       const [sessionFiles, outputInfo] = await Promise.all([
-        window.electronAPI.getSessionFiles(sessionId),
+        window.electronAPI.getSessionFiles(sessionId, { maxDepth: 1 }),
         window.electronAPI.getSessionOutputDirectory(sessionId),
       ])
       if (mountedRef.current) {
         setFiles(sessionFiles)
         setOutputDirectory(outputInfo)
+        setLoadingDirectoryPaths(new Set())
         if (outputInfo?.exists) {
           setExpandedPaths((prev) => {
             if (prev.has(outputInfo.path)) return prev
@@ -561,15 +569,6 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
           })
         }
 
-        // Default behavior: expand the entire folder tree when there's no saved state yet.
-        if (!hasSavedExpandedState) {
-          const allDirectoryPaths = new Set(collectDirectoryPaths(sessionFiles))
-          if (allDirectoryPaths.size > 0) {
-            setExpandedPaths(allDirectoryPaths)
-            saveExpandedPaths(allDirectoryPaths)
-            setHasSavedExpandedState(true)
-          }
-        }
       }
     } catch (error) {
       console.error('Failed to load session files:', error)
@@ -582,7 +581,39 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         setIsLoading(false)
       }
     }
-  }, [sessionId, workingDirectoryKey, hasSavedExpandedState, saveExpandedPaths])
+  }, [sessionId, workingDirectoryKey, saveExpandedPaths])
+
+  const loadDirectoryChildren = useCallback(async (file: SessionFile) => {
+    if (!sessionId || file.type !== 'directory') return
+    if (loadingDirectoryPaths.has(file.path)) return
+
+    setLoadingDirectoryPaths((prev) => {
+      const next = new Set(prev)
+      next.add(file.path)
+      return next
+    })
+
+    try {
+      const children = await window.electronAPI.getSessionFiles(sessionId, {
+        parentPath: file.path,
+        maxDepth: 1,
+      })
+      if (mountedRef.current) {
+        setFiles((prev) => replaceDirectoryChildren(prev, file.path, children))
+      }
+    } catch (error) {
+      console.error('Failed to load directory children:', error)
+      toast.error(t('chat.sessionFilesLoadFailed', { defaultValue: 'Failed to load folder contents' }))
+    } finally {
+      if (mountedRef.current) {
+        setLoadingDirectoryPaths((prev) => {
+          const next = new Set(prev)
+          next.delete(file.path)
+          return next
+        })
+      }
+    }
+  }, [loadingDirectoryPaths, sessionId, t])
 
   // Initial load and file watcher setup
   useEffect(() => {
@@ -660,7 +691,13 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   }, [onOpenFile])
 
   // Toggle folder expanded state
-  const handleToggleExpand = useCallback((path: string) => {
+  const handleToggleExpand = useCallback((file: SessionFile) => {
+    const path = file.path
+    const shouldLoadChildren = file.type === 'directory'
+      && !expandedPaths.has(path)
+      && (file.childrenLoaded === false || file.hasMoreChildren)
+      && ((file.children?.length ?? 0) === 0)
+
     setExpandedPaths((prev) => {
       const next = new Set(prev)
       if (next.has(path)) {
@@ -671,7 +708,11 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       saveExpandedPaths(next)
       return next
     })
-  }, [saveExpandedPaths])
+
+    if (shouldLoadChildren) {
+      void loadDirectoryChildren(file)
+    }
+  }, [expandedPaths, loadDirectoryChildren, saveExpandedPaths])
 
   const handlePromoteFile = useCallback(async (file: SessionFile) => {
     if (!sessionId) return
@@ -827,6 +868,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
                 file={file}
                 depth={0}
                 expandedPaths={expandedPaths}
+                loadingDirectoryPaths={loadingDirectoryPaths}
                 onToggleExpand={handleToggleExpand}
                 onFileClick={handleFileClick}
                 onFileDoubleClick={handleFileDoubleClick}

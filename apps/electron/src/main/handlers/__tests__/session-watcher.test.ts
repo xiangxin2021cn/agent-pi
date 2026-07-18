@@ -124,7 +124,7 @@ describe('session file watcher isolation', () => {
     writeFileSync(join(dir1, 'output.txt'), 'hello')
 
     // Wait for debounce + fs.watch delay
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1500))
 
     // Only client-a should have received the notification
     const clientAPushes = pushCalls.filter(p => p.target?.clientId === 'client-a')
@@ -144,7 +144,7 @@ describe('session file watcher isolation', () => {
 
     // Trigger a change in s2
     writeFileSync(join(dir2, 'data.json'), '{}')
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1500))
 
     // Client B should still receive notifications
     const clientBAfter = pushCalls.filter(p => p.target?.clientId === 'client-b')
@@ -155,7 +155,7 @@ describe('session file watcher isolation', () => {
 
     // Double cleanup is a no-op (doesn't throw)
     cleanupSessionFileWatchForClient('client-b')
-  })
+  }, 10_000)
 
   it('cleans up previous watcher when same client watches a different session', async () => {
     const dir1 = makeTempSessionDir()
@@ -176,7 +176,7 @@ describe('session file watcher isolation', () => {
 
     // Write to s1 — should NOT trigger notification (old watcher closed)
     writeFileSync(join(dir1, 'old.txt'), 'stale')
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1000))
 
     const s1Pushes = pushCalls.filter(p =>
       p.args[0] === 's1' && p.channel === RPC_CHANNELS.sessions.FILES_CHANGED
@@ -185,7 +185,7 @@ describe('session file watcher isolation', () => {
 
     // Write to s2 — should trigger notification
     writeFileSync(join(dir2, 'new.txt'), 'fresh')
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1000))
 
     const s2Pushes = pushCalls.filter(p =>
       p.args[0] === 's2' && p.channel === RPC_CHANNELS.sessions.FILES_CHANGED
@@ -209,13 +209,13 @@ describe('session file watcher isolation', () => {
     // Write internal files — should be ignored
     writeFileSync(join(dir, 'session.jsonl'), 'log entry')
     writeFileSync(join(dir, '.hidden'), 'secret')
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1000))
 
     expect(pushCalls.length).toBe(0)
 
     // Write a normal file — should trigger notification
     writeFileSync(join(dir, 'result.txt'), 'output')
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1000))
 
     expect(pushCalls.length).toBeGreaterThanOrEqual(1)
 

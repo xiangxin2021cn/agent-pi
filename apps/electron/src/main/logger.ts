@@ -259,6 +259,63 @@ export const autoUpdateLog = {
 }
 
 /**
+ * Always-on stability log.
+ *
+ * Production builds keep normal electron-log file transport disabled to reduce
+ * noise. Crash and memory diagnostics still need a persistent trace.
+ */
+export const stabilityLogPath = join(CONFIG_DIR, 'logs', 'stability.log')
+const stabilityBackupPath = `${stabilityLogPath}.1`
+const STABILITY_LOG_MAX_BYTES = 5 * 1024 * 1024 // 5MB
+
+function rotateStabilityLogIfNeeded(nextLineBytes: number): void {
+  if (!existsSync(stabilityLogPath)) return
+  try {
+    const currentSize = statSync(stabilityLogPath).size
+    if (currentSize + nextLineBytes <= STABILITY_LOG_MAX_BYTES) return
+    if (existsSync(stabilityBackupPath)) {
+      rmSync(stabilityBackupPath, { force: true })
+    }
+    renameSync(stabilityLogPath, stabilityBackupPath)
+  } catch (error) {
+    mainLog.warn('[stability] failed to rotate dedicated log file', normalizeLogValue(error))
+  }
+}
+
+function writeStabilityLog(level: 'info' | 'warn' | 'error', message: string, meta?: unknown): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level,
+    scope: 'stability',
+    ...(meta !== undefined ? { meta: normalizeLogValue(meta) } : {}),
+    message,
+  }
+
+  const line = JSON.stringify(entry) + '\n'
+  try {
+    mkdirSync(dirname(stabilityLogPath), { recursive: true })
+    rotateStabilityLogIfNeeded(Buffer.byteLength(line))
+    appendFileSync(stabilityLogPath, line, 'utf8')
+  } catch (error) {
+    mainLog.warn('[stability] failed to write dedicated log entry', normalizeLogValue(error))
+  }
+
+  if (level === 'error') {
+    mainLog.error('[stability]', message, entry)
+  } else if (level === 'warn') {
+    mainLog.warn('[stability]', message, entry)
+  } else if (isDebugMode) {
+    mainLog.info('[stability]', message, entry)
+  }
+}
+
+export const stabilityLog = {
+  info: (message: string, meta?: unknown) => writeStabilityLog('info', message, meta),
+  warn: (message: string, meta?: unknown) => writeStabilityLog('warn', message, meta),
+  error: (message: string, meta?: unknown) => writeStabilityLog('error', message, meta),
+}
+
+/**
  * Get the path to the current Electron main log file.
  * Returns undefined if file logging is disabled.
  */
@@ -273,6 +330,10 @@ export function getMessagingGatewayLogFilePath(): string {
 
 export function getAutoUpdateLogFilePath(): string {
   return autoUpdateLogPath
+}
+
+export function getStabilityLogFilePath(): string {
+  return stabilityLogPath
 }
 
 export default log

@@ -113,7 +113,8 @@ import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
-import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
+import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, stabilityLog, getStabilityLogFilePath } from './logger'
+import { createStabilitySnapshot, shouldLogMemoryPeak } from './stability-telemetry'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
 import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
@@ -224,6 +225,8 @@ let browserPaneManager: BrowserPaneManager | null = null
 let oauthFlowStore: OAuthFlowStore | null = null
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
+let stabilityMemoryPeakKb = 0
+let stabilityTelemetryTimer: NodeJS.Timeout | null = null
 
 // Messaging gateway: the bootstrap handle is created once sessionManager is
 // available (inside createHandlerDeps) and populated with the WS publisher
@@ -234,6 +237,46 @@ let messagingHandle: MessagingBootstrapHandle | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
+
+async function logStabilityEvent(level: 'info' | 'warn' | 'error', message: string, extra?: unknown): Promise<void> {
+  try {
+    const snapshot = await createStabilitySnapshot(app, message, extra)
+    stabilityLog[level](message, snapshot)
+  } catch (error) {
+    stabilityLog.error('failed to capture stability snapshot', {
+      message,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function logMemoryPeakIfNeeded(label: string): Promise<void> {
+  const snapshot = await createStabilitySnapshot(app, label)
+  const totalWorkingSetKb = snapshot.appMetrics.totalWorkingSetKb || Math.round(process.memoryUsage().rss / 1024)
+  if (!shouldLogMemoryPeak(stabilityMemoryPeakKb, totalWorkingSetKb)) return
+
+  stabilityMemoryPeakKb = Math.max(stabilityMemoryPeakKb, totalWorkingSetKb)
+  stabilityLog.info('memory peak', {
+    ...snapshot,
+    peakTotalWorkingSetKb: stabilityMemoryPeakKb,
+  })
+}
+
+function startStabilityTelemetry(): void {
+  if (stabilityTelemetryTimer) return
+
+  stabilityLog.info('stability telemetry started', {
+    stabilityLogPath: getStabilityLogFilePath(),
+    pid: process.pid,
+    packaged: app.isPackaged,
+  })
+  void logMemoryPeakIfNeeded('startup')
+
+  stabilityTelemetryTimer = setInterval(() => {
+    void logMemoryPeakIfNeeded('periodic')
+  }, 60_000)
+  stabilityTelemetryTimer.unref?.()
+}
 
 // Register as default protocol client for app deeplink URLs.
 // This must be done before app.whenReady() on some platforms
@@ -389,6 +432,11 @@ async function createInitialWindows(): Promise<void> {
 app.whenReady().then(async () => {
   // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
   process.env.CRAFT_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
+  startStabilityTelemetry()
+
+  app.on('child-process-gone', (_event, details) => {
+    void logStabilityEvent('error', 'child process gone', { details })
+  })
 
   // Register bundled assets root so all seeding functions can find their files
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
@@ -1222,6 +1270,11 @@ app.on('before-quit', async (event) => {
   // Ensure Cmd+Q/app quit bypasses layered window close interception (Cmd+W behavior).
   windowManager?.setAppQuitting(true)
 
+  if (stabilityTelemetryTimer) {
+    clearInterval(stabilityTelemetryTimer)
+    stabilityTelemetryTimer = null
+  }
+
   if (windowManager) {
     const windows = windowManager.getWindowStates()
     // Empty-snapshot guard: during update-quit, electron-updater has already
@@ -1343,10 +1396,12 @@ app.on('before-quit', async (event) => {
 // a custom handler can interfere with @sentry/electron's automatic capture.
 process.on('uncaughtException', (error) => {
   mainLog.error('Uncaught exception:', error)
+  void logStabilityEvent('error', 'uncaught exception', { error })
   Sentry.captureException(error)
 })
 
 process.on('unhandledRejection', (reason, promise) => {
   mainLog.error('Unhandled rejection at:', promise, 'reason:', reason)
+  void logStabilityEvent('error', 'unhandled rejection', { reason, promise: String(promise) })
   Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)))
 })

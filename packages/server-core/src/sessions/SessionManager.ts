@@ -117,7 +117,7 @@ import { listLabels, loadLabelConfig } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, resolveSessionLabels } from '@craft-agent/shared/labels'
 import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
-import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
+import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, resolveAutomationsConfigPath, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 import type { SessionSpawnStatus } from '@craft-agent/session-tools-core'
 import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
@@ -2553,6 +2553,74 @@ export class SessionManager implements ISessionManager {
     return changed
   }
 
+  private ensureAutomationSystem(workspaceRootPath: string, workspaceId: string): AutomationSystem {
+    const existing = this.automationSystems.get(workspaceRootPath)
+    if (existing) return existing
+
+    const automationSystem = new AutomationSystem({
+      workspaceRootPath,
+      workspaceId,
+      enableScheduler: true,
+      onPromptsReady: async (prompts) => {
+        const settled = await Promise.allSettled(
+          prompts.map((pending) =>
+            this.executePromptAutomation({
+              workspaceId,
+              workspaceRootPath,
+              prompt: pending.prompt,
+              labels: pending.labels,
+              permissionMode: pending.permissionMode,
+              mentions: pending.mentions,
+              llmConnection: pending.llmConnection,
+              model: pending.model,
+              thinkingLevel: pending.thinkingLevel,
+              automationName: pending.automationName,
+              telegramTopic: pending.telegramTopic,
+            })
+          )
+        )
+
+        for (const [idx, result] of settled.entries()) {
+          const pending = prompts[idx]
+          if (!pending.matcherId) continue
+
+          const entry = createPromptHistoryEntry({
+            matcherId: pending.matcherId,
+            ok: result.status === 'fulfilled',
+            sessionId: result.status === 'fulfilled' ? result.value.sessionId : undefined,
+            prompt: pending.prompt,
+            error: result.status === 'rejected' ? String(result.reason) : undefined,
+          })
+
+          appendAutomationHistoryEntry(workspaceRootPath, entry).catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
+
+          if (result.status === 'rejected') {
+            sessionLog.error(`[Automations] Failed to execute prompt action ${idx + 1}:`, result.reason)
+          } else {
+            sessionLog.info(`[Automations] Created session ${result.value.sessionId} from prompt action`)
+          }
+        }
+      },
+      onError: (event, error) => {
+        sessionLog.error(`Automation failed for ${event}:`, error.message)
+      },
+    })
+    this.automationSystems.set(workspaceRootPath, automationSystem)
+    sessionLog.info(`Initialized AutomationSystem for workspace ${workspaceId}`)
+    return automationSystem
+  }
+
+  private disposeAutomationSystem(workspaceRootPath: string): void {
+    const automationSystem = this.automationSystems.get(workspaceRootPath)
+    if (!automationSystem) return
+
+    void automationSystem.dispose().catch((error) => {
+      sessionLog.error(`Failed to dispose AutomationSystem for ${workspaceRootPath}:`, error)
+    })
+    this.automationSystems.delete(workspaceRootPath)
+    sessionLog.info(`Disposed AutomationSystem for workspace ${workspaceRootPath}`)
+  }
+
   /**
    * Set up ConfigWatcher for a workspace to broadcast live updates
    * (sources added/removed, guide.md changes, etc.)
@@ -2609,9 +2677,14 @@ export class SessionManager implements ISessionManager {
       },
       onAutomationsConfigChange: () => {
         sessionLog.info(`Automations config changed in ${workspaceId}`)
-        // Reload automations config via AutomationSystem
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
-        if (automationSystem) {
+        const automationConfigPath = resolveAutomationsConfigPath(workspaceRootPath)
+        let automationSystem = this.automationSystems.get(workspaceRootPath)
+        if (!existsSync(automationConfigPath)) {
+          this.disposeAutomationSystem(workspaceRootPath)
+        } else {
+          automationSystem = this.ensureAutomationSystem(workspaceRootPath, workspaceId)
+        }
+        if (automationSystem && existsSync(automationConfigPath)) {
           const result = automationSystem.reloadConfig()
           if (result.errors.length === 0) {
             sessionLog.info(`Reloaded ${result.automationCount} automations for workspace ${workspaceId}`)
@@ -2702,60 +2775,11 @@ export class SessionManager implements ISessionManager {
     watcher.start()
     this.configWatchers.set(workspaceRootPath, watcher)
 
-    // Initialize AutomationSystem for this workspace (includes scheduler, handlers, and event logging)
-    if (!this.automationSystems.has(workspaceRootPath)) {
-      const automationSystem = new AutomationSystem({
-        workspaceRootPath,
-        workspaceId,
-        enableScheduler: true,
-        onPromptsReady: async (prompts) => {
-          // Execute prompt automations by creating new sessions
-          const settled = await Promise.allSettled(
-            prompts.map((pending) =>
-              this.executePromptAutomation({
-                workspaceId,
-                workspaceRootPath,
-                prompt: pending.prompt,
-                labels: pending.labels,
-                permissionMode: pending.permissionMode,
-                mentions: pending.mentions,
-                llmConnection: pending.llmConnection,
-                model: pending.model,
-                thinkingLevel: pending.thinkingLevel,
-                automationName: pending.automationName,
-                telegramTopic: pending.telegramTopic,
-              })
-            )
-          )
-
-          // Write enriched history entries (with session IDs and prompt summaries)
-          for (const [idx, result] of settled.entries()) {
-            const pending = prompts[idx]
-            if (!pending.matcherId) continue
-
-            const entry = createPromptHistoryEntry({
-              matcherId: pending.matcherId,
-              ok: result.status === 'fulfilled',
-              sessionId: result.status === 'fulfilled' ? result.value.sessionId : undefined,
-              prompt: pending.prompt,
-              error: result.status === 'rejected' ? String(result.reason) : undefined,
-            })
-
-            appendAutomationHistoryEntry(workspaceRootPath, entry).catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
-
-            if (result.status === 'rejected') {
-              sessionLog.error(`[Automations] Failed to execute prompt action ${idx + 1}:`, result.reason)
-            } else {
-              sessionLog.info(`[Automations] Created session ${result.value.sessionId} from prompt action`)
-            }
-          }
-        },
-        onError: (event, error) => {
-          sessionLog.error(`Automation failed for ${event}:`, error.message)
-        },
-      })
-      this.automationSystems.set(workspaceRootPath, automationSystem)
-      sessionLog.info(`Initialized AutomationSystem for workspace ${workspaceId}`)
+    // Initialize AutomationSystem only when the workspace actually defines automations.
+    if (existsSync(resolveAutomationsConfigPath(workspaceRootPath))) {
+      this.ensureAutomationSystem(workspaceRootPath, workspaceId)
+    } else {
+      sessionLog.info(`AutomationSystem not started for workspace ${workspaceId}; automations.json is not present`)
     }
   }
 

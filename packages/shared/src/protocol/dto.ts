@@ -687,9 +687,16 @@ export interface SessionFile {
   type: 'file' | 'directory'
   size?: number
   children?: SessionFile[]
+  childrenLoaded?: boolean
+  hasMoreChildren?: boolean
   source?: SessionFileSource
   relativePath?: string
   promoted?: boolean
+}
+
+export interface SessionFilesRequestOptions {
+  parentPath?: string
+  maxDepth?: number
 }
 
 export type SessionFileSource =
