@@ -7737,7 +7737,10 @@ export class SessionManager implements ISessionManager {
     }
 
     const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
-    if (spawnBarrier.action === 'wait' || spawnBarrier.action === 'review') {
+    const isQueuedReviewRecovery = Boolean(existingMessageId) && spawnBarrier.action === 'review'
+    const shouldQueueForSpawnBarrier = spawnBarrier.action === 'wait'
+      || (spawnBarrier.action === 'review' && !isQueuedReviewRecovery)
+    if (shouldQueueForSpawnBarrier) {
       userMessage.isQueued = true
       if (!managed.messageQueue.some((queued) => queued.messageId === userMessage.id)) {
         managed.messageQueue.push({
@@ -7760,6 +7763,11 @@ export class SessionManager implements ISessionManager {
       this.persistSession(managed)
       await this.flushSession(managed.id)
       return
+    }
+    if (isQueuedReviewRecovery && managed.spawnHandoffWait) {
+      // This is the explicit user recovery message replayed after a child failed.
+      // Re-queueing it behind the same review barrier creates an infinite loop.
+      this.clearSpawnHandoffWait(managed)
     }
 
     // Evaluate auto-label rules against the user message (common path for both

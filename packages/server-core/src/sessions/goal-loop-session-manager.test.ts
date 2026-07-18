@@ -216,6 +216,88 @@ describe('SessionManager goal loop routing', () => {
     expect(continuationPrompts[0]).toContain('Do not repeat delegated source analysis')
   })
 
+  it('replays queued parent recovery work only once when a child handoff needs review', async () => {
+    const parentSessionId = 'goal-child-review-pause'
+    const childSessionId = 'goal-failed-child'
+    const reportPath = join(tmpRoot, 'sessions', parentSessionId, 'orchestration', 'reports', 'failed-child.md')
+    const parent = buildSession(parentSessionId, {
+      goalState: goal({
+        criteria: [],
+        orchestration: {
+          version: 1,
+          phase: 'plan',
+          createdAt: 1,
+          updatedAt: 1,
+          policy: {
+            selectedSourceSlugs: ['kb-coto'],
+            forbidWorkingDirectoryDiscovery: true,
+            requireStructuredHandoff: true,
+            requireUserConfirmationPause: true,
+            maxAutomaticRepairPasses: 2,
+          },
+          taskBoard: { tasks: [] },
+          subAgents: [{
+            sessionId: childSessionId,
+            taskId: 'price-sheet-c1',
+            status: 'needs_review',
+            sourceSlugs: ['kb-coto'],
+            reportPath,
+            createdAt: 1,
+            updatedAt: 1,
+            lastActivityAt: 1,
+            expectedHandoff: ['report'],
+          }],
+        },
+      }),
+    })
+    const events = captureEvents()
+    ;(sm as unknown as {
+      scheduleSpawnHandoffMonitor: (session: unknown) => void
+    }).scheduleSpawnHandoffMonitor = () => undefined
+
+    await expect(sm.sendMessage(parentSessionId, 'Continue after the child finishes.')).resolves.toBeUndefined()
+    expect(parent.messageQueue).toHaveLength(1)
+
+    let replayCount = 0
+    let replayPromise = Promise.resolve()
+    ;(sm as unknown as {
+      getOrCreateAgent: () => Promise<never>
+    }).getOrCreateAgent = async () => {
+      throw new Error('expected test stop after barrier evaluation')
+    }
+    ;(sm as unknown as {
+      processNextQueuedMessage: (sessionId: string) => void
+    }).processNextQueuedMessage = (sessionId) => {
+      replayCount++
+      const next = parent.messageQueue.shift()
+      if (!next) return
+      const queuedMessage = parent.messages.find(message => message.id === next.messageId)
+      if (queuedMessage) queuedMessage.isQueued = false
+      replayPromise = sm.sendMessage(
+        sessionId,
+        next.message,
+        next.attachments,
+        next.storedAttachments,
+        next.options,
+        next.messageId,
+      ).catch(() => undefined)
+    }
+
+    ;(sm as unknown as {
+      checkWaitingParentSpawnHandoffs: (sessionId: string) => void
+    }).checkWaitingParentSpawnHandoffs(parentSessionId)
+    await replayPromise
+
+    expect(replayCount).toBe(1)
+    expect(parent.messageQueue).toHaveLength(0)
+    expect(parent.spawnHandoffWait).toBeUndefined()
+    expect(parent.goalState?.status).toBe('needs_review')
+    expect(events.filter(event => event.type === 'goal_needs_review')).toHaveLength(1)
+    expect(parent.messages.filter(message => (
+      message.role === 'info' && message.content.startsWith('Waiting for 1 structured child handoff')
+    ))).toHaveLength(1)
+  })
+
   it('does not complete a professional Markdown goal without a validated transactional artifact', async () => {
     const sessionId = 'goal-professional-artifact-gate'
     const managed = buildSession(sessionId, {
