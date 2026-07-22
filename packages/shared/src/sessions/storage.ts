@@ -609,7 +609,7 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
     const {
       enabledSourceSlugs: _es, pendingPlanExecution: _pp,
       sessionStatus: _ss, workingDirectory: _wd, sdkCwd: _sc,
-      workspaceRootPath: _wrp, ...headerFields
+      workspaceRootPath: _wrp, goalState: _gs, ...headerFields
     } = header;
 
     return {

@@ -106,6 +106,30 @@ describe('cold-session metadata persistence', () => {
     return { id, type: 'user', content, timestamp: Date.now() } as StoredMessage
   }
 
+  function makeQueuedUserMessage(id: string, content: string): StoredMessage {
+    return {
+      id,
+      type: 'user',
+      content,
+      timestamp: Date.now(),
+      isQueued: true,
+    } as StoredMessage
+  }
+
+  function readDiskMessages(sessionId: string): Array<Record<string, unknown>> {
+    const path = getSessionFilePath(tmpRoot, sessionId)
+    if (!existsSync(path)) return []
+    return readFileSync(path, 'utf-8')
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map(line => JSON.parse(line) as Record<string, unknown>)
+  }
+
+  async function waitForImmediate(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+
   function goalState(overrides: Partial<SessionGoalState> = {}): SessionGoalState {
     return {
       id: 'goal-1',
@@ -248,5 +272,42 @@ describe('cold-session metadata persistence', () => {
     await sm.flushSession(sessionId)
 
     expect(readDiskHeader(sessionId).sessionStatus).toBe('cancelled')
+  })
+
+  it('opening a cold session does not replay a queued message left by a previous process', async () => {
+    const sessionId = 'cold-orphaned-queue-open'
+    seedColdSession(sessionId, {
+      messages: [makeQueuedUserMessage('queued-1', 'continue the interrupted task')],
+    })
+
+    const replayed: string[] = []
+    ;(sm as unknown as { processNextQueuedMessage: (id: string) => void })
+      .processNextQueuedMessage = (id: string) => replayed.push(id)
+
+    const session = await sm.getSession(sessionId)
+    await waitForImmediate()
+
+    expect(replayed).toEqual([])
+    expect(session?.messages.find(message => message.id === 'queued-1')?.isQueued).toBe(false)
+
+    await sm.flushSession(sessionId)
+    expect(readDiskMessages(sessionId).find(message => message.id === 'queued-1')?.isQueued).toBe(false)
+  })
+
+  it('persisting cold metadata never turns an orphaned queued message into startup work', async () => {
+    const sessionId = 'cold-orphaned-queue-persist'
+    seedColdSession(sessionId, {
+      messages: [makeQueuedUserMessage('queued-2', 'resume after restart')],
+    })
+
+    const replayed: string[] = []
+    ;(sm as unknown as { processNextQueuedMessage: (id: string) => void })
+      .processNextQueuedMessage = (id: string) => replayed.push(id)
+
+    await sm.setSessionStatus(sessionId, 'in-progress')
+    await waitForImmediate()
+
+    expect(replayed).toEqual([])
+    expect(readDiskMessages(sessionId).find(message => message.id === 'queued-2')?.isQueued).toBe(false)
   })
 })

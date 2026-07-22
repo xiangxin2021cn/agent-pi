@@ -37,6 +37,7 @@ import {
   clearPlanFileState,
   registerSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
+  getSessionScopedToolCallbacks,
   getSessionScopedTools,
   cleanupSessionScopedTools,
   type AuthRequest,
@@ -1131,6 +1132,7 @@ export class ClaudeAgent extends BaseAgent {
                 rtkContext,
                 orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
                 orchestrationState: this.config.session?.goalState?.orchestration,
+                toolRecoveryGuard: getSessionScopedToolCallbacks(sessionId)?.toolRecoveryGuardFn,
                 onDebug: (msg) => this.onDebug?.(msg),
               });
 
@@ -1176,6 +1178,9 @@ export class ClaudeAgent extends BaseAgent {
                     changedAt: diagnostics.lastChangedAt,
                     reason: checkResult.reason,
                   })}`);
+                  if (checkResult.source === 'handoff_barrier') {
+                    setImmediate(() => this.interruptForHandoff(AbortReason.SpawnHandoff));
+                  }
                   return blockWithReason(checkResult.reason);
                 }
 

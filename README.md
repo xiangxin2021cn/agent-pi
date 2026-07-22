@@ -51,15 +51,32 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.2.6.**
+**Current release: V2.3.0.**
 
-**当前发布版：V2.2.6。**
+**当前发布版：V2.3.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.3.0 Bounded Self-Harness / V2.3.0 有边界的自适应执行
+
+V2.3.0 makes recurring execution failures reusable without allowing the agent to rewrite production code. Within one turn, an identical failed tool call can be retried once; after the second identical failure Agent Pi blocks that route and requires changed input, a verified fallback, or user review. A sanitized workspace Harness Store records only verified recovery shapes, provider/model/mode profiles, hashes, and explicit quality feedback. Similar future tasks can receive up to three proven route hints. User corrections become regression candidates, while global policies remain a constrained, non-executable DSL and can be promoted only after target improvement, no held-out regression, a fully passing protected suite, and retained rollback metadata. This release also adds renderer crash recovery, spawn memory soft-guards, and a Tender Workbench bridge that can use audited `STAGE_CLOSEOUT*.md` evidence to satisfy `document_analysis` readiness without fabricating downstream data packs.
+
+V2.3.0 让反复出现的执行失败可以被复用，但不允许智能体在运行时改写生产代码。同一轮中，同一个失败工具调用最多重试一次；第二次完全相同的调用仍失败后，Agent π 会阻止继续原样重试，要求修改参数、改走已验证路线或转人工复核。工作区 Harness Store 只保存已验证的恢复形状、供应商/模型/模式画像、哈希和用户明确质量反馈；相似任务最多注入三条成功路线提示。用户指出的跑偏、漏项、模板不符、深度不足、证据或格式问题会转成回归候选；全局策略采用受限且不可执行的规则 DSL，只有目标用例提升、留出用例不退化、保护用例全部通过并保留版本哈希和回滚链时才可晋升。本版同时加入 renderer 崩溃恢复、子智能体内存软保护，以及投标工作台 `STAGE_CLOSEOUT*.md` 人工审计证明解锁 `document_analysis` 的桥接能力，不会伪造后续数据包。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Bounded tool recovery | One identical retry is allowed; repeated identical failure forces a changed route or review instead of consuming tokens in a loop. | 同一调用只允许一次原样重试；重复失败后强制换路线或复核，避免循环浪费 token。 |
+| Verified route reuse | Sanitized successful recovery shapes are matched by task plus provider/model/mode and injected as bounded advice. | 按任务及供应商/模型/模式匹配脱敏成功路线，并以有限提示复用。 |
+| Feedback regression | Explicit user corrections become deduplicated regression candidates; they do not silently rewrite global behavior. | 用户明确纠错会形成去重回归候选，不会静默改写全局行为。 |
+| Deterministic BOQ gate | Completion depends on exact BOQ IDs, counts, child-report equality, schemas, and contradiction checks, not completion claims. | BOQ 完成取决于条目 ID、数量、子报告一致性、结构和矛盾检查，而不是智能体自称完成。 |
+| Executable template profile | Uploaded templates are parsed into section, page, margin, style, font, numbering, header/footer, table, and caption constraints and checked against exported DOCX evidence. | 上传模板被解析为章节、纸张、页边距、样式、字体、编号、页眉页脚、表格和题注约束，并与导出 DOCX 证据核对。 |
+| Harness observability | The existing Info panel shows matched routes, current recovery decision, feedback/regression counts, and compact Goal status. | 现有信息弹窗显示命中路线、当前纠偏决策、反馈/回归数量及简洁 Goal 状态。 |
+| Runtime stability | Renderer crashes reload the window with rate limiting, and `spawn_session` is blocked when Electron crosses memory soft limits. | Renderer 崩溃会限频重载窗口；Electron 超过内存软阈值时会阻止继续创建子智能体。 |
+| Tender closeout bridge | Audited `STAGE_CLOSEOUT*.md` evidence can satisfy `document_analysis` readiness and unblock later Tender Workbench stages without fake BOQ packs. | 经审计的 `STAGE_CLOSEOUT*.md` 可满足 `document_analysis` 就绪条件，解锁后续投标阶段且不伪造 BOQ 包。 |
 
 ### V2.2.6 Multi-Agent Recovery and DeepSeek V4 Endpoint Limits / V2.2.6 多智能体恢复与 DeepSeek V4 端点上限
 
@@ -87,21 +104,6 @@ V2.2.5 聚焦大型投标工作台会话的稳定性和流畅性。会话文件�
 | Lower idle load | Automation runtime starts only when configured; permission reconciliation no longer scans every session by default. | 自动化运行时仅在配置存在时启动；权限状态校准不再默认扫描全部会话。 |
 | Regression tests | Added lazy-loading and stability telemetry coverage; watcher tests match the safer debounce window. | 增加懒加载和稳定性遥测测试；watcher 测试匹配更稳妥的 debounce 窗口。 |
 
-### V2.2.4 C5.1 BOQ Pricing and Bidder Commitments / V2.2.4 C5.1 组价与投标人条件确认
-
-V2.2.4 makes the C5.1 item-level workpaper the readiness standard for Tender Workbench BOQ pricing. Each item must retain its original BOQ identity and sources, define scope and payment rules, derive crew and three-scenario productivity, calculate resource consumption, apply traceable VAT-exclusive rates, and reconcile pure direct unit cost and item total. Backend-controlled batches are limited to 12 items and reject generic databases or summary reports as substitutes. A new user-confirmed bidder-commitment stage binds proposed resources, procurement, camp, method, productivity, sequence, timing, and subcontract decisions before methodology planning. The release also fixes persistent child-session unread indicators, focuses the primary navigation, and refreshes the Claude and Pi runtimes.
-
-V2.2.4 将 C5.1 逐项工作底稿设为投标工作台 BOQ 组价的就绪标准。每条清单必须保留原始身份及来源，明确范围和计量支付规则，推导班组及三情景工效，核算资源消耗，采用可追溯且不含增值税的费率，并校核纯直接费单价与条目总价。后端受控批次最多 12 条，通用人材机数据库或摘要报告不能替代逐项推导。新增由用户确认的“投标人条件”阶段，在施工策划前锁定拟投入资源、采购、营地、工法、工效、顺序、时间和分包决策。本版同时修复子会话未读状态反复出现的问题、精简主导航并更新 Claude 与 Pi 运行时。
-
-| Area / 模块 | English | 中文 |
-| --- | --- | --- |
-| C5.1 BOQ pricing | Structured item identity, scope clauses, crew and bottleneck productivity, six resource categories, rate metadata, pure direct-cost arithmetic, and item-specific risk are mandatory. | 强制校验条目身份、范围条款、班组与瓶颈工效、六类资源、费率元数据、纯直接费计算和条目特定风险。 |
-| Controlled batches | At most 12 immutable BOQ items per child brief; full coverage, schema, arithmetic, source, and cross-batch conflict gates must pass before merge. | 每份子智能体简报最多包含 12 条不可变清单；合并前必须通过全覆盖、结构、算术、来源及跨批次冲突门禁。 |
-| Bidder commitments | User-confirmed labour, management, equipment, material-price, camp, method, productivity, sequence, timing, and subcontract decisions gate construction methodology. | 用户确认的人力、管理、设备、材料价格、营地、工法、工效、顺序、时间和分包决策成为施工策划前置门禁。 |
-| Thread-aware read state | Parent and descendant sessions share a consistent read boundary, including child completion while the parent is being viewed. | 主会话与全部后代会话采用一致的已读边界，包括查看主会话期间完成的子智能体。 |
-| Focused navigation | Scheduled tasks, event triggers, and agent events are removed from the main sidebar; existing automation data and backend services are not deleted. | 主侧栏不再显示定时任务、事件触发和智能体事件；已有自动化数据及后端服务不会被删除。 |
-| Core runtime | Claude Agent SDK 0.3.212, Anthropic SDK 0.112.2, and Pi 0.80.10. | Claude Agent SDK 升级至 0.3.212，Anthropic SDK 升级至 0.112.2，Pi 升级至 0.80.10。 |
-
 Older release details are available on GitHub Releases.
 
 更早版本说明请查看 GitHub Releases。
@@ -111,6 +113,7 @@ Older release details are available on GitHub Releases.
 | Capability | English | 中文 |
 | --- | --- | --- |
 | Goal Loop | Reviews long-running tasks against the user's stated goal, required files, formats, evidence, and verification signals before accepting completion. | 按用户目标、必需文件、格式、证据和验证信号审查长任务结果，避免过早完成。 |
+| Bounded Self-Harness | Stops repeated identical tool failures, reuses sanitized verified recovery routes, and turns explicit user corrections into regression candidates without runtime self-modifying code. | 阻止相同工具失败反复循环，复用脱敏且已验证的恢复路线，并将用户明确纠错转成回归候选，但不在运行时自改代码。 |
 | Task Contract | Converts user instructions into a durable task contract with hard constraints, acceptance checks, evidence requirements, and forbidden shortcuts. | 将用户要求转成可持久化任务契约，记录硬约束、验收标准、证据要求和禁止偷懒项。 |
 | Requirement Ledger | Tracks each material requirement with a stable ID, verification rule, status, evidence references, and failure reason across follow-up turns. | 跨后续轮次以稳定 ID、验证规则、状态、证据引用和失败原因追踪每项关键要求。 |
 | Transactional Document Artifact | Writes long Markdown as recoverable sections and accepts completion only after hash-frozen atomic assembly and validation. | 将长 Markdown 写成可恢复章节，仅在冻结哈希、原子组装并校验后接受完成。 |

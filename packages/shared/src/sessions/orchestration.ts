@@ -134,6 +134,30 @@ export function appendSubAgentLifecycleEntry(
   };
 }
 
+export function filterSupersededSubAgentHandoffs(
+  subAgents: readonly SessionSubAgentLifecycleEntry[],
+): SessionSubAgentLifecycleEntry[] {
+  const readyExactReportPaths = new Set<string>();
+  const readySplitFamilyCounts = new Map<string, number>();
+
+  for (const agent of subAgents) {
+    if (!isSubAgentHandoffReady(agent) || !agent.reportPath) continue;
+    readyExactReportPaths.add(normalizeReportPath(agent.reportPath));
+    const family = getHandoffReportFamily(agent.reportPath);
+    if (family?.splitMarker) {
+      readySplitFamilyCounts.set(family.key, (readySplitFamilyCounts.get(family.key) ?? 0) + 1);
+    }
+  }
+
+  return subAgents.filter(agent => {
+    if (isSubAgentHandoffReady(agent) || !agent.reportPath) return true;
+    if (readyExactReportPaths.has(normalizeReportPath(agent.reportPath))) return false;
+
+    const family = getHandoffReportFamily(agent.reportPath);
+    return !(family && !family.splitMarker && (readySplitFamilyCounts.get(family.key) ?? 0) >= 2);
+  });
+}
+
 export function markSubAgentHandoffReady(
   orchestration: SessionOrchestrationState | undefined,
   input: MarkSubAgentHandoffReadyInput,
@@ -689,4 +713,32 @@ function transitionTo(
 
 function unique(values: string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+}
+
+function isSubAgentHandoffReady(agent: SessionSubAgentLifecycleEntry): boolean {
+  return agent.status === 'handoff_received' || agent.status === 'completed';
+}
+
+function normalizeReportPath(reportPath: string): string {
+  return reportPath.replace(/\\/g, '/').trim().toLowerCase();
+}
+
+function getHandoffReportFamily(reportPath: string): { key: string; splitMarker?: string } | undefined {
+  const normalized = normalizeReportPath(reportPath);
+  const fileName = normalized.split('/').pop();
+  if (!fileName) return undefined;
+
+  const stem = fileName.replace(/\.[^.]+$/, '');
+  const match = stem.match(/^(.+?)(?:[-_ ]([a-z]|part[-_ ]?\d+|p\d+))?([-_ ]handoff(?:[-_ ]v\d+)?)$/i);
+  if (!match) return undefined;
+
+  const prefix = match[1];
+  const splitMarker = match[2];
+  const suffix = match[3];
+  if (!prefix || !suffix) return undefined;
+
+  return {
+    key: `${prefix}${suffix}`.replace(/[-_ ]+/g, '-'),
+    splitMarker,
+  };
 }

@@ -494,6 +494,16 @@ function OrchestrationInfoBlock({ info }: { info: OrchestrationInfoViewModel }) 
         value={info.selectedSourceBoundary}
         active
       />
+      {info.harness && (
+        <InfoLine
+          icon={<RotateCcw className="h-3.5 w-3.5" />}
+          label={t('sessionInfo.harnessRecovery', { defaultValue: '自适应恢复' })}
+          value={info.harness.recovery
+            ? `${info.harness.summary} · ${info.harness.recovery}`
+            : info.harness.summary}
+          active={info.harness.tone === 'warning' || info.harness.tone === 'danger'}
+        />
+      )}
       <InfoLine
         icon={<ListChecks className="h-3.5 w-3.5" />}
         label={t('sessionInfo.orchestrationTaskBoard', { defaultValue: '任务板' })}

@@ -1,6 +1,11 @@
 import { BrowserWindow, shell, nativeTheme, Menu, app } from 'electron'
 import { stabilityLog, windowLog } from './logger'
 import { createStabilitySnapshot } from './stability-telemetry'
+import {
+  decideRendererRecovery,
+  nextRendererRecoveryState,
+  type RendererRecoveryState,
+} from './renderer-recovery'
 import { join, resolve, sep } from 'path'
 import { existsSync } from 'fs'
 import { release } from 'os'
@@ -97,6 +102,8 @@ export class WindowManager {
   private windows: Map<number, ManagedWindow> = new Map()  // webContents.id → ManagedWindow
   private focusedModeWindows: Set<number> = new Set()  // webContents.id of windows in focused mode
   private pendingCloseTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Fallback timeouts for window close
+  /** Per-webContents recovery timestamps used to rate-limit crash loops. */
+  private rendererRecoveryByWebContents = new Map<number, number[]>()
   private eventSink: ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null = null
   private clientResolver: ((wcId: number) => string | undefined) | null = null
   private keyboardCloseIntents: Set<number> = new Set()  // webContents.id flagged by Cmd/Ctrl+W before close
@@ -309,6 +316,7 @@ export class WindowManager {
 
     window.webContents.on('render-process-gone', (_event, details) => {
       logWindowStabilityEvent('error', 'renderer process gone', window, workspaceId, { details })
+      this.recoverRendererProcess(window, workspaceId, details)
     })
 
     window.webContents.on('unresponsive', () => {
@@ -545,6 +553,7 @@ export class WindowManager {
         clearTimeout(timeout)
         this.pendingCloseTimeouts.delete(webContentsId)
       }
+      this.rendererRecoveryByWebContents.delete(webContentsId)
 
       // Clean up short-lived keyboard-close intent tracking.
       const keyboardIntentTimeout = this.keyboardCloseIntentTimeouts.get(webContentsId)
@@ -715,6 +724,60 @@ export class WindowManager {
    */
   getAllWindows(): ManagedWindow[] {
     return Array.from(this.windows.values()).filter(m => !m.window.isDestroyed())
+  }
+
+  /**
+   * Attempt to keep the BrowserWindow alive after a renderer crash.
+   * On Windows/Linux, a dead last window would otherwise trigger window-all-closed → app.quit().
+   */
+  private recoverRendererProcess(
+    window: BrowserWindow,
+    workspaceId: string,
+    details: { reason: string; exitCode?: number },
+  ): void {
+    const windowDestroyed = window.isDestroyed()
+    const webContentsDestroyed = windowDestroyed || window.webContents.isDestroyed()
+    const webContentsId = webContentsDestroyed ? -1 : window.webContents.id
+    const nowMs = Date.now()
+    const state: RendererRecoveryState = {
+      recentRecoveries: webContentsId >= 0
+        ? (this.rendererRecoveryByWebContents.get(webContentsId) ?? [])
+        : [],
+      nowMs,
+    }
+
+    const decision = decideRendererRecovery({
+      details,
+      windowDestroyed,
+      webContentsDestroyed,
+      state,
+    })
+    const nextState = nextRendererRecoveryState(state, decision)
+    if (webContentsId >= 0) {
+      this.rendererRecoveryByWebContents.set(webContentsId, nextState.recentRecoveries)
+    }
+
+    if (decision.action !== 'reload') {
+      logWindowStabilityEvent('warn', 'renderer recovery skipped', window, workspaceId, {
+        details,
+        decision,
+      })
+      return
+    }
+
+    try {
+      window.webContents.reload()
+      logWindowStabilityEvent('info', 'renderer recovery reload', window, workspaceId, {
+        details,
+        decision,
+      })
+    } catch (error) {
+      logWindowStabilityEvent('error', 'renderer recovery reload failed', window, workspaceId, {
+        details,
+        decision,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   /**

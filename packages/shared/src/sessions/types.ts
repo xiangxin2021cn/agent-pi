@@ -209,6 +209,49 @@ export interface SessionDocumentEditorialProfile {
   maxTableLineRatio: number;
 }
 
+export type SessionTemplateSourceType = 'markdown' | 'docx' | 'pdf';
+export type SessionTemplateLayoutFidelity = 'semantic-only' | 'strict-docx-ooxml' | 'pdf-visual-approximation';
+
+export interface SessionTemplateProfile {
+  id: string;
+  sourcePath: string;
+  sourceType: SessionTemplateSourceType;
+  generatedBy?: string;
+  layoutFidelity: SessionTemplateLayoutFidelity;
+  sectionOrder: string[];
+  titleDepth?: number;
+  averageSectionLength?: number;
+  tableConvention?: string;
+  figureConvention?: string;
+  citationStyle?: string;
+  languageStyle?: string;
+  pageSize?: 'A4' | 'A3' | 'letter' | 'custom';
+  orientation?: 'portrait' | 'landscape';
+  styles: Array<{
+    id: string;
+    name: string;
+    role?: 'title' | 'heading' | 'body' | 'caption' | 'table' | 'toc' | 'header' | 'footer';
+  }>;
+  fonts: string[];
+  tableStyles?: string[];
+  captionStyles?: string[];
+  headerFooterReferences?: Array<{
+    type: 'header' | 'footer';
+    id: string;
+  }>;
+  numbering?: Array<{
+    id: string;
+    levels: number;
+  }>;
+  margins?: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+  };
+  unknowns: string[];
+}
+
 export interface SessionDocumentPlan {
   title?: string;
   audience?: string;
@@ -222,6 +265,7 @@ export interface SessionDocumentPlan {
   deliveryReviewPlan?: SessionDocumentDeliveryReviewPlan;
   artifactVisibility?: SessionDocumentArtifactVisibilityPlan;
   templateProfileId?: string;
+  templateProfile?: SessionTemplateProfile;
   strictTemplate?: boolean;
   sections: string[];
   tables: string[];
@@ -312,6 +356,25 @@ export interface SessionGoalAuditResult {
   createdAt: number;
 }
 
+export interface SessionHarnessRecoveryState {
+  toolName: string;
+  category: string;
+  attempts: number;
+  decision: 'retry_allowed' | 'change_route' | 'manual_review';
+  updatedAt: number;
+}
+
+export interface SessionHarnessState {
+  version: 1;
+  updatedAt: number;
+  currentFailure?: SessionHarnessRecoveryState;
+  lastRecoveredRouteId?: string;
+  matchedRouteIds: string[];
+  verifiedRouteCount: number;
+  feedbackCount: number;
+  regressionCandidateCount: number;
+}
+
 export interface SessionGoalState {
   id: string;
   objective: string;
@@ -324,6 +387,7 @@ export interface SessionGoalState {
   criteria: SessionGoalCriterion[];
   taskContract?: SessionTaskContract;
   orchestration?: SessionOrchestrationState;
+  harness?: SessionHarnessState;
   auditHistory: SessionGoalAuditResult[];
   budgets?: {
     maxExtraTurns?: number;

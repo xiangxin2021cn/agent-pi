@@ -66,6 +66,22 @@ describe('template fidelity audit', () => {
     expect(audit.score).toBeGreaterThanOrEqual(80);
   });
 
+  test('fails when required sections exist but do not follow the template order', () => {
+    const audit = auditTemplateFidelity([
+      '## Cost Analysis',
+      'This section contains a complete cost analysis with supporting evidence [1] and enough detail for review.',
+      '',
+      '## Executive Summary',
+      'This section contains a complete executive summary with supporting evidence [2] and enough detail for review.',
+      '',
+      '## Risk Register',
+      'This section contains a complete risk register with supporting evidence [3] and enough detail for review.',
+    ].join('\n'), { ...profile, tableConvention: undefined, figureConvention: undefined });
+
+    expect(audit.passed).toBe(false);
+    expect(audit.issues).toContain('Required sections do not follow the template order.');
+  });
+
   test('strict DOCX profiles require exported DOCX structure evidence', () => {
     const audit = auditTemplateFidelity('## Executive Summary\n\nContent with enough depth and citation [1].', {
       ...profile,
@@ -76,6 +92,87 @@ describe('template fidelity audit', () => {
 
     expect(audit.passed).toBe(false);
     expect(audit.issues).toContain('Strict DOCX template audit requires exported DOCX structure evidence.');
+  });
+
+  test('strict DOCX audit rejects an unresolved source template even when an exported DOCX exists', () => {
+    const unresolved: ExtractedTemplateProfile = {
+      ...profile,
+      sourcePath: 'user-template-request',
+      sourceType: 'docx',
+      layoutFidelity: 'strict-docx-ooxml',
+      sectionOrder: [],
+      styles: [],
+      fonts: [],
+      unknowns: ['Strict template request is pending parsed DOCX profile and exported DOCX evidence.'],
+    };
+    const audit = auditTemplateFidelity('## Report\n\nSubstantive report content.', unresolved, {
+      exportedDocxProfile: {
+        ...unresolved,
+        id: 'exported',
+        sourcePath: 'output.docx',
+        unknowns: [],
+      },
+    });
+
+    expect(audit.passed).toBe(false);
+    expect(audit.issues).toContain('Strict template source profile is unresolved; the uploaded template must be parsed before completion.');
+  });
+
+  test('strict DOCX audit compares exported page, orientation, margins, fonts, styles, numbering, headers, footers, tables, and captions', () => {
+    const templateProfile: ExtractedTemplateProfile = {
+      ...profile,
+      sourceType: 'docx',
+      layoutFidelity: 'strict-docx-ooxml',
+      pageSize: 'A4',
+      orientation: 'portrait',
+      margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+      fonts: ['Arial'],
+      styles: [{ id: 'Heading1', name: 'Heading 1', role: 'heading' }],
+      tableStyles: ['TableGrid'],
+      captionStyles: ['Caption'],
+      headerFooterReferences: [
+        { type: 'header', id: 'rIdHeader1' },
+        { type: 'footer', id: 'rIdFooter1' },
+      ],
+      numbering: [{ id: '1', levels: 3 }],
+    };
+    const exportedDocxProfile: ExtractedTemplateProfile = {
+      ...templateProfile,
+      id: 'exported',
+      sourcePath: 'output.docx',
+      pageSize: 'A3',
+      orientation: 'landscape',
+      margins: { top: 720, right: 720, bottom: 720, left: 720 },
+      fonts: ['Calibri'],
+      styles: [{ id: 'Normal', name: 'Normal', role: 'body' }],
+      tableStyles: [],
+      captionStyles: [],
+      headerFooterReferences: [{ type: 'header', id: 'rIdDifferent' }],
+      numbering: [{ id: '8', levels: 1 }],
+    };
+    const audit = auditTemplateFidelity([
+      '## Executive Summary',
+      'This section provides enough management-level detail with evidence [1] and clear conclusions for the report.',
+      '',
+      '## Cost Analysis',
+      'This section provides enough cost detail with evidence [2] and clear conclusions for the report.',
+      '',
+      '## Risk Register',
+      'This section provides enough risk detail with evidence [3] and clear conclusions for the report.',
+    ].join('\n'), templateProfile, { exportedDocxProfile });
+
+    expect(audit.passed).toBe(false);
+    expect(audit.issues).toEqual(expect.arrayContaining([
+      'Exported DOCX page size does not match the template.',
+      'Exported DOCX orientation does not match the template.',
+      'Exported DOCX margins do not match the template.',
+      'Exported DOCX fonts do not include all template fonts.',
+      'Exported DOCX styles do not include all required template styles.',
+      'Exported DOCX table styles do not include all template table styles.',
+      'Exported DOCX caption styles do not include all template caption styles.',
+      'Exported DOCX header/footer structure does not match the template.',
+      'Exported DOCX numbering structure does not match the template.',
+    ]));
   });
 
   test('PDF templates are labeled as visual approximations', () => {

@@ -48,6 +48,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectory, isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { applyManualTenderCloseoutEvidence } from './tender-manual-closeout.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
 
@@ -115,6 +116,15 @@ export async function handleTenderCapability(
 
     const workspace = parseTenderWorkspace(JSON.parse(readFileSync(paths.corePath, 'utf8')));
     let index = readIndex(paths.indexPath, args.projectId, workspace.revision);
+    const manualEvidence = applyManualTenderCloseoutEvidence(index, {
+      projectDirectory: paths.projectDirectory,
+      workingDirectory: ctx.workingDirectory,
+      coreRevision: workspace.revision,
+    });
+    if (manualEvidence.changed) {
+      index = manualEvidence.index;
+      atomicWriteJson(paths.indexPath, index);
+    }
 
     if (args.action === 'configure') {
       const current = index.capabilities.find((entry) => entry.capability === args.capability);

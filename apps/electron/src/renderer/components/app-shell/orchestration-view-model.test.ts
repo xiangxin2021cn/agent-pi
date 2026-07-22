@@ -35,6 +35,22 @@ describe('orchestration view model', () => {
 
   it('summarizes phase, source boundary, task board, sub-agents, and entropy', () => {
     const info = getOrchestrationInfoViewModel(t, goalState({
+      harness: {
+        version: 1,
+        updatedAt: 3,
+        currentFailure: {
+          toolName: 'Read',
+          category: 'range',
+          attempts: 2,
+          decision: 'change_route',
+          updatedAt: 3,
+        },
+        lastRecoveredRouteId: 'route-1',
+        matchedRouteIds: ['route-1', 'route-2'],
+        verifiedRouteCount: 5,
+        feedbackCount: 3,
+        regressionCandidateCount: 2,
+      },
       orchestration: {
         version: 1,
         phase: 'audit',
@@ -127,6 +143,11 @@ describe('orchestration view model', () => {
     expect(info?.ledger?.summary).toContain('当前 task-2')
     expect(info?.ledger?.summary).toContain('完成 1')
     expect(info?.ledger?.summary).toContain('待确认')
+    expect(info?.harness?.summary).toContain('验证路线 5')
+    expect(info?.harness?.summary).toContain('匹配 2')
+    expect(info?.harness?.recovery).toContain('Read')
+    expect(info?.harness?.recovery).toContain('2 次')
+    expect(info?.harness?.tone).toBe('danger')
   })
 
   it('summarizes the requirement ledger with bounded visible items and verification metadata', () => {
@@ -223,6 +244,43 @@ describe('orchestration view model', () => {
 
     expect(preview?.label).toBe('熵告警')
     expect(preview?.tone).toBe('warning')
+  })
+
+  it('uses a compact recovery hint when an identical failed tool route was stopped', () => {
+    const preview = getOrchestrationBadgePreview(t, goalState({
+      harness: {
+        version: 1,
+        updatedAt: 3,
+        currentFailure: {
+          toolName: 'AnySearch',
+          category: 'invalid_input',
+          attempts: 2,
+          decision: 'change_route',
+          updatedAt: 3,
+        },
+        matchedRouteIds: [],
+        verifiedRouteCount: 0,
+        feedbackCount: 0,
+        regressionCandidateCount: 0,
+      },
+      orchestration: {
+        version: 1,
+        phase: 'plan',
+        createdAt: 1,
+        updatedAt: 2,
+        policy: {
+          selectedSourceSlugs: [],
+          forbidWorkingDirectoryDiscovery: false,
+          requireStructuredHandoff: false,
+          requireUserConfirmationPause: false,
+          maxAutomaticRepairPasses: 2,
+        },
+        taskBoard: { tasks: [] },
+        subAgents: [],
+      },
+    }))
+
+    expect(preview).toEqual({ label: '工具纠偏', tone: 'warning' })
   })
 
   it('shows a completed success badge for the done orchestration phase', () => {

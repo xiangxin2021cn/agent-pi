@@ -36,6 +36,14 @@ export type { TenderWorkspaceArgs, TenderWorkspaceAction } from './tender-worksp
 // Tender Capability Packs
 export { handleTenderCapability } from './tender-capability.ts';
 export type { TenderCapabilityArgs, TenderCapabilityAction } from './tender-capability.ts';
+export {
+  applyManualTenderCloseoutEvidence,
+  findManualTenderCloseoutEvidence,
+} from './tender-manual-closeout.ts';
+export type {
+  TenderManualCloseoutApplyResult,
+  TenderManualCloseoutEvidence,
+} from './tender-manual-closeout.ts';
 
 // Project Delivery Controls Workspace
 export { handleDeliveryWorkspace } from './delivery-workspace.ts';

@@ -151,7 +151,7 @@ function formatDocumentWorkflowExecutionProtocol(contract: SessionTaskContract):
     `3. Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.`,
     `4. If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.`,
     `5. Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.`,
-    `6. After spawn_session returns, use get_spawn_status and follow parentAction. While it is "wait", do not inspect original sources, calculate substitutes, or write child reports; the runtime pauses and resumes the parent only after every terminal handoff is ready.`,
+    `6. After spawn_session returns, return control immediately and let the runtime monitor handoff progress. Do not call get_spawn_status in the same turn, inspect original sources, calculate substitutes, or write child reports; the runtime resumes the parent only after every terminal handoff is ready.`,
     `7. Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.`,
     `8. Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.`,
     `9. Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.`,
@@ -169,7 +169,7 @@ function appendComplexAgentOrchestrationProtocol(lines: string[], contract: Sess
 
   lines.push(`${startIndex}. Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session for the listed scoped assignments when the task has multiple chapters, sources, files, or review domains.`);
   lines.push(`${startIndex + 1}. Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs, must not broaden into working-directory discovery, and must return handoff notes rather than final artifacts.`);
-  lines.push(`${startIndex + 2}. After spawning, use get_spawn_status and follow parentAction. Pending helpers retain exclusive ownership of their assigned work; do not replace them after a fixed timeout or treat status "todo" as failure.`);
+  lines.push(`${startIndex + 2}. After spawning, return control immediately and let the runtime monitor handoff progress. Do not call get_spawn_status in the same turn. Pending helpers retain exclusive ownership of their assigned work; do not replace them after a fixed timeout or treat status "todo" as failure.`);
   lines.push(`${startIndex + 3}. The main session remains the final synthesis owner. It may read, compare, and resolve terminal helper handoffs before writing the final deliverable; if a helper fails or loses its report, retry it or record an explicit missing-child gap instead of fabricating the child report.`);
   return startIndex + 4;
 }

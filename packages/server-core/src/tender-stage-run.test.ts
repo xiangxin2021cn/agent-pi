@@ -113,6 +113,55 @@ describe('tender stage runner', () => {
     expect(methodology.missingItems).toContain('capability:bidder_commitments');
   });
 
+  test('uses manual stage closeout evidence to satisfy document-analysis upstream readiness', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
+    const closeoutDirectory = join(fixture.projectRoot, 'Agent Pi Outputs', '260720-light-crane');
+    mkdirSync(closeoutDirectory, { recursive: true });
+    writeFileSync(join(closeoutDirectory, 'STAGE_CLOSEOUT_Phase1_Document_Analysis.md'), [
+      '# Stage Closeout',
+      '## Capability Coverage',
+      '### document_analysis ✅',
+    ].join('\n'));
+    const entry = (capability: string) => ({
+      capability, enabled: true, required: true, revision: 1, readiness: 'ready',
+      issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+    });
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      coreRevision: 2,
+      capabilities: [entry('boq_reconciliation')],
+    }));
+    writeCapabilityPack(projectDirectory, 'boq_reconciliation', {
+      items: [{
+        id: 'item-1', source: { documentId: sourceId(fixture.boqPath), sheet: 'C5.1', cell: 'A1:F1' },
+        code: '5.1.1', description: 'BOQ item', unit: 'm', quantity: '1',
+        quantityBasis: 'boq', quantityStatus: 'sourced', quantityRefs: [],
+      }],
+      scopeLinks: [{
+        boqItemId: 'item-1', requirementIds: [], specificationRefs: [], drawingRefs: [],
+        measurementRuleRefs: [], inclusions: [], exclusions: [], assumptions: [], gapStatus: 'needs_review',
+      }],
+    });
+
+    const result = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+
+    expect(result.status).toBe('running');
+    expect(result.generatedPacks).toContain('document_analysis');
+    expect(result.missingItems).not.toContain('capability:document_analysis');
+    const persistedIndex = JSON.parse(readFileSync(join(projectDirectory, 'capability-index.json'), 'utf8'));
+    expect(persistedIndex.capabilities.find((capability: any) => capability.capability === 'document_analysis')?.readiness)
+      .toBe('ready');
+  });
+
   test('keeps schedule/resources and cost/cashflow as separate gated stages', async () => {
     const fixture = createFixture();
     await runTenderStage({

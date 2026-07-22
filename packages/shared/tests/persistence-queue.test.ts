@@ -120,4 +120,25 @@ describe('SessionPersistenceQueue', () => {
     expect(JSON.parse(contentA.split('\n')[0]).sdkSessionId).toBe('id-a');
     expect(JSON.parse(contentB.split('\n')[0]).sdkSessionId).toBe('id-b');
   });
+
+  it('materializes only the latest lazy snapshot during a debounce window', async () => {
+    queue = new SessionPersistenceQueue(60_000);
+    let materialized = 0;
+
+    for (let index = 0; index < 100; index++) {
+      queue.enqueueLazy('test-session', () => {
+        materialized++;
+        return createTestSession('test-session', testDir, `sdk-${index}`);
+      });
+    }
+
+    expect(materialized).toBe(0);
+    await queue.flush('test-session');
+    expect(materialized).toBe(1);
+
+    const filePath = join(testDir, 'sessions', 'test-session', 'session.jsonl');
+    const content = readFileSync(filePath, 'utf-8');
+    const header = JSON.parse(content.split('\n')[0]);
+    expect(header.sdkSessionId).toBe('sdk-99');
+  });
 });

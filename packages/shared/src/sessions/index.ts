@@ -35,6 +35,9 @@ export type {
   SessionTaskContract,
   SessionDocumentGenre,
   SessionDocumentEditorialProfile,
+  SessionTemplateSourceType,
+  SessionTemplateLayoutFidelity,
+  SessionTemplateProfile,
   SessionDocumentPlan,
   SessionDocumentInternalArtifactKind,
   SessionDocumentArtifactVisibilityPlan,
@@ -71,6 +74,7 @@ export { getContextPressureSignal } from './context-pressure.ts';
 export { formatTaskContractContext } from './task-contract-context.ts';
 export {
   buildSessionOrchestrationState,
+  filterSupersededSubAgentHandoffs,
   formatOrchestrationContext,
   getRunnableOrchestrationTasks,
   getOrchestrationEntropySignal,

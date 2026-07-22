@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
 import type { Message } from '@craft-agent/core/types'
+import { AbortReason } from '@craft-agent/shared/agent'
 import { FORMAL_OUTPUTS_DIR_NAME, getProjectBrainPath, type SessionGoalState } from '@craft-agent/shared/sessions'
 import type { SessionEvent } from '@craft-agent/shared/protocol'
 import { saveWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { strToU8, zipSync } from 'fflate'
 import xlsx from 'xlsx'
 import { buildMarkdownExport } from '../handlers/rpc/files'
-import { SessionManager, createManagedSession } from './SessionManager.ts'
+import { SPAWNED_CHILD_SEND_OPTIONS, SessionManager, createManagedSession } from './SessionManager.ts'
 import { FILE_OUTPUT_REQUIRED_CRITERION_TEXT, TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT, TOOL_VERIFICATION_REQUIRED_CRITERION_TEXT, VISUAL_BLOCK_AUDIT_REQUIRED_CRITERION_TEXT } from './goal-criteria'
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
@@ -132,6 +134,33 @@ describe('SessionManager goal loop routing', () => {
     expect(events.some(event => event.type === 'goal_audit_result')).toBe(true)
     expect(events.some(event => event.type === 'goal_needs_review')).toBe(false)
     expect(events.some(event => event.type === 'complete')).toBe(false)
+  })
+
+  it('handles duplicate processing-stop callbacks only once per processing generation', async () => {
+    const sessionId = 'goal-duplicate-stop'
+    const managed = buildSession(sessionId)
+    const events = captureEvents()
+    const continuations: string[] = []
+
+    ;(sm as unknown as {
+      scheduleGoalContinuation: (sessionId: string, prompt: string, iteration: number) => void
+    }).scheduleGoalContinuation = (id) => {
+      continuations.push(id)
+    }
+
+    const stop = (sm as unknown as {
+      onProcessingStopped: (sessionId: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped.bind(sm)
+
+    await Promise.all([
+      stop(sessionId, 'complete'),
+      stop(sessionId, 'complete'),
+    ])
+
+    expect(managed.processingGeneration).toBe(0)
+    expect(continuations).toEqual([sessionId])
+    expect(events.filter(event => event.type === 'goal_audit_started')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'goal_audit_result')).toHaveLength(1)
   })
 
   it('keeps the parent paused for a structured child regardless of the mode policy', async () => {
@@ -296,6 +325,131 @@ describe('SessionManager goal loop routing', () => {
     expect(parent.messages.filter(message => (
       message.role === 'info' && message.content.startsWith('Waiting for 1 structured child handoff')
     ))).toHaveLength(1)
+  })
+
+  it('moves a restored tender child without a live runtime to review instead of waiting forever', () => {
+    const parentSessionId = 'tender-parent-after-restart'
+    const childSessionId = 'tender-child-after-restart'
+    const projectId = 'project-a'
+    const stageId = 'boq-pricing'
+    const parent = buildSession(parentSessionId)
+    parent.workingDirectory = tmpRoot
+    parent.businessContext = {
+      module: 'tender',
+      projectId,
+      workflowId: 'tender-full-workflow',
+      stageId,
+    }
+    const child = createManagedSession({
+      id: childSessionId,
+      name: 'restored tender child',
+      parentSessionId,
+      parentSessionKind: 'spawn',
+    }, parent.workspace, { messagesLoaded: true })
+    ;(child as unknown as { restoredFromDisk?: boolean }).restoredFromDisk = true
+    sessionIds.push(childSessionId)
+    ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(childSessionId, child)
+
+    const taskBoardDirectory = join(
+      tmpRoot,
+      '.agent-pi',
+      'business',
+      'tender',
+      projectId,
+      'orchestration',
+      'task-boards',
+    )
+    mkdirSync(taskBoardDirectory, { recursive: true })
+    writeFileSync(join(taskBoardDirectory, `${stageId}.json`), JSON.stringify({
+      schemaVersion: 1,
+      projectId,
+      stageId,
+      parentSessionId,
+      maxConcurrency: 4,
+      updatedAt: new Date().toISOString(),
+      taskBoardPath: join(taskBoardDirectory, `${stageId}.json`),
+      tasks: [{
+        batchId: 'batch-1',
+        name: 'BOQ batch 1',
+        status: 'running',
+        briefPath: join(tmpRoot, 'brief.md'),
+        reportPath: join(tmpRoot, 'report.md'),
+        allowedSourcePaths: [],
+        sessionId: childSessionId,
+        attemptCount: 1,
+        updatedAt: new Date().toISOString(),
+      }],
+    }), 'utf8')
+
+    const decision = (sm as unknown as {
+      getParentSpawnHandoffBarrierDecision: (session: unknown) => {
+        action: string
+        pendingSessionIds: string[]
+        reviewSessionIds: string[]
+      }
+    }).getParentSpawnHandoffBarrierDecision(parent)
+
+    expect(decision.action).toBe('review')
+    expect(decision.pendingSessionIds).toEqual([])
+    expect(decision.reviewSessionIds).toEqual([childSessionId])
+  })
+
+  it('emits only one persistent wait notice when the same barrier is re-entered', () => {
+    const parent = buildSession('repeat-wait-notice')
+    const barrier = {
+      action: 'wait' as const,
+      pendingSessionIds: ['child-1'],
+      reviewSessionIds: [],
+      reportPaths: ['report.md'],
+      source: 'goal_orchestration' as const,
+    }
+    const manager = sm as unknown as {
+      enterSpawnHandoffWait: (session: unknown, decision: unknown) => void
+      clearSpawnHandoffWait: (session: unknown) => void
+      scheduleSpawnHandoffMonitor: (session: unknown) => void
+    }
+    manager.scheduleSpawnHandoffMonitor = () => undefined
+
+    manager.enterSpawnHandoffWait(parent, barrier)
+    manager.clearSpawnHandoffWait(parent)
+    manager.enterSpawnHandoffWait(parent, barrier)
+
+    expect(parent.messages.filter(message => (
+      message.role === 'info' && message.content.startsWith('Waiting for 1 structured child handoff')
+    ))).toHaveLength(1)
+  })
+
+  it('ends the parent model turn after a structured child handoff is dispatched', async () => {
+    const parent = buildSession('yield-after-structured-spawn')
+    const events = captureEvents()
+    const abortReasons: AbortReason[] = []
+    parent.isProcessing = true
+    parent.spawnHandoffWait = {
+      childSessionIds: ['child-1'],
+      startedAt: Date.now(),
+      resumeScheduled: false,
+      source: 'goal_orchestration',
+      reportPaths: [join(tmpRoot, 'child-1.md')],
+    }
+    parent.agent = {
+      interruptForHandoff: (reason: AbortReason) => abortReasons.push(reason),
+    } as never
+
+    ;(sm as unknown as {
+      scheduleParentPauseForSpawnHandoff: (session: unknown) => void
+    }).scheduleParentPauseForSpawnHandoff(parent)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(abortReasons).toEqual([AbortReason.SpawnHandoff])
+    expect(parent.isProcessing).toBe(false)
+    expect(events.filter(event => event.type === 'complete')).toHaveLength(1)
+  })
+
+  it('runs spawned children as narrow workers without their own goal loop', () => {
+    expect(SPAWNED_CHILD_SEND_OPTIONS).toEqual({
+      goalLoopMode: 'off',
+      documentQualityMode: 'native_quick',
+    })
   })
 
   it('does not complete a professional Markdown goal without a validated transactional artifact', async () => {
@@ -2046,7 +2200,21 @@ describe('SessionManager goal loop routing', () => {
   it('initializes template fidelity criteria for uploaded reference templates', async () => {
     const sessionId = 'goal-template-fidelity-init'
     const templatePath = join(tmpRoot, 'reference-template.docx')
-    writeFileSync(templatePath, 'template')
+    writeFileSync(templatePath, zipSync({
+      'word/styles.xml': strToU8([
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr></w:style>',
+        '</w:styles>',
+      ].join('')),
+      'word/numbering.xml': strToU8('<w:numbering/>'),
+      'word/document.xml': strToU8([
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>',
+        '</w:body></w:document>',
+      ].join('')),
+    }))
+    const semanticPath = join(tmpRoot, 'reference-template.md')
+    writeFileSync(semanticPath, '# Project Report\n\n## Executive Summary\n\nTemplate body.')
     const managed = buildSession(sessionId, { goalState: undefined })
     captureEvents()
 
@@ -2061,6 +2229,7 @@ describe('SessionManager goal loop routing', () => {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         size: 8,
         storedPath: templatePath,
+        markdownPath: semanticPath,
       } as never],
     ).catch(() => { /* expected after pre-agent setup */ })
 
@@ -2070,7 +2239,15 @@ describe('SessionManager goal loop routing', () => {
       required: true,
     }))
     expect(managed.goalState?.taskContract?.documentPlan?.strictTemplate).toBe(true)
-    expect(managed.goalState?.taskContract?.documentPlan?.templateProfileId).toBe('pending-template-profile')
+    expect(managed.goalState?.taskContract?.documentPlan?.templateProfileId).toMatch(/^tpl_/)
+    expect(managed.goalState?.taskContract?.documentPlan?.templateProfile).toMatchObject({
+      sourceType: 'docx',
+      layoutFidelity: 'strict-docx-ooxml',
+      pageSize: 'A4',
+      orientation: 'portrait',
+      fonts: ['Arial'],
+      sectionOrder: ['Project Report', 'Executive Summary'],
+    })
   })
 
   it('keeps two automatic repair passes when the first work request asks to continue until done', async () => {

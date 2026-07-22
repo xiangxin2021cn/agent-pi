@@ -7,7 +7,7 @@ import { createSessionHeader, makeSessionPathPortable, readSessionHeader } from 
 import { debug } from '../utils/debug.js'
 
 interface PendingWrite {
-  data: StoredSession
+  produce: () => StoredSession
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -71,16 +71,40 @@ class SessionPersistenceQueue {
    * session, it will be replaced with the new data and the timer reset.
    */
   enqueue(session: StoredSession): void {
-    const existing = this.pending.get(session.id)
+    this.enqueueLazy(session.id, () => session)
+  }
+
+  /**
+   * Queue a lazily materialized session snapshot. Rapid state updates replace
+   * the producer without repeatedly cloning a large message history; only the
+   * latest producer is evaluated when the debounce window is flushed.
+   */
+  enqueueLazy(sessionId: string, produce: () => StoredSession): void {
+    const existing = this.pending.get(sessionId)
     if (existing) {
       clearTimeout(existing.timer)
     }
 
     const timer = setTimeout(() => {
-      void this.write(session.id)
+      void this.startWrite(sessionId)
     }, this.debounceMs)
 
-    this.pending.set(session.id, { data: session, timer })
+    this.pending.set(sessionId, { produce, timer })
+  }
+
+  private startWrite(sessionId: string): Promise<void> {
+    const previous = this.writeInProgress.get(sessionId) ?? Promise.resolve()
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.write(sessionId))
+
+    this.writeInProgress.set(sessionId, current)
+    void current.finally(() => {
+      if (this.writeInProgress.get(sessionId) === current) {
+        this.writeInProgress.delete(sessionId)
+      }
+    })
+    return current
   }
 
   /**
@@ -94,7 +118,7 @@ class SessionPersistenceQueue {
     this.pending.delete(sessionId)
 
     try {
-      const { data } = entry
+      const data = entry.produce()
       ensureSessionsDir(data.workspaceRootPath)
       ensureSessionDir(data.workspaceRootPath, sessionId)
 
@@ -174,23 +198,11 @@ class SessionPersistenceQueue {
     const entry = this.pending.get(sessionId)
     if (entry) {
       clearTimeout(entry.timer)
-
-      // Wait for any in-progress write to complete first
-      const inProgress = this.writeInProgress.get(sessionId)
-      if (inProgress) {
-        await inProgress
-      }
-
-      // Start new write and track it
-      const writePromise = this.write(sessionId)
-      this.writeInProgress.set(sessionId, writePromise)
-
-      try {
-        await writePromise
-      } finally {
-        this.writeInProgress.delete(sessionId)
-      }
+      await this.startWrite(sessionId)
+      return
     }
+
+    await this.writeInProgress.get(sessionId)
   }
 
   /**

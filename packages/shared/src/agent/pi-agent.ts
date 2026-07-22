@@ -1223,6 +1223,7 @@ export class PiAgent extends BaseAgent {
       rtkContext,
       orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
       orchestrationState: this.config.session?.goalState?.orchestration,
+      toolRecoveryGuard: getSessionScopedToolCallbacks(sessionId)?.toolRecoveryGuardFn,
       onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
     });
 
@@ -1247,6 +1248,9 @@ export class PiAgent extends BaseAgent {
           reason: checkResult.reason,
         })}`);
         this.send({ type: 'pre_tool_use_response', requestId, action: 'block', reason: checkResult.reason });
+        if (checkResult.source === 'handoff_barrier') {
+          setImmediate(() => this.interruptForHandoff(AbortReason.SpawnHandoff));
+        }
         return;
       }
 
@@ -1298,6 +1302,7 @@ export class PiAgent extends BaseAgent {
           rtkContext,
           orchestrationPolicy: this.config.session?.goalState?.orchestration?.policy,
           orchestrationState: this.config.session?.goalState?.orchestration,
+          toolRecoveryGuard: getSessionScopedToolCallbacks(sessionId)?.toolRecoveryGuardFn,
           onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
         });
 
@@ -1305,6 +1310,9 @@ export class PiAgent extends BaseAgent {
           this.send({ type: 'pre_tool_use_response', requestId, action: 'modify', input: postResult.input });
         } else if (postResult.type === 'block') {
           this.send({ type: 'pre_tool_use_response', requestId, action: 'block', reason: postResult.reason });
+          if (postResult.source === 'handoff_barrier') {
+            setImmediate(() => this.interruptForHandoff(AbortReason.SpawnHandoff));
+          }
         } else {
           this.send({ type: 'pre_tool_use_response', requestId, action: 'allow' });
         }
@@ -2295,6 +2303,30 @@ export class PiAgent extends BaseAgent {
     this.preToolMetadataByCallId.clear();
   }
 
+  override interruptForHandoff(reason: AbortReason): void {
+    // Handoff pauses must end the live Pi model turn, but should not restart
+    // the warm runtime. forceAbort(SpawnHandoff) deliberately keeps the
+    // subprocess alive, so send a normal abort without scheduling a kill.
+    this.emitAutomationEvent('Stop', { hook_event_name: 'Stop' });
+
+    this.abortReason = reason;
+    this._isProcessing = false;
+
+    for (const [, pending] of this.pendingPermissions) {
+      pending.resolve(false);
+    }
+    this.pendingPermissions.clear();
+
+    for (const [, pending] of this.pendingToolExecutions) {
+      pending.reject(new Error(`Interrupted for handoff: ${reason}`));
+    }
+    this.pendingToolExecutions.clear();
+
+    this.send({ type: 'abort' });
+    this.eventQueue.complete();
+    this.preToolMetadataByCallId.clear();
+  }
+
   forceAbort(reason: AbortReason): void {
     // Fire Stop hook event (fire-and-forget)
     this.emitAutomationEvent('Stop', { hook_event_name: 'Stop' });
@@ -2320,8 +2352,12 @@ export class PiAgent extends BaseAgent {
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
 
-    // For PlanSubmitted and AuthRequest, just interrupt the turn
-    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+    // UI/runtime handoffs end only the current turn; keep the warm Pi runtime.
+    if (
+      reason === AbortReason.PlanSubmitted
+      || reason === AbortReason.AuthRequest
+      || reason === AbortReason.SpawnHandoff
+    ) {
       return;
     }
 

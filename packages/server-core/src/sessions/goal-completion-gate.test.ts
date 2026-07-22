@@ -99,6 +99,59 @@ describe('agent session status goal gate', () => {
 
     expect(getAgentSessionStatusGateError(goal, 'done')).toBeUndefined()
   })
+
+  it('does not block done for a superseded aggregate attempt after split handoffs are received', () => {
+    const goal = makeGoal('passed')
+    goal.orchestration = {
+      version: 1,
+      phase: 'plan',
+      createdAt: 1,
+      updatedAt: 2,
+      policy: {
+        selectedSourceSlugs: [],
+        forbidWorkingDirectoryDiscovery: false,
+        requireStructuredHandoff: true,
+        requireUserConfirmationPause: true,
+        maxAutomaticRepairPasses: 2,
+      },
+      taskBoard: { tasks: [] },
+      subAgents: [{
+        sessionId: 'ghost-c4-2',
+        status: 'started',
+        sourceSlugs: [],
+        reportPath: 'C:/reports/sheet-C4.2-handoff-v3.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }, {
+        sessionId: 'split-c4-2-a',
+        status: 'handoff_received',
+        sourceSlugs: [],
+        reportPath: 'C:/reports/sheet-C4.2-A-handoff-v3.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }, {
+        sessionId: 'split-c4-2-b',
+        status: 'handoff_received',
+        sourceSlugs: [],
+        reportPath: 'C:/reports/sheet-C4.2-B-handoff-v3.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }, {
+        sessionId: 'split-c4-2-c',
+        status: 'handoff_received',
+        sourceSlugs: [],
+        reportPath: 'C:/reports/sheet-C4.2-C-handoff-v3.md',
+        createdAt: 1,
+        updatedAt: 2,
+        expectedHandoff: ['report'],
+      }],
+    }
+
+    expect(getAgentSessionStatusGateError(goal, 'done')).toBeUndefined()
+  })
 })
 
 function makeGoal(status: SessionGoalState['status']): SessionGoalState {

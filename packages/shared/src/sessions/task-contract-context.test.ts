@@ -190,8 +190,9 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Call spawn_session with help=true first, then spawn only the scoped chapter-agent assignments needed for the request.');
     expect(formatted).toContain('If the request names a single chapter, source, file, or folder, spawn only agents for that scoped input and do not spawn agents for other chapters or sources.');
     expect(formatted).toContain('Each spawned chapter prompt must name the selected knowledge-base/source slugs or inherit them, forbid broad working-directory discovery, and require source-grounded handoff notes.');
-    expect(formatted).toContain('use get_spawn_status and follow parentAction');
-    expect(formatted).toContain('the runtime pauses and resumes the parent only after every terminal handoff is ready');
+    expect(formatted).toContain('return control immediately and let the runtime monitor handoff progress');
+    expect(formatted).not.toContain('use get_spawn_status and follow parentAction');
+    expect(formatted).toContain('the runtime resumes the parent only after every terminal handoff is ready');
     expect(formatted).toContain('Keep active spawned chapter sessions in small batches and do not spawn nested child sessions.');
     expect(formatted).toContain('Each spawned chapter session must return a handoff note only and must not write or replace the final artifact.');
     expect(formatted).toContain('Omit workingDirectory in spawned chapter sessions unless a different directory is explicitly required, so they inherit the current session working directory.');
@@ -271,7 +272,8 @@ describe('formatTaskContractContext', () => {
 
     expect(formatted).toContain('Because a Document agent plan is present, the main session must decide orchestration before drafting and use spawn_session');
     expect(formatted).toContain('Spawned helper sessions must inherit selected sources or name the same knowledge-base/source slugs');
-    expect(formatted).toContain('After spawning, use get_spawn_status and follow parentAction');
+    expect(formatted).toContain('After spawning, return control immediately and let the runtime monitor handoff progress');
+    expect(formatted).not.toContain('After spawning, use get_spawn_status and follow parentAction');
     expect(formatted).toContain('if a helper fails or loses its report, retry it or record an explicit missing-child gap');
     expect(formatted).toContain('The main session remains the final synthesis owner.');
   });

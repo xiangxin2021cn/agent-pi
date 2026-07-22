@@ -497,6 +497,31 @@ describe('tender_capability handler', () => {
     expect(readdirSync(join(projectDirectory, 'packs')).some((name) => name.endsWith('.tmp'))).toBe(false);
   });
 
+  test('accepts manual closeout evidence as document-analysis upstream readiness', async () => {
+    const handler = await loadHandler();
+    const closeoutDirectory = join(workingDirectory, 'Agent Pi Outputs', '260720-light-crane');
+    mkdirSync(closeoutDirectory, { recursive: true });
+    writeFileSync(join(closeoutDirectory, 'STAGE_CLOSEOUT_Phase1_Document_Analysis.md'), [
+      '# Stage Closeout',
+      '## Capability Coverage',
+      '### document_analysis ✅',
+    ].join('\n'));
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'evaluation_strategy',
+      data: strategyData(),
+    });
+
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+    expect(output.audit.readiness).toBe('ready');
+    const persistedIndex = JSON.parse(readFileSync(output.indexPath, 'utf8'));
+    expect(persistedIndex.capabilities.find((capability: any) => capability.capability === 'document_analysis')?.readiness)
+      .toBe('ready');
+  });
+
   test('rejects an optimistic revision conflict without mutating the pack', async () => {
     const handler = await loadHandler();
     await handler(context, {

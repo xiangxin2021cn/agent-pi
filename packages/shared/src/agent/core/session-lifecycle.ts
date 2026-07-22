@@ -29,6 +29,9 @@ export enum AbortReason {
   /** Auth request triggered (OAuth, credential prompt) */
   AuthRequest = 'auth_request',
 
+  /** Structured child work was dispatched; the runtime now owns monitoring */
+  SpawnHandoff = 'spawn_handoff',
+
   /** New message sent while processing (silent redirect) */
   Redirect = 'redirect',
 

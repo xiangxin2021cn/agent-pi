@@ -1,4 +1,4 @@
-import type { SessionGoalState } from '@craft-agent/shared/sessions'
+import { filterSupersededSubAgentHandoffs, type SessionGoalState } from '@craft-agent/shared/sessions'
 
 export function getAgentSessionStatusGateError(
   goalState: SessionGoalState | undefined,
@@ -14,7 +14,7 @@ export function getAgentSessionStatusGateError(
     || orchestration.subAgents.some(agent => Boolean(agent.reportPath))
   ))
   const unresolvedStructuredHandoffs = hasStructuredDelegation
-    ? orchestration!.subAgents.filter(agent => (
+    ? filterSupersededSubAgentHandoffs(orchestration!.subAgents).filter(agent => (
         agent.status !== 'handoff_received'
         && agent.status !== 'completed'
         && agent.status !== 'needs_review'

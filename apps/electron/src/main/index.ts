@@ -114,7 +114,7 @@ import { BrowserPaneManager } from './browser-pane-manager'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, stabilityLog, getStabilityLogFilePath } from './logger'
-import { createStabilitySnapshot, shouldLogMemoryPeak } from './stability-telemetry'
+import { createStabilitySnapshot, shouldLogMemoryPeak, summarizeAppMetrics } from './stability-telemetry'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { registerPiModelResolver } from '@craft-agent/shared/config'
 import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
@@ -816,6 +816,20 @@ app.whenReady().then(async () => {
       oauthFlowStore = instance.oauthFlowStore
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
+
+      // Soft-block new spawn_session calls when Electron memory is already near crash levels.
+      sessionManager.setRuntimeMemoryProbe(() => {
+        const mainRssBytes = process.memoryUsage().rss
+        try {
+          const summary = summarizeAppMetrics(app.getAppMetrics())
+          return {
+            mainRssBytes,
+            totalWorkingSetKb: summary.totalWorkingSetKb,
+          }
+        } catch {
+          return { mainRssBytes }
+        }
+      })
 
       // -----------------------------------------------------------------------
       // Messaging Gateway — attach the WS publisher, init local workspaces,

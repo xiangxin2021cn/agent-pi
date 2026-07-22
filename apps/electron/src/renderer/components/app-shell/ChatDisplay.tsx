@@ -548,7 +548,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const prevSessionIdRef = React.useRef<string | null>(null)
   // Reverse pagination: show last N turns initially, load more on scroll up
   const TURNS_PER_PAGE = 20
+  const MAX_SEARCH_AUTO_VISIBLE_TURNS = 100
   const [visibleTurnCount, setVisibleTurnCount] = React.useState(TURNS_PER_PAGE)
+  const visibleTurnSessionIdRef = React.useRef(session?.id)
   // Sticky-bottom: When true, auto-scroll on content changes. Toggled by user scroll behavior.
   const isStickToBottomRef = React.useRef(true)
   // Mirror isFocusedPanel into a ref so the ResizeObserver closure reads the latest value
@@ -761,8 +763,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     // totalTurns - visibleTurnCount = startIndex, so we need visibleTurnCount = totalTurns - earliestMatchTurnIndex + buffer
     const requiredVisibleCount = totalTurns - earliestMatchTurnIndex + 5 // +5 buffer for context
 
-    if (requiredVisibleCount > visibleTurnCount) {
-      setVisibleTurnCount(requiredVisibleCount)
+    // Do not mount an entire long-running session just because a restored
+    // search query has an early match. Match navigation can still reveal an
+    // older target on demand.
+    const boundedVisibleCount = Math.min(requiredVisibleCount, MAX_SEARCH_AUTO_VISIBLE_TURNS)
+    if (boundedVisibleCount > visibleTurnCount) {
+      setVisibleTurnCount(boundedVisibleCount)
     }
   }, [isSearchActive, matchingOccurrences, session?.messages, session?.isProcessing, visibleTurnCount])
 
@@ -1188,6 +1194,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     // On session switch: reset UI state (scroll handled by ScrollOnMount)
     if (isSessionSwitch) {
       isStickToBottomRef.current = true
+      visibleTurnSessionIdRef.current = session?.id
+      turnRefs.current.clear()
       setVisibleTurnCount(TURNS_PER_PAGE)
     }
 
@@ -1435,7 +1443,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   totalTurnCountRef.current = allTurns.length
 
   // Reverse pagination: only render last N turns for fast initial render
-  const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
+  // Effects reset pagination after a session switch, but render happens first.
+  // Clamp that first render so a previously expanded session cannot make the
+  // next session mount its full history for one frame.
+  const renderVisibleTurnCount = visibleTurnSessionIdRef.current === session?.id
+    ? visibleTurnCount
+    : TURNS_PER_PAGE
+  const startIndex = Math.max(0, allTurns.length - renderVisibleTurnCount)
   const turns = allTurns.slice(startIndex)
   const hasMoreAbove = startIndex > 0
 

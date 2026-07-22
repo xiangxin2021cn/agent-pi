@@ -20,6 +20,12 @@ import { debug } from '../utils/debug.ts';
  * Callbacks that can be registered per-session
  */
 export interface SessionScopedToolCallbacks {
+  /** Block an exact tool retry after the bounded recovery controller requires a changed route. */
+  toolRecoveryGuardFn?: (
+    toolName: string,
+    input: Record<string, unknown>,
+  ) => { action: 'allow' } | { action: 'block'; reason: string };
+
   /**
    * Called when a plan is submitted via SubmitPlan tool.
    * Receives the path to the plan markdown file.

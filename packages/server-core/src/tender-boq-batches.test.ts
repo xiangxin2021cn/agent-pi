@@ -113,6 +113,20 @@ describe('tender BOQ batch manifest', () => {
     expect(validateBoqBatchMerge(manifest, pricingData([buildUp]))).toEqual([]);
   });
 
+  test('cannot pass from a completion claim when zero child batches have validated coverage', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
+    const manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
+    const claimedFinal = pricingData(manifest.batches[0]!.itemIds.map(completeBuildUp));
+
+    const errors = validateBoqBatchMerge(manifest, claimedFinal);
+
+    expect(manifest.completedBatches).toBe(0);
+    expect(manifest.missingItemIds).toHaveLength(2);
+    expect(errors).toContain(`incomplete BOQ batch: ${manifest.batches[0]!.batchId}`);
+    expect(errors).toContain('unexpected final BOQ item: item-1');
+    expect(errors).toContain('unexpected final BOQ item: item-2');
+  });
+
   test('rejects deterministic resource, productivity, and activity conflicts across batches', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
     let manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(41));

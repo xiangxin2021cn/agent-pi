@@ -1390,6 +1390,97 @@ describe('GoalController', () => {
     }
   })
 
+  test('uses persisted template constraints and exported DOCX structure evidence', async () => {
+    const controller = new GoalController()
+    const templateProfile = {
+      id: 'tpl_verified',
+      sourcePath: 'reference-template.docx',
+      sourceType: 'docx' as const,
+      layoutFidelity: 'strict-docx-ooxml' as const,
+      sectionOrder: ['Executive Summary', 'Project Scope'],
+      titleDepth: 1,
+      pageSize: 'A4' as const,
+      orientation: 'portrait' as const,
+      margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+      styles: [{ id: 'Heading1', name: 'Heading 1', role: 'heading' as const }],
+      fonts: ['Arial'],
+      unknowns: [],
+    }
+    const artifact = [
+      '# Executive Summary',
+      '',
+      'This executive summary provides a complete decision-ready account of the verified project position and its supporting evidence.',
+      '',
+      '# Project Scope',
+      '',
+      'This project scope states the included work, boundaries, interfaces, exclusions, and delivery responsibilities in sufficient detail.',
+    ].join('\n')
+
+    const decision = await controller.onTurnStopped(goal({
+      mode: 'check_only',
+      taskContract: {
+        originalRequest: 'Follow the uploaded Word template exactly.',
+        taskType: 'document',
+        documentPlan: {
+          templateProfileId: templateProfile.id,
+          templateProfile,
+          strictTemplate: true,
+          sections: templateProfile.sectionOrder,
+          tables: [],
+          charts: [],
+          enhancements: [],
+          citations: [],
+          deliveryFormats: ['DOCX'],
+        },
+        deliverables: ['Produce a strict-template DOCX report.'],
+        mustPreserve: [],
+        evidenceRequirements: [],
+        outputFormats: ['DOCX'],
+        acceptanceCriteria: [],
+        forbiddenShortcuts: [],
+      },
+      criteria: [{
+        id: 'crit-template',
+        text: TEMPLATE_FIDELITY_REQUIRED_CRITERION_TEXT,
+        kind: 'coverage',
+        required: true,
+      }],
+    }), {
+      messages: [
+        message('u1', 'user', 'Follow the uploaded Word template exactly.'),
+        message('t1', 'tool', 'created /tmp/report.docx', {
+          toolName: 'Write',
+          toolStatus: 'completed',
+          toolInput: { file_path: '/tmp/report.docx' },
+        }),
+        message('a1', 'assistant', 'The strict-template DOCX report is complete.'),
+      ],
+      stoppedReason: 'complete',
+      now: 10,
+      reviewer: async () => ({
+        status: 'pass',
+        summary: 'The persisted template constraints and exported DOCX structure match.',
+        missingCriteria: [],
+      }),
+      fileVerifier: async () => ({
+        exists: true,
+        readable: true,
+        isFile: true,
+        sizeBytes: 20_000,
+        auditContent: artifact,
+        templateProfile,
+      }),
+    })
+
+    expect(decision.action).toBe('complete')
+    if (decision.action === 'complete') {
+      expect(decision.result.evidence).toContainEqual(expect.objectContaining({
+        label: 'template_fidelity_audit',
+        detail: expect.stringContaining('Exported DOCX layout and style profile matches the template.'),
+      }))
+    }
+  })
+
   test('enforces strict delivery contract gates even when criteria omit explicit audit items', async () => {
     const controller = new GoalController()
 

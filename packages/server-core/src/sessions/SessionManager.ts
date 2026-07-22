@@ -5,9 +5,9 @@ import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
-import { closeSync, constants as FS_CONSTANTS, existsSync, openSync, readSync, statSync } from 'fs'
+import { closeSync, constants as FS_CONSTANTS, existsSync, openSync, readFileSync, readSync, statSync } from 'fs'
 import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary, type SpawnSessionRequest, type SpawnSessionResult } from '@craft-agent/shared/agent'
 import {
   resolveSessionConnection,
@@ -77,6 +77,7 @@ import {
   type SessionGoalCriterionKind,
   type SessionGoalAuditResult,
   type SessionGoalState,
+  type SessionTaskContract,
   type SessionGoalFailureCategory,
   type SessionDocumentQualityMode,
   type SessionOrchestrationState,
@@ -84,6 +85,7 @@ import {
   buildSessionOrchestrationState,
   appendSubAgentLifecycleEntry,
   attachOrchestrationArtifacts,
+  filterSupersededSubAgentHandoffs,
   markSubAgentHandoffNeedsReview,
   markSubAgentHandoffReady,
   mergeSessionOrchestrationState,
@@ -124,6 +126,11 @@ import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackag
 import { enforceGoalCompletionGates } from './goal-completion-gates'
 import { getAgentSessionStatusGateError } from './goal-completion-gate'
 import {
+  decideSpawnMemoryGuard,
+  readSpawnMemoryGuardEnvLimits,
+  type SpawnMemoryGuardDecision,
+} from './runtime-memory-guard'
+import {
   getSpawnActivityTimeoutMs,
   isSpawnReportReady,
   resolveParentSpawnHandoffBarrier,
@@ -133,6 +140,11 @@ import {
 import { verifyDocumentArtifactReadiness } from './document-artifact-readiness'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
+import {
+  extractDocxTemplateProfile,
+  extractMarkdownTemplateProfile,
+  extractPdfTemplateProfile,
+} from '../documents/template-profile'
 import { getWorkingDirectoryLockDecision } from './working-directory-lock'
 import {
   buildOrchestrationArtifactPaths,
@@ -151,6 +163,23 @@ import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
 import { resolveTenderStageParentBarrier } from '../tender-stage-executor'
 import { collectSessionThreadIds, isSessionInsideViewedThread } from './unread-thread'
+import {
+  createToolRecoveryRuntime,
+  guardToolRetry,
+  registerToolFailure,
+  registerToolSuccess,
+  type ToolRecoveryRuntime,
+} from './tool-recovery'
+import {
+  buildHarnessGuidance,
+  classifyQualityFeedback,
+  getHarnessStoreSummary,
+  getReusableRouteHints,
+  listApprovedHarnessPolicies,
+  recordQualityFeedback,
+  recordRecoveredToolRoute,
+  type HarnessExecutionProfile,
+} from './harness-learning'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -963,6 +992,10 @@ interface ManagedSession {
     reportPaths: string[]
     reviewNotified?: boolean
   }
+  /** True until a restored session starts a new live turn in this process. */
+  restoredFromDisk?: boolean
+  /** Runtime-only dedup key for the latest persisted handoff wait notice. */
+  lastSpawnHandoffNoticeKey?: string
   messages: Message[]
   isProcessing: boolean
   /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
@@ -972,6 +1005,10 @@ interface ManagedSession {
   // Incremented each time a new message starts processing.
   // Used to detect if a follow-up message has superseded the current one (stale-request guard).
   processingGeneration: number
+  /** Last processing generation whose stop callback entered centralized cleanup. */
+  lastStoppedProcessingGeneration?: number
+  toolRecoveryRuntime: ToolRecoveryRuntime
+  toolRecoveryInputs: Map<string, { toolName: string; input: Record<string, unknown> }>
   // NOTE: Parent-child tracking state (pendingTools, parentToolStack, toolToParentMap,
   // pendingTextParent) has been removed. CraftAgent now provides parentToolUseId
   // directly on all events using the SDK's authoritative parent_tool_use_id field.
@@ -1369,6 +1406,11 @@ const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
 
 const SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT = 4
 const SPAWN_HANDOFF_MONITOR_INTERVAL_MS = 5_000
+
+export const SPAWNED_CHILD_SEND_OPTIONS = Object.freeze({
+  goalLoopMode: 'off',
+  documentQualityMode: 'native_quick',
+} satisfies SendMessageOptions)
 
 interface ParentSpawnHandoffBarrierContext extends ParentSpawnHandoffBarrierDecision {
   source: 'none' | 'goal_orchestration' | 'tender_task_board'
@@ -1939,6 +1981,65 @@ function normalizeSendDocumentQualityMode(value: unknown): SessionDocumentQualit
     : undefined
 }
 
+function hydrateTaskContractTemplateProfile(
+  taskContract: SessionTaskContract,
+  storedAttachments: StoredAttachment[] | undefined,
+): SessionTaskContract {
+  const plan = taskContract.documentPlan
+  if (!plan?.strictTemplate || !storedAttachments?.length) return taskContract
+
+  const declaredTemplatePath = taskContract.artifactDeliverables
+    ?.find(deliverable => deliverable.templatePath)?.templatePath
+  const candidates = storedAttachments
+    .filter(attachment => /\.(?:docx?|pdf|md|markdown)$/i.test(attachment.name) || Boolean(attachment.markdownPath))
+    .sort((left, right) => templateAttachmentScore(right, declaredTemplatePath) - templateAttachmentScore(left, declaredTemplatePath))
+  const template = candidates[0]
+  if (!template) return taskContract
+
+  try {
+    const extension = extname(template.name || template.storedPath).toLowerCase()
+    const semanticMarkdown = template.markdownPath && existsSync(template.markdownPath)
+      ? readFileSync(template.markdownPath, 'utf8')
+      : undefined
+    const profile = extension === '.docx'
+      ? extractDocxTemplateProfile(readFileSync(template.storedPath), {
+          sourcePath: template.name,
+          strictLayout: true,
+          semanticMarkdown,
+        })
+      : extension === '.pdf'
+        ? extractPdfTemplateProfile(semanticMarkdown ?? '', { sourcePath: template.name })
+        : extractMarkdownTemplateProfile(
+            semanticMarkdown ?? readFileSync(template.storedPath, 'utf8'),
+            { sourcePath: template.name, generatedBy: semanticMarkdown ? 'markitdown' : undefined },
+          )
+    const profileSections = profile.sectionOrder.map(section => section.trim()).filter(Boolean)
+    return {
+      ...taskContract,
+      documentPlan: {
+        ...plan,
+        templateProfileId: profile.id,
+        templateProfile: profile,
+        sections: profileSections.length > 0
+          ? [...new Set([...profileSections, ...plan.sections])].slice(0, 24)
+          : plan.sections,
+      },
+    }
+  } catch {
+    return taskContract
+  }
+}
+
+function templateAttachmentScore(attachment: StoredAttachment, declaredTemplatePath: string | undefined): number {
+  const normalizedStoredPath = attachment.storedPath.replace(/\\/g, '/').toLowerCase()
+  const normalizedDeclaredPath = declaredTemplatePath?.replace(/\\/g, '/').toLowerCase()
+  if (normalizedDeclaredPath && normalizedDeclaredPath === normalizedStoredPath) return 100
+  if (/(?:template|reference|format|layout|模板|样板|版式|格式)/i.test(attachment.name)) return 20
+  if (/\.docx$/i.test(attachment.name)) return 10
+  if (/\.pdf$/i.test(attachment.name)) return 5
+  return 1
+}
+
 function getErrorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code)
@@ -2019,6 +2120,8 @@ export function createManagedSession(
     lastMessageAt: (s.lastMessageAt ?? s.lastUsedAt ?? Date.now()) as number,
     streamingText: '',
     processingGeneration: 0,
+    toolRecoveryRuntime: createToolRecoveryRuntime(),
+    toolRecoveryInputs: new Map(),
     isFlagged: (s.isFlagged ?? false) as boolean,
     messageQueue: [],
     backgroundShellCommands: new Map(),
@@ -2157,6 +2260,96 @@ export class SessionManager implements ISessionManager {
     return getSourcesBySlugs(managed.workspace.rootPath, sourceSlugs)
   }
 
+  private getHarnessExecutionProfile(
+    managed: ManagedSession,
+    provider?: string,
+    model?: string,
+  ): HarnessExecutionProfile {
+    return {
+      provider: provider ?? resolveBackendContext({
+        sessionConnectionSlug: managed.llmConnection,
+        workspaceDefaultConnectionSlug: loadWorkspaceConfig(managed.workspace.rootPath)?.defaults?.defaultLlmConnection,
+        managedModel: managed.model,
+      }).provider,
+      model: model ?? managed.model,
+      mode: managed.goalState?.taskContract?.documentQualityMode ?? managed.goalState?.mode,
+    }
+  }
+
+  private updateHarnessState(
+    managed: ManagedSession,
+    patch: Partial<NonNullable<SessionGoalState['harness']>>,
+    refreshStoreSummary = false,
+  ): void {
+    if (!managed.goalState) return
+    const current = managed.goalState.harness
+    const summary = refreshStoreSummary || !current
+      ? getHarnessStoreSummary(managed.workspace.rootPath)
+      : {
+          routeCount: current.verifiedRouteCount,
+          feedbackCount: current.feedbackCount,
+          regressionCandidateCount: current.regressionCandidateCount,
+        }
+    const now = Date.now()
+    managed.goalState = {
+      ...managed.goalState,
+      updatedAt: now,
+      harness: {
+        version: 1,
+        updatedAt: now,
+        matchedRouteIds: current?.matchedRouteIds ?? [],
+        verifiedRouteCount: summary.routeCount,
+        feedbackCount: summary.feedbackCount,
+        regressionCandidateCount: summary.regressionCandidateCount,
+        ...current,
+        ...patch,
+      },
+    }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
+    this.persistSession(managed)
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+  }
+
+  private captureUserQualityFeedback(managed: ManagedSession, message: string): void {
+    if (!/(?:没(?:有)?|未|不符合|跑偏|漏|遗漏|错误|失败|质量差|没做到|不对|重新|修正|纠正|did not|didn't|failed|wrong|missing|omitted|off[- ]scope)/i.test(message)) {
+      return
+    }
+    const previousUser = [...managed.messages].reverse().find(item => item.role === 'user')
+    const hasPriorAssistant = managed.messages.some(item => item.role === 'assistant')
+    if (!previousUser || !hasPriorAssistant) return
+
+    const categories = classifyQualityFeedback(message)
+    const artifactRefs = managed.messages
+      .filter(item => item.role === 'tool' && item.toolStatus === 'completed')
+      .slice(-30)
+      .flatMap(item => {
+        const input = item.toolInput ?? {}
+        return ['file_path', 'path', 'output_path', 'outputPath']
+          .map(key => input[key])
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      })
+    const scopeSource = managed.businessContext?.projectId
+      ?? managed.workingDirectory
+      ?? managed.workspace.id
+    try {
+      recordQualityFeedback(managed.workspace.rootPath, {
+        sessionId: managed.id,
+        projectScope: createHash('sha256').update(scopeSource).digest('hex').slice(0, 24),
+        originalTask: previousUser.content,
+        feedback: message,
+        artifactRefs,
+      })
+      sessionLog.info(`Recorded harness quality feedback for ${managed.id}: ${categories.join(', ')}`)
+      this.updateHarnessState(managed, {}, true)
+    } catch (error) {
+      sessionLog.warn(`Failed to record harness quality feedback for ${managed.id}:`, error)
+    }
+  }
+
   private async ensureProjectMemoryForWorkingDirectory(
     workingDirectory: string | undefined,
     scope: ProjectMemoryScope = {},
@@ -2238,6 +2431,15 @@ export class SessionManager implements ISessionManager {
   }) => Promise<void>
 
   /**
+   * Optional host probe for spawn memory gating. Electron wires this with
+   * process.memoryUsage() + app.getAppMetrics(); headless falls back to RSS only.
+   */
+  private runtimeMemoryProbe?: () => {
+    mainRssBytes: number
+    totalWorkingSetKb?: number
+  }
+
+  /**
    * Centralized setter for session processing state.
    * Automatically notifies the power manager on transitions (true→false, false→true)
    * so callers don't need to remember to call onSessionStarted/onSessionStopped.
@@ -2295,6 +2497,12 @@ export class SessionManager implements ISessionManager {
     fn: (input: { workspaceId: string; sessionId: string; topicName: string }) => Promise<void>,
   ): void {
     this.automationBinder = fn
+  }
+
+  setRuntimeMemoryProbe(
+    probe: (() => { mainRssBytes: number; totalWorkingSetKb?: number }) | null,
+  ): void {
+    this.runtimeMemoryProbe = probe ?? undefined
   }
 
   private browserPaneManager: IBrowserPaneManager | null = null
@@ -3004,6 +3212,7 @@ export class SessionManager implements ISessionManager {
           const managed = createManagedSession(meta, workspace, {
             enabledSourceSlugs: undefined,  // Loaded with messages
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
+            restoredFromDisk: true,
           })
 
           // Migration: clear orphaned llmConnection references (e.g., after connection was deleted)
@@ -3132,7 +3341,7 @@ export class SessionManager implements ISessionManager {
   // loadMessagesFromDisk but skips the metadata field syncs. Sets
   // messagesLoaded=true so subsequent persistSession calls take the fast path.
   // Subsequent ensureMessagesLoaded calls also short-circuit, which is fine —
-  // queue recovery has already run here.
+  // interrupted queue recovery has already run here.
   private hydrateMessagesForColdPersist(managed: ManagedSession): void {
     sessionLog.debug(`Cold-load triggered for persistSession on ${managed.id}`)
     const stored = loadStoredSession(managed.workspace.rootPath, managed.id)
@@ -3151,53 +3360,61 @@ export class SessionManager implements ISessionManager {
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
       if (managed.transferredSessionSummaryApplied === undefined) managed.transferredSessionSummaryApplied = stored.transferredSessionSummaryApplied
 
-      // Queue recovery: find orphaned queued messages from crash/restart and re-queue them.
-      const orphanedQueued = managed.messages.filter(m =>
-        m.role === 'user' && m.isQueued === true
-      )
-      if (orphanedQueued.length > 0) {
-        sessionLog.info(`Recovering ${orphanedQueued.length} queued message(s) for session ${managed.id}`)
-        for (const msg of orphanedQueued) {
-          managed.messageQueue.push({
-            message: msg.content,
-            messageId: msg.id,
-            attachments: undefined,
-            storedAttachments: msg.attachments,
-            options: undefined,
-          })
-        }
-        if (!managed.isProcessing && managed.messageQueue.length > 0) {
-          setImmediate(() => {
-            this.processNextQueuedMessage(managed.id)
-          })
-        }
-      }
+      this.recoverInterruptedQueuedMessages(managed)
       sessionLog.debug(`Cold-hydrated ${managed.messages.length} messages for session ${managed.id}`)
     }
     managed.messagesLoaded = true
+  }
+
+  /**
+   * A queued user message persisted by a previous process is not safe to replay:
+   * its source and child-session state may be stale, and merely opening a
+   * session must remain passive. Keep the message in history, mark the previous
+   * turn interrupted, and wait for an explicit user action before resuming.
+   */
+  private recoverInterruptedQueuedMessages(managed: ManagedSession): number {
+    const orphanedQueued = managed.messages.filter(message =>
+      message.role === 'user' && message.isQueued === true
+    )
+    if (orphanedQueued.length === 0) return 0
+
+    const orphanedIds = new Set(orphanedQueued.map(message => message.id))
+    for (const message of orphanedQueued) {
+      message.isQueued = false
+    }
+    managed.messageQueue = managed.messageQueue.filter(queued =>
+      !queued.messageId || !orphanedIds.has(queued.messageId)
+    )
+    managed.wasInterrupted = true
+    sessionLog.warn(
+      `Recovered ${orphanedQueued.length} interrupted queued message(s) for session ${managed.id}; explicit user action is required to resume`,
+    )
+    return orphanedQueued.length
   }
 
   // Build the StoredSession snapshot and hand it to the persistence queue.
   // Caller must ensure `managed.messagesLoaded` is true.
   private enqueuePersist(managed: ManagedSession): void {
     try {
-      // Filter out transient status messages (progress indicators like "Compacting...")
-      // Error messages are now persisted with rich fields for diagnostics
-      const persistableMessages = managed.messages.filter(m =>
-        m.role !== 'status'
-      )
+      // Materialize only the latest debounced snapshot. Building StoredSession
+      // eagerly on every tool event repeatedly cloned the entire message history
+      // and could exhaust the main process heap during polling-heavy turns.
+      sessionPersistenceQueue.enqueueLazy(managed.id, () => {
+        // Filter out transient status messages (progress indicators like "Compacting...")
+        // Error messages are now persisted with rich fields for diagnostics
+        const persistableMessages = managed.messages.filter(m =>
+          m.role !== 'status'
+        )
 
-      const storedSession: StoredSession = {
-        ...pickSessionFields(managed),
-        workspaceRootPath: managed.workspace.rootPath,
-        createdAt: managed.createdAt ?? Date.now(),
-        lastUsedAt: Date.now(),
-        messages: persistableMessages.map(messageToStored),
-        tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
-      } as StoredSession
-
-      // Queue for async persistence with debouncing
-      sessionPersistenceQueue.enqueue(storedSession)
+        return {
+          ...pickSessionFields(managed),
+          workspaceRootPath: managed.workspace.rootPath,
+          createdAt: managed.createdAt ?? Date.now(),
+          lastUsedAt: Date.now(),
+          messages: persistableMessages.map(messageToStored),
+          tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
+        } as StoredSession
+      })
     } catch (error) {
       sessionLog.error(`Failed to queue session ${managed.id} for persistence:`, error)
     }
@@ -3634,29 +3851,12 @@ export class SessionManager implements ISessionManager {
       managed.transferredSessionSummaryApplied = storedSession.transferredSessionSummaryApplied
       sessionLog.debug(`Lazy-loaded ${managed.messages.length} messages for session ${managed.id}`)
 
-      // Queue recovery: find orphaned queued messages from crash/restart and re-queue them
-      const orphanedQueued = managed.messages.filter(m =>
-        m.role === 'user' && m.isQueued === true
-      )
-      if (orphanedQueued.length > 0) {
-        sessionLog.info(`Recovering ${orphanedQueued.length} queued message(s) for session ${managed.id}`)
-        for (const msg of orphanedQueued) {
-          managed.messageQueue.push({
-            message: msg.content,
-            messageId: msg.id,
-            attachments: undefined,  // Attachments already stored on disk
-            storedAttachments: msg.attachments,
-            options: undefined,
-          })
-        }
-        // Process queue when session becomes active (will be triggered by first message or interaction)
-        // Use setImmediate to avoid blocking the load and allow session state to settle
-        if (!managed.isProcessing && managed.messageQueue.length > 0) {
-          setImmediate(() => {
-            this.processNextQueuedMessage(managed.id)
-          })
-        }
+      const recoveredQueuedCount = this.recoverInterruptedQueuedMessages(managed)
+      managed.messagesLoaded = true
+      if (recoveredQueuedCount > 0) {
+        this.enqueuePersist(managed)
       }
+      return
     }
     managed.messagesLoaded = true
   }
@@ -5248,8 +5448,9 @@ export class SessionManager implements ISessionManager {
 
         const activeSpawnCount = this.getActiveSpawnHandoffCount(managed.id)
         if (activeSpawnCount >= SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT) {
-          throw new Error(`spawn_session active handoff limit reached (${activeSpawnCount}/${SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT}). Wait for existing spawned sessions to finish and use get_spawn_status to collect ready report_path handoffs before spawning more.`)
+          throw new Error(`spawn_session active handoff limit reached (${activeSpawnCount}/${SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT}). Return control and let the runtime monitor existing handoffs before spawning more.`)
         }
+        this.assertSpawnMemoryAvailable()
 
         const spawnedWorkingDirectory = resolveSpawnedSessionWorkingDirectory(request.workingDirectory, managed.workingDirectory)
         const explicitDispatch = resolveExplicitSpawnDispatchPaths(request, spawnedWorkingDirectory)
@@ -5376,10 +5577,26 @@ export class SessionManager implements ISessionManager {
           }, managed.workspace.id)
         }
 
-        // Fire and forget — send the message but don't await completion
-        this.sendMessage(session.id, spawnedPrompt, fileAttachments).catch(err => {
+        // Spawned sessions are narrow workers. The parent owns audit and merge;
+        // starting another document/goal loop inside the child multiplies work
+        // and can recursively stall the handoff.
+        this.sendMessage(
+          session.id,
+          spawnedPrompt,
+          fileAttachments,
+          undefined,
+          SPAWNED_CHILD_SEND_OPTIONS,
+        ).catch(err => {
           sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
         })
+
+        if (reportPath) {
+          const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
+          if (spawnBarrier.action === 'wait' || spawnBarrier.action === 'review') {
+            this.enterSpawnHandoffWait(managed, spawnBarrier)
+            this.scheduleParentPauseForSpawnHandoff(managed)
+          }
+        }
 
         return {
           sessionId: session.id,
@@ -5390,13 +5607,17 @@ export class SessionManager implements ISessionManager {
           taskId: spawnTask?.id,
           briefPath: taskBriefPath,
           reportPath,
-          pollAfterMs: 5000,
           handoffRequired: Boolean(reportPath),
         }
       }
 
       // Wire up session self-management tools (set_session_labels, set_session_status, etc.)
       mergeSessionScopedToolCallbacks(managed.id, {
+        toolRecoveryGuardFn: (toolName, input) => guardToolRetry(
+          managed.toolRecoveryRuntime,
+          toolName,
+          input,
+        ),
         setSessionLabelsFn: async (sessionId: string | undefined, labels: string[]) => {
           await this.setSessionLabels(sessionId ?? managed.id, labels)
         },
@@ -5432,7 +5653,15 @@ export class SessionManager implements ISessionManager {
         },
         getSpawnStatusFn: (sessionId?: string) => {
           const targetId = sessionId ?? managed.id
-          return this.getSpawnStatus(targetId)
+          const status = this.getSpawnStatus(targetId)
+          if (status?.parentSessionId === managed.id && status.parentAction === 'wait') {
+            const barrier = this.getParentSpawnHandoffBarrierDecision(managed)
+            if (barrier.action === 'wait' || barrier.action === 'review') {
+              this.enterSpawnHandoffWait(managed, barrier)
+              this.scheduleParentPauseForSpawnHandoff(managed)
+            }
+          }
+          return status
         },
         listSessionsFn: (options) => {
           const DEFAULT_LIMIT = 20
@@ -6205,6 +6434,10 @@ export class SessionManager implements ISessionManager {
       failedLifecycle: failedHandoff,
       hasReportPath: Boolean(lifecycle?.reportPath),
       fallbackLifecycleStatus: lifecycle?.status ?? (session.parentSessionKind === 'spawn' ? 'started' : 'unknown'),
+      restoredWithoutRuntime: session.restoredFromDisk === true
+        && session.agent == null
+        && !session.isProcessing
+        && session.messageQueue.length === 0,
     })
 
     const handoffStatus = session.parentSessionKind !== 'spawn' ? 'not_applicable' : activityState.handoffStatus
@@ -6253,6 +6486,26 @@ export class SessionManager implements ISessionManager {
       }).length
   }
 
+  private evaluateSpawnMemoryGuard(): SpawnMemoryGuardDecision {
+    const snapshot = this.runtimeMemoryProbe?.() ?? {
+      mainRssBytes: process.memoryUsage().rss,
+    }
+    const limits = readSpawnMemoryGuardEnvLimits()
+    return decideSpawnMemoryGuard({
+      mainRssBytes: snapshot.mainRssBytes,
+      totalWorkingSetKb: snapshot.totalWorkingSetKb,
+      mainRssLimitBytes: limits.mainRssLimitBytes,
+      totalWorkingSetLimitKb: limits.totalWorkingSetLimitKb,
+    })
+  }
+
+  private assertSpawnMemoryAvailable(): void {
+    const decision = this.evaluateSpawnMemoryGuard()
+    if (!decision.blocked) return
+    sessionLog.warn(`Blocking spawn_session due to memory pressure: ${decision.reason}`)
+    throw new Error(decision.message ?? `spawn_session blocked by memory guard (${decision.reason})`)
+  }
+
   private getParentSpawnHandoffBarrierDecision(parent: ManagedSession): ParentSpawnHandoffBarrierContext {
     const tenderBarrier = resolveTenderStageParentBarrier({
       workingDirectory: parent.workingDirectory,
@@ -6260,7 +6513,33 @@ export class SessionManager implements ISessionManager {
       businessContext: parent.businessContext,
     })
     if (tenderBarrier.action !== 'none') {
-      return { ...tenderBarrier, source: 'tender_task_board' }
+      const pendingSessionIds: string[] = []
+      const reviewSessionIds = new Set(tenderBarrier.reviewSessionIds)
+      const reportPaths = new Set(tenderBarrier.reportPaths)
+      for (const sessionId of tenderBarrier.pendingSessionIds) {
+        const runtime = this.getSpawnStatus(sessionId)
+        if (!runtime) {
+          pendingSessionIds.push(sessionId)
+        } else if (runtime.handoffStatus === 'ready') {
+          if (runtime.reportPath) reportPaths.add(runtime.reportPath)
+        } else if (runtime.handoffStatus === 'failed' || runtime.handoffStatus === 'missing') {
+          reviewSessionIds.add(sessionId)
+        } else {
+          pendingSessionIds.push(sessionId)
+        }
+      }
+      return {
+        ...tenderBarrier,
+        action: reviewSessionIds.size > 0
+          ? 'review'
+          : pendingSessionIds.length > 0
+            ? 'wait'
+            : 'resume',
+        pendingSessionIds,
+        reviewSessionIds: [...reviewSessionIds],
+        reportPaths: [...reportPaths],
+        source: 'tender_task_board',
+      }
     }
 
     const orchestration = parent.goalState?.orchestration
@@ -6273,43 +6552,53 @@ export class SessionManager implements ISessionManager {
         source: 'none',
       }
     }
+    const activeSubAgents = filterSupersededSubAgentHandoffs(orchestration.subAgents)
+    const handoffStatuses = activeSubAgents.map(agent => {
+      const runtime = this.getSpawnStatus(agent.sessionId)
+      if (runtime) {
+        return {
+          sessionId: agent.sessionId,
+          handoffStatus: runtime.handoffStatus,
+          reportPath: runtime.reportPath ?? agent.reportPath,
+        }
+      }
+
+      const report = this.getReportFileState(agent.reportPath)
+      const persistedReady = (agent.status === 'handoff_received' || agent.status === 'completed')
+        && report.exists
+        && (report.size ?? 0) > 0
+      return {
+        sessionId: agent.sessionId,
+        handoffStatus: persistedReady
+          ? 'ready' as const
+          : agent.status === 'needs_review' || agent.status === 'failed'
+            ? 'failed' as const
+            : 'missing' as const,
+        reportPath: agent.reportPath,
+      }
+    })
 
     const decision = resolveParentSpawnHandoffBarrier({
       requireStructuredHandoff: orchestration.policy.requireStructuredHandoff
-        || orchestration.subAgents.some(agent => Boolean(agent.reportPath)),
-      statuses: orchestration.subAgents.map(agent => {
-        const runtime = this.getSpawnStatus(agent.sessionId)
-        if (runtime) {
-          return { sessionId: agent.sessionId, handoffStatus: runtime.handoffStatus }
-        }
-
-        const report = this.getReportFileState(agent.reportPath)
-        const persistedReady = (agent.status === 'handoff_received' || agent.status === 'completed')
-          && report.exists
-          && (report.size ?? 0) > 0
-        return {
-          sessionId: agent.sessionId,
-          handoffStatus: persistedReady
-            ? 'ready' as const
-            : agent.status === 'needs_review' || agent.status === 'failed'
-              ? 'failed' as const
-              : 'missing' as const,
-        }
-      }),
+        || activeSubAgents.some(agent => Boolean(agent.reportPath)),
+      statuses: handoffStatuses,
     })
     return {
       ...decision,
       source: 'goal_orchestration',
-      reportPaths: orchestration.subAgents
-        .map((agent) => agent.reportPath)
+      reportPaths: handoffStatuses
+        .filter((status) => status.handoffStatus === 'ready')
+        .map((status) => status.reportPath)
         .filter((path): path is string => Boolean(path)),
     }
   }
 
   private enterSpawnHandoffWait(parent: ManagedSession, barrier: ParentSpawnHandoffBarrierContext): void {
     const firstWait = !parent.spawnHandoffWait
+    const childSessionIds = [...barrier.pendingSessionIds, ...barrier.reviewSessionIds]
+    const noticeKey = `${barrier.source}:${[...childSessionIds].sort().join(',')}`
     parent.spawnHandoffWait = {
-      childSessionIds: [...barrier.pendingSessionIds, ...barrier.reviewSessionIds],
+      childSessionIds,
       startedAt: parent.spawnHandoffWait?.startedAt ?? Date.now(),
       resumeScheduled: false,
       source: barrier.source === 'tender_task_board' ? 'tender_task_board' : 'goal_orchestration',
@@ -6317,7 +6606,8 @@ export class SessionManager implements ISessionManager {
       reviewNotified: parent.spawnHandoffWait?.reviewNotified,
     }
 
-    if (firstWait) {
+    if (firstWait && parent.lastSpawnHandoffNoticeKey !== noticeKey) {
+      parent.lastSpawnHandoffNoticeKey = noticeKey
       const childCount = parent.spawnHandoffWait.childSessionIds.length
       const infoMessage: Message = {
         id: generateMessageId(),
@@ -6340,6 +6630,38 @@ export class SessionManager implements ISessionManager {
 
     this.persistSession(parent)
     this.scheduleSpawnHandoffMonitor(parent)
+  }
+
+  /**
+   * End the live parent model turn once structured work has been delegated.
+   * The lightweight handoff monitor owns progress from this point; keeping the
+   * model turn alive only causes repeated status-tool calls and unbounded memory
+   * growth. A later runtime continuation resumes the parent after every report
+   * is ready.
+   */
+  private scheduleParentPauseForSpawnHandoff(parent: ManagedSession): void {
+    setImmediate(() => {
+      const current = this.sessions.get(parent.id)
+      if (current !== parent || !parent.spawnHandoffWait || !parent.isProcessing || !parent.agent) return
+
+      sessionLog.info(`Yielding parent session ${parent.id} to the structured handoff monitor`)
+      parent.agent.interruptForHandoff(AbortReason.SpawnHandoff)
+      this.setProcessing(parent, false)
+      parent.stopRequested = false
+
+      void releaseBrowserOwnershipOnForcedStop(
+        (sessionId) => this.getBrowserPaneManagerForSession(sessionId),
+        parent.id,
+      )
+      this.sendEvent({
+        type: 'complete',
+        sessionId: parent.id,
+        tokenUsage: parent.tokenUsage,
+        hasUnread: parent.hasUnread,
+      }, parent.workspace.id)
+      this.persistSession(parent)
+      this.scheduleIdleRuntimeDispose(parent)
+    })
   }
 
   private clearSpawnHandoffWait(parent: ManagedSession): void {
@@ -7587,6 +7909,8 @@ export class SessionManager implements ISessionManager {
 
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
+    managed.restoredFromDisk = false
+    this.captureUserQualityFeedback(managed, message)
 
     // If currently processing, behavior depends on the connection's
     // `midStreamBehavior` (resolved via {@link resolveMidStreamBehavior},
@@ -7801,6 +8125,8 @@ export class SessionManager implements ISessionManager {
     this.setProcessing(managed, true)
     managed.streamingText = ''
     managed.processingGeneration++
+    managed.toolRecoveryRuntime = createToolRecoveryRuntime()
+    managed.toolRecoveryInputs.clear()
     managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
 
     // Reset auth retry flag for this new message (allows one retry per message)
@@ -7976,6 +8302,23 @@ export class SessionManager implements ISessionManager {
         workspaceDefaultConnectionSlug: loadWorkspaceConfig(workspaceRootPath)?.defaults?.defaultLlmConnection,
         managedModel: managed.model,
       })
+      if (managed.goalState?.taskContract?.documentQualityMode !== 'native_quick') {
+        try {
+          const harnessProfile = this.getHarnessExecutionProfile(managed, messageBackendContext.provider, messageBackendContext.resolvedModel)
+          const routeHints = getReusableRouteHints(workspaceRootPath, {
+            taskText: message,
+            profile: harnessProfile,
+            limit: 3,
+          })
+          const guidance = buildHarnessGuidance(routeHints, listApprovedHarnessPolicies(workspaceRootPath))
+          if (guidance) effectiveMessage = `${effectiveMessage}\n\n${guidance}`
+          this.updateHarnessState(managed, {
+            matchedRouteIds: routeHints.map(hint => hint.id),
+          })
+        } catch (error) {
+          sessionLog.warn(`Failed to load harness route hints for session ${sessionId}:`, error)
+        }
+      }
       const modelInputAttachments = filterAttachmentsForModelInput(
         attachments,
         messageBackendContext.connection,
@@ -8365,6 +8708,13 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
 
+    const stoppedGeneration = managed.processingGeneration
+    if (managed.lastStoppedProcessingGeneration === stoppedGeneration) {
+      sessionLog.debug(`Ignoring duplicate processing-stop callback for session ${sessionId}, generation ${stoppedGeneration}`)
+      return
+    }
+    managed.lastStoppedProcessingGeneration = stoppedGeneration
+
     sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
 
     // 1. Cleanup state
@@ -8420,6 +8770,15 @@ export class SessionManager implements ISessionManager {
       managed.pendingExternalMetadata = undefined
       sessionLog.info(`Applying deferred external metadata for session ${sessionId} after processing stop`)
       this.applyExternalSessionMetadata(managed, pendingHeader)
+    }
+
+    // Cleanup above may await browser or metadata work. If a newer turn started
+    // in the meantime, this callback belongs to the old generation and must not
+    // drain its queue, audit it, or schedule a continuation over the new turn.
+    if (managed.processingGeneration !== stoppedGeneration || managed.isProcessing) {
+      sessionLog.info(`Skipping stale processing-stop cleanup for session ${sessionId}, generation ${stoppedGeneration}`)
+      this.persistSession(managed)
+      return
     }
 
     // 5. Check queue and process or complete
@@ -8750,6 +9109,17 @@ export class SessionManager implements ISessionManager {
         }
 
         const preview = await readGoalFilePreview(filePath, info.size)
+        let templateProfile
+        if (/\.docx$/i.test(filePath)) {
+          try {
+            templateProfile = extractDocxTemplateProfile(await readFile(filePath), {
+              sourcePath: basename(filePath),
+              strictLayout: true,
+            })
+          } catch {
+            // The regular verifier still reports the file; strict template audit fails closed without a DOCX profile.
+          }
+        }
 
         return {
           exists: true,
@@ -8760,6 +9130,7 @@ export class SessionManager implements ISessionManager {
           previewTruncated: preview?.truncated,
           auditContent: preview?.auditContent,
           auditContentOversized: preview?.auditContentOversized,
+          templateProfile,
         }
       } catch (error) {
         const code = getErrorCode(error)
@@ -8876,13 +9247,13 @@ export class SessionManager implements ISessionManager {
       badges: options?.badges,
       documentQualityMode,
     })
-    const taskContract = buildTaskContractFromMessage({
+    const taskContract = hydrateTaskContractTemplateProfile(buildTaskContractFromMessage({
       message,
       storedAttachments,
       badges: options?.badges,
       documentQualityMode,
       workingDirectory: managed.workingDirectory,
-    })
+    }), storedAttachments)
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
     const workspaceDefaultMode = normalizeWorkspaceGoalLoopDefaultMode(workspaceConfig?.defaults?.goalLoop?.defaultMode)
     const explicitDocumentWorkflowMode = Boolean(documentQualityMode && documentQualityMode !== 'quick')
@@ -8973,7 +9344,10 @@ export class SessionManager implements ISessionManager {
     const now = Date.now()
     const elapsedWallClockMs = Math.max(0, now - current.createdAt)
     const nextObjective = appendGoalObjectiveFollowUp(current.objective, message)
-    const mergedTaskContract = mergeTaskContracts(existingTaskContract, taskContract)
+    const mergedTaskContract = hydrateTaskContractTemplateProfile(
+      mergeTaskContracts(existingTaskContract, taskContract),
+      storedAttachments,
+    )
     const resumedOrchestration = resumeSessionOrchestrationForFollowUp(this.buildOrchestrationStateForGoal(managed, {
       objective: nextObjective,
       taskContract: mergedTaskContract,
@@ -10008,6 +10382,12 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'tool_start': {
+        if (event.input && Object.keys(event.input).length > 0) {
+          managed.toolRecoveryInputs.set(event.toolUseId, {
+            toolName: event.toolName,
+            input: event.input,
+          })
+        }
         // Format tool input paths to relative for better readability
         const formattedToolInput = formatToolInputPaths(event.input)
 
@@ -10163,6 +10543,54 @@ export class SessionManager implements ISessionManager {
 
         // parentToolUseId comes from CraftAgent (SDK-authoritative) or existing message
         const parentToolUseId = existingToolMsg?.parentToolUseId || event.parentToolUseId
+
+        const recoveryCall = managed.toolRecoveryInputs.get(event.toolUseId)
+        const recoveryInput = recoveryCall?.input ?? existingToolMsg?.toolInput ?? {}
+        if (inferredError) {
+          const observation = registerToolFailure(managed.toolRecoveryRuntime, {
+            toolName: recoveryCall?.toolName ?? toolName,
+            input: recoveryInput,
+            result: rawFormattedResult,
+          })
+          this.updateHarnessState(managed, {
+            currentFailure: {
+              toolName: observation.toolName,
+              category: observation.category,
+              attempts: observation.attempts,
+              decision: observation.decision,
+              updatedAt: observation.lastFailedAt,
+            },
+          })
+        } else {
+          const recovered = registerToolSuccess(managed.toolRecoveryRuntime, {
+            toolName: recoveryCall?.toolName ?? toolName,
+            input: recoveryInput,
+          })
+          if (recovered) {
+            try {
+              const profile = this.getHarnessExecutionProfile(managed)
+              const route = recordRecoveredToolRoute(managed.workspace.rootPath, {
+                sessionId: managed.id,
+                taskText: managed.lastSentMessage ?? managed.goalState?.objective ?? '',
+                profile,
+                toolName: recovered.toolName,
+                category: recovered.category,
+                failedInputShape: recovered.failedInputShape,
+                successfulInputShape: recovered.successfulInputShape,
+                failedAttempts: recovered.failedAttempts,
+                traceRef: event.toolUseId,
+                now: recovered.recoveredAt,
+              })
+              this.updateHarnessState(managed, {
+                currentFailure: undefined,
+                lastRecoveredRouteId: route.id,
+              }, true)
+            } catch (error) {
+              sessionLog.warn(`Failed to persist recovered tool route for session ${sessionId}:`, error)
+            }
+          }
+        }
+        managed.toolRecoveryInputs.delete(event.toolUseId)
 
         if (existingToolMsg) {
           // Keep lightweight status text in `content` and store full payload in `toolResult` only.

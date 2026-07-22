@@ -62,6 +62,7 @@ export interface GoalFileVerificationResult {
   previewTruncated?: boolean
   auditContent?: string
   auditContentOversized?: boolean
+  templateProfile?: ExtractedTemplateProfile
   error?: string
 }
 
@@ -361,6 +362,7 @@ export class GoalController {
     }
     const outputAuditTexts: string[] = []
     const verifiedFileContents = new Map<string, string>()
+    const verifiedTemplateProfiles = new Map<string, ExtractedTemplateProfile>()
     if (snapshot.fileVerifier && fileEvidencePaths.size > 0) {
       for (const filePath of fileEvidencePaths) {
         const verification = await snapshot.fileVerifier(filePath)
@@ -412,6 +414,7 @@ export class GoalController {
           const preview = verification.preview?.trim()
           const verifiedContent = verification.auditContent?.trim() || preview
           if (verifiedContent) verifiedFileContents.set(filePath, verifiedContent)
+          if (verification.templateProfile) verifiedTemplateProfiles.set(filePath, verification.templateProfile)
           if (isOutputFile) {
             verifiedOutputPaths.add(filePath)
             evidence.push({
@@ -551,7 +554,9 @@ export class GoalController {
       }
     }
     if (finalAssistant && requiresTemplateFidelityAudit(goalState)) {
-      const report = auditTemplateOutput(outputTexts, goalState)
+      const exportedDocxProfile = [...verifiedTemplateProfiles]
+        .find(([filePath, profile]) => outputFileEvidencePaths.has(filePath) && profile.sourceType === 'docx')?.[1]
+      const report = auditTemplateOutput(outputTexts, goalState, exportedDocxProfile)
       evidence.push({
         type: 'system',
         label: 'template_fidelity_audit',
@@ -1778,15 +1783,21 @@ function formatDocumentAgentPlanAudit(report: DocumentAgentPlanAudit): string {
   ].join('\n')
 }
 
-function auditTemplateOutput(contents: string[], goalState: SessionGoalState): TemplateFidelityAudit {
+function auditTemplateOutput(
+  contents: string[],
+  goalState: SessionGoalState,
+  exportedDocxProfile?: ExtractedTemplateProfile,
+): TemplateFidelityAudit {
   return auditTemplateFidelity(
     contents.map(content => content.trim()).filter(Boolean).join('\n\n'),
     buildTemplateProfileFromGoal(goalState),
+    { exportedDocxProfile },
   )
 }
 
 function buildTemplateProfileFromGoal(goalState: SessionGoalState): ExtractedTemplateProfile {
   const plan = goalState.taskContract?.documentPlan
+  if (plan?.templateProfile) return plan.templateProfile
   const strictDocx = plan?.strictTemplate === true || plan?.deliveryFormats.some(format => /^docx?$/i.test(format))
 
   return {

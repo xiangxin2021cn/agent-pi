@@ -36,11 +36,18 @@ export interface RequirementLedgerViewModel {
   tone: OrchestrationTone
 }
 
+export interface HarnessInfoViewModel {
+  summary: string
+  recovery?: string
+  tone: OrchestrationTone
+}
+
 export interface OrchestrationInfoViewModel {
   phase: string
   selectedSourceBoundary: string
   ledger?: OrchestrationLedgerViewModel
   requirements?: RequirementLedgerViewModel
+  harness?: HarnessInfoViewModel
   taskBoardSummary: string
   tasks: OrchestrationListItemViewModel[]
   hiddenTaskCount: number
@@ -98,12 +105,14 @@ export function getOrchestrationInfoViewModel(
       }
     : undefined
   const requirements = formatRequirementLedger(t, goalState.taskContract?.requirementLedger)
+  const harness = formatHarnessState(t, goalState.harness)
 
   return {
     phase: getPhaseLabel(t, orchestration.phase),
     selectedSourceBoundary: `${selectedSources} · ${boundaryState}`,
     ledger,
     requirements,
+    harness,
     taskBoardSummary: t('sessionInfo.orchestrationTaskBoardSummary', {
       count: tasks.length,
       defaultValue: `${tasks.length} 项任务`,
@@ -132,6 +141,49 @@ export function getOrchestrationInfoViewModel(
     hiddenSubAgentCount: Math.max(0, subAgents.length - SUB_AGENT_LIMIT),
     entropy,
   }
+}
+
+function formatHarnessState(
+  t: Translate,
+  harness: SessionGoalState['harness'],
+): HarnessInfoViewModel | undefined {
+  if (!harness) return undefined
+  const summary = [
+    t('sessionInfo.harnessVerifiedRoutes', {
+      count: harness.verifiedRouteCount,
+      defaultValue: `验证路线 ${harness.verifiedRouteCount}`,
+    }),
+    t('sessionInfo.harnessMatchedRoutes', {
+      count: harness.matchedRouteIds.length,
+      defaultValue: `匹配 ${harness.matchedRouteIds.length}`,
+    }),
+    t('sessionInfo.harnessFeedback', {
+      count: harness.feedbackCount,
+      defaultValue: `反馈 ${harness.feedbackCount}`,
+    }),
+    t('sessionInfo.harnessRegressionCandidates', {
+      count: harness.regressionCandidateCount,
+      defaultValue: `回归候选 ${harness.regressionCandidateCount}`,
+    }),
+  ].join(' · ')
+  const failure = harness.currentFailure
+  const recovery = failure
+    ? t('sessionInfo.harnessCurrentRecovery', {
+        tool: failure.toolName,
+        category: failure.category,
+        attempts: failure.attempts,
+        decision: failure.decision,
+        defaultValue: `${failure.toolName} · ${failure.category} · ${failure.attempts} 次 · ${failure.decision}`,
+      })
+    : undefined
+  const tone: OrchestrationTone = failure?.decision === 'change_route' || failure?.decision === 'manual_review'
+    ? 'danger'
+    : failure
+      ? 'warning'
+      : harness.verifiedRouteCount > 0
+        ? 'success'
+        : 'default'
+  return { summary, recovery, tone }
 }
 
 function formatRequirementLedger(
@@ -245,6 +297,18 @@ export function getOrchestrationBadgePreview(
         ? t('sessionInfo.orchestrationBadgeHighEntropy', { defaultValue: '高熵' })
         : t('sessionInfo.orchestrationBadgeEntropyWarning', { defaultValue: '熵告警' }),
       tone: orchestration.entropy.level === 'high' ? 'danger' : 'warning',
+    }
+  }
+
+  const recovery = goalState?.harness?.currentFailure
+  if (recovery) {
+    return {
+      label: recovery.decision === 'change_route'
+        ? t('sessionInfo.harnessBadgeChangeRoute', { defaultValue: '工具纠偏' })
+        : recovery.decision === 'manual_review'
+          ? t('sessionInfo.harnessBadgeManualReview', { defaultValue: '工具待确认' })
+          : t('sessionInfo.harnessBadgeRetry', { defaultValue: '工具重试' }),
+      tone: recovery.decision === 'manual_review' ? 'danger' : 'warning',
     }
   }
 

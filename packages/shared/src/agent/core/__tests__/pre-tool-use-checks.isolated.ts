@@ -203,6 +203,22 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('allow');
     });
 
+    it('blocks an exact tool retry after the recovery guard requires a changed route', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: '/test/missing.ts', offset: 2100 },
+        toolRecoveryGuard: () => ({
+          action: 'block',
+          reason: 'The same call has already failed twice. Change the tool route or request user input.',
+        }),
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('same call has already failed twice');
+      }
+    });
+
     it('passes correct args to shouldAllowToolInMode', () => {
       runPreToolUseChecks(createInput({
         toolName: 'Bash',
@@ -403,6 +419,7 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
+        expect(result.source).toBe('handoff_barrier');
         expect(result.reason).toContain('delegated handoff barrier');
         expect(result.reason).toContain('child-1');
         expect(result.reason).toContain('must not perform or synthesize delegated work');
@@ -424,6 +441,7 @@ describe('runPreToolUseChecks', () => {
 
       expect(result.type).toBe('block');
       if (result.type === 'block') {
+        expect(result.source).toBe('handoff_barrier');
         expect(result.reason).toContain('delegated handoff barrier');
       }
     });
@@ -434,11 +452,31 @@ describe('runPreToolUseChecks', () => {
       'mcp__session__get_session_info',
       'mcp__session__list_sessions',
       'mcp__session__send_agent_message',
-    ])('allows coordination tool %s while children are pending', (toolName) => {
+    ])('blocks coordination tool %s while active children are pending', (toolName) => {
       const result = runPreToolUseChecks(createInput({
         toolName,
         input: {},
         orchestrationState: pendingOrchestration,
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.source).toBe('handoff_barrier');
+        expect(result.reason).toContain('Do not poll child status');
+      }
+    });
+
+    it('allows recovery coordination after every unresolved child is reviewable', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'mcp__session__spawn_session',
+        input: {},
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [{
+            ...pendingOrchestration.subAgents[0]!,
+            status: 'failed' as const,
+          }],
+        },
       }));
 
       expect(result.type).not.toBe('block');
@@ -459,6 +497,107 @@ describe('runPreToolUseChecks', () => {
       }));
 
       expect(result.type).toBe('allow');
+    });
+
+    it('does not let superseded aggregate handoff attempts block successful split handoffs', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/knowledge/C5.1_guide.md' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'ghost-c4-2',
+              status: 'started' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-handoff-v3.md',
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-a',
+              status: 'handoff_received' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-A-handoff-v3.md',
+              reportSize: 1024,
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-b',
+              status: 'handoff_received' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-B-handoff-v3.md',
+              reportSize: 1024,
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-c',
+              status: 'handoff_received' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-C-handoff-v3.md',
+              reportSize: 1024,
+            },
+          ],
+        },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
+    it('still blocks when a split handoff part is genuinely pending', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/knowledge/C5.1_guide.md' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-a',
+              status: 'handoff_received' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-A-handoff-v3.md',
+              reportSize: 1024,
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-b',
+              status: 'started' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-B-handoff-v3.md',
+            },
+          ],
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('split-c4-2-b');
+      }
+    });
+
+    it('does not treat a single split report as replacing an aggregate handoff', () => {
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Read',
+        input: { file_path: 'C:/test/workspace/knowledge/C5.1_guide.md' },
+        orchestrationState: {
+          ...pendingOrchestration,
+          subAgents: [
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'ghost-c4-2',
+              status: 'started' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-handoff-v3.md',
+            },
+            {
+              ...pendingOrchestration.subAgents[0]!,
+              sessionId: 'split-c4-2-a',
+              status: 'handoff_received' as const,
+              reportPath: 'C:/test/workspace/orchestration/reports/sheet-C4.2-A-handoff-v3.md',
+              reportSize: 1024,
+            },
+          ],
+        },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('ghost-c4-2');
+      }
     });
 
     it('allows bounded parent recovery after failed children stop owning active work', () => {

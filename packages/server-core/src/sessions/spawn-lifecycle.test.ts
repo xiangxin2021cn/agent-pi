@@ -59,6 +59,25 @@ describe('spawn activity lifecycle', () => {
     expect(state.lifecycleStatus).toBe('stale')
   })
 
+  it('marks a restored running child failed immediately when no runtime survived restart', () => {
+    const state = resolveSpawnActivityState({
+      now: 101_000,
+      lastActivityAt: 100_000,
+      staleAfterMs: 15 * 60 * 1000,
+      isProcessing: false,
+      queueLength: 0,
+      reportReady: false,
+      failedLifecycle: false,
+      hasReportPath: true,
+      fallbackLifecycleStatus: 'running',
+      restoredWithoutRuntime: true,
+    })
+
+    expect(state.isStale).toBe(true)
+    expect(state.handoffStatus).toBe('failed')
+    expect(state.lifecycleStatus).toBe('stale')
+  })
+
   it('never marks a child stale while its backend is still processing', () => {
     const state = resolveSpawnActivityState({
       now: 1_000_000,

@@ -686,7 +686,7 @@ For runtime-generated bounded tasks, pass both \`briefPath\` and \`reportPath\` 
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
-The spawned session appears in the session list and runs fire-and-forget. The result may include taskId, briefPath, reportPath, pollAfterMs, and handoffRequired. If handoffRequired is true, call get_spawn_status after pollAfterMs. While parentAction is "wait", do not perform the delegated work or write the child report; the runtime will keep the parent paused and resume it after every handoff is ready. If parentAction is "user_review", retry the child, continue only with explicit missing-child gaps, or pause for explicit user review. Never fabricate or overwrite a child-owned handoff report.
+The spawned session appears in the session list and runs independently. When handoffRequired is true, return control immediately: do not poll get_spawn_status in the same turn, perform the delegated work, or write the child report. The runtime monitors child activity without keeping the parent model running and resumes the parent only after every handoff is ready. If a child needs review, retry it, continue only with explicit missing-child gaps, or pause for explicit user review. Never fabricate or overwrite a child-owned handoff report.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
 
   send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
@@ -707,12 +707,12 @@ Omit sessionId to target the current session.`,
 
 Returns labels, status, name, permission mode, and other details.
 Call with no arguments to introspect your own session state.
-For spawned sessions, do not interpret user status values such as "todo" as runtime state; call get_spawn_status for handoff progress.`,
+For spawned sessions, do not interpret user status values such as "todo" as runtime state. The runtime normally monitors handoff progress automatically.`,
 
   get_spawn_status: `Get runtime handoff status for a spawned session.
 
-Use this after spawn_session to check whether the child is still processing, whether its structured report exists, and whether the handoff is ready.
-Do not treat get_session_info.status="todo" as failure. Follow parentAction: "wait" means the child still owns the work, "merge" means the terminal structured report is ready, and "user_review" means retry, ask the user, or recover with explicit missing-child gaps when takeoverAllowed is true. A non-empty report written while the child is still processing is partial and cannot be merged.`,
+Use this only in a later explicit recovery or diagnostic turn. Do not call it immediately after spawn_session and never poll it repeatedly; the runtime normally monitors handoff progress without keeping the parent model running.
+Do not treat get_session_info.status="todo" as failure. Follow parentAction: "wait" means return control because the child still owns the work, "merge" means the terminal structured report is ready, and "user_review" means retry, ask the user, or recover with explicit missing-child gaps when takeoverAllowed is true. A non-empty report written while the child is still processing is partial and cannot be merged.`,
 
   list_sessions: `List sessions in the workspace. Returns total count + paginated results.
 

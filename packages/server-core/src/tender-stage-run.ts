@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { basename, dirname, extname, join } from 'node:path';
 import { listBusinessProjects } from '@craft-agent/shared/business-projects';
 import {
+  applyManualTenderCloseoutEvidence,
   createNodeFileSystem,
   handleTenderWorkspace,
   type SessionToolContext,
@@ -178,9 +179,19 @@ export async function runTenderStage(
   const paths = resolvePaths(project.rootPath, project.projectId);
   const context = createContext(project.rootPath);
   const sourceBoundary = await syncSourceBoundary(context, paths, project);
-  const capabilityIndex = existsSync(paths.capabilityIndexPath)
+  const workspace = parseTenderWorkspace(readJson(paths.workspacePath));
+  let capabilityIndex = existsSync(paths.capabilityIndexPath)
     ? parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath))
-    : { schemaVersion: 1 as const, projectId: project.projectId, coreRevision: 0, capabilities: [] };
+    : { schemaVersion: 1 as const, projectId: project.projectId, coreRevision: workspace.revision, capabilities: [] };
+  const manualEvidence = applyManualTenderCloseoutEvidence(capabilityIndex, {
+    projectDirectory: paths.projectDirectory,
+    workingDirectory: project.rootPath,
+    coreRevision: workspace.revision,
+  });
+  if (manualEvidence.changed) {
+    capabilityIndex = manualEvidence.index;
+    atomicWriteJson(paths.capabilityIndexPath, capabilityIndex);
+  }
   const generatedPacks = capabilityIndex.capabilities
     .filter((entry) => entry.revision > 0 && entry.readiness === 'ready' && !entry.stale)
     .map((entry) => entry.capability);

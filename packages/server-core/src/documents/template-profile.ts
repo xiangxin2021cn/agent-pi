@@ -2,49 +2,15 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
+import type {
+  SessionTemplateLayoutFidelity,
+  SessionTemplateProfile,
+  SessionTemplateSourceType,
+} from '@craft-agent/shared/sessions';
 
-export type TemplateSourceType = 'markdown' | 'docx' | 'pdf';
-export type TemplateLayoutFidelity = 'semantic-only' | 'strict-docx-ooxml' | 'pdf-visual-approximation';
-
-export interface ExtractedTemplateProfile {
-  id: string;
-  sourcePath: string;
-  sourceType: TemplateSourceType;
-  generatedBy?: string;
-  layoutFidelity: TemplateLayoutFidelity;
-  sectionOrder: string[];
-  titleDepth?: number;
-  averageSectionLength?: number;
-  tableConvention?: string;
-  figureConvention?: string;
-  citationStyle?: string;
-  languageStyle?: string;
-  pageSize?: 'A4' | 'A3' | 'letter' | 'custom';
-  orientation?: 'portrait' | 'landscape';
-  styles: Array<{
-    id: string;
-    name: string;
-    role?: 'title' | 'heading' | 'body' | 'caption' | 'table' | 'toc' | 'header' | 'footer';
-  }>;
-  fonts: string[];
-  tableStyles?: string[];
-  captionStyles?: string[];
-  headerFooterReferences?: Array<{
-    type: 'header' | 'footer';
-    id: string;
-  }>;
-  numbering?: Array<{
-    id: string;
-    levels: number;
-  }>;
-  margins?: {
-    top?: number;
-    right?: number;
-    bottom?: number;
-    left?: number;
-  };
-  unknowns: string[];
-}
+export type TemplateSourceType = SessionTemplateSourceType;
+export type TemplateLayoutFidelity = SessionTemplateLayoutFidelity;
+export type ExtractedTemplateProfile = SessionTemplateProfile;
 
 export interface MarkdownTemplateProfileOptions {
   sourcePath: string;

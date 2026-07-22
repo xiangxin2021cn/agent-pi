@@ -9,6 +9,7 @@ export interface ResolveSpawnActivityStateInput {
   reportReady: boolean
   failedLifecycle: boolean
   hasReportPath: boolean
+  restoredWithoutRuntime?: boolean
   fallbackLifecycleStatus?: 'started' | 'running' | 'handoff_received' | 'handoff_ready' | 'completed' | 'needs_review' | 'failed' | 'unknown'
 }
 
@@ -81,8 +82,8 @@ export function resolveSpawnActivityState(input: ResolveSpawnActivityStateInput)
     && !input.isProcessing
     && input.queueLength === 0
     && active
-    && idleMs !== undefined
-    && idleMs > input.staleAfterMs
+    && (input.restoredWithoutRuntime === true
+      || (idleMs !== undefined && idleMs > input.staleAfterMs))
 
   if (input.reportReady) {
     return { lifecycleStatus: 'handoff_ready', handoffStatus: 'ready', isStale: false, idleMs }

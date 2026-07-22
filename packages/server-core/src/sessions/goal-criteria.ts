@@ -1155,6 +1155,7 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     deliveryReviewPlan: mergeDocumentDeliveryReviewPlans(current.deliveryReviewPlan, next.deliveryReviewPlan),
     artifactVisibility: mergeDocumentArtifactVisibilityPlans(current.artifactVisibility, next.artifactVisibility),
     templateProfileId: current.templateProfileId ?? next.templateProfileId,
+    templateProfile: current.templateProfile ?? next.templateProfile,
     strictTemplate: current.strictTemplate || next.strictTemplate || undefined,
     sections: uniqueBounded([...current.sections, ...next.sections], 24),
     tables: uniqueBounded([...current.tables, ...next.tables], 12),
@@ -1269,6 +1270,7 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Domain: ${plan.domain ?? '(unspecified)'}`,
     `Strict template: ${plan.strictTemplate ? 'yes' : 'no'}`,
     `Template profile: ${plan.templateProfileId ?? '(none)'}`,
+    `Template constraints:\n${formatTemplateProfile(plan.templateProfile)}`,
     `Visual plan:\n${formatVisualPlan(plan.visualPlan)}`,
     `Document agent plan:\n${formatDocumentAgentPlan(plan.agentPlan)}`,
     `Evidence matrix:\n${formatDocumentEvidenceMatrix(plan.evidenceMatrix)}`,
@@ -1280,6 +1282,17 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string {
     `Enhancements:\n${formatContractList(plan.enhancements ?? [])}`,
     `Citations:\n${formatContractList(plan.citations)}`,
     `Delivery formats:\n${formatContractList(plan.deliveryFormats)}`,
+  ].join('\n')
+}
+
+function formatTemplateProfile(profile: SessionDocumentPlan['templateProfile']): string {
+  if (!profile) return '(not parsed)'
+  return [
+    `Source: ${profile.sourceType} (${profile.layoutFidelity})`,
+    `Sections in order: ${profile.sectionOrder.slice(0, 24).join(' -> ') || '(not detected)'}`,
+    `Page: ${profile.pageSize ?? '(unknown)'} ${profile.orientation ?? ''}`.trim(),
+    `Fonts: ${profile.fonts.slice(0, 12).join(', ') || '(not detected)'}`,
+    `Styles: ${profile.styles.slice(0, 16).map(style => `${style.id}:${style.role ?? 'body'}`).join(', ') || '(not detected)'}`,
   ].join('\n')
 }
 

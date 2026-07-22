@@ -48,6 +48,7 @@ import {
 import { permissionsConfigCache, type PermissionsContext } from '../permissions-config.ts';
 import type { PrerequisiteCheckResult } from './prerequisite-manager.ts';
 import { rewriteBashWithRtk } from './rtk-rewrite.ts';
+import { filterSupersededSubAgentHandoffs } from '../../sessions/orchestration.ts';
 import type { SessionOrchestrationState } from '../../sessions/types.ts';
 
 // ============================================================
@@ -583,7 +584,7 @@ export function getConfigDomainBashRedirect(
 export type PreToolUseCheckResult =
   | { type: 'allow' }
   | { type: 'modify'; input: Record<string, unknown> }
-  | { type: 'block'; reason: string; source?: 'prerequisite' }
+  | { type: 'block'; reason: string; source?: 'prerequisite' | 'handoff_barrier' }
   | {
       type: 'prompt';
       promptType: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
@@ -646,6 +647,11 @@ export interface PreToolUseInput {
   };
   /** Full parent orchestration state used to enforce delegated-work ownership. */
   orchestrationState?: SessionOrchestrationState;
+  /** Current-turn bounded recovery guard for exact repeated tool calls. */
+  toolRecoveryGuard?: (
+    toolName: string,
+    input: Record<string, unknown>,
+  ) => { action: 'allow' } | { action: 'block'; reason: string };
   /** Debug callback */
   onDebug?: (message: string) => void;
 }
@@ -702,6 +708,7 @@ function getDelegatedHandoffBlock(input: {
   if (!hasStructuredDelegation) {
     return null;
   }
+  const activeSubAgents = filterSupersededSubAgentHandoffs(orchestration.subAgents);
 
   const targetPath = getToolTargetPath(input.input);
   const childOwner = targetPath
@@ -717,19 +724,10 @@ function getDelegatedHandoffBlock(input: {
     ].join(' ');
   }
 
-  const unresolved = orchestration.subAgents.filter(agent => (
+  const unresolved = activeSubAgents.filter(agent => (
     agent.status !== 'handoff_received' && agent.status !== 'completed'
   ));
   if (unresolved.length === 0) return null;
-  if (DELEGATION_COORDINATION_TOOLS.has(input.toolName)) return null;
-  if (FILE_WRITE_TOOLS.has(input.toolName) && targetPath && isOrchestrationBriefPath(
-    targetPath,
-    orchestration,
-    input.workingDirectory ?? input.workspaceRootPath,
-  )) {
-    return null;
-  }
-
   const activeUnresolved = unresolved.filter(agent => (
     agent.status !== 'needs_review' && agent.status !== 'failed'
   ));
@@ -740,13 +738,22 @@ function getDelegatedHandoffBlock(input: {
     return null;
   }
 
+  if (DELEGATION_COORDINATION_TOOLS.has(input.toolName)) {
+    return [
+      'STOP. The delegated handoff barrier is active.',
+      `Active child sessions: ${activeUnresolved.map(agent => `${agent.sessionId} (${agent.status})`).join(', ')}.`,
+      'Do not poll child status, message child sessions, list sessions, or spawn replacement children while any structured handoff is still active.',
+      'Return control now. The runtime monitor owns child progress and resumes the parent only after every active structured handoff is ready or reviewable.',
+    ].join(' ');
+  }
+
   return [
     'STOP. The delegated handoff barrier is active.',
     `Unresolved child sessions: ${unresolved.map(agent => `${agent.sessionId} (${agent.status})`).join(', ')}.`,
     'The parent must not perform or synthesize delegated work, inspect original sources, calculate substitutes, or write child reports.',
     recoverableUnresolved.length > 0
-      ? 'Continue waiting for active children; failed children can be retried or recovered after active handoffs finish.'
-      : 'Use get_spawn_status or send_agent_message and continue waiting until every structured handoff is ready.',
+      ? 'Return control now. The runtime monitors active children; failed children can be retried or recovered after active handoffs finish.'
+      : 'Return control now. The runtime monitors child activity and resumes the parent only after every structured handoff is ready.',
   ].join(' ');
 }
 
@@ -932,7 +939,13 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   });
   if (delegatedHandoffBlock) {
     onDebug?.(`Orchestration handoff barrier blocked ${toolName}: ${delegatedHandoffBlock}`);
-    return { type: 'block', reason: delegatedHandoffBlock };
+    return { type: 'block', reason: delegatedHandoffBlock, source: 'handoff_barrier' };
+  }
+
+  const recoveryGuardResult = ctx.toolRecoveryGuard?.(toolName, input);
+  if (recoveryGuardResult?.action === 'block') {
+    onDebug?.(`Bounded recovery blocked ${toolName}: ${recoveryGuardResult.reason}`);
+    return { type: 'block', reason: recoveryGuardResult.reason };
   }
 
   // ============================================================
