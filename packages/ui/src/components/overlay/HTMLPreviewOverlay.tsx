@@ -2,20 +2,22 @@
  * HTMLPreviewOverlay - Fullscreen overlay for viewing rendered HTML content.
  *
  * Uses PreviewOverlay as the base for consistent modal/fullscreen behavior.
- * Renders HTML in a sandboxed iframe (no script execution).
+ * Renders HTML in a sandboxed iframe. File-backed previews may enable scripts
+ * (needed for simulation/report HTML); chat embeds keep scripts disabled.
  * Links open in the system browser via Electron's will-navigate handler.
  *
- * Supports multiple items with arrow navigation in the header.
- * The iframe auto-sizes to its content height by reading contentDocument.scrollHeight
- * on load (possible because allow-same-origin is set).
+ * Supports Preview/Code modes, Save As, multi-item navigation, and copy.
  */
 
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe } from 'lucide-react'
+import { Code2, Download, Eye, Globe } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
 import { CopyButton } from './CopyButton'
 import { ItemNavigator } from './ItemNavigator'
+import { ShikiCodeViewer } from '../code-viewer/ShikiCodeViewer'
+import { ContentFrame } from './ContentFrame'
+import { cn } from '../../lib/utils'
 
 /**
  * Inject `<base target="_top">` so link clicks navigate the top frame,
@@ -54,8 +56,19 @@ export interface HTMLPreviewOverlayProps {
   initialIndex?: number
   /** Optional title for the overlay header */
   title?: string
+  /** Real filesystem path — enables path badge Open/Reveal actions */
+  filePath?: string
+  /** Save current HTML via host Save As dialog */
+  onSaveAs?: (content: string) => void | Promise<unknown>
+  /**
+   * Allow script execution inside the sandboxed iframe.
+   * Enable for trusted local artifact files (simulations/reports); keep false for chat embeds.
+   */
+  allowScripts?: boolean
   /** Theme mode for dark/light styling */
   theme?: 'light' | 'dark'
+  /** Error message if the file could not be read */
+  error?: string
 }
 
 export function HTMLPreviewOverlay({
@@ -67,17 +80,22 @@ export function HTMLPreviewOverlay({
   onLoadContent,
   initialIndex = 0,
   title,
+  filePath,
+  onSaveAs,
+  allowScripts = false,
   theme,
+  error,
 }: HTMLPreviewOverlayProps) {
   // Normalize: single html prop → single item, or use items array
   const { t } = useTranslation()
   const resolvedItems = React.useMemo<PreviewItem[]>(() => {
     if (items && items.length > 0) return items
-    if (html) return [{ src: '__single__' }]
+    if (html || filePath) return [{ src: filePath || '__single__', label: title }]
     return []
-  }, [items, html])
+  }, [items, html, filePath, title])
 
   const [activeIdx, setActiveIdx] = React.useState(initialIndex)
+  const [viewMode, setViewMode] = React.useState<'preview' | 'code'>('preview')
   const iframeRef = React.useRef<HTMLIFrameElement>(null)
   const [contentSize, setContentSize] = React.useState<{ width: number; height: number } | null>(null)
 
@@ -85,14 +103,18 @@ export function HTMLPreviewOverlay({
   const [internalCache, setInternalCache] = React.useState<Record<string, string>>({})
   const [loadingItem, setLoadingItem] = React.useState(false)
   const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [saving, setSaving] = React.useState(false)
 
   // Merge caches — external takes precedence, plus single html prop
   const mergedCache = React.useMemo(() => {
     const merged: Record<string, string> = { ...internalCache }
     if (externalCache) Object.assign(merged, externalCache)
-    if (html) merged['__single__'] = html
+    if (html) {
+      merged['__single__'] = html
+      if (filePath) merged[filePath] = html
+    }
     return merged
-  }, [internalCache, externalCache, html])
+  }, [internalCache, externalCache, html, filePath])
 
   const activeItem = resolvedItems[activeIdx]
   const activeContent = activeItem ? mergedCache[activeItem.src] : undefined
@@ -102,6 +124,7 @@ export function HTMLPreviewOverlay({
     if (isOpen) {
       setActiveIdx(initialIndex)
       setContentSize(null)
+      setViewMode('preview')
     }
   }, [isOpen, initialIndex])
 
@@ -135,6 +158,10 @@ export function HTMLPreviewOverlay({
     [activeContent]
   )
 
+  const sandbox = allowScripts
+    ? 'allow-scripts allow-same-origin allow-top-navigation-by-user-activation'
+    : 'allow-same-origin allow-top-navigation-by-user-activation'
+
   // Read iframe content dimensions after it loads
   const handleLoad = React.useCallback(() => {
     const iframe = iframeRef.current
@@ -151,23 +178,78 @@ export function HTMLPreviewOverlay({
       const height = doc.body.scrollHeight
       setContentSize({ width: naturalWidth, height })
     } catch {
-      // Cross-origin access denied
+      // Cross-origin access denied — fall back to viewport height
+      setContentSize({ width: 0, height: Math.round(window.innerHeight * 0.7) })
     }
   }, [])
 
+  const handleSaveAs = React.useCallback(async () => {
+    if (!onSaveAs || !activeContent || saving) return
+    setSaving(true)
+    try {
+      await onSaveAs(activeContent)
+    } finally {
+      setSaving(false)
+    }
+  }, [onSaveAs, activeContent, saving])
+
   const iframeHeight = contentSize
-    ? `${contentSize.height}px`
+    ? `${Math.max(contentSize.height, 400)}px`
     : 'calc(100vh - 200px)'
 
-  const measured = contentSize !== null
+  const measured = contentSize !== null || viewMode === 'code'
 
-  // Header actions: item navigation + copy button
+  // Header actions: mode toggle + item navigation + save/copy
   const headerActions = (
     <div className="flex items-center gap-2">
+      <div className="flex items-center rounded-[6px] border bg-background shadow-minimal overflow-hidden">
+        <button
+          type="button"
+          className={cn(
+            'inline-flex h-7 items-center gap-1 px-2 text-xs font-medium transition-colors',
+            viewMode === 'preview'
+              ? 'bg-foreground/10 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5',
+          )}
+          onClick={() => setViewMode('preview')}
+          title={t('overlay.preview')}
+        >
+          <Eye className="w-3.5 h-3.5" />
+          {t('overlay.preview')}
+        </button>
+        <button
+          type="button"
+          className={cn(
+            'inline-flex h-7 items-center gap-1 px-2 text-xs font-medium transition-colors',
+            viewMode === 'code'
+              ? 'bg-foreground/10 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5',
+          )}
+          onClick={() => setViewMode('code')}
+          title={t('overlay.code')}
+        >
+          <Code2 className="w-3.5 h-3.5" />
+          {t('overlay.code')}
+        </button>
+      </div>
       <ItemNavigator items={resolvedItems} activeIndex={activeIdx} onSelect={setActiveIdx} size="md" />
+      {onSaveAs && (
+        <button
+          type="button"
+          className="inline-flex h-7 items-center justify-center gap-1 rounded-[6px] bg-background px-2 text-xs font-medium shadow-minimal text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+          disabled={!activeContent || saving}
+          onClick={() => { void handleSaveAs() }}
+          title={t('common.saveAs')}
+        >
+          <Download className="w-3.5 h-3.5" />
+          {t('common.saveAs')}
+        </button>
+      )}
       <CopyButton content={activeContent || ''} label="Copy HTML" className="bg-background shadow-minimal" />
     </div>
   )
+
+  const displayError = error || loadError
 
   return (
     <PreviewOverlay
@@ -179,17 +261,28 @@ export function HTMLPreviewOverlay({
         label: 'HTML',
         variant: 'blue',
       }}
-      title={title || activeItem?.label || 'HTML Preview'}
+      filePath={filePath}
+      title={filePath ? undefined : (title || activeItem?.label || t('preview.htmlPreview'))}
       headerActions={headerActions}
+      error={displayError && !activeContent ? { label: 'Read Failed', message: displayError } : undefined}
     >
       <div className="px-6 pb-6">
         {loadingItem && !activeContent && (
           <div className="py-12 text-center text-muted-foreground text-sm">{t('common.loading')}</div>
         )}
-        {loadError && !activeContent && (
-          <div className="py-12 text-center text-destructive/70 text-sm">{loadError}</div>
+        {viewMode === 'code' && activeContent && (
+          <ContentFrame title={t('overlay.code')} fitContent minWidth={850}>
+            <div>
+              <ShikiCodeViewer
+                code={activeContent}
+                filePath={filePath}
+                language="html"
+                theme={theme}
+              />
+            </div>
+          </ContentFrame>
         )}
-        {processedHtml && (
+        {viewMode === 'preview' && processedHtml && (
           <div
             className="bg-white rounded-[12px] overflow-hidden shadow-minimal mx-auto"
             style={{
@@ -201,10 +294,10 @@ export function HTMLPreviewOverlay({
           >
             <iframe
               ref={iframeRef}
-              sandbox="allow-same-origin allow-top-navigation-by-user-activation"
+              sandbox={sandbox}
               srcDoc={processedHtml}
               onLoad={handleLoad}
-              title={activeItem?.label || title || 'HTML Preview'}
+              title={activeItem?.label || title || t('preview.htmlPreview')}
               className="w-full border-0"
               style={{ height: iframeHeight, minHeight: '400px' }}
             />

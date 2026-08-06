@@ -72,6 +72,13 @@ interface TextPreview {
   error?: string
 }
 
+interface HtmlPreview {
+  type: 'html'
+  filePath: string
+  content: string | null
+  error?: string
+}
+
 interface OfficePreview {
   type: 'office'
   filePath: string
@@ -97,6 +104,7 @@ export type FilePreviewState =
   | MarkdownPreview
   | JSONPreview
   | TextPreview
+  | HtmlPreview
   | SpreadsheetPreview
   | OfficePreview
 
@@ -221,6 +229,15 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
         })
         return
       }
+      if (type === 'html') {
+        setPreviewState({
+          type,
+          filePath: path,
+          content: preview.content,
+          error: emptyPreviewError,
+        })
+        return
+      }
       const state = buildInitialTextState(type, path)
       setPreviewState({ ...state, content: preview.content, ...previewOptions, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
@@ -322,6 +339,8 @@ function buildInitialTextState(type: FilePreviewType, path: string): FilePreview
       return { type: 'json', filePath: path, content: null }
     case 'text':
       return { type: 'text', filePath: path, content: null }
+    case 'html':
+      return { type: 'html', filePath: path, content: null }
     case 'office':
       return { type: 'office', filePath: path, content: null }
     case 'spreadsheet':

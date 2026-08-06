@@ -335,6 +335,10 @@ export class PiEventAdapter extends BaseEventAdapter {
         const sdkMessageId = (event as { sdkMessageId?: string }).sdkMessageId ?? msg?.id;
         if (msg?.role !== 'assistant') break;
 
+        // Pi 0.83+: stopReason "pending" is for in-flight/partial assistant
+        // messages during streaming and must not finalize a turn.
+        if (msg.stopReason === 'pending') break;
+
         // Surface API errors — Pi SDK sets stopReason: 'error' and errorMessage on failures
         if (msg.stopReason === 'error' && msg.errorMessage) {
           // Context overflow: hand recovery to the SDK's _runAutoCompaction

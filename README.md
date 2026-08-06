@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.3.0.**
+**Current release: V2.3.1.**
 
-**当前发布版：V2.3.0。**
+**当前发布版：V2.3.1。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.3.1 Pi 0.83 + HTML Artifacts / V2.3.1 Pi 0.83 与 HTML 产物
+
+V2.3.1 builds on the V2.3.0 Self-Harness release. Pi runtime moves to 0.83.0 (Copilot OAuth + catalog typing adapted). Official Output and working-directory `.html` / `.htm` files open in a sandboxed render preview with Preview/Code toggle and Save As. Claude Agent SDK moves to 0.3.222.
+
+V2.3.1 基于 V2.3.0 Self-Harness：Pi 运行时升级到 0.83.0（已适配 Copilot OAuth 与模型目录类型）；正式输出与工作目录中的 `.html` / `.htm` 可沙箱渲染预览，支持预览/代码切换与另存为；Claude Agent SDK 升级到 0.3.222。
 
 ### V2.3.0 Bounded Self-Harness / V2.3.0 有边界的自适应执行
 

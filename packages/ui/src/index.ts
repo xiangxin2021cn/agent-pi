@@ -210,6 +210,7 @@ export {
   ImagePreviewOverlay,
   PDFPreviewOverlay,
   SpreadsheetPreviewOverlay,
+  HTMLPreviewOverlay,
   detectLanguage,
   detectLanguageFromPath,
   type CodePreviewOverlayProps,
@@ -225,6 +226,7 @@ export {
   type ImagePreviewOverlayProps,
   type PDFPreviewOverlayProps,
   type SpreadsheetPreviewOverlayProps,
+  type HTMLPreviewOverlayProps,
   ActivityCardsOverlay,
   type ActivityCardsOverlayProps,
 } from './components/overlay'

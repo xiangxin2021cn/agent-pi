@@ -71,6 +71,7 @@ import {
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
+  HTMLPreviewOverlay,
   type MarkdownSidecarActionsProps,
 } from '@craft-agent/ui'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
@@ -2285,6 +2286,30 @@ async function downloadMarkdownWithSaveDialog(sourcePath: string, content: strin
   return { path: result.filePath }
 }
 
+function getDefaultHtmlSaveAsPath(sourcePath: string): string {
+  const basename = sourcePath.split(/[\\/]/).pop() || 'preview.html'
+  if (/\.html?$/i.test(basename)) {
+    return basename.replace(/(\.html?)$/i, '-copy$1')
+  }
+  return `${basename}-copy.html`
+}
+
+async function downloadHtmlWithSaveDialog(sourcePath: string, content: string) {
+  const result = await window.electronAPI.saveTextFileWithDialog({
+    title: 'Save HTML As',
+    defaultPath: getDefaultHtmlSaveAsPath(sourcePath),
+    buttonLabel: 'Save',
+    filters: [
+      { name: 'HTML Document', extensions: ['html', 'htm'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    content,
+  })
+
+  if (result.canceled || !result.filePath) return null
+  return { path: result.filePath }
+}
+
 async function exportMarkdownWithSaveDialog(
   sourcePath: string,
   format: MarkdownDocumentExportFormat,
@@ -2312,6 +2337,7 @@ async function exportMarkdownWithSaveDialog(
  * - image → ImagePreviewOverlay (binary, loaded via data URL)
  * - pdf → PDFPreviewOverlay (binary, embedded via Chromium viewer)
  * - code/text → CodePreviewOverlay (syntax highlighted)
+ * - html → HTMLPreviewOverlay (sandboxed render + optional code view)
  * - markdown → DocumentFormattedMarkdownOverlay
  * - json → JSONPreviewOverlay
  *
@@ -2402,6 +2428,20 @@ function FilePreviewRenderer({
           mode="read"
           theme={theme}
           error={state.error}
+        />
+      )
+
+    case 'html':
+      return (
+        <HTMLPreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          html={state.content ?? ''}
+          allowScripts
+          theme={theme}
+          error={state.error}
+          onSaveAs={(content) => downloadHtmlWithSaveDialog(state.filePath, content)}
         />
       )
 

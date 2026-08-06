@@ -16,6 +16,7 @@
     "./app-defaults": "./src/app-defaults.ts",
     "./artifacts": "./src/artifacts/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./agent/github-copilot-oauth": "./src/agent/github-copilot-oauth.ts",
     "./agent/modes": "./src/agent/mode-types.ts",
     "./agent/mode-types": "./src/agent/mode-types.ts",
     "./agent/thinking-levels": "./src/agent/thinking-levels.ts",
@@ -86,12 +87,12 @@
     "i18next": "^26.0.3",
     "incr-regex-package": "^1.0.4",
     "shell-quote": "^1.8.3",
-    "@earendil-works/pi-agent-core": "0.80.10",
-    "@earendil-works/pi-ai": "0.80.10",
-    "@earendil-works/pi-coding-agent": "0.80.10"
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.83.0"
   },
   "peerDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.214",
+    "@anthropic-ai/claude-agent-sdk": "0.3.222",
     "@modelcontextprotocol/sdk": ">=1.29.0",
     "zod": ">=4.0.0"
   },

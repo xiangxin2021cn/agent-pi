@@ -4,6 +4,10 @@ export * from './conversation-summary.ts';
 
 // Export PiAgent for direct use
 export { PiAgent, PiBackend } from './pi-agent.ts';
+export {
+  loginGitHubCopilotOAuth,
+  refreshGitHubCopilotOAuth,
+} from './github-copilot-oauth.ts';
 export * from './errors.ts';
 export * from './options.ts';
 
