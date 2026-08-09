@@ -232,6 +232,7 @@ export async function runTenderStage(
 
   // When every document-analysis batch is complete, deterministically merge into
   // packs/document-analysis.json and write a readable summary under formal outputs.
+  const documentMergeRuntimeErrors: string[] = [];
   if (
     stage.id === 'tender-document-analysis'
     && documentBatchManifest
@@ -241,7 +242,7 @@ export async function runTenderStage(
     && documentBatchManifest.batches.every((batch) => batch.status === 'complete')
   ) {
     const parentSessionId = taskBoard?.parentSessionId ?? request.parentSessionId;
-    await ensureDocumentAnalysisPackMerged({
+    const mergeResult = await ensureDocumentAnalysisPackMerged({
       context,
       paths,
       projectId: project.projectId,
@@ -249,6 +250,7 @@ export async function runTenderStage(
       manifest: documentBatchManifest,
       parentSessionId,
     });
+    documentMergeRuntimeErrors.push(...mergeResult.errors);
     if (existsSync(paths.capabilityIndexPath)) {
       capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
       generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest);
@@ -311,8 +313,11 @@ export async function runTenderStage(
       && documentBatchManifest.completedBatches === documentBatchManifest.batchCount
       && documentBatchManifest.missingDocumentIds.length === 0
     ) {
-      completionMissingItems.push(...validateFinalDocumentAnalysisMerge(paths, documentBatchManifest)
-        .map((error) => `document-merge:${error}`));
+      completionMissingItems.push(
+        ...documentMergeRuntimeErrors.map((error) => `document-merge:${error}`),
+        ...validateFinalDocumentAnalysisMerge(paths, documentBatchManifest)
+          .map((error) => `document-merge:${error}`),
+      );
     }
     if (
       stage.id === 'boq-five-step-pricing'
@@ -458,13 +463,13 @@ async function ensureDocumentAnalysisPackMerged(input: {
   workingDirectory: string;
   manifest: TenderDocumentAnalysisBatchManifest;
   parentSessionId?: string;
-}): Promise<void> {
+}): Promise<{ errors: string[] }> {
   const packPath = join(input.paths.projectDirectory, 'packs', 'document-analysis.json');
   const existingMergeErrors = existsSync(packPath)
     ? validateFinalDocumentAnalysisMerge(input.paths, input.manifest)
     : ['missing'];
   const merged = mergeDocumentAnalysisBatchReports(input.manifest);
-  if (merged.errors.length > 0) return;
+  if (merged.errors.length > 0) return { errors: merged.errors };
 
   if (existingMergeErrors.length === 0) {
     // Pack already matches child reports — still refresh the formal MD summary.
@@ -476,20 +481,20 @@ async function ensureDocumentAnalysisPackMerged(input: {
         manifest: input.manifest,
       });
     }
-    return;
+    return { errors: [] };
   }
 
   const action = existsSync(packPath) ? 'replace' : 'init';
+  // Omit inline data — tender_capability syncs from batch reports when complete.
   const result = await handleTenderCapability(input.context, {
     action,
     projectId: input.projectId,
     capability: 'document_analysis',
-    data: merged.data,
   });
   if (result.isError) {
-    // Leave missingItems to surface on the next status poll; do not throw and
-    // abort unrelated stage bookkeeping.
-    return;
+    return {
+      errors: [result.content.map((block) => block.text).join('\n') || 'document_analysis merge write failed'],
+    };
   }
 
   if (input.parentSessionId) {
@@ -500,6 +505,7 @@ async function ensureDocumentAnalysisPackMerged(input: {
       manifest: input.manifest,
     });
   }
+  return { errors: [] };
 }
 
 function validateFinalDocumentAnalysisMerge(

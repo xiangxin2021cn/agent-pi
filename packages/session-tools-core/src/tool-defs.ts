@@ -258,7 +258,8 @@ export const TenderCapabilityToolSchema = z.object({
     'submission_documents',
     'submission_audit',
   ]).describe('Tender capability pack to operate on.'),
-  data: z.unknown().optional().describe('Complete capability data required by init and replace.'),
+  data: z.unknown().optional().describe('Complete capability data for init/replace. Prefer dataPath for large packs. For document_analysis, runtime ignores this and merges batch reports when all batches are complete.'),
+  dataPath: z.string().optional().describe('JSON file path inside the working directory with capability data. Preferred over inlining large payloads.'),
   expectedRevision: z.number().int().positive().optional()
     .describe('Optimistic concurrency revision required when replacing known state.'),
   enabled: z.boolean().optional().describe('Whether the capability is enabled for this tender.'),
@@ -469,12 +470,14 @@ Use this after tender_workspace has registered the authoritative project, source
 
 Actions:
 - configure: set whether a capability is enabled and required
-- init: create a capability pack from complete typed data
+- init: create a capability pack from complete typed data (or dataPath)
 - replace: atomically replace the pack using expectedRevision when available
 - status: inspect current data, audit, and stale dependencies
 - validate: recompute and persist the capability audit
 
-Only implemented capability packs can be initialized. A stale pack cannot be treated as ready. The tool never scans the working directory.`,
+document_analysis special rule: when every per-document batch report is complete, init/replace ALWAYS writes the deterministic merge from those reports (section ids namespaced by documentId). Do NOT inline, compress, truncate, or rewrite summaries to fit tool-call size limits — pass empty data / omit data and let runtime merge, or call stage status/resume. For other large packs, prefer dataPath over inline JSON.
+
+Only implemented capability packs can be initialized. A stale pack cannot be treated as ready.`,
 
   delivery_workspace: `Maintain the independent Project Delivery Controls system of record.
 

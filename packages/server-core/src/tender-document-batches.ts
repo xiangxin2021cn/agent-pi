@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import {
   parseTenderDocumentAnalysisData,
   type TenderDocumentAnalysisData,
   type TenderDocumentAnalysisSection,
   type TenderDocumentKind,
 } from '@agent-pi/business-core/tender';
+import {
+  mergeDocumentAnalysisBatchReports as mergeDocumentAnalysisBatchReportsCore,
+  validateDocumentAnalysisBatchMerge as validateDocumentAnalysisBatchMergeCore,
+} from '@craft-agent/session-tools-core';
 
 export interface TenderDocumentBatchSource {
   documentId: string;
@@ -136,95 +139,28 @@ export function createOrRefreshDocumentAnalysisBatchManifest(
 
 /**
  * Deterministically concatenate complete batch reports into final pack data.
- * Section order follows manifest.batches; fields are not rewritten.
+ * Duplicate template section ids are namespaced with documentId.
  */
 export function mergeDocumentAnalysisBatchReports(
   manifest: TenderDocumentAnalysisBatchManifest,
 ): { data: TenderDocumentAnalysisData; errors: string[] } {
-  const errors: string[] = [];
-  const sections: TenderDocumentAnalysisSection[] = [];
-  const seenIds = new Set<string>();
-
   if (manifest.batchCount === 0) {
     return { data: { sections: [] }, errors: ['document-batches:no-documents'] };
   }
   if (manifest.completedBatches !== manifest.batchCount || manifest.missingDocumentIds.length > 0) {
-    return {
-      data: { sections: [] },
-      errors: ['document-batches:incomplete'],
-    };
+    return { data: { sections: [] }, errors: ['document-batches:incomplete'] };
   }
-
-  for (const batch of manifest.batches) {
-    if (batch.status !== 'complete') {
-      errors.push(`incomplete document batch: ${batch.batchId}`);
-      continue;
-    }
-    const report = readReport(batch.reportPath, batch.batchId, batch.documentId);
-    if (report.errors.length > 0) {
-      errors.push(...report.errors.map((error) => `${batch.batchId}: ${error}`));
-      continue;
-    }
-    for (const section of report.sections) {
-      if (seenIds.has(section.id)) {
-        errors.push(`duplicate child document section: ${section.id}`);
-        continue;
-      }
-      seenIds.add(section.id);
-      sections.push(section);
-    }
-  }
-
-  if (errors.length > 0) return { data: { sections: [] }, errors };
-
-  const data = parseTenderDocumentAnalysisData({ sections });
-  const mergeErrors = validateDocumentAnalysisBatchMerge(manifest, data);
-  return { data, errors: mergeErrors };
+  return mergeDocumentAnalysisBatchReportsCore(manifest.batches);
 }
 
 export function validateDocumentAnalysisBatchMerge(
   manifest: TenderDocumentAnalysisBatchManifest,
   finalValue: TenderDocumentAnalysisData | unknown,
 ): string[] {
-  const errors: string[] = [];
-  let finalData: TenderDocumentAnalysisData;
-  try {
-    finalData = parseTenderDocumentAnalysisData(finalValue);
-  } catch (error) {
-    return [`invalid final document analysis pack: ${error instanceof Error ? error.message : String(error)}`];
+  if (manifest.completedBatches !== manifest.batchCount || manifest.missingDocumentIds.length > 0) {
+    return ['document-batches:incomplete'];
   }
-
-  const reportedBySectionId = new Map<string, TenderDocumentAnalysisSection>();
-  for (const batch of manifest.batches) {
-    if (batch.status !== 'complete') {
-      errors.push(`incomplete document batch: ${batch.batchId}`);
-      continue;
-    }
-    const report = readReport(batch.reportPath, batch.batchId, batch.documentId);
-    if (report.errors.length > 0) {
-      errors.push(...report.errors.map((error) => `${batch.batchId}: ${error}`));
-      continue;
-    }
-    for (const section of report.sections) {
-      if (reportedBySectionId.has(section.id)) errors.push(`duplicate child document section: ${section.id}`);
-      else reportedBySectionId.set(section.id, section);
-    }
-  }
-
-  const finalBySectionId = new Map<string, TenderDocumentAnalysisSection>();
-  for (const section of finalData.sections) {
-    if (finalBySectionId.has(section.id)) errors.push(`duplicate final document section: ${section.id}`);
-    else finalBySectionId.set(section.id, section);
-  }
-  for (const [sectionId, reported] of reportedBySectionId) {
-    const finalSection = finalBySectionId.get(sectionId);
-    if (!finalSection) errors.push(`missing final document section: ${sectionId}`);
-    else if (!isDeepStrictEqual(finalSection, reported)) errors.push(`final document section differs from child report: ${sectionId}`);
-  }
-  for (const sectionId of finalBySectionId.keys()) {
-    if (!reportedBySectionId.has(sectionId)) errors.push(`unexpected final document section: ${sectionId}`);
-  }
-  return errors;
+  return validateDocumentAnalysisBatchMergeCore(manifest.batches, finalValue);
 }
 
 function validateReport(

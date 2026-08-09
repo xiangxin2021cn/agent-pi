@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.3.3.**
+**Current release: V2.3.4.**
 
-**当前发布版：V2.3.3。**
+**当前发布版：V2.3.4。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.3.4 Document-Analysis Merge Loop Fix / V2.3.4 文档分析合并死循环修复
+
+V2.3.4 namespaces duplicate child section ids during document-analysis merge and prevents parent agents from overwriting the pack with compressed inline JSON, stopping the compress/retry loop against deep-equal merge gates.
+
+V2.3.4 在 document_analysis 合并时对重复子报告 section id 做 documentId 命名空间，并禁止主会话用压缩内联 JSON 覆盖终包，打断与深相等门禁互相打架的压缩重试循环。
 
 ### V2.3.3 Tender Document-Analysis Deliverables / V2.3.3 招标文件分析成果闭环
 

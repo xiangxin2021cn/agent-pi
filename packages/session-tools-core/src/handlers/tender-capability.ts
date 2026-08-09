@@ -49,6 +49,10 @@ import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectory, isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
 import { requireContextWorkingDirectory } from '../working-directory.ts';
+import {
+  mergeDocumentAnalysisBatchReports,
+  type DocumentAnalysisMergeBatch,
+} from '../tender/document-analysis-merge.ts';
 import { applyManualTenderCloseoutEvidence } from './tender-manual-closeout.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
@@ -58,6 +62,8 @@ export interface TenderCapabilityArgs {
   projectId: string;
   capability: TenderCapabilityId;
   data?: unknown;
+  /** Absolute or workingDirectory-relative JSON file with capability data (preferred for large packs). */
+  dataPath?: string;
   expectedRevision?: number;
   enabled?: boolean;
   required?: boolean;
@@ -157,7 +163,8 @@ export async function handleTenderCapability(
     }
 
     if (args.action === 'init' || args.action === 'replace') {
-      if (args.data === undefined) return errorResponse(`${args.action} requires data.`);
+      const resolvedData = resolveCapabilityWriteData(args, workingDirectory, paths.projectDirectory);
+      if ('error' in resolvedData) return errorResponse(resolvedData.error);
       const upstreamError = findUpstreamReadinessError(index, args.capability, workspace);
       if (upstreamError) return errorResponse(upstreamError);
       const current = existsSync(paths.modelPath)
@@ -182,7 +189,7 @@ export async function handleTenderCapability(
         coreRevision: workspace.revision,
         upstream: buildUpstream(index, args.capability, workspace.revision),
         updatedAt,
-        data: await parseCapabilityData(args.capability, args.data, workingDirectory),
+        data: await parseCapabilityData(args.capability, resolvedData.data, workingDirectory),
       });
       const audit = auditCapability(
         args.capability,
@@ -194,7 +201,11 @@ export async function handleTenderCapability(
       );
       index = updateIndexFromAudit(index, args, envelope, audit, false, workspace.revision);
       persistCapability(paths, envelope, audit, index);
-      return successResponse(JSON.stringify(buildResult(paths, envelope, audit, index, false), null, 2));
+      return successResponse(JSON.stringify({
+        ...buildResult(paths, envelope, audit, index, false),
+        dataSource: resolvedData.source,
+        note: resolvedData.note,
+      }, null, 2));
     }
 
     const envelope = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(paths.modelPath, 'utf8')));
@@ -460,6 +471,89 @@ function buildResult(
     auditPath: paths.auditPath,
     indexPath: paths.indexPath,
   };
+}
+
+function resolveCapabilityWriteData(
+  args: TenderCapabilityArgs,
+  workingDirectory: string,
+  projectDirectory: string,
+): { data: unknown; source: string; note?: string } | { error: string } {
+  // document_analysis: when every batch report is complete, runtime owns the pack.
+  // Ignore compressed/incomplete inline payloads that caused parent-session loops.
+  if (args.capability === 'document_analysis') {
+    const synced = trySyncDocumentAnalysisFromBatches(projectDirectory);
+    if (synced.ok) {
+      return {
+        data: synced.data,
+        source: 'batch_reports',
+        note: args.data !== undefined || args.dataPath
+          ? 'Ignored inline/dataPath payload; wrote deterministic merge from complete batch reports (namespaced section ids). Do not compress summaries to fit tool-call limits.'
+          : 'Wrote deterministic merge from complete batch reports (namespaced section ids).',
+      };
+    }
+    if (synced.reason === 'incomplete') {
+      // Fall through to explicit data while batches are still running.
+    } else if (synced.reason === 'merge_failed') {
+      return {
+        error: `document_analysis batch merge failed: ${synced.errors.join('; ')}. `
+          + 'Fix child batch reports, then retry with empty data (runtime will merge) or call stage status/resume.',
+      };
+    }
+  }
+
+  if (typeof args.dataPath === 'string' && args.dataPath.trim()) {
+    const filePath = isAbsolute(args.dataPath) ? resolve(args.dataPath) : resolve(workingDirectory, args.dataPath);
+    if (!isPathWithinDirectory(filePath, workingDirectory)) {
+      return { error: 'dataPath must resolve inside the session working directory.' };
+    }
+    if (!existsSync(filePath)) return { error: `dataPath does not exist: ${filePath}` };
+    try {
+      return {
+        data: JSON.parse(readFileSync(filePath, 'utf8')),
+        source: 'dataPath',
+      };
+    } catch (error) {
+      return { error: `dataPath is not valid JSON: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (args.data !== undefined) return { data: args.data, source: 'inline' };
+  return { error: `${args.action} requires data, dataPath, or complete document-analysis batch reports.` };
+}
+
+function trySyncDocumentAnalysisFromBatches(projectDirectory: string):
+  | { ok: true; data: unknown }
+  | { ok: false; reason: 'incomplete' | 'merge_failed'; errors: string[] } {
+  const manifestPath = join(projectDirectory, 'document-analysis-batch-manifest.json');
+  if (!existsSync(manifestPath)) return { ok: false, reason: 'incomplete', errors: [] };
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      completedBatches?: number;
+      batchCount?: number;
+      missingDocumentIds?: string[];
+      batches?: DocumentAnalysisMergeBatch[];
+    };
+    const batches = Array.isArray(manifest.batches) ? manifest.batches : [];
+    if (
+      batches.length === 0
+      || manifest.completedBatches !== manifest.batchCount
+      || (manifest.missingDocumentIds?.length ?? 0) > 0
+      || batches.some((batch) => batch.status !== 'complete')
+    ) {
+      return { ok: false, reason: 'incomplete', errors: [] };
+    }
+    const merged = mergeDocumentAnalysisBatchReports(batches);
+    if (merged.errors.length > 0) {
+      return { ok: false, reason: 'merge_failed', errors: merged.errors };
+    }
+    return { ok: true, data: merged.data };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'merge_failed',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
 }
 
 function resolvePaths(workingDirectory: string, projectId: string, capability: TenderCapabilityId) {

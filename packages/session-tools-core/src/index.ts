@@ -143,6 +143,13 @@ export type {
 
 export { createNodeFileSystem } from './context.ts';
 export * from './knowledge-base-business-publication.ts';
+export {
+  finalizeMergedDocumentAnalysisSection,
+  makeNamespacedDocumentAnalysisSectionId,
+  mergeDocumentAnalysisBatchReports,
+  validateDocumentAnalysisBatchMerge,
+  type DocumentAnalysisMergeBatch,
+} from './tender/document-analysis-merge.ts';
 
 // Handlers
 export {

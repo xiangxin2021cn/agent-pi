@@ -8,6 +8,6 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
-<!-- Folded into 2.3.3.md: deterministic document-analysis merge; formal MD summary; tender workspace sidebar -->
+<!-- Folded into 2.3.4.md: namespaced document-analysis merge; block compressed inline overwrite loop -->
 
 ## Breaking Changes

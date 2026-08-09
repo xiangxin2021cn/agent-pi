@@ -114,7 +114,7 @@ function buildDispatchBlock(stage: BusinessWorkflowStage): string {
     return `
 <controlled_subagent_dispatch>
 The backend stage controller owns document batch dispatch, concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, or take over an unfinished batch.
-Monitor the exact task_board_path and document_analysis_batch_manifest_path. When every batch report is schema-valid, the runtime deterministically merges them into packs/document-analysis.json and writes Agent Pi Outputs/<parentSession>/document-analysis-summary.md — do not recreate that merge by hand. Then resolve cross-document conflicts and write evaluation_strategy and boq_reconciliation capability packs.
+Monitor the exact task_board_path and document_analysis_batch_manifest_path. When every batch report is schema-valid, call stage status/resume or tender_capability init/replace for document_analysis with NO inline data — runtime merges batch reports (namespaced ids) into packs/document-analysis.json and writes Agent Pi Outputs/<parentSession>/document-analysis-summary.md. Never compress, truncate, or rewrite section summaries to fit tool-call size limits; that breaks merge gates and causes retry loops. Then write evaluation_strategy and boq_reconciliation via dataPath or modest payloads.
 </controlled_subagent_dispatch>
 `
   }

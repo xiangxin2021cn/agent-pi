@@ -91,15 +91,15 @@ describe('tender document analysis batch manifest', () => {
     }));
     manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
     const section = {
-      id: 'requirements-1', documentId: batch.documentId, kind: 'tender_requirements', title: 'Requirements',
+      id: 'tender-data--requirements-1', documentId: batch.documentId, kind: 'tender_requirements', title: 'Requirements',
       summary: 'Exact requirement.', sourceRefs: [{ documentId: batch.documentId, page: 3 }], status: 'reviewed',
     };
 
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [] })).toContain(
-      'missing final document section: requirements-1',
+      'missing final document section: tender-data--requirements-1',
     );
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [{ ...section, summary: 'Changed.' }] })).toContain(
-      'final document section differs from child report: requirements-1',
+      'final document section differs from merged batch report: tender-data--requirements-1',
     );
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [section] })).toEqual([]);
   });
@@ -117,7 +117,8 @@ describe('tender document analysis batch manifest', () => {
         batchId: batch.batchId,
         documentId: batch.documentId,
         sections: [{
-          id: `${batch.documentId}-s1`,
+          // Intentionally reuse the same template id across documents.
+          id: 'sec-02-tender-requirements',
           kind: 'tender_requirements',
           title: `${batch.documentId} requirements`,
           summary: `Summary for ${batch.documentId}`,
@@ -131,8 +132,8 @@ describe('tender document analysis batch manifest', () => {
     const merged = mergeDocumentAnalysisBatchReports(manifest);
     expect(merged.errors).toEqual([]);
     expect(merged.data.sections.map((section) => section.id)).toEqual([
-      'tender-data-s1',
-      'boq-s1',
+      'tender-data--sec-02-tender-requirements',
+      'boq--sec-02-tender-requirements',
     ]);
     expect(validateDocumentAnalysisBatchMerge(manifest, merged.data)).toEqual([]);
   });
