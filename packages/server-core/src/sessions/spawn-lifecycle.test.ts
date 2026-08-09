@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  getSpawnActivityTimeoutMs,
   isSpawnReportReady,
   resolveParentSpawnHandoffBarrier,
   resolveSpawnActivityState,
@@ -59,11 +60,17 @@ describe('spawn activity lifecycle', () => {
     expect(state.lifecycleStatus).toBe('stale')
   })
 
+  it('defaults spawn activity timeout to one hour for long-running tender batches', () => {
+    expect(getSpawnActivityTimeoutMs(undefined)).toBe(60 * 60 * 1000)
+    expect(getSpawnActivityTimeoutMs('120000')).toBe(120_000)
+    expect(getSpawnActivityTimeoutMs('not-a-number')).toBe(60 * 60 * 1000)
+  })
+
   it('marks a restored running child failed immediately when no runtime survived restart', () => {
     const state = resolveSpawnActivityState({
       now: 101_000,
       lastActivityAt: 100_000,
-      staleAfterMs: 15 * 60 * 1000,
+      staleAfterMs: 60 * 60 * 1000,
       isProcessing: false,
       queueLength: 0,
       reportReady: false,

@@ -57,7 +57,8 @@ export const CHANNEL_MAP = {
   listTenderWorkspaces: invoke(RPC_CHANNELS.tenderWorkspace.LIST),
   getTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.GET),
   mutateTenderWorkspace: invoke(RPC_CHANNELS.tenderWorkspace.MUTATE),
-  runTenderStage: invoke(RPC_CHANNELS.tenderWorkspace.STAGE_RUN),
+  // Stage status/dispatch can take longer than the default 30s RPC timeout on large batches.
+  runTenderStage: invoke(RPC_CHANNELS.tenderWorkspace.STAGE_RUN, undefined, { timeoutMs: 180_000 }),
   listDeliveryWorkspaces: invoke(RPC_CHANNELS.deliveryWorkspace.LIST),
   getDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.GET),
   mutateDeliveryWorkspace: invoke(RPC_CHANNELS.deliveryWorkspace.MUTATE),

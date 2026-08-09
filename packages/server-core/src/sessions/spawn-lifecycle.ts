@@ -1,4 +1,5 @@
-export const DEFAULT_SPAWN_ACTIVITY_TIMEOUT_MS = 15 * 60 * 1000
+/** Idle timeout for spawned children without a handoff report. Tender document batches are long-running. */
+export const DEFAULT_SPAWN_ACTIVITY_TIMEOUT_MS = 60 * 60 * 1000
 
 export interface ResolveSpawnActivityStateInput {
   now: number

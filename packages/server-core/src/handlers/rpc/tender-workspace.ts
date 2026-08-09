@@ -68,6 +68,7 @@ export function registerTenderWorkspaceHandlers(
     if (result.isError) throw new Error(result.content.map((block) => block.text).join('\n'));
     return parseToolResult(result);
   });
+  // Long-running status polls may reconcile many batch reports + dispatch the next slot.
   server.handle(RPC_CHANNELS.tenderWorkspace.STAGE_RUN, async (_ctx, request: TenderStageRunRequest) => {
     const execution = deps?.sessionManager
       ? {
@@ -76,7 +77,7 @@ export function registerTenderWorkspaceHandlers(
         }
       : undefined;
     return runTenderStage(request, { execution });
-  });
+  }, { timeoutMs: 180_000 });
 }
 
 export function listTenderWorkspaces(workingDirectory: string): TenderWorkspaceSummaryDto[] {
