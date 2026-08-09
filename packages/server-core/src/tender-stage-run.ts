@@ -36,7 +36,7 @@ import {
   type TenderStageTaskRecord,
 } from './tender-stage-executor.ts';
 
-export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'complete';
+export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'resume' | 'complete';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -243,7 +243,12 @@ export async function runTenderStage(
     if (!boqBatchManifest) baseMissingItems.push('boq-batches:manifest-unavailable');
     else if (boqBatchManifest.itemCount === 0) baseMissingItems.push('boq-batches:no-items');
   }
-  if (taskBoard && options.execution && request.action === 'start' && !taskBoard.parentSessionId) {
+  if (
+    taskBoard
+    && options.execution
+    && (request.action === 'start' || request.action === 'resume')
+    && !taskBoard.parentSessionId
+  ) {
     baseMissingItems.push('task-board:parent-session-required');
   }
   if (taskBoard) {
@@ -253,7 +258,10 @@ export async function runTenderStage(
     if (blockedTasks > 0) baseMissingItems.push(`task-board:blocked:${blockedTasks}`);
   }
   const shouldEvaluateCompletion = request.action === 'complete'
-    || (request.action === 'status' && (previous?.status === 'running' || previous?.status === 'complete'));
+    || (
+      (request.action === 'status' || request.action === 'resume')
+      && (previous?.status === 'running' || previous?.status === 'complete')
+    );
   const completionMissingItems: string[] = [];
   if (shouldEvaluateCompletion) {
     completionMissingItems.push(...stage.producedCapabilities
@@ -320,7 +328,9 @@ export async function runTenderStage(
         ? boqBatchProgress(boqBatchManifest, taskBoard)
         : undefined,
     updatedAt: now,
-    startedAt: request.action === 'start' && status === 'running' ? (previous?.startedAt ?? now) : previous?.startedAt,
+    startedAt: (request.action === 'start' || request.action === 'resume') && status === 'running'
+      ? (previous?.startedAt ?? now)
+      : previous?.startedAt,
     completedAt: status === 'complete' ? (previous?.completedAt ?? now) : undefined,
   };
   const nextState: PersistedTenderStageState = {
@@ -341,7 +351,7 @@ function determineStatus(
 ): TenderStageRunStatus {
   if (baseMissingItems.length > 0) return 'blocked';
   if (action === 'preflight') return 'ready';
-  if (action === 'start') return 'running';
+  if (action === 'start' || action === 'resume') return 'running';
   if (action === 'complete') return completionMissingItems.length > 0 ? 'blocked' : 'complete';
   if (previous === 'running') return completionMissingItems.length > 0 ? 'running' : 'complete';
   if (previous === 'complete') return completionMissingItems.length > 0 ? 'blocked' : 'complete';

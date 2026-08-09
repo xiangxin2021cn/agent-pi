@@ -30,11 +30,16 @@ export interface TenderStageTaskRecord {
   reportPath: string;
   allowedSourcePaths: string[];
   sessionId?: string;
+  /** Previous child session kept for left-panel linkage after an idle release. */
+  lastSessionId?: string;
   attemptCount: number;
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
   error?: string;
+  /** Live session mirror for panel ↔ sidebar linkage (refreshed on inspect/resume). */
+  linkedIsProcessing?: boolean;
+  linkedSessionStatus?: string;
 }
 
 export interface TenderStageTaskBoard {
@@ -67,7 +72,8 @@ export interface TenderStageExecutionRuntime {
 }
 
 export interface UpdateTenderStageTaskBoardOptions {
-  action: 'preflight' | 'start' | 'status' | 'complete';
+  /** status/preflight/complete = inspect only; start/resume = may dispatch. */
+  action: 'preflight' | 'start' | 'status' | 'resume' | 'complete';
   projectDirectory: string;
   projectId: string;
   stageId: string;
@@ -169,6 +175,9 @@ export async function updateTenderStageTaskBoard(
           status: 'pending' as const,
           error: undefined,
           sessionId: undefined,
+          lastSessionId: task.sessionId ?? task.lastSessionId,
+          linkedIsProcessing: undefined,
+          linkedSessionStatus: undefined,
           startedAt: undefined,
           completedAt: undefined,
           updatedAt: now,
@@ -176,10 +185,11 @@ export async function updateTenderStageTaskBoard(
       }),
     };
   }
+  // Explicit start/resume only — status/preflight never auto-dispatch on app open.
   if (
     options.execution
     && parentSessionId
-    && (options.action === 'start' || options.action === 'status')
+    && (options.action === 'start' || options.action === 'resume')
   ) {
     board = await dispatchPendingTasks(board, options, options.execution, parentSessionId);
   }
@@ -246,6 +256,7 @@ function reconcileTask(
     ...base,
     status: previous.status,
     ...(previous.sessionId ? { sessionId: previous.sessionId } : {}),
+    ...(previous.lastSessionId ? { lastSessionId: previous.lastSessionId } : {}),
     ...(previous.startedAt ? { startedAt: previous.startedAt } : {}),
     ...(previous.error ? { error: previous.error } : {}),
   };
@@ -256,20 +267,76 @@ async function reconcileRuntime(
   execution: TenderStageExecutionRuntime,
 ): Promise<TenderStageTaskBoard> {
   const tasks = await Promise.all(board.tasks.map(async (task): Promise<TenderStageTaskRecord> => {
-    if (task.status !== 'running' || !task.sessionId) return task;
-    const session = await execution.getSession(task.sessionId);
+    const linkId = task.sessionId ?? task.lastSessionId;
+    if (!linkId) {
+      return {
+        ...task,
+        linkedIsProcessing: undefined,
+        linkedSessionStatus: undefined,
+      };
+    }
+    const session = await execution.getSession(linkId);
     const now = new Date().toISOString();
+    if (task.status !== 'running' || !task.sessionId) {
+      return {
+        ...task,
+        linkedIsProcessing: session?.isProcessing,
+        linkedSessionStatus: session?.sessionStatus,
+        updatedAt: now,
+      };
+    }
     if (!session) {
-      return { ...task, status: 'failed', error: 'Spawned session is no longer available.', updatedAt: now };
+      return {
+        ...task,
+        status: 'failed',
+        error: 'Spawned session is no longer available.',
+        lastSessionId: task.sessionId,
+        linkedIsProcessing: false,
+        linkedSessionStatus: undefined,
+        updatedAt: now,
+      };
     }
     const goalStatus = session.goalState?.status;
+    const linked = {
+      linkedIsProcessing: session.isProcessing,
+      linkedSessionStatus: session.sessionStatus,
+    };
     if (session.sessionStatus === 'cancelled' || goalStatus === 'failed' || goalStatus === 'cancelled') {
-      return { ...task, status: 'failed', error: `Spawned session ended without a valid report (${goalStatus ?? session.sessionStatus ?? 'unknown'}).`, updatedAt: now };
+      return {
+        ...task,
+        ...linked,
+        status: 'failed',
+        error: `Spawned session ended without a valid report (${goalStatus ?? session.sessionStatus ?? 'unknown'}).`,
+        lastSessionId: task.sessionId,
+        updatedAt: now,
+      };
     }
     if (!session.isProcessing && (session.sessionStatus === 'done' || goalStatus === 'passed')) {
-      return { ...task, status: 'failed', error: 'Spawned session completed without writing a valid report.', updatedAt: now };
+      return {
+        ...task,
+        ...linked,
+        status: 'failed',
+        error: 'Spawned session completed without writing a valid report.',
+        lastSessionId: task.sessionId,
+        updatedAt: now,
+      };
     }
-    return { ...task, updatedAt: now };
+    // After app restart / interrupt, children sit idle (Todo) while the board still
+    // claims "running" — that blocks the queue forever. Release the slot for an
+    // explicit resume; keep lastSessionId so the panel can open the left-tree session.
+    if (!session.isProcessing) {
+      return {
+        ...task,
+        ...linked,
+        status: 'pending',
+        sessionId: undefined,
+        lastSessionId: task.sessionId,
+        startedAt: undefined,
+        error: '子会话已空闲，请点击「恢复未完任务」重新调度',
+        updatedAt: now,
+      };
+    }
+    return { ...task, ...linked, updatedAt: now };
   }));
   return { ...board, tasks, updatedAt: new Date().toISOString() };
 }
@@ -305,16 +372,19 @@ async function dispatchPendingTasks(
         ...task,
         status: 'running',
         sessionId: result.sessionId,
+        lastSessionId: task.sessionId ?? task.lastSessionId,
         attemptCount: task.attemptCount + 1,
         startedAt: now,
         updatedAt: now,
         error: undefined,
+        linkedIsProcessing: true,
+        linkedSessionStatus: 'todo',
       };
       available -= 1;
     } catch (error) {
       if (isTenderStageCapacityError(error)) {
-        // Slot is full or memory-guarded — leave the task queued. A later
-        // status poll will dispatch once active handoffs drain.
+        // Slot is full or memory-guarded — leave the task queued. An explicit
+        // resume (or live monitor after the user opts in) will dispatch later.
         tasks[index] = {
           ...task,
           status: 'pending',

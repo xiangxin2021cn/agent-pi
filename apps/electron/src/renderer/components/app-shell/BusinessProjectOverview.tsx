@@ -1,13 +1,20 @@
 import * as React from 'react'
-import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw } from 'lucide-react'
+import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, SearchCheck, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import { Button } from '@/components/ui/button'
 import { useAppShellContext } from '@/context/AppShellContext'
+import { useNavigation } from '@/contexts/NavigationContext'
 import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
-import { preflightTenderStageLaunch, startTenderStageLaunch, summarizeTenderStage } from '@/pages/business-tender-stage'
+import {
+  preflightTenderStageLaunch,
+  resumeTenderStageLaunch,
+  startTenderStageLaunch,
+  summarizeTenderStage,
+} from '@/pages/business-tender-stage'
 import { getBusinessWorkflow, type BusinessWorkflowStage } from '@/pages/business-workflows'
+import { routes } from '../../../shared/routes'
 import { cn } from '@/lib/utils'
 
 interface BusinessProjectOverviewProps {
@@ -17,15 +24,24 @@ interface BusinessProjectOverviewProps {
 }
 
 const LIVE_POLL_MS = 2_500
-const IDLE_POLL_MS = 15_000
 const TICK_MS = 1_000
+
+type StageTask = NonNullable<TenderStageRunResultDto['batchProgress']>['tasks'][number]
 
 function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
   if (!run) return false
-  if (run.status === 'running') return true
   const progress = run.batchProgress
   if (!progress) return false
-  return progress.runningBatches > 0 || progress.pendingBatches > 0
+  // Only truly active children — pending alone must not auto-enable live monitor.
+  return progress.runningBatches > 0
+    || progress.tasks.some((task) => task.status === 'running' && task.linkedIsProcessing !== false)
+}
+
+function stageHasResumableWork(run?: TenderStageRunResultDto): boolean {
+  if (!run?.batchProgress) return false
+  return run.batchProgress.pendingBatches > 0
+    || run.batchProgress.failedBatches > 0
+    || run.batchProgress.runningBatches > 0
 }
 
 function formatElapsed(fromIso: string | undefined, nowMs: number): string | null {
@@ -48,8 +64,13 @@ function formatClock(iso: string | undefined): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+function linkedSessionId(task: StageTask): string | undefined {
+  return task.sessionId ?? task.lastSessionId
+}
+
 export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId }: BusinessProjectOverviewProps) {
   const { openNewChat, onOpenFile } = useAppShellContext()
+  const { navigate } = useNavigation()
   const workflow = React.useMemo(() => getBusinessWorkflow(moduleId), [moduleId])
   const [project, setProject] = React.useState<BusinessProjectRecord | null>(null)
   const [stageRuns, setStageRuns] = React.useState<Record<string, TenderStageRunResultDto>>({})
@@ -59,99 +80,118 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   const [refreshing, setRefreshing] = React.useState(false)
   const [nowMs, setNowMs] = React.useState(() => Date.now())
   const [expandedStageIds, setExpandedStageIds] = React.useState<Record<string, boolean>>({})
+  /** Opt-in only — never auto-enable on open from persisted pending/running board state. */
+  const [monitoringActive, setMonitoringActive] = React.useState(false)
   const refreshInFlight = React.useRef(false)
-  const pollTickRef = React.useRef(0)
   const stageRunsRef = React.useRef(stageRuns)
   stageRunsRef.current = stageRuns
 
-  const liveMonitoring = React.useMemo(
-    () => Object.values(stageRuns).some((run) => stageHasLiveWork(run)),
-    [stageRuns],
-  )
-
-  const refresh = React.useCallback(async (options?: { force?: boolean }) => {
-    if (refreshInFlight.current && !options?.force) return
+  const refresh = React.useCallback(async (options?: {
+    force?: boolean
+    /** status = inspect/reconcile only; resume = reconcile + dispatch pending. */
+    action?: 'status' | 'resume'
+    stages?: BusinessWorkflowStage[]
+  }): Promise<Record<string, TenderStageRunResultDto>> => {
+    if (refreshInFlight.current && !options?.force) return stageRunsRef.current
     refreshInFlight.current = true
     setRefreshing(true)
+    const action = options?.action ?? 'status'
     try {
       const projects = await window.electronAPI.listBusinessProjects({ workspaceRootPath, module: moduleId })
       const selected = projects.find((entry) => entry.projectId === projectId) ?? null
       setProject(selected)
       if (moduleId === 'tender' && selected) {
         const currentRuns = stageRunsRef.current
-        const hasLive = Object.values(currentRuns).some((run) => stageHasLiveWork(run))
-        pollTickRef.current += 1
-        // While live, poll only active/problem stages every tick; full sweep about every 15s.
-        const fullSweep = options?.force || !hasLive || pollTickRef.current % Math.max(1, Math.round(IDLE_POLL_MS / LIVE_POLL_MS)) === 0
-        const targets = fullSweep
-          ? workflow.stages
-          : workflow.stages.filter((stage) => {
-              const run = currentRuns[stage.id]
-              return !run || stageHasLiveWork(run) || run.status === 'blocked' || Boolean(run.batchProgress?.failedBatches)
-            })
+        const targets = options?.stages ?? (
+          options?.force
+            ? workflow.stages
+            : workflow.stages.filter((stage) => {
+                const run = currentRuns[stage.id]
+                return !run || stageHasLiveWork(run) || stageHasResumableWork(run) || run.status === 'blocked'
+              })
+        )
         const results = await Promise.all(targets.map(async (stage) => {
           try {
+            const parentSessionId = currentRuns[stage.id]?.batchProgress?.parentSessionId
             return [stage.id, await window.electronAPI.runTenderStage({
-              action: 'status', workspaceRootPath, projectId: selected.projectId, stageId: stage.id,
+              action,
+              workspaceRootPath,
+              projectId: selected.projectId,
+              stageId: stage.id,
+              ...(action === 'resume' && parentSessionId ? { parentSessionId } : {}),
             })] as const
           } catch {
             return null
           }
         }))
-        // Merge — never drop a stage that timed out on this tick.
-        setStageRuns((current) => {
-          const next = { ...current }
-          for (const entry of results) {
-            if (!entry) continue
-            next[entry[0]] = entry[1]
-          }
-          return next
-        })
+        const next = { ...currentRuns }
+        for (const entry of results) {
+          if (!entry) continue
+          next[entry[0]] = entry[1]
+        }
+        stageRunsRef.current = next
+        setStageRuns(next)
         setExpandedStageIds((current) => {
-          const next = { ...current }
+          const expanded = { ...current }
           for (const entry of results) {
             if (!entry) continue
             const [stageId, run] = entry
-            if (stageHasLiveWork(run) && current[stageId] === undefined) {
-              next[stageId] = true
+            if ((stageHasLiveWork(run) || stageHasResumableWork(run)) && current[stageId] === undefined) {
+              expanded[stageId] = true
             }
           }
-          return next
+          return expanded
         })
-      } else {
-        setStageRuns({})
+        setLastRefreshAt(Date.now())
+        setError(null)
+        return next
       }
+      stageRunsRef.current = {}
+      setStageRuns({})
       setLastRefreshAt(Date.now())
       setError(null)
+      return {}
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      return stageRunsRef.current
     } finally {
       refreshInFlight.current = false
       setRefreshing(false)
     }
   }, [moduleId, projectId, workflow.stages, workspaceRootPath])
 
+  // Snapshot inspect on open / project list change — never auto-dispatch or auto-monitor.
   React.useEffect(() => {
-    void refresh({ force: true })
-    const handleChanged = () => void refresh({ force: true })
+    setMonitoringActive(false)
+    void refresh({ force: true, action: 'status' })
+    const handleChanged = () => void refresh({ force: true, action: 'status' })
     window.addEventListener('craft:business-projects-changed', handleChanged)
     return () => window.removeEventListener('craft:business-projects-changed', handleChanged)
   }, [refresh])
 
   React.useEffect(() => {
-    const intervalMs = liveMonitoring ? LIVE_POLL_MS : IDLE_POLL_MS
-    const timer = window.setInterval(() => void refresh(), intervalMs)
+    if (!monitoringActive) return
+    const timer = window.setInterval(() => void refresh({ action: 'resume' }), LIVE_POLL_MS)
     return () => window.clearInterval(timer)
-  }, [liveMonitoring, refresh])
+  }, [monitoringActive, refresh])
 
   React.useEffect(() => {
-    if (!liveMonitoring) return
+    if (!monitoringActive) return
     const timer = window.setInterval(() => setNowMs(Date.now()), TICK_MS)
     return () => window.clearInterval(timer)
-  }, [liveMonitoring])
+  }, [monitoringActive])
+
+  // Auto-stop monitor when nothing is actually running anymore.
+  React.useEffect(() => {
+    if (!monitoringActive) return
+    const stillLive = Object.values(stageRuns).some((run) => stageHasLiveWork(run) || stageHasResumableWork(run))
+    if (!stillLive && lastRefreshAt !== null) {
+      setMonitoringActive(false)
+    }
+  }, [monitoringActive, stageRuns, lastRefreshAt])
 
   React.useEffect(() => {
-    if (moduleId !== 'tender') return
+    if (moduleId !== 'tender' || !monitoringActive) return
     const cleanup = window.electronAPI.onSessionEvent((event) => {
       if (
         event.type !== 'complete'
@@ -162,12 +202,35 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       if (!('sessionId' in event)) return
       const related = Object.values(stageRunsRef.current).some((run) => {
         if (run.batchProgress?.parentSessionId === event.sessionId) return true
-        return run.batchProgress?.tasks.some((task) => task.sessionId === event.sessionId) ?? false
+        return run.batchProgress?.tasks.some((task) => linkedSessionId(task) === event.sessionId) ?? false
       })
-      if (related) void refresh()
+      if (related) void refresh({ action: 'resume' })
     })
     return cleanup
-  }, [moduleId, refresh])
+  }, [moduleId, monitoringActive, refresh])
+
+  const handleInspect = async () => {
+    await refresh({ force: true, action: 'status' })
+    toast.success('已检查：已与左侧会话状态对齐，未自动调度')
+  }
+
+  const handleResumeUnfinished = async () => {
+    if (!project) return
+    setStartingStageId('__resume__')
+    try {
+      const inspected = await refresh({ force: true, action: 'status' })
+      const targets = workflow.stages.filter((stage) => stageHasResumableWork(inspected[stage.id]))
+      if (targets.length === 0) {
+        toast.message('没有可恢复的未完批次；请先进入阶段或重试失败批次')
+        return
+      }
+      await refresh({ force: true, action: 'resume', stages: targets })
+      setMonitoringActive(true)
+      toast.success('已恢复未完任务，并开启流程监控')
+    } finally {
+      setStartingStageId(null)
+    }
+  }
 
   const handleAddInputs = async () => {
     if (!project) return
@@ -178,7 +241,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     setProject(updated)
     window.dispatchEvent(new CustomEvent('craft:business-projects-changed', { detail: { moduleId } }))
     toast.success(`已登记 ${updated.inputPaths.length} 个项目资料文件`)
-    void refresh({ force: true })
+    void refresh({ force: true, action: 'status' })
   }
 
   const handleStartStage = async (stage: BusinessWorkflowStage) => {
@@ -213,11 +276,13 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         if (!launch.ok) {
           const summary = summarizeTenderStage(launch.result)
           toast.error(`阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+        } else {
+          setMonitoringActive(true)
         }
       }
     } finally {
       setStartingStageId(null)
-      void refresh({ force: true })
+      void refresh({ force: true, action: 'status' })
     }
   }
 
@@ -238,6 +303,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       const progress = retried.result.batchProgress
       const inFlight = (progress?.runningBatches ?? 0) + (progress?.pendingBatches ?? 0)
       if (retried.ok || inFlight > 0) {
+        setMonitoringActive(true)
         toast.success(
           progress
             ? `已重新调度：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
@@ -249,8 +315,37 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       toast.error(`重试失败：${summary.missingLabel ?? summary.statusLabel}`)
     } finally {
       setStartingStageId(null)
-      void refresh({ force: true })
+      void refresh({ force: true, action: 'status' })
     }
+  }
+
+  const handleResumeStage = async (stage: BusinessWorkflowStage) => {
+    const parentSessionId = stageRuns[stage.id]?.batchProgress?.parentSessionId
+    if (!parentSessionId) {
+      await handleStartStage(stage)
+      return
+    }
+    setStartingStageId(stage.id)
+    try {
+      const resumed = await resumeTenderStageLaunch(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId, stageId: stage.id,
+      }, parentSessionId)
+      setStageRuns((current) => ({ ...current, [stage.id]: resumed.result }))
+      setExpandedStageIds((current) => ({ ...current, [stage.id]: true }))
+      setMonitoringActive(true)
+      const progress = resumed.result.batchProgress
+      toast.success(
+        progress
+          ? `已恢复调度：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+          : '已恢复未完任务',
+      )
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
+  const openLinkedSession = (sessionId: string) => {
+    navigate(routes.view.tenderWorkspaces(projectId, sessionId))
   }
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>
@@ -274,23 +369,45 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       </header>
 
       <section className="border-b px-6 py-5">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">流程监控</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">长程批次实时刷新；槽位满时保持排队，不会因等待误标失败</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              打开项目仅快照检查，不会自动调度。先点「检查」对齐左侧会话，再点「恢复未完任务」唤起排队。
+            </p>
           </div>
-          <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-            <span className={cn('inline-flex items-center gap-1.5', liveMonitoring && 'text-accent')}>
-              <span className={cn('size-1.5 rounded-full', liveMonitoring ? 'animate-pulse bg-accent' : 'bg-muted-foreground/40')} />
-              {liveMonitoring ? `实时 ${LIVE_POLL_MS / 1000}s` : `空闲 ${IDLE_POLL_MS / 1000}s`}
+          <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className={cn('inline-flex items-center gap-1.5', monitoringActive && 'text-accent')}>
+              <span className={cn('size-1.5 rounded-full', monitoringActive ? 'animate-pulse bg-accent' : 'bg-muted-foreground/40')} />
+              {monitoringActive ? `监控中 ${LIVE_POLL_MS / 1000}s` : '监控未开启'}
             </span>
             <span title={lastRefreshAt ? new Date(lastRefreshAt).toLocaleString() : undefined}>
-              刷新于 {lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—'}
+              检查于 {lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—'}
             </span>
-            <Button type="button" variant="ghost" size="sm" disabled={refreshing} onClick={() => void refresh({ force: true })}>
-              <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
-              刷新
+            <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={() => void handleInspect()}>
+              <SearchCheck className={cn('size-3.5', refreshing && !monitoringActive && 'animate-pulse')} />
+              检查
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={refreshing || startingStageId !== null}
+              onClick={() => void handleResumeUnfinished()}
+            >
+              <PlayCircle className="size-3.5" />
+              {startingStageId === '__resume__' ? '恢复中…' : '恢复未完任务'}
+            </Button>
+            {monitoringActive ? (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setMonitoringActive(false)}>
+                <Square className="size-3.5" />
+                停止监控
+              </Button>
+            ) : (
+              <Button type="button" variant="ghost" size="sm" disabled={refreshing} onClick={() => void refresh({ force: true, action: 'status' })}>
+                <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
+                刷新快照
+              </Button>
+            )}
           </div>
         </div>
 
@@ -299,11 +416,12 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
             const run = stageRuns[stage.id]
             const summary = run ? summarizeTenderStage(run) : null
             const progress = run?.batchProgress
-            const live = stageHasLiveWork(run)
+            const live = monitoringActive && stageHasLiveWork(run)
+            const resumable = stageHasResumableWork(run)
             const completed = progress?.completedBatches ?? 0
             const total = progress?.batchCount ?? 0
             const percent = total > 0 ? Math.round((completed / total) * 100) : 0
-            const expanded = expandedStageIds[stage.id] ?? live
+            const expanded = expandedStageIds[stage.id] ?? (live || resumable)
             const failed = progress?.failedBatches ?? 0
             return (
               <div key={stage.id} className="py-3">
@@ -313,6 +431,9 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm font-medium">{stage.label}</p>
                       {live && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">监控中</span>}
+                      {!live && resumable && (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">有未完任务</span>
+                      )}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{stage.prompt}</p>
                     {summary && (
@@ -321,7 +442,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                           'font-medium',
                           run!.status === 'blocked' && 'text-destructive',
                           run!.status === 'complete' && 'text-success',
-                          run!.status === 'running' && 'text-accent',
+                          (run!.status === 'running' || live) && 'text-accent',
                         )}>{summary.statusLabel}</span>
                         {summary.upstreamLabel && <span>{summary.upstreamLabel}</span>}
                         <span>{summary.sourceLabel}</span>
@@ -364,6 +485,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                 : task.status === 'complete' && task.startedAt && task.completedAt
                                   ? formatElapsed(task.startedAt, Date.parse(task.completedAt))
                                   : null
+                              const sessionId = linkedSessionId(task)
+                              const idleLinked = Boolean(sessionId) && task.linkedIsProcessing === false
                               return (
                                 <div key={task.batchId} className="flex items-start gap-3 py-2">
                                   <span className={cn(
@@ -374,11 +497,23 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                     (task.status === 'failed' || task.status === 'blocked') && 'text-destructive',
                                   )}>{taskStatusLabel(task.status)}</span>
                                   <div className="min-w-0 flex-1">
-                                    <p className="truncate text-foreground" title={task.name}>{task.name}</p>
+                                    {sessionId ? (
+                                      <button
+                                        type="button"
+                                        className="block w-full truncate text-left text-foreground hover:text-primary hover:underline"
+                                        title={`打开左侧会话 ${sessionId}`}
+                                        onClick={() => openLinkedSession(sessionId)}
+                                      >
+                                        {task.name}
+                                      </button>
+                                    ) : (
+                                      <p className="truncate text-foreground" title={task.name}>{task.name}</p>
+                                    )}
                                     <p className="truncate text-muted-foreground" title={task.error ?? task.reportPath}>
                                       {task.error
                                         ?? [
-                                          task.sessionId ? `会话 ${task.sessionId}` : null,
+                                          sessionId ? (idleLinked ? `左侧空闲 · ${sessionId}` : `会话 ${sessionId}`) : null,
+                                          task.linkedSessionStatus ? `状态 ${task.linkedSessionStatus}` : null,
                                           `尝试 ${task.attemptCount}`,
                                           duration ? (task.status === 'running' ? `已运行 ${duration}` : `耗时 ${duration}`) : null,
                                           task.updatedAt ? `更新 ${formatClock(task.updatedAt)}` : null,
@@ -393,22 +528,33 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                       </div>
                     ) : null}
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={startingStageId !== null || (live && !failed) || (run?.status === 'blocked' && !failed && !live)}
-                    title={live && !failed
-                      ? '阶段进行中，面板自动刷新监控'
-                      : run?.status === 'blocked' && !live ? summary?.missingLabel : undefined}
-                    onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
-                  >{startingStageId === stage.id
-                      ? '处理中…'
-                      : failed
-                        ? '重试失败批次'
-                        : live
-                          ? '监控中'
-                          : '进入阶段'}</Button>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    {resumable && !failed && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={startingStageId !== null}
+                        onClick={() => void handleResumeStage(stage)}
+                      >{startingStageId === stage.id ? '恢复中…' : '恢复本阶段'}</Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={startingStageId !== null || (live && !failed) || (run?.status === 'blocked' && !failed && !resumable)}
+                      title={live && !failed
+                        ? '阶段监控中'
+                        : run?.status === 'blocked' && !resumable ? summary?.missingLabel : undefined}
+                      onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
+                    >{startingStageId === stage.id
+                        ? '处理中…'
+                        : failed
+                          ? '重试失败批次'
+                          : live
+                            ? '监控中'
+                            : '进入阶段'}</Button>
+                  </div>
                 </div>
               </div>
             )
@@ -434,7 +580,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   )
 }
 
-function taskStatusLabel(status: NonNullable<TenderStageRunResultDto['batchProgress']>['tasks'][number]['status']): string {
+function taskStatusLabel(status: StageTask['status']): string {
   return {
     pending: '排队',
     running: '运行',

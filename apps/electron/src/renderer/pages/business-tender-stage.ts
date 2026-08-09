@@ -22,6 +22,20 @@ export async function startTenderStageLaunch(
   return { ok: started.status === 'running' || started.status === 'complete', result: started }
 }
 
+/** Reconcile idle slots and dispatch pending batches without resetting failed tasks. */
+export async function resumeTenderStageLaunch(
+  run: RunTenderStage,
+  target: Omit<TenderStageRunRequest, 'action' | 'parentSessionId'>,
+  parentSessionId?: string,
+): Promise<{ ok: boolean; result: TenderStageRunResultDto }> {
+  const resumed = await run({
+    ...target,
+    action: 'resume',
+    ...(parentSessionId ? { parentSessionId } : {}),
+  })
+  return { ok: resumed.status === 'running' || resumed.status === 'complete', result: resumed }
+}
+
 export function summarizeTenderStage(result: TenderStageRunResultDto): {
   statusLabel: string
   upstreamLabel?: string

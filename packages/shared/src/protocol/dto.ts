@@ -538,7 +538,7 @@ export interface TenderWorkspaceMutationRequest {
   args: Record<string, unknown>;
 }
 
-export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'complete';
+export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'resume' | 'complete';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -579,11 +579,14 @@ export interface TenderStageRunResultDto {
       reportPath: string;
       allowedSourcePaths: string[];
       sessionId?: string;
+      lastSessionId?: string;
       attemptCount: number;
       startedAt?: string;
       completedAt?: string;
       updatedAt: string;
       error?: string;
+      linkedIsProcessing?: boolean;
+      linkedSessionStatus?: string;
     }>;
   };
   sourceBoundary: {

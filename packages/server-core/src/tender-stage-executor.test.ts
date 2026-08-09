@@ -42,13 +42,24 @@ describe('tender stage task-board executor', () => {
     const progressedTasks = fixture.tasks.map((task, index) => index === 0
       ? { ...task, validationStatus: 'complete' as const }
       : task);
-    const progressed = await updateTenderStageTaskBoard({
+    const inspected = await updateTenderStageTaskBoard({
       action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
       stageId: 'document-analysis', workingDirectory: root,
       tasks: progressedTasks, execution,
     });
-    expect(progressed.tasks.filter((task) => task.status === 'complete')).toHaveLength(1);
-    expect(progressed.tasks.filter((task) => task.status === 'running')).toHaveLength(4);
+    expect(inspected.tasks.filter((task) => task.status === 'complete')).toHaveLength(1);
+    // status inspect must not auto-dispatch the freed slot
+    expect(inspected.tasks.filter((task) => task.status === 'running')).toHaveLength(3);
+    expect(inspected.tasks.filter((task) => task.status === 'pending')).toHaveLength(1);
+    expect(calls).toHaveLength(4);
+
+    const resumed = await updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: progressedTasks, execution,
+    });
+    expect(resumed.tasks.filter((task) => task.status === 'complete')).toHaveLength(1);
+    expect(resumed.tasks.filter((task) => task.status === 'running')).toHaveLength(4);
     expect(calls).toHaveLength(5);
   });
 
@@ -116,14 +127,66 @@ describe('tender stage task-board executor', () => {
     expect(calls).toBe(3); // two successes + one capacity rejection that stops the round
     expect(isTenderStageCapacityError(new Error('spawn_session active handoff limit reached (5/4). Return control and let the runtime monitor existing handoffs before spawning more.'))).toBe(true);
 
-    // Later status polls must keep trying the queued remainder.
-    const polled = await updateTenderStageTaskBoard({
+    // status inspect must not spawn; explicit resume keeps trying the remainder.
+    const inspected = await updateTenderStageTaskBoard({
       action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
       stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
       tasks: fixture.tasks, execution,
     });
-    expect(polled.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
-    expect(polled.tasks.filter((task) => task.status === 'pending').length).toBeGreaterThan(0);
+    expect(inspected.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
+    expect(calls).toBe(3);
+
+    const resumed = await updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(resumed.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
+    expect(resumed.tasks.filter((task) => task.status === 'pending').length).toBeGreaterThan(0);
+  });
+
+  test('releases idle ghost running slots on inspect without dispatching', async () => {
+    const fixture = createTasks(2);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const calls: string[] = [];
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        calls.push(request.name ?? 'child');
+        const sessionId = `child-${calls.length}`;
+        sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+    };
+
+    const started = await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(started.tasks.every((task) => task.status === 'running')).toBe(true);
+
+    for (const session of sessions.values()) {
+      session.isProcessing = false;
+      session.sessionStatus = 'todo';
+    }
+
+    const inspected = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(inspected.tasks.every((task) => task.status === 'pending')).toBe(true);
+    expect(inspected.tasks.every((task) => !task.sessionId && task.lastSessionId)).toBe(true);
+    expect(calls).toHaveLength(2);
+
+    const resumed = await updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(resumed.tasks.every((task) => task.status === 'running')).toBe(true);
+    expect(calls).toHaveLength(4);
   });
 
   test('does not clobber an in-flight retry with a stale invalid report', async () => {
