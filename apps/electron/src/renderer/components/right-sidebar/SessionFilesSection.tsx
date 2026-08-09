@@ -143,6 +143,8 @@ function getSourceLabel(t: ReturnType<typeof useTranslation>['t'], source: Sessi
       return t('chat.fileSourceNote')
     case 'official-output':
       return t('chat.fileSourceFormal')
+    case 'tender-workspace':
+      return t('chat.fileSourceTenderWorkspace')
     case 'session':
       return t('chat.fileSourceSession')
     default:
@@ -155,7 +157,7 @@ function SourcePill({ file }: { file: SessionFile }) {
   const label = getSourceLabel(t, file.source)
   if (!label) return null
 
-  const isFormal = file.source === 'official-output'
+  const isFormal = file.source === 'official-output' || file.source === 'tender-workspace'
   return (
     <span
       className={cn(

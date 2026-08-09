@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.3.2.**
+**Current release: V2.3.3.**
 
-**当前发布版：V2.3.2。**
+**当前发布版：V2.3.3。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.3.3 Tender Document-Analysis Deliverables / V2.3.3 招标文件分析成果闭环
+
+V2.3.3 deterministically merges completed document-analysis batch reports into `packs/document-analysis.json`, writes a readable summary under `Agent Pi Outputs/<parentSession>/`, and exposes the tender workspace tree in the session files sidebar.
+
+V2.3.3 在全部文档分析批次完成后确定性合并写入 `packs/document-analysis.json`，同步生成 `Agent Pi Outputs/<主会话>/document-analysis-summary.md`，并在会话文件侧栏暴露投标工作区产物树。
 
 ### V2.3.2 Tender Retry Fix + Runtime Uplift / V2.3.2 投标重试修复与运行时升级
 

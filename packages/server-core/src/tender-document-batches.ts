@@ -134,6 +134,54 @@ export function createOrRefreshDocumentAnalysisBatchManifest(
   return manifest;
 }
 
+/**
+ * Deterministically concatenate complete batch reports into final pack data.
+ * Section order follows manifest.batches; fields are not rewritten.
+ */
+export function mergeDocumentAnalysisBatchReports(
+  manifest: TenderDocumentAnalysisBatchManifest,
+): { data: TenderDocumentAnalysisData; errors: string[] } {
+  const errors: string[] = [];
+  const sections: TenderDocumentAnalysisSection[] = [];
+  const seenIds = new Set<string>();
+
+  if (manifest.batchCount === 0) {
+    return { data: { sections: [] }, errors: ['document-batches:no-documents'] };
+  }
+  if (manifest.completedBatches !== manifest.batchCount || manifest.missingDocumentIds.length > 0) {
+    return {
+      data: { sections: [] },
+      errors: ['document-batches:incomplete'],
+    };
+  }
+
+  for (const batch of manifest.batches) {
+    if (batch.status !== 'complete') {
+      errors.push(`incomplete document batch: ${batch.batchId}`);
+      continue;
+    }
+    const report = readReport(batch.reportPath, batch.batchId, batch.documentId);
+    if (report.errors.length > 0) {
+      errors.push(...report.errors.map((error) => `${batch.batchId}: ${error}`));
+      continue;
+    }
+    for (const section of report.sections) {
+      if (seenIds.has(section.id)) {
+        errors.push(`duplicate child document section: ${section.id}`);
+        continue;
+      }
+      seenIds.add(section.id);
+      sections.push(section);
+    }
+  }
+
+  if (errors.length > 0) return { data: { sections: [] }, errors };
+
+  const data = parseTenderDocumentAnalysisData({ sections });
+  const mergeErrors = validateDocumentAnalysisBatchMerge(manifest, data);
+  return { data, errors: mergeErrors };
+}
+
 export function validateDocumentAnalysisBatchMerge(
   manifest: TenderDocumentAnalysisBatchManifest,
   finalValue: TenderDocumentAnalysisData | unknown,

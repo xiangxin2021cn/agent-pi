@@ -5,6 +5,7 @@ import { listBusinessProjects } from '@craft-agent/shared/business-projects';
 import {
   applyManualTenderCloseoutEvidence,
   createNodeFileSystem,
+  handleTenderCapability,
   handleTenderWorkspace,
   type SessionToolContext,
 } from '@craft-agent/session-tools-core';
@@ -14,6 +15,7 @@ import {
   parseTenderBoqReconciliationData,
   parseTenderWorkspace,
   type TenderCapabilityId,
+  type TenderCapabilityIndex,
   type TenderDocument,
   type TenderDocumentKind,
   type TenderWorkspace,
@@ -23,8 +25,10 @@ import {
   validateBoqBatchMerge,
   type TenderBoqBatchManifest,
 } from './tender-boq-batches.ts';
+import { writeDocumentAnalysisSummaryMarkdown } from './tender-document-analysis-md.ts';
 import {
   createOrRefreshDocumentAnalysisBatchManifest,
+  mergeDocumentAnalysisBatchReports,
   validateDocumentAnalysisBatchMerge,
   type TenderDocumentAnalysisBatchManifest,
 } from './tender-document-batches.ts';
@@ -192,9 +196,8 @@ export async function runTenderStage(
     capabilityIndex = manualEvidence.index;
     atomicWriteJson(paths.capabilityIndexPath, capabilityIndex);
   }
-  const generatedPacks = capabilityIndex.capabilities
-    .filter((entry) => entry.revision > 0 && entry.readiness === 'ready' && !entry.stale)
-    .map((entry) => entry.capability);
+  let capabilityIndexLive: TenderCapabilityIndex = capabilityIndex;
+  let generatedPacks = listReadyPacks(capabilityIndexLive);
   const documentBatchManifest = stage.id === 'tender-document-analysis'
     ? createOrRefreshDocumentAnalysisBatchManifest(
         paths.projectDirectory,
@@ -226,13 +229,41 @@ export async function runTenderStage(
         execution: options.execution,
       })
     : undefined;
+
+  // When every document-analysis batch is complete, deterministically merge into
+  // packs/document-analysis.json and write a readable summary under formal outputs.
+  if (
+    stage.id === 'tender-document-analysis'
+    && documentBatchManifest
+    && documentBatchManifest.batchCount > 0
+    && documentBatchManifest.completedBatches === documentBatchManifest.batchCount
+    && documentBatchManifest.missingDocumentIds.length === 0
+    && documentBatchManifest.batches.every((batch) => batch.status === 'complete')
+  ) {
+    const parentSessionId = taskBoard?.parentSessionId ?? request.parentSessionId;
+    await ensureDocumentAnalysisPackMerged({
+      context,
+      paths,
+      projectId: project.projectId,
+      workingDirectory: project.rootPath,
+      manifest: documentBatchManifest,
+      parentSessionId,
+    });
+    if (existsSync(paths.capabilityIndexPath)) {
+      capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
+      generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest);
+    }
+  } else {
+    generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest);
+  }
+
   const persisted = readStageState(paths.stageStatePath, project.projectId);
   const previous = persisted.stages[stage.id];
   const baseMissingItems = [
     ...sourceBoundary.missingPaths.map((path) => `source:${path}`),
     ...(sourceBoundary.registeredCount === 0 ? ['source:registered-file-required'] : []),
     ...stage.requiredCapabilities
-      .filter((capability) => !generatedPacks.includes(capability))
+      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest))
       .map((capability) => `capability:${capability}`),
   ];
   if (stage.id === 'tender-document-analysis') {
@@ -265,7 +296,7 @@ export async function runTenderStage(
   const completionMissingItems: string[] = [];
   if (shouldEvaluateCompletion) {
     completionMissingItems.push(...stage.producedCapabilities
-      .filter((capability) => !generatedPacks.includes(capability))
+      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest))
       .map((capability) => `output:${capability}`));
     if (
       stage.id === 'tender-document-analysis'
@@ -279,7 +310,6 @@ export async function runTenderStage(
       && documentBatchManifest
       && documentBatchManifest.completedBatches === documentBatchManifest.batchCount
       && documentBatchManifest.missingDocumentIds.length === 0
-      && generatedPacks.includes('document_analysis')
     ) {
       completionMissingItems.push(...validateFinalDocumentAnalysisMerge(paths, documentBatchManifest)
         .map((error) => `document-merge:${error}`));
@@ -375,6 +405,101 @@ function loadBoqBatchManifest(
       .map((file) => [file.documentId, file.path] as const),
   );
   return createOrRefreshBoqBatchManifest(paths.projectDirectory, projectId, boq, sourcePathByDocumentId);
+}
+
+function listReadyPacks(index: TenderCapabilityIndex): TenderCapabilityId[] {
+  return index.capabilities
+    .filter((entry) => entry.revision > 0 && entry.readiness === 'ready' && !entry.stale)
+    .map((entry) => entry.capability);
+}
+
+function listSatisfiedPacks(
+  index: TenderCapabilityIndex,
+  paths: ReturnType<typeof resolvePaths>,
+  documentManifest?: TenderDocumentAnalysisBatchManifest,
+): TenderCapabilityId[] {
+  const ready = listReadyPacks(index);
+  if (
+    documentManifest
+    && isCapabilitySatisfied('document_analysis', index, paths, documentManifest)
+    && !ready.includes('document_analysis')
+  ) {
+    return [...ready, 'document_analysis'];
+  }
+  return ready;
+}
+
+function isCapabilitySatisfied(
+  capability: TenderCapabilityId,
+  index: TenderCapabilityIndex,
+  paths: ReturnType<typeof resolvePaths>,
+  documentManifest?: TenderDocumentAnalysisBatchManifest,
+): boolean {
+  const entry = index.capabilities.find((candidate) => candidate.capability === capability);
+  if (!entry || entry.revision <= 0 || entry.stale) return false;
+  if (entry.readiness === 'ready') return true;
+  // Deterministic document-analysis merge may land as needs_review when some
+  // child sections are still draft; accept it once the pack exists and matches.
+  if (
+    capability === 'document_analysis'
+    && entry.readiness === 'needs_review'
+    && documentManifest
+    && validateFinalDocumentAnalysisMerge(paths, documentManifest).length === 0
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function ensureDocumentAnalysisPackMerged(input: {
+  context: SessionToolContext;
+  paths: ReturnType<typeof resolvePaths>;
+  projectId: string;
+  workingDirectory: string;
+  manifest: TenderDocumentAnalysisBatchManifest;
+  parentSessionId?: string;
+}): Promise<void> {
+  const packPath = join(input.paths.projectDirectory, 'packs', 'document-analysis.json');
+  const existingMergeErrors = existsSync(packPath)
+    ? validateFinalDocumentAnalysisMerge(input.paths, input.manifest)
+    : ['missing'];
+  const merged = mergeDocumentAnalysisBatchReports(input.manifest);
+  if (merged.errors.length > 0) return;
+
+  if (existingMergeErrors.length === 0) {
+    // Pack already matches child reports — still refresh the formal MD summary.
+    if (input.parentSessionId) {
+      writeDocumentAnalysisSummaryMarkdown(merged.data, {
+        projectId: input.projectId,
+        parentSessionId: input.parentSessionId,
+        workingDirectory: input.workingDirectory,
+        manifest: input.manifest,
+      });
+    }
+    return;
+  }
+
+  const action = existsSync(packPath) ? 'replace' : 'init';
+  const result = await handleTenderCapability(input.context, {
+    action,
+    projectId: input.projectId,
+    capability: 'document_analysis',
+    data: merged.data,
+  });
+  if (result.isError) {
+    // Leave missingItems to surface on the next status poll; do not throw and
+    // abort unrelated stage bookkeeping.
+    return;
+  }
+
+  if (input.parentSessionId) {
+    writeDocumentAnalysisSummaryMarkdown(merged.data, {
+      projectId: input.projectId,
+      parentSessionId: input.parentSessionId,
+      workingDirectory: input.workingDirectory,
+      manifest: input.manifest,
+    });
+  }
 }
 
 function validateFinalDocumentAnalysisMerge(

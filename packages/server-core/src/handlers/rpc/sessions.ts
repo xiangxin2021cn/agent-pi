@@ -288,10 +288,60 @@ async function scanExternalOutputDirectory(outputPath: string, maxDepth = SESSIO
   }
 }
 
+function resolveTenderWorkspacePaths(
+  workingDirectory: string | undefined,
+  businessContext: { module?: string; projectId?: string } | undefined,
+): string[] {
+  if (!workingDirectory) return []
+  const tenderRoot = join(workingDirectory, '.agent-pi', 'business', 'tender')
+  if (!existsSync(tenderRoot)) return []
+
+  if (businessContext?.module === 'tender' && businessContext.projectId) {
+    const projectPath = join(tenderRoot, businessContext.projectId)
+    return existsSync(projectPath) ? [projectPath] : []
+  }
+
+  try {
+    return readdirSync(tenderRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => join(tenderRoot, entry.name))
+      .sort((left, right) => left.localeCompare(right))
+  } catch {
+    return []
+  }
+}
+
+async function scanTenderWorkspaceTrees(
+  projectPaths: string[],
+  maxDepth = SESSION_FILES_INITIAL_SCAN_DEPTH,
+): Promise<SessionFile[]> {
+  const trees: SessionFile[] = []
+  for (const projectPath of projectPaths) {
+    if (!await pathExists(projectPath)) continue
+    const children = await scanSessionDirectory(projectPath, projectPath, {
+      sourceOverride: 'tender-workspace',
+      maxDepth,
+    })
+    trees.push({
+      name: `Tender Workspace · ${basename(projectPath)}`,
+      path: projectPath,
+      type: 'directory',
+      source: 'tender-workspace',
+      relativePath: '',
+      promoted: false,
+      children,
+      childrenLoaded: true,
+      hasMoreChildren: false,
+    })
+  }
+  return trees
+}
+
 function resolveSessionFilesParentPath(
   parentPath: string,
   sessionPath: string,
-  outputPath: string
+  outputPath: string,
+  tenderWorkspacePaths: string[] = [],
 ): { path: string; rootPath: string; sourceOverride?: SessionFileSource } | null {
   const resolvedParentPath = resolve(parentPath)
   if (pathStartsWith(resolvedParentPath, sessionPath)) {
@@ -299,6 +349,11 @@ function resolveSessionFilesParentPath(
   }
   if (pathStartsWith(resolvedParentPath, outputPath)) {
     return { path: resolvedParentPath, rootPath: outputPath, sourceOverride: 'official-output' }
+  }
+  for (const tenderPath of tenderWorkspacePaths) {
+    if (pathStartsWith(resolvedParentPath, tenderPath)) {
+      return { path: resolvedParentPath, rootPath: tenderPath, sourceOverride: 'tender-workspace' }
+    }
   }
   return null
 }
@@ -794,6 +849,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     try {
       const session = sessionManager.getSessions().find(s => s.id === sessionId)
       const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
+      const tenderWorkspacePaths = resolveTenderWorkspacePaths(session?.workingDirectory, session?.businessContext)
       const requestedParentPath = typeof options?.parentPath === 'string' && options.parentPath.trim().length > 0
         ? options.parentPath
         : null
@@ -802,7 +858,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       )
 
       if (requestedParentPath) {
-        const target = resolveSessionFilesParentPath(requestedParentPath, sessionPath, outputPath)
+        const target = resolveSessionFilesParentPath(
+          requestedParentPath,
+          sessionPath,
+          outputPath,
+          tenderWorkspacePaths,
+        )
         if (!target || !await pathExists(target.path)) {
           return []
         }
@@ -819,6 +880,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         if (outputTree) {
           files.unshift(outputTree)
         }
+      }
+
+      const tenderTrees = await scanTenderWorkspaceTrees(tenderWorkspacePaths, scanDepth)
+      if (tenderTrees.length > 0) {
+        files.unshift(...tenderTrees)
       }
 
       return files
@@ -1019,6 +1085,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
       if (!pathStartsWith(outputPath, sessionPath) && await pathExists(outputPath)) {
         state.watchers.push(watch(outputPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
+      }
+
+      for (const tenderPath of resolveTenderWorkspacePaths(session?.workingDirectory, session?.businessContext)) {
+        if (await pathExists(tenderPath)) {
+          state.watchers.push(watch(tenderPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
+        }
       }
 
       clientSessionWatches.set(clientId, state)

@@ -711,6 +711,7 @@ export type SessionFileSource =
   | 'long-response'
   | 'note'
   | 'official-output'
+  | 'tender-workspace'
 
 export interface SessionOutputDirectory {
   path: string

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createOrRefreshDocumentAnalysisBatchManifest,
+  mergeDocumentAnalysisBatchReports,
   validateDocumentAnalysisBatchMerge,
   type TenderDocumentAnalysisBatchBrief,
 } from './tender-document-batches.ts';
@@ -101,5 +102,38 @@ describe('tender document analysis batch manifest', () => {
       'final document section differs from child report: requirements-1',
     );
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [section] })).toEqual([]);
+  });
+
+  test('deterministically merges complete batch reports into final pack data', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
+    const sources = [
+      { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
+      { documentId: 'boq', path: 'C:/inputs/BOQ.xlsx', name: 'BOQ.xlsx', kind: 'boq', priority: 2 },
+    ];
+    let manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    for (const batch of manifest.batches) {
+      writeFileSync(batch.reportPath, JSON.stringify({
+        schemaVersion: 1,
+        batchId: batch.batchId,
+        documentId: batch.documentId,
+        sections: [{
+          id: `${batch.documentId}-s1`,
+          kind: 'tender_requirements',
+          title: `${batch.documentId} requirements`,
+          summary: `Summary for ${batch.documentId}`,
+          sourceRefs: [{ documentId: batch.documentId, page: 1 }],
+          status: 'reviewed',
+        }],
+      }));
+    }
+    manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+
+    const merged = mergeDocumentAnalysisBatchReports(manifest);
+    expect(merged.errors).toEqual([]);
+    expect(merged.data.sections.map((section) => section.id)).toEqual([
+      'tender-data-s1',
+      'boq-s1',
+    ]);
+    expect(validateDocumentAnalysisBatchMerge(manifest, merged.data)).toEqual([]);
   });
 });

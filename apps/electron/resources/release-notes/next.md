@@ -8,6 +8,6 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
-<!-- Folded into 2.3.2.md: tender stage retry capacity false-failures; Claude SDK 0.3.226; Pi 0.84.1; restore/spawn workingDirectory rebind -->
+<!-- Folded into 2.3.3.md: deterministic document-analysis merge; formal MD summary; tender workspace sidebar -->
 
 ## Breaking Changes

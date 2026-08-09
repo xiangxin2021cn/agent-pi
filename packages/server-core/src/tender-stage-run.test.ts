@@ -205,6 +205,7 @@ describe('tender stage runner', () => {
     const started = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'tender-document-analysis',
+      parentSessionId: 'parent-doc-analysis',
     });
 
     expect(started.status).toBe('running');
@@ -220,7 +221,6 @@ describe('tender stage runner', () => {
     expect(blocked.missingItems).toContain('document-batches:incomplete');
 
     const manifest = JSON.parse(readFileSync(started.paths.documentAnalysisBatchManifestPath!, 'utf8'));
-    const mergedSections: unknown[] = [];
     for (const batch of manifest.batches) {
       const section = {
         id: `${batch.documentId}-summary`,
@@ -236,30 +236,40 @@ describe('tender stage runner', () => {
         documentId: batch.documentId,
         sections: [section],
       }));
-      mergedSections.push({ ...section, documentId: batch.documentId });
     }
     const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
-    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(false)));
-    writeCapabilityPack(projectDirectory, 'document_analysis', { sections: mergedSections.slice(0, 1) });
-    const mergeBlocked = await runTenderStage({
-      action: 'complete', workspaceRootPath: fixture.workspaceRoot,
-      projectId: 'n3-tender', stageId: 'tender-document-analysis',
-    });
-    expect(mergeBlocked.status).toBe('blocked');
-    expect(mergeBlocked.missingItems.some((item) => item.startsWith('document-merge:'))).toBe(true);
+    const packPath = join(projectDirectory, 'packs', 'document-analysis.json');
+    expect(existsSync(packPath)).toBe(false);
 
-    writeCapabilityPack(projectDirectory, 'document_analysis', { sections: mergedSections });
+    // Seed sibling capabilities as ready so stage completion only depends on document_analysis.
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(false)));
+
     await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'tender-document-analysis',
+      parentSessionId: 'parent-doc-analysis',
     });
     const completed = await runTenderStage({
       action: 'status', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'tender-document-analysis',
+      parentSessionId: 'parent-doc-analysis',
     });
 
+    expect(existsSync(packPath)).toBe(true);
+    const pack = JSON.parse(readFileSync(packPath, 'utf8'));
+    expect(pack.data.sections).toHaveLength(2);
+    const summaryPath = join(
+      fixture.projectRoot,
+      'Agent Pi Outputs',
+      'parent-doc-analysis',
+      'document-analysis-summary.md',
+    );
+    expect(existsSync(summaryPath)).toBe(true);
+    expect(readFileSync(summaryPath, 'utf8')).toContain('# Document Analysis Summary');
     expect(completed.status).toBe('complete');
     expect(completed.batchProgress?.completedBatches).toBe(2);
+    expect(completed.generatedPacks).toContain('document_analysis');
+    expect(completed.missingItems.some((item) => item.startsWith('document-merge:'))).toBe(false);
   });
 
   test('dispatches document-analysis batches through the backend runtime without duplicate spawning', async () => {
