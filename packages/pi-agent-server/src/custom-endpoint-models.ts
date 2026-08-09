@@ -4,6 +4,10 @@ export const CUSTOM_ENDPOINT_DEFAULT_CONTEXT_WINDOW = 131_072
 export const CUSTOM_ENDPOINT_DEFAULT_MAX_TOKENS = 8_192
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_000_000
 export const DEEPSEEK_V4_MAX_TOKENS = 384_000
+/** Kimi Coding / Moonshot K3 1M catalog values (Pi SDK kimi-coding `k3`). */
+export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
+export const KIMI_K3_MAX_TOKENS = 131_072
+export const KIMI_K3_256K_CONTEXT_WINDOW = 262_144
 
 export interface CustomEndpointModelDefaults {
   supportsImages?: boolean
@@ -64,6 +68,20 @@ export function getKnownCustomEndpointModelCapabilities(id: string): Pick<Custom
     return {
       contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
       maxTokens: DEEPSEEK_V4_MAX_TOKENS,
+    }
+  }
+
+  // Kimi K3 1M — Coding API id `k3` and Moonshot id `kimi-k3`.
+  if (bareId === 'k3' || bareId === 'kimi-k3' || bareId === 'kimi-k3-preview') {
+    return {
+      contextWindow: KIMI_K3_CONTEXT_WINDOW,
+      maxTokens: KIMI_K3_MAX_TOKENS,
+    }
+  }
+  if (bareId === 'k3-256k' || bareId === 'kimi-k3-256k') {
+    return {
+      contextWindow: KIMI_K3_256K_CONTEXT_WINDOW,
+      maxTokens: KIMI_K3_MAX_TOKENS,
     }
   }
 

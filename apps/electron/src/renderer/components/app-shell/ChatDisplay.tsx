@@ -59,6 +59,7 @@ import {
   isAnnotationFollowUpSent,
   extractAnnotationSelectedText,
   normalizeFollowUpText,
+  humanizeRuntimeError,
   type Turn,
   type AssistantTurn,
   type UserTurn,
@@ -2238,7 +2239,7 @@ function ErrorMessage({ message, onOpenUrl, sessionId, onRetry }: { message: Mes
         <div className="text-xs text-destructive/50 mb-0.5 font-semibold">
           {message.errorTitle || t('common.error')}
         </div>
-        <p className="text-sm text-destructive">{message.content}</p>
+        <p className="text-sm text-destructive">{humanizeRuntimeError(message.content) ?? message.content}</p>
 
         {/* Action buttons */}
         {actions && actions.length > 0 && (
@@ -2384,13 +2385,20 @@ function MessageBubble({
     // Compaction complete message - render as horizontal rule with centered label
     // This persists after reload to show where context was compacted
     if (message.statusType === 'compaction_complete') {
+      const detail = message.content?.trim()
+        || t('chat.conversationCompactedDetail')
       return (
-        <div className="flex items-center gap-3 my-12 px-3">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-sm text-muted-foreground/70 select-none">
-            Conversation Compacted
-          </span>
-          <div className="flex-1 h-px bg-border" />
+        <div className="my-12 px-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-sm text-muted-foreground/70 select-none" title={detail}>
+              {t('chat.conversationCompacted')}
+            </span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+          <p className="mx-auto mt-2 max-w-xl text-center text-[11px] leading-relaxed text-muted-foreground/60 select-none">
+            {detail}
+          </p>
         </div>
       )
     }

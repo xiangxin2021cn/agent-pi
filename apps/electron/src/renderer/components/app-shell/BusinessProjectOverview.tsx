@@ -23,7 +23,7 @@ interface BusinessProjectOverviewProps {
   projectId: string
 }
 
-const LIVE_POLL_MS = 2_500
+const LIVE_POLL_MS = 20_000
 const TICK_MS = 1_000
 
 type StageTask = NonNullable<TenderStageRunResultDto['batchProgress']>['tasks'][number]

@@ -2647,13 +2647,14 @@ export function FreeFormInput({
 
           {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold */}
           {(() => {
-            // Calculate usage percentage based on compaction threshold (~77.5% of context window),
-            // not the full context window - this gives users meaningful warnings before compaction kicks in.
-            // SDK triggers compaction at ~155k tokens for a 200k context window.
-            // Falls back to known per-model context window when SDK hasn't reported usage yet.
+            // Claude-ish SDK historically compacted around ~77.5% of the window.
+            // Pi auto-compacts near contextWindow - 16_384. For long-context models
+            // (≥256k, e.g. Kimi K3 1M) use the Pi reserve so the badge isn't alarmist.
             const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
             const compactionThreshold = effectiveContextWindow
-              ? Math.round(effectiveContextWindow * 0.775)
+              ? (effectiveContextWindow >= 256_000
+                  ? Math.max(1, effectiveContextWindow - 16_384)
+                  : Math.round(effectiveContextWindow * 0.775))
               : null
             const usagePercent = contextStatus?.inputTokens && compactionThreshold
               ? Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100))
@@ -2682,15 +2683,14 @@ export function FreeFormInput({
                       '--shadow-color': 'var(--info-rgb)',
                       color: 'color-mix(in oklab, var(--info) 30%, var(--foreground))',
                     } as React.CSSProperties}
+                    aria-label={t('chat.contextBadge')}
                   >
                     {usagePercent}%
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top">
-                  {isProcessing
-                    ? `${usagePercent}% context used — wait for current operation`
-                    : `${usagePercent}% context used — click to compact`
-                  }
+                <TooltipContent side="top" className="max-w-xs">
+                  <p>{t('chat.contextUsageNearCompaction', { percent: usagePercent })}</p>
+                  <p className="mt-1 text-muted-foreground">{t('chat.contextUsageTooltip')}</p>
                 </TooltipContent>
               </Tooltip>
             )

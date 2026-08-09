@@ -28,11 +28,34 @@ export type { ActivityItem }
  */
 function stripErrorTags(content: string | undefined): string | undefined {
   if (!content) return content
+  return humanizeRuntimeError(
+    content
+      .replace(/<\/?error>/gi, '')
+      .replace(/<\/?tool_use_error>/gi, '')
+      .replace(/^\[ERROR]\s*/i, '')
+      .trim(),
+  )
+}
+
+/**
+ * Rewrite known runtime/capacity errors into actionable UI copy
+ * (spawn handoff limit, memory guard, compaction-adjacent failures).
+ */
+export function humanizeRuntimeError(content: string | undefined): string | undefined {
+  if (!content) return content
+  if (/active handoff limit reached/i.test(content)) {
+    const match = content.match(/\((\d+)\s*\/\s*(\d+)\)/)
+    const current = match?.[1] ?? '?'
+    const limit = match?.[2] ?? '4'
+    return `Sub-agent spawn limit reached (${current}/${limit} active). Wait for existing children to finish or stop them before spawning more — this is not a model failure.`
+  }
+  if (/spawn_session blocked by memory guard/i.test(content) || /spawn_session blocked: (main process memory|total working set)/i.test(content)) {
+    return `Sub-agent spawn blocked by memory pressure. Finish or stop existing children before spawning more.`
+  }
+  if (/Nested spawn_session is disabled/i.test(content)) {
+    return `Nested spawn_session is disabled for child agents. Return a structured handoff to the parent instead.`
+  }
   return content
-    .replace(/<\/?error>/gi, '')
-    .replace(/<\/?tool_use_error>/gi, '')
-    .replace(/^\[ERROR]\s*/i, '')
-    .trim()
 }
 
 // ============================================================================

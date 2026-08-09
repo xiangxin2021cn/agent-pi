@@ -550,7 +550,10 @@ export class PiEventAdapter extends BaseEventAdapter {
           this.overflowState = 'compacting';
         }
         // Use "Compacting" keyword so session handler detects statusType: 'compacting'
-        yield { type: 'status', message: 'Compacting context...' };
+        yield {
+          type: 'status',
+          message: 'Compacting context — near the model window reserve (keeps ~16k tokens free)...',
+        };
         break;
 
       case 'compaction_end': {
@@ -564,7 +567,10 @@ export class PiEventAdapter extends BaseEventAdapter {
             this.heldOverflowError = null;
           }
           // Use "Compacted" keyword so session handler detects statusType: 'compaction_complete'
-          yield { type: 'info', message: 'Compacted context to fit within limits' };
+          yield {
+            type: 'info',
+            message: 'Compacted context to fit within limits. Older turns were summarized; only the recent ~20k tokens stay in full. Active sub-agents are unchanged (max 4 concurrent spawn_session handoffs).',
+          };
         } else if (compactionEvent.errorMessage) {
           // Defensive handler for the Pi SDK auto-compaction race (cause A
           // in plans/fix-pi-gpt-compaction.md). The raw stack

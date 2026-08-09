@@ -38,8 +38,18 @@ import {
  * 4-chars/token heuristic but cost far more in the real tokenizer. The
  * lower cap, combined with {@link estimateTokensDensityAware}, gives
  * headroom for that drift.
+ *
+ * For long-context models (≥256k, e.g. Kimi K3 1M) the hard cap rises to
+ * {@link TOKEN_LIMIT_LARGE_CONTEXT} so PDF/vector tool dumps are not
+ * aggressively summarized on every step.
  */
 export const TOKEN_LIMIT = 12000;
+
+/** Hard cap for models with contextWindow ≥ {@link LARGE_CONTEXT_WINDOW}. */
+export const TOKEN_LIMIT_LARGE_CONTEXT = 48_000;
+
+/** Windows at/above this size use {@link TOKEN_LIMIT_LARGE_CONTEXT}. */
+export const LARGE_CONTEXT_WINDOW = 256_000;
 
 /** Max tokens to send for summarization (~400KB). Beyond this, save to file + preview only. */
 export const MAX_SUMMARIZATION_INPUT = 100000;
@@ -123,6 +133,7 @@ export function estimateTokensDensityAware(text: string): number {
 /**
  * Per-result summarization threshold scaled to the active model's context
  * window. A 200k-window model returns the {@link TOKEN_LIMIT} cap (12k);
+ * a 1M-window model returns up to {@link TOKEN_LIMIT_LARGE_CONTEXT} (48k);
  * a 64k-window model returns 6_400; below ~20k window the floor (2_000)
  * kicks in.
  *
@@ -131,9 +142,12 @@ export function estimateTokensDensityAware(text: string): number {
  */
 export function tokenLimitFor(contextWindow: number | undefined): number {
   if (!contextWindow || contextWindow <= 0) return TOKEN_LIMIT;
+  const hardCap = contextWindow >= LARGE_CONTEXT_WINDOW
+    ? TOKEN_LIMIT_LARGE_CONTEXT
+    : TOKEN_LIMIT;
   return Math.max(
     TOKEN_LIMIT_FLOOR,
-    Math.min(TOKEN_LIMIT, Math.floor(contextWindow * PER_RESULT_CONTEXT_FRACTION)),
+    Math.min(hardCap, Math.floor(contextWindow * PER_RESULT_CONTEXT_FRACTION)),
   );
 }
 
@@ -490,14 +504,14 @@ export function formatLargeResponseMessage(opts: FormatOptions): string {
   ].join('\n');
 
   if (summary) {
-    return `[Large response (~${estimatedTokens} tokens) summarized]\n\n${fileRef}\n\n${summary}`;
+    return `[Large tool result (~${estimatedTokens} tokens) summarized to protect context — full output is on disk, not discarded]\n\n${fileRef}\n\n${summary}`;
   }
 
   if (preview) {
-    return `[Response too large (~${estimatedTokens} tokens)]\n\n${fileRef}\n\nPreview:\n${preview}...`;
+    return `[Tool result too large (~${estimatedTokens} tokens) — truncated for context; full output is on disk]\n\n${fileRef}\n\nPreview:\n${preview}...`;
   }
 
-  return `[Response too large (~${estimatedTokens} tokens)]\n\n${fileRef}`;
+  return `[Tool result too large (~${estimatedTokens} tokens) — full output is on disk]\n\n${fileRef}`;
 }
 
 // ============================================================

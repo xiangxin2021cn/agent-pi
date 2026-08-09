@@ -13,6 +13,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   TOKEN_LIMIT,
+  TOKEN_LIMIT_LARGE_CONTEXT,
   tokenLimitFor,
   guardLargeResult,
   handleLargeResponse,
@@ -35,9 +36,16 @@ describe('tokenLimitFor', () => {
     expect(tokenLimitFor(-1)).toBe(TOKEN_LIMIT);
   });
 
-  test('caps at the existing default for large-window models', () => {
+  test('caps at the mid-range default below the large-context cutoff', () => {
     expect(tokenLimitFor(200_000)).toBe(TOKEN_LIMIT);
-    expect(tokenLimitFor(1_000_000)).toBe(TOKEN_LIMIT);
+  });
+
+  test('raises the hard cap for long-context models (≥256k)', () => {
+    // 256k * 0.10 = 25_600 → under the 48k large-context cap
+    expect(tokenLimitFor(256_000)).toBe(25_600);
+    // 1M * 0.10 = 100_000 → capped at TOKEN_LIMIT_LARGE_CONTEXT
+    expect(tokenLimitFor(1_000_000)).toBe(TOKEN_LIMIT_LARGE_CONTEXT);
+    expect(tokenLimitFor(1_048_576)).toBe(TOKEN_LIMIT_LARGE_CONTEXT);
   });
 
   test('scales linearly in the middle range', () => {

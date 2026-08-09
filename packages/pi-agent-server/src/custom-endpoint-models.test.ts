@@ -90,4 +90,22 @@ describe('buildCustomEndpointModelDef', () => {
     expect(reasoner.contextWindow).toBe(1_000_000)
     expect(reasoner.maxTokens).toBe(384_000)
   })
+
+  it('uses Kimi K3 1M defaults for coding and moonshot ids', () => {
+    const coding = buildCustomEndpointModelDef('k3')
+    const moonshot = buildCustomEndpointModelDef('kimi-k3')
+    const namespaced = buildCustomEndpointModelDef('moonshotai/kimi-k3')
+
+    expect(coding.contextWindow).toBe(1_048_576)
+    expect(coding.maxTokens).toBe(131_072)
+    expect(moonshot.contextWindow).toBe(1_048_576)
+    expect(moonshot.maxTokens).toBe(131_072)
+    expect(namespaced.contextWindow).toBe(1_048_576)
+  })
+
+  it('uses Kimi K3-256K defaults for the smaller coding variant', () => {
+    const model = buildCustomEndpointModelDef('k3-256k')
+    expect(model.contextWindow).toBe(262_144)
+    expect(model.maxTokens).toBe(131_072)
+  })
 })
