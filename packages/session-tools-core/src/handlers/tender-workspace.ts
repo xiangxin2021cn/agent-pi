@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { requireContextWorkingDirectory } from '../working-directory.ts';
 
 export type TenderWorkspaceAction =
   | 'init'
@@ -44,22 +45,21 @@ export async function handleTenderWorkspace(
   args: TenderWorkspaceArgs,
 ) {
   try {
-    if (!ctx.workingDirectory) {
-      return errorResponse('tender_workspace requires an explicit session working directory.');
-    }
+    const workingDirectory = requireContextWorkingDirectory(ctx, 'tender_workspace');
+    if (typeof workingDirectory !== 'string') return workingDirectory;
     if (!SAFE_PROJECT_ID.test(args.projectId)) {
       return errorResponse('projectId must be a filesystem-safe identifier.');
     }
 
-    mkdirSync(ctx.workingDirectory, { recursive: true });
+    mkdirSync(workingDirectory, { recursive: true });
     const projectDirectory = resolve(
-      ctx.workingDirectory,
+      workingDirectory,
       '.agent-pi',
       'business',
       'tender',
       args.projectId,
     );
-    if (!isPathWithinDirectoryForCreation(projectDirectory, ctx.workingDirectory)) {
+    if (!isPathWithinDirectoryForCreation(projectDirectory, workingDirectory)) {
       return errorResponse('Resolved tender project path escapes the session working directory.');
     }
 

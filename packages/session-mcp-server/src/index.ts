@@ -46,6 +46,7 @@ import {
   getToolDefsAsJsonSchema,
   // Helpers
   loadSourceConfig as loadSourceConfigFromHelpers,
+  resolveSessionWorkingDirectory,
   errorResponse,
 } from '@craft-agent/session-tools-core';
 
@@ -204,7 +205,12 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     get sourcesPath() { return join(workspaceRootPath, 'sources'); },
     get skillsPath() { return join(workspaceRootPath, 'skills'); },
     plansFolderPath,
-    workingDirectory: config.workingDirectory,
+    // Prefer env snapshot; fall back to live session.jsonl so restore/spawn
+    // still works if CRAFT_WORKING_DIRECTORY was missing at process start.
+    get workingDirectory() {
+      return config.workingDirectory
+        || resolveSessionWorkingDirectory(workspaceRootPath, sessionId);
+    },
     sessionPath: sessionsDir,
     dataPath: sessionDataDir,
     callbacks,

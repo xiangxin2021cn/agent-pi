@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';
-import { resolveSessionWorkingDirectory } from '../source-helpers.ts';
+import { resolveContextWorkingDirectory } from '../working-directory.ts';
 import {
   validateSlug,
   validateSkillContent,
@@ -81,9 +81,8 @@ export async function handleSkillValidate(
     };
   }
 
-  // Resolve workingDirectory: ctx first (if factories ever populate it), then session header
-  const workingDirectory = ctx.workingDirectory
-    ?? resolveSessionWorkingDirectory(ctx.workspacePath, ctx.sessionId);
+  // Resolve workingDirectory: live ctx / getSessionInfo / session.jsonl header
+  const workingDirectory = resolveContextWorkingDirectory(ctx);
 
   // Resolve SKILL.md from all three tiers
   const resolved = resolveSkillMdPath(ctx, skillSlug, workingDirectory);

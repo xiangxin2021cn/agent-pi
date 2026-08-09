@@ -19,13 +19,16 @@
  */
 
 import type { SessionToolContext } from '@craft-agent/session-tools-core';
+import { resolveSessionWorkingDirectory } from '@craft-agent/session-tools-core';
 import { getSessionScopedToolCallbacks } from './session-scoped-tool-callback-registry.ts';
 
 /**
  * Attach session self-management bindings to a SessionToolContext.
  *
  * Defines lazy getters for: setSessionLabels, setSessionStatus,
- * getSessionInfo, listSessions, resolveLabels, resolveStatus.
+ * getSessionInfo, listSessions, resolveLabels, resolveStatus,
+ * and workingDirectory (rebound from live session metadata on every access
+ * so restore/spawn sessions keep business tools working).
  *
  * @param context - The SessionToolContext to augment (mutated in place)
  * @param sessionId - The session ID for registry lookup and getSessionInfo defaulting
@@ -34,6 +37,19 @@ export function attachSessionSelfManagementBindings(
   context: SessionToolContext,
   sessionId: string,
 ): void {
+  // Live working directory — do NOT snapshot at context creation time.
+  // Restored/spawned sessions persist workingDirectory in metadata, but the
+  // tool context used to omit it, which broke tender_* / delivery_* / etc.
+  Object.defineProperty(context, 'workingDirectory', {
+    get() {
+      const fromInfo = getSessionScopedToolCallbacks(sessionId)?.getSessionInfoFn?.(sessionId)?.workingDirectory;
+      if (fromInfo) return fromInfo;
+      return resolveSessionWorkingDirectory(context.workspacePath, sessionId);
+    },
+    configurable: true,
+    enumerable: true,
+  });
+
   // Direct pass-through bindings — signatures match, no wrapping needed.
   // Each getter resolves fresh from the registry on every access.
 

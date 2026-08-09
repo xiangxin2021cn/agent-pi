@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { requireContextWorkingDirectory } from '../working-directory.ts';
 
 export type InvestmentCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
 
@@ -42,11 +43,12 @@ const CAPABILITY_FILES: Record<InvestmentCapabilityId, string> = {
 
 export async function handleInvestmentCapability(ctx: SessionToolContext, args: InvestmentCapabilityArgs) {
   try {
-    if (!ctx.workingDirectory) return errorResponse('investment_capability requires an explicit session working directory.');
+    const workingDirectory = requireContextWorkingDirectory(ctx, 'investment_capability');
+    if (typeof workingDirectory !== 'string') return workingDirectory;
     if (!SAFE_PROJECT_ID.test(args.projectId)) return errorResponse('projectId must be a filesystem-safe identifier.');
     if (args.required === true && args.enabled === false) return errorResponse('A required capability must be enabled.');
-    const paths = resolvePaths(ctx.workingDirectory, args.projectId, args.capability);
-    if (!isPathWithinDirectoryForCreation(paths.projectDirectory, ctx.workingDirectory)) return errorResponse('Resolved investment project path escapes the session working directory.');
+    const paths = resolvePaths(workingDirectory, args.projectId, args.capability);
+    if (!isPathWithinDirectoryForCreation(paths.projectDirectory, workingDirectory)) return errorResponse('Resolved investment project path escapes the session working directory.');
     if (!existsSync(paths.corePath)) return errorResponse(`Investment workspace ${args.projectId} does not exist. Call investment_workspace init first.`);
     const workspace = parseInvestmentWorkspace(JSON.parse(readFileSync(paths.corePath, 'utf8')));
     let index = readIndex(paths.indexPath, args.projectId, workspace.revision);

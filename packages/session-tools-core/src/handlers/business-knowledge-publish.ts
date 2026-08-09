@@ -3,6 +3,7 @@ import type { SessionToolContext } from '../context.ts';
 import { publishBusinessKnowledgeArtifact, toBusinessEvidenceSnapshot, type BusinessPluginId } from '../knowledge-base-business-publication.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectory } from '../runtime/path-security.ts';
+import { requireContextWorkingDirectory } from '../working-directory.ts';
 
 export interface BusinessKnowledgePublishArgs {
   artifactPath: string;
@@ -19,10 +20,11 @@ export interface BusinessKnowledgePublishArgs {
 
 export async function handleBusinessKnowledgePublish(ctx: SessionToolContext, args: BusinessKnowledgePublishArgs) {
   try {
-    if (!ctx.workingDirectory) return errorResponse('business_knowledge_publish requires an explicit session working directory.');
+    const workingDirectory = requireContextWorkingDirectory(ctx, 'business_knowledge_publish');
+    if (typeof workingDirectory !== 'string') return workingDirectory;
     if (!ctx.knowledgeBaseRegistryRootPath) return errorResponse('business_knowledge_publish requires the global knowledge base registry root.');
-    const artifactPath = resolve(ctx.workingDirectory, args.artifactPath);
-    if (!isPathWithinDirectory(artifactPath, ctx.workingDirectory)) return errorResponse('artifactPath must be an explicit file inside the session working directory.');
+    const artifactPath = resolve(workingDirectory, args.artifactPath);
+    if (!isPathWithinDirectory(artifactPath, workingDirectory)) return errorResponse('artifactPath must be an explicit file inside the session working directory.');
     const publishedAt = new Date().toISOString();
     const publication = publishBusinessKnowledgeArtifact(ctx.knowledgeBaseRegistryRootPath, artifactPath, {
       publicationId: args.publicationId, producerPlugin: args.producerPlugin,

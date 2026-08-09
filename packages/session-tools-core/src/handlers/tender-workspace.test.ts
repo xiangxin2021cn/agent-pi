@@ -48,6 +48,34 @@ describe('tender_workspace handler', () => {
     expect(result.content[0]?.text).toContain('working directory');
   });
 
+  test('rebounds working directory from getSessionInfo when ctx.workingDirectory is unset', async () => {
+    context.workingDirectory = undefined;
+    context.getSessionInfo = () => ({
+      id: context.sessionId,
+      name: 'Restored',
+      labels: [],
+      status: 'active',
+      permissionMode: 'execute',
+      createdAt: Date.now(),
+      isActive: true,
+      workingDirectory,
+    });
+
+    const result = await handleTenderWorkspace(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      project: {
+        id: 'n3-upgrade',
+        title: 'N3 Upgrade Tender',
+        status: 'active',
+      },
+    });
+
+    expect(result.isError).toBe(false);
+    const output = resultJson(result);
+    expect(output.modelPath).toContain(join('.agent-pi', 'business', 'tender', 'n3-upgrade'));
+  });
+
   test('rejects project path traversal', async () => {
     const result = await handleTenderWorkspace(context, {
       action: 'init',

@@ -14,6 +14,7 @@ import type { SessionToolContext } from '../context.ts';
 import { verifyBusinessEvidenceSnapshots } from '../knowledge-base-business-publication.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { requireContextWorkingDirectory } from '../working-directory.ts';
 
 export type DeliveryWorkspaceAction =
   | 'init'
@@ -38,11 +39,12 @@ const SAFE_PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export async function handleDeliveryWorkspace(ctx: SessionToolContext, args: DeliveryWorkspaceArgs) {
   try {
-    if (!ctx.workingDirectory) return errorResponse('delivery_workspace requires an explicit session working directory.');
+    const workingDirectory = requireContextWorkingDirectory(ctx, 'delivery_workspace');
+    if (typeof workingDirectory !== 'string') return workingDirectory;
     if (!SAFE_PROJECT_ID.test(args.projectId)) return errorResponse('projectId must be a filesystem-safe identifier.');
-    mkdirSync(ctx.workingDirectory, { recursive: true });
-    const projectDirectory = resolve(ctx.workingDirectory, '.agent-pi', 'business', 'delivery', args.projectId);
-    if (!isPathWithinDirectoryForCreation(projectDirectory, ctx.workingDirectory)) {
+    mkdirSync(workingDirectory, { recursive: true });
+    const projectDirectory = resolve(workingDirectory, '.agent-pi', 'business', 'delivery', args.projectId);
+    if (!isPathWithinDirectoryForCreation(projectDirectory, workingDirectory)) {
       return errorResponse('Resolved delivery project path escapes the session working directory.');
     }
     const modelPath = join(projectDirectory, 'delivery-workspace.json');

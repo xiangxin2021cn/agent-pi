@@ -192,6 +192,31 @@ describe('attachSessionSelfManagementBindings', () => {
     expect(receivedId).toBe('other-session');
   });
 
+  it('workingDirectory lazy-binds from live getSessionInfo (restore/spawn safe)', () => {
+    const ctx = createBaseContext(sessionId);
+    attachSessionSelfManagementBindings(ctx, sessionId);
+
+    expect(ctx.workingDirectory).toBeUndefined();
+
+    registerSessionScopedToolCallbacks(sessionId, {
+      getSessionInfoFn: () => makeSessionInfo({
+        id: sessionId,
+        workingDirectory: '/tmp/tender-pack',
+      }),
+    });
+
+    expect(ctx.workingDirectory).toBe('/tmp/tender-pack');
+
+    // Late metadata update is visible without recreating the context
+    mergeSessionScopedToolCallbacks(sessionId, {
+      getSessionInfoFn: () => makeSessionInfo({
+        id: sessionId,
+        workingDirectory: '/tmp/tender-pack-v2',
+      }),
+    });
+    expect(ctx.workingDirectory).toBe('/tmp/tender-pack-v2');
+  });
+
   it('getSpawnStatus defaults to current session ID and exposes report readiness', async () => {
     const ctx = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(ctx, sessionId);

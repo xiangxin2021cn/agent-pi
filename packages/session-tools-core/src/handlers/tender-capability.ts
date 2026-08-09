@@ -48,6 +48,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import { isPathWithinDirectory, isPathWithinDirectoryForCreation } from '../runtime/path-security.ts';
+import { requireContextWorkingDirectory } from '../working-directory.ts';
 import { applyManualTenderCloseoutEvidence } from './tender-manual-closeout.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
@@ -93,9 +94,8 @@ export async function handleTenderCapability(
   args: TenderCapabilityArgs,
 ) {
   try {
-    if (!ctx.workingDirectory) {
-      return errorResponse('tender_capability requires an explicit session working directory.');
-    }
+    const workingDirectory = requireContextWorkingDirectory(ctx, 'tender_capability');
+    if (typeof workingDirectory !== 'string') return workingDirectory;
     if (!SAFE_PROJECT_ID.test(args.projectId)) {
       return errorResponse('projectId must be a filesystem-safe identifier.');
     }
@@ -106,8 +106,8 @@ export async function handleTenderCapability(
       return errorResponse('A required capability must be enabled.');
     }
 
-    const paths = resolvePaths(ctx.workingDirectory, args.projectId, args.capability);
-    if (!isPathWithinDirectoryForCreation(paths.projectDirectory, ctx.workingDirectory)) {
+    const paths = resolvePaths(workingDirectory, args.projectId, args.capability);
+    if (!isPathWithinDirectoryForCreation(paths.projectDirectory, workingDirectory)) {
       return errorResponse('Resolved tender project path escapes the session working directory.');
     }
     if (!existsSync(paths.corePath)) {
@@ -118,7 +118,7 @@ export async function handleTenderCapability(
     let index = readIndex(paths.indexPath, args.projectId, workspace.revision);
     const manualEvidence = applyManualTenderCloseoutEvidence(index, {
       projectDirectory: paths.projectDirectory,
-      workingDirectory: ctx.workingDirectory,
+      workingDirectory,
       coreRevision: workspace.revision,
     });
     if (manualEvidence.changed) {
@@ -182,7 +182,7 @@ export async function handleTenderCapability(
         coreRevision: workspace.revision,
         upstream: buildUpstream(index, args.capability, workspace.revision),
         updatedAt,
-        data: await parseCapabilityData(args.capability, args.data, ctx.workingDirectory),
+        data: await parseCapabilityData(args.capability, args.data, workingDirectory),
       });
       const audit = auditCapability(
         args.capability,

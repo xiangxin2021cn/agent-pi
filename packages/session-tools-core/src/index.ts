@@ -77,10 +77,16 @@ export {
   skillMdExists,
   listSkillSlugs,
   generateRequestId,
+  resolveSessionWorkingDirectory,
   // Multi-header credential helpers
   detectCredentialMode,
   getEffectiveHeaderNames,
 } from './source-helpers.ts';
+
+export {
+  resolveContextWorkingDirectory,
+  requireContextWorkingDirectory,
+} from './working-directory.ts';
 
 // Validation
 export {

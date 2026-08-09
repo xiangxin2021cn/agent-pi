@@ -11,6 +11,7 @@ import { basename, dirname, join } from 'node:path';
 import type { SessionToolContext } from '../context.ts';
 import { errorResponse, successResponse } from '../response.ts';
 import type { ToolResult } from '../types.ts';
+import { resolveContextWorkingDirectory } from '../working-directory.ts';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const MAX_SECTIONS = 128;
@@ -314,7 +315,7 @@ function readManifest(manifestPath: string): ArtifactManifest {
 }
 
 function resolveFormalOutputDirectory(ctx: SessionToolContext): string {
-  const workingDirectory = ctx.workingDirectory ?? ctx.getSessionInfo?.(ctx.sessionId)?.workingDirectory;
+  const workingDirectory = resolveContextWorkingDirectory(ctx);
   if (workingDirectory) return join(workingDirectory, 'Agent Pi Outputs', ctx.sessionId);
   return join(ctx.sessionPath!, 'outputs');
 }
