@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnSessionRequest } from '@craft-agent/shared/agent';
 import {
+  isTenderStageCapacityError,
   updateTenderStageTaskBoard,
   type TenderStageBatchTaskSpec,
 } from './tender-stage-executor.ts';
@@ -86,6 +87,89 @@ describe('tender stage task-board executor', () => {
     expect(retried.tasks[0]?.status).toBe('running');
     expect(retried.tasks[0]?.attemptCount).toBe(2);
     expect(attempt).toBe(2);
+  });
+
+  test('keeps overflowed spawns queued instead of failing them', async () => {
+    const fixture = createTasks(6);
+    let calls = 0;
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        calls += 1;
+        // Simulate SessionManager handoff slots already partly occupied by other
+        // children: board still has room, but spawn_session rejects further work.
+        if (calls > 2) {
+          throw new Error('spawn_session active handoff limit reached (5/4). Return control and let the runtime monitor existing handoffs before spawning more.');
+        }
+        return { sessionId: `child-${calls}`, name: request.name ?? `child-${calls}`, status: 'started' as const };
+      },
+      getSession: async () => ({ id: 'x', isProcessing: true, sessionStatus: 'todo' }),
+    };
+
+    const started = await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(started.tasks.filter((task) => task.status === 'running')).toHaveLength(2);
+    expect(started.tasks.filter((task) => task.status === 'pending')).toHaveLength(4);
+    expect(started.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
+    expect(calls).toBe(3); // two successes + one capacity rejection that stops the round
+    expect(isTenderStageCapacityError(new Error('spawn_session active handoff limit reached (5/4). Return control and let the runtime monitor existing handoffs before spawning more.'))).toBe(true);
+
+    // Later status polls must keep trying the queued remainder.
+    const polled = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution,
+    });
+    expect(polled.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
+    expect(polled.tasks.filter((task) => task.status === 'pending').length).toBeGreaterThan(0);
+  });
+
+  test('does not clobber an in-flight retry with a stale invalid report', async () => {
+    const fixture = createTasks(1);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        const sessionId = 'child-running';
+        sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+    };
+
+    writeFileSync(fixture.tasks[0]!.reportPath, JSON.stringify({ bad: true }));
+    const invalidTasks = fixture.tasks.map((task) => ({
+      ...task,
+      validationStatus: 'invalid' as const,
+      validationErrors: ['sections schema is invalid'],
+    }));
+
+    const failed = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: invalidTasks, execution,
+    });
+    expect(failed.tasks[0]?.status).toBe('failed');
+    expect(existsSync(fixture.tasks[0]!.reportPath)).toBe(true);
+
+    const retried = await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: invalidTasks, execution,
+    });
+    expect(retried.tasks[0]?.status).toBe('running');
+    expect(existsSync(fixture.tasks[0]!.reportPath)).toBe(false);
+    expect(readdirSync(join(fixture.projectDirectory, 'orchestration', 'reports'))
+      .some((name) => name.includes('.invalid.'))).toBe(true);
+
+    const polled = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: invalidTasks, execution,
+    });
+    expect(polled.tasks[0]?.status).toBe('running');
+    expect(polled.tasks[0]?.sessionId).toBe('child-running');
   });
 
   function createTasks(count: number): { projectDirectory: string; tasks: TenderStageBatchTaskSpec[] } {

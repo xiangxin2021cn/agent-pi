@@ -123,10 +123,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         workspaceRootPath, projectId, stageId: stage.id,
       }, parentSessionId)
       setStageRuns((current) => ({ ...current, [stage.id]: retried.result }))
-      if (!retried.ok) {
-        const summary = summarizeTenderStage(retried.result)
-        toast.error(`重试失败：${summary.missingLabel ?? summary.statusLabel}`)
+      const progress = retried.result.batchProgress
+      const inFlight = (progress?.runningBatches ?? 0) + (progress?.pendingBatches ?? 0)
+      if (retried.ok || inFlight > 0) {
+        toast.success(
+          progress
+            ? `已重新调度：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+            : '已重新调度失败批次',
+        )
+        return
       }
+      const summary = summarizeTenderStage(retried.result)
+      toast.error(`重试失败：${summary.missingLabel ?? summary.statusLabel}`)
     } finally {
       setStartingStageId(null)
     }

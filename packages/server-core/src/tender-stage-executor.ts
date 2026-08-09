@@ -4,6 +4,14 @@ import type { SpawnSessionRequest, SpawnSessionResult } from '@craft-agent/share
 
 export type TenderStageTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'blocked';
 
+/** Capacity / backpressure signals — keep the task queued, do not mark failed. */
+export function isTenderStageCapacityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /active handoff limit reached/i.test(message)
+    || /spawn_session blocked by memory guard/i.test(message)
+    || /Return control and let the runtime monitor existing handoffs/i.test(message);
+}
+
 export interface TenderStageBatchTaskSpec {
   batchId: string;
   briefPath: string;
@@ -151,9 +159,21 @@ export async function updateTenderStageTaskBoard(
   if (options.action === 'start') {
     board = {
       ...board,
-      tasks: board.tasks.map((task) => task.status === 'failed'
-        ? { ...task, status: 'pending' as const, error: undefined, updatedAt: now }
-        : task),
+      tasks: board.tasks.map((task) => {
+        if (task.status !== 'failed') return task;
+        // Quarantine stale invalid reports so retry is not immediately re-failed
+        // by the previous schema-invalid handoff while a new child is still writing.
+        quarantineInvalidReport(task.reportPath);
+        return {
+          ...task,
+          status: 'pending' as const,
+          error: undefined,
+          sessionId: undefined,
+          startedAt: undefined,
+          completedAt: undefined,
+          updatedAt: now,
+        };
+      }),
     };
   }
   if (
@@ -193,6 +213,19 @@ function reconcileTask(
     };
   }
   if (spec.validationStatus === 'invalid') {
+    // A stale invalid report must not clobber an in-flight retry. Keep the
+    // running/pending attempt until reconcileRuntime or a later complete report
+    // settles the task.
+    if (previous?.status === 'running' || previous?.status === 'pending') {
+      return {
+        ...base,
+        status: previous.status,
+        attemptCount: previous.attemptCount,
+        ...(previous.sessionId ? { sessionId: previous.sessionId } : {}),
+        ...(previous.startedAt ? { startedAt: previous.startedAt } : {}),
+        ...(previous.error ? { error: previous.error } : {}),
+      };
+    }
     return {
       ...base,
       status: 'failed',
@@ -279,6 +312,18 @@ async function dispatchPendingTasks(
       };
       available -= 1;
     } catch (error) {
+      if (isTenderStageCapacityError(error)) {
+        // Slot is full or memory-guarded — leave the task queued. A later
+        // status poll will dispatch once active handoffs drain.
+        tasks[index] = {
+          ...task,
+          status: 'pending',
+          updatedAt: now,
+          error: undefined,
+        };
+        atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
+        break;
+      }
       tasks[index] = {
         ...task,
         status: 'failed',
@@ -290,6 +335,17 @@ async function dispatchPendingTasks(
     atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
   }
   return { ...board, tasks, updatedAt: new Date().toISOString() };
+}
+
+function quarantineInvalidReport(reportPath: string): void {
+  if (!existsSync(reportPath)) return;
+  const stamp = Date.now();
+  const quarantinePath = `${reportPath}.invalid.${stamp}`;
+  try {
+    renameSync(reportPath, quarantinePath);
+  } catch {
+    // Best-effort: if rename fails, reconcileTask still protects in-flight retries.
+  }
 }
 
 function readTaskBoard(

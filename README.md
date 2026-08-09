@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.3.1.**
+**Current release: V2.3.2.**
 
-**当前发布版：V2.3.1。**
+**当前发布版：V2.3.2。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.3.2 Tender Retry Fix + Runtime Uplift / V2.3.2 投标重试修复与运行时升级
+
+V2.3.2 fixes tender workbench batch retry false-failures when spawn handoff slots are full, and uplifts Claude Agent SDK to 0.3.226 and Pi runtime to 0.84.1.
+
+V2.3.2 修复投标工作台在 spawn handoff 槽位满时重试误报失败的问题，并将 Claude Agent SDK 升级到 0.3.226、Pi 运行时升级到 0.84.1。
 
 ### V2.3.1 Pi 0.83 + HTML Artifacts / V2.3.1 Pi 0.83 与 HTML 产物
 
