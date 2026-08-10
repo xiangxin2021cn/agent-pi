@@ -93,6 +93,13 @@ export interface TenderBoqResourceCoverage {
   basis: string;
 }
 
+export interface TenderBoqRateWebEvidence {
+  url: string;
+  title?: string;
+  accessedAt: string;
+  note?: string;
+}
+
 export interface TenderBoqRateBasis {
   sourceType:
     | 'supplier_quote'
@@ -108,6 +115,8 @@ export interface TenderBoqRateBasis {
   location: string;
   effectiveDate: string;
   vatTreatment: 'exclusive';
+  /** Web price-verification hits collected during C5.1 Step 3 (市场询价核证). */
+  webEvidence?: TenderBoqRateWebEvidence[];
 }
 
 export interface TenderBoqDirectCostSummary {

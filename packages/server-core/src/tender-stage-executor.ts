@@ -359,7 +359,7 @@ async function dispatchPendingTasks(
     try {
       const result = await execution.spawnSession(parentSessionId, {
         name: spec.name,
-        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. Use only the allowed sources attached to this task. For BOQ pricing, complete one C5.1 pure-direct-cost workpaper per assigned item; a resource database or summary report is not a valid substitute. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
+        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. The tender documents attached to this task are the only valid basis for scope, quantities, specifications, and measurement rules. For BOQ pricing, complete one C5.1 pure-direct-cost workpaper per assigned item; a resource database or summary report is not a valid substitute. For resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt); rates that cannot be verified online stay assumptionStatus "unverified" — never invent a rate. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
         workingDirectory: options.workingDirectory,
         briefPath: spec.briefPath,
         reportPath: spec.reportPath,

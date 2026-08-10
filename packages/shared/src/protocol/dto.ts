@@ -588,6 +588,9 @@ export interface TenderStageRunResultDto {
       linkedIsProcessing?: boolean;
       linkedSessionStatus?: string;
     }>;
+    invalidBatches?: Array<{ batchId: string; errors: string[] }>;
+    validationWarningCount?: number;
+    skippedItems?: Array<{ itemId: string; code: string; reason: string }>;
   };
   sourceBoundary: {
     schemaVersion: 1;

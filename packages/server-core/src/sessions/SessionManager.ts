@@ -6715,7 +6715,18 @@ export class SessionManager implements ISessionManager {
       return
     }
     if (parent.spawnHandoffWait.source === 'tender_task_board') {
-      this.clearSpawnHandoffWait(parent)
+      if (parent.spawnHandoffWait.resumeScheduled) return
+      parent.spawnHandoffWait.resumeScheduled = true
+      const tenderReports = decision.reportPaths.map((path) => `- ${path}`).join('\n')
+      const tenderPrompt = [
+        '<tender-batches-ready>',
+        'All tender batch subagents have finished and their reports passed runtime acceptance.',
+        'Read the accepted batch reports listed below. Do not repeat delegated analysis and do not rewrite or compress the reports — the runtime owns the deterministic pack merge.',
+        tenderReports || '(No report paths were recorded.)',
+        'Then run the tender stage status/complete check for the current stage, surface any normalization warnings or unverified rates to the user for review, and continue the stage workflow.',
+        '</tender-batches-ready>',
+      ].join('\n')
+      this.scheduleSpawnHandoffContinuation(parent, tenderPrompt)
       return
     }
     if (parent.spawnHandoffWait.resumeScheduled) return

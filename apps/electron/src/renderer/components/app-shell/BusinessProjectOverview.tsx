@@ -468,6 +468,31 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         </div>
                       </div>
                     )}
+                    {progress?.invalidBatches?.length ? (
+                      <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
+                        <p className="font-medium text-destructive">报告未通过验收（{progress.invalidBatches.length} 批）</p>
+                        <ul className="mt-1 space-y-1 text-muted-foreground">
+                          {progress.invalidBatches.slice(0, 4).map((batch) => (
+                            <li key={batch.batchId} className="min-w-0">
+                              <span className="font-mono text-[11px]">{batch.batchId}</span>
+                              {batch.errors.slice(0, 2).map((err, i) => (
+                                <p key={i} className="truncate" title={err}>· {err}</p>
+                              ))}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {(progress?.validationWarningCount ?? 0) > 0 && (
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {progress!.validationWarningCount} 条格式归一化提示已记录（非阻塞，供人工复核）
+                      </p>
+                    )}
+                    {progress?.skippedItems?.length ? (
+                      <p className="mt-1.5 text-[11px] text-muted-foreground" title={progress.skippedItems.map((item) => `${item.code}: ${item.reason}`).join('\n')}>
+                        {progress.skippedItems.length} 条对账行不进入组价（汇总行/人造组合）：{progress.skippedItems.slice(0, 3).map((item) => item.code).join('、')}{progress.skippedItems.length > 3 ? '…' : ''}
+                      </p>
+                    ) : null}
                     {progress?.tasks.length ? (
                       <div className="mt-2 text-xs">
                         <button

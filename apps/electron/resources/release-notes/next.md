@@ -9,5 +9,6 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 ## Bug Fixes
 
 <!-- Folded into 2.3.4.md: namespaced document-analysis merge; block compressed inline overwrite loop -->
+<!-- Folded into 2.4.0.md: tender workbench restructure — chapter-based BOQ batches, web rate verification, lenient normalization, runtime-owned pricing merge, auto-resume, 9→5 stages -->
 
 ## Breaking Changes

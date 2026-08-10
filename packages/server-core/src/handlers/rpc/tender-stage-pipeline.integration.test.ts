@@ -108,12 +108,13 @@ describe('tender stage pipeline RPC integration', () => {
       action: 'start', workspaceRootPath, projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
     }) as any
     expect(pricingStarted.status).toBe('running')
+    // V2.4.0: chapter-aware batching — one C5.1 chapter of 41 items splits at 25.
     expect(pricingStarted.batchProgress).toEqual(expect.objectContaining({
-      batchType: 'boq_five_step_pricing', itemCount: 41, batchCount: 4, completedBatches: 0,
+      batchType: 'boq_five_step_pricing', itemCount: 41, batchCount: 2, completedBatches: 0,
     }))
 
     const pricingManifest = readJson<any>(pricingStarted.paths.boqBatchManifestPath)
-    expect(pricingManifest.batches.map((batch: any) => batch.itemIds.length)).toEqual([12, 12, 12, 5])
+    expect(pricingManifest.batches.map((batch: any) => batch.itemIds.length)).toEqual([25, 16])
     const allBuildUps: any[] = []
     for (const batch of pricingManifest.batches) {
       const brief = readJson<any>(batch.briefPath)
@@ -130,6 +131,8 @@ describe('tender stage pipeline RPC integration', () => {
       allBuildUps.push(...buildUps)
     }
 
+    // All batches complete → the runtime owns the deterministic merge; the
+    // inline payload is ignored by design (V2.3.4/V2.4.0 anti-loop rule).
     await writeCapability(mutateTender, projectRoot, 'boq_five_step_pricing', {
       currency: 'ZAR',
       pricingStandard: 'c51_pure_direct_cost_v1',
@@ -141,12 +144,24 @@ describe('tender stage pipeline RPC integration', () => {
       assumptions: [],
     })
 
+    // V2.4.0: the consolidated pricing stage also requires user-confirmed
+    // bidder commitments before it can complete.
+    const indexPath = join(
+      projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender', 'capability-index.json',
+    )
+    const index = readJson<any>(indexPath)
+    index.capabilities.push({
+      capability: 'bidder_commitments', enabled: true, required: true, revision: 1,
+      readiness: 'ready', issueCount: 0, stale: false, updatedAt: '2026-08-10T00:00:00.000Z',
+    })
+    writeJson(indexPath, index)
+
     const pricingCompleted = await runStage(requestContext, {
       action: 'complete', workspaceRootPath, projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
     }) as any
     expect(pricingCompleted.status).toBe('complete')
     expect(pricingCompleted.batchProgress).toEqual(expect.objectContaining({
-      batchCount: 4, completedBatches: 4, missingItemCount: 0,
+      batchCount: 2, completedBatches: 2, missingItemCount: 0,
     }))
     expect(pricingCompleted.missingItems).toEqual([])
   })

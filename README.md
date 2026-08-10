@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.3.4.**
+**Current release: V2.4.0.**
 
-**当前发布版：V2.3.4。**
+**当前发布版：V2.4.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.4.0 Tender Workbench Restructure / V2.4.0 投标工作台业务化重构
+
+V2.4.0 restructures the tender workbench: BOQ pricing batches follow BOQ pages (one COTO chapter per subagent), children verify market rates online with recorded evidence, lenient normalization plus per-item validation ends format-driven invalid loops, the runtime owns the merged pricing pack, parent sessions auto-resume when batches finish, and the nine micro-stages consolidate into five business stages with legacy-id aliases.
+
+V2.4.0 重构投标工作台：BOQ 组价按 BOQ 页（每页一个 COTO 章节）派生子智能体并联网询价留证；宽容归一化与逐条验收终结格式死循环；合并定价包由运行时确定性写入；批次完成后主会话自动闭环；九个碎阶段收敛为五个业务阶段并兼容旧 ID。
 
 ### V2.3.4 Document-Analysis Merge Loop Fix / V2.3.4 文档分析合并死循环修复
 

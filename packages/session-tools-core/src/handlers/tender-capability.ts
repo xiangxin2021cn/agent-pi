@@ -53,6 +53,11 @@ import {
   mergeDocumentAnalysisBatchReports,
   type DocumentAnalysisMergeBatch,
 } from '../tender/document-analysis-merge.ts';
+import {
+  mergeBoqBatchReports,
+  type BoqPricingMergeBatch,
+} from '../tender/boq-pricing-merge.ts';
+import { parseTenderBoqFiveStepPricingDataLenient } from '@agent-pi/business-core/tender';
 import { applyManualTenderCloseoutEvidence } from './tender-manual-closeout.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
@@ -261,7 +266,12 @@ async function parseCapabilityData(
   if (capability === 'document_analysis') return parseTenderDocumentAnalysisData(data);
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
-  if (capability === 'boq_five_step_pricing') return parseTenderBoqFiveStepPricingData(data);
+  if (capability === 'boq_five_step_pricing') {
+    // Lenient: LLM-authored packs carry numbers as numbers, percent weights,
+    // etc. Format coercions are recorded as warnings; identity/completeness
+    // rules still fail hard downstream in the audit.
+    return parseTenderBoqFiveStepPricingDataLenient(data).data;
+  }
   if (capability === 'bidder_commitments') return parseTenderBidderCommitmentsData(data);
   if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
   if (capability === 'schedule_resources') return parseTenderScheduleResourceData(data);
@@ -369,7 +379,11 @@ function findUpstreamReadinessError(
       continue;
     }
     const entry = index.capabilities.find((candidate) => candidate.capability === dependency);
-    if (!entry || entry.revision === 0 || entry.readiness !== 'ready' || entry.stale) {
+    // needs_review = machine checks passed with warnings pending human review.
+    // Downstream work may proceed; the stage surface keeps warnings visible and
+    // submission_audit remains the final hard gate. Only not_ready/stale block.
+    if (!entry || entry.revision === 0 || entry.stale
+      || (entry.readiness !== 'ready' && entry.readiness !== 'needs_review')) {
       return `Tender capability ${capability} requires ready upstream capability ${dependency}.`;
     }
   }
@@ -501,6 +515,29 @@ function resolveCapabilityWriteData(
     }
   }
 
+  // boq_five_step_pricing: same rule — once every pricing batch is complete the
+  // runtime owns the merged pack. Hand-written inline packs could never survive
+  // the deep-equal merge gate and caused the same compression loops.
+  if (args.capability === 'boq_five_step_pricing') {
+    const synced = trySyncBoqPricingFromBatches(projectDirectory);
+    if (synced.ok) {
+      return {
+        data: synced.data,
+        source: 'batch_reports',
+        note: args.data !== undefined || args.dataPath
+          ? 'Ignored inline/dataPath payload; wrote deterministic merge from complete BOQ batch reports. Do not hand-assemble or compress the pricing pack.'
+          : 'Wrote deterministic merge from complete BOQ batch reports.',
+      };
+    }
+    if (synced.reason === 'merge_failed') {
+      return {
+        error: `boq_five_step_pricing batch merge failed: ${synced.errors.join('; ')}. `
+          + 'Fix child batch reports, then retry with empty data (runtime will merge) or call stage status/resume.',
+      };
+    }
+    // 'incomplete' → fall through to explicit data while batches are running.
+  }
+
   if (typeof args.dataPath === 'string' && args.dataPath.trim()) {
     const filePath = isAbsolute(args.dataPath) ? resolve(args.dataPath) : resolve(workingDirectory, args.dataPath);
     if (!isPathWithinDirectory(filePath, workingDirectory)) {
@@ -518,7 +555,54 @@ function resolveCapabilityWriteData(
   }
 
   if (args.data !== undefined) return { data: args.data, source: 'inline' };
-  return { error: `${args.action} requires data, dataPath, or complete document-analysis batch reports.` };
+  return { error: `${args.action} requires data, dataPath, or complete batch reports.` };
+}
+
+function trySyncBoqPricingFromBatches(projectDirectory: string):
+  | { ok: true; data: unknown }
+  | { ok: false; reason: 'incomplete' | 'merge_failed'; errors: string[] } {
+  const manifestPath = join(projectDirectory, 'boq-batch-manifest.json');
+  if (!existsSync(manifestPath)) return { ok: false, reason: 'incomplete', errors: [] };
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      completedBatches?: number;
+      batchCount?: number;
+      missingItemIds?: string[];
+      batches?: BoqPricingMergeBatch[];
+    };
+    const batches = Array.isArray(manifest.batches) ? manifest.batches : [];
+    if (
+      batches.length === 0
+      || manifest.completedBatches !== manifest.batchCount
+      || (manifest.missingItemIds?.length ?? 0) > 0
+      || batches.some((batch) => batch.status !== 'complete')
+    ) {
+      return { ok: false, reason: 'incomplete', errors: [] };
+    }
+    const merged = mergeBoqBatchReports(batches, readWorkspaceCurrency(projectDirectory));
+    if (merged.errors.length > 0 || !merged.data) {
+      return { ok: false, reason: 'merge_failed', errors: merged.errors };
+    }
+    return { ok: true, data: merged.data };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'merge_failed',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+function readWorkspaceCurrency(projectDirectory: string): string {
+  try {
+    const workspacePath = join(projectDirectory, 'tender-workspace.json');
+    if (!existsSync(workspacePath)) return 'USD';
+    const workspace = JSON.parse(readFileSync(workspacePath, 'utf8')) as { project?: { currency?: string } };
+    const currency = workspace.project?.currency;
+    return typeof currency === 'string' && /^[A-Z]{3}$/.test(currency) ? currency : 'USD';
+  } catch {
+    return 'USD';
+  }
 }
 
 function trySyncDocumentAnalysisFromBatches(projectDirectory: string):

@@ -1,6 +1,7 @@
 import type { TenderSourceLocator } from '../../types.ts';
 import type { TenderBoqItem, TenderScopeLink } from '../boq/types.ts';
 import { compareDecimalStrings, decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
+import { remapBoqPricingIssueSeverity } from './severity.ts';
 import type {
   TenderBoqDirectResourceKind,
   TenderBoqFiveStepItemBuildUp,
@@ -28,7 +29,7 @@ export function inspectTenderBoqItemC51Quality(
   buildUp: TenderBoqFiveStepItemBuildUp,
 ): TenderBoqItemQualityIssue[] {
   const issues: TenderBoqItemQualityIssue[] = [];
-  const error = (code: string, message: string) => issues.push({ code, severity: 'error', message });
+  const error = (code: string, message: string) => issues.push({ code, severity: remapBoqPricingIssueSeverity(code, 'error'), message });
 
   const identity = buildUp.itemIdentity;
   if (!identity) {

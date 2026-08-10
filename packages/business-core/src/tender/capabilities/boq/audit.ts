@@ -1,5 +1,6 @@
 import type { TenderDocumentKind, TenderSourceLocator, TenderWorkspace } from '../../types.ts';
 import type { TenderCapabilityAuditIssue } from '../types.ts';
+import { boqPricingIneligibilityReason } from './pricing-eligibility.ts';
 import { parseTenderBoqReconciliationData } from './schema.ts';
 import type {
   TenderBoqReconciliationAudit,
@@ -122,7 +123,18 @@ export function auditTenderBoqReconciliation(
     }
     for (const source of item.quantityRefs) inspectReference(source, item.id);
 
-    if (!scopeLinkByItemId.has(item.id)) {
+    const ineligibility = boqPricingIneligibilityReason(item);
+    if (ineligibility) {
+      issues.push({
+        code: 'boq_item_not_pricable',
+        severity: 'warning',
+        entityType: 'boq_item',
+        entityId: item.id,
+        message: `BOQ item ${item.id} is excluded from pricing batches: ${ineligibility}.`,
+      });
+    }
+
+    if (!scopeLinkByItemId.has(item.id) && !ineligibility) {
       issues.push({
         code: 'boq_scope_link_missing',
         severity: 'error',

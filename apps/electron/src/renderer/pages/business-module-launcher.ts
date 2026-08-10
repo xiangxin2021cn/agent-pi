@@ -121,8 +121,8 @@ Monitor the exact task_board_path and document_analysis_batch_manifest_path. Whe
   return `
 <controlled_subagent_dispatch>
 The backend stage controller owns BOQ batch dispatch, bounded concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, directly price an unfinished child range, or create substitute reports.
-Each child must follow the C5.1 pure-direct-cost quality standard embedded in its brief. A resource database, market-rate summary, chapter narrative, or unpriced scope register is input evidence only and cannot satisfy a batch.
-Monitor the exact task_board_path and boq_batch_manifest_path. Wait until every child report is schema-valid and C5.1-complete, then merge only those reports, run conflict and full-item coverage checks, and write the boq_five_step_pricing capability pack before downstream planning.
+Batches are segmented by BOQ sheet chapter (each BOQ page ≈ one COTO chapter). Each child follows the C5.1 pure-direct-cost quality standard embedded in its brief and verifies key resource rates online (webEvidence); unverifiable rates stay "unverified".
+Monitor the exact task_board_path and boq_batch_manifest_path. When every batch report is accepted, call stage status/resume or tender_capability init/replace for boq_five_step_pricing with NO inline data — the runtime merges batch reports into packs/boq-five-step-pricing.json deterministically. Never hand-assemble, compress, or rewrite pricing content into the tool call. Review normalization warnings and unverified rates with the user, then confirm bidder commitments (bidder_commitments) before downstream planning.
 </controlled_subagent_dispatch>
 `
 }

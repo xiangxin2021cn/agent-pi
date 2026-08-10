@@ -16,7 +16,7 @@ describe('tender BOQ batch manifest', () => {
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('splits BOQ work by source sheet and a maximum of 12 ordered C5.1 items', () => {
+  test('splits BOQ work by sheet chapter, splitting oversized chapters at 25 items', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
     const manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(45), new Map([
       ['boq', 'C:/inputs/BOQ.xlsx'],
@@ -24,11 +24,12 @@ describe('tender BOQ batch manifest', () => {
     ]));
 
     expect(manifest.itemCount).toBe(45);
-    expect(manifest.batches).toHaveLength(4);
-    expect(manifest.batches.map((batch) => batch.itemIds.length)).toEqual([12, 12, 12, 9]);
+    // All 45 items share chapter 5.1 → one oversized chapter split at the cap.
+    expect(manifest.batches).toHaveLength(2);
+    expect(manifest.batches.map((batch) => batch.itemIds.length)).toEqual([25, 20]);
     expect(manifest.batches[0]?.source.sheet).toBe('C5.1');
     expect(manifest.batches[0]?.source.firstCell).toBe('A1:F1');
-    expect(manifest.batches[0]?.source.lastCell).toBe('A12:F12');
+    expect(manifest.batches[0]?.source.lastCell).toBe('A25:F25');
 
     const brief = JSON.parse(readFileSync(manifest.batches[0]!.briefPath, 'utf8')) as TenderBoqBatchBrief;
     expect(Object.keys(brief).sort()).toEqual([
@@ -80,7 +81,10 @@ describe('tender BOQ batch manifest', () => {
     }));
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
 
-    expect(manifest.batches[0]?.status).toBe('invalid');
+    // V2.4.0: complete-but-unreviewed workpapers are accepted with a warning —
+    // commercial sign-off belongs to the human reviewer, not the batch gate.
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(manifest.batches[0]?.validationWarnings.some((warning) => warning.includes('not reviewed'))).toBe(true);
 
     writeFileSync(batch.reportPath, JSON.stringify({
       schemaVersion: 1,
@@ -113,6 +117,56 @@ describe('tender BOQ batch manifest', () => {
     expect(validateBoqBatchMerge(manifest, pricingData([buildUp]))).toEqual([]);
   });
 
+  test('keeps small chapters whole in one batch and skips non-pricable summary rows', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
+    const data = boqData(0);
+    data.items = [
+      { id: 'sum-1', source: { documentId: 'boq', sheet: 'C2.3', cell: 'A6:F6' }, code: 'SCH-A', description: 'Schedule A 小计', unit: 'ZAR', quantity: '85490000', quantityBasis: 'boq', quantityStatus: 'sourced', quantityRefs: [] },
+      { id: 'comb-1', source: { documentId: 'boq', sheet: 'SCH A', cell: 'A10:F200' }, code: '组合1', description: '组合1 C1.2-C1.7', unit: 'composite', quantity: undefined, quantityBasis: 'not_provided', quantityStatus: 'unverified', quantityRefs: [] },
+      ...['C1.2.1', 'C1.2.2', 'C1.3.1', 'C1.3.2', 'C1.3.3'].map((code, index) => ({
+        id: `item-${code}`,
+        source: { documentId: 'boq', sheet: 'SCH A', cell: `A${index + 1}:F${index + 1}` },
+        code,
+        description: `Item ${code}`,
+        unit: 'm3',
+        quantity: '10',
+        quantityBasis: 'boq' as const,
+        quantityStatus: 'sourced' as const,
+        quantityRefs: [],
+      })),
+    ];
+    const manifest = createOrRefreshBoqBatchManifest(root, 'n3', data);
+
+    expect(manifest.skippedItems.map((item) => item.itemId).sort()).toEqual(['comb-1', 'sum-1']);
+    // C1.2 (2 items) and C1.3 (3 items) are distinct small chapters → merged into one batch.
+    expect(manifest.batches).toHaveLength(1);
+    expect(manifest.batches[0]?.itemIds).toHaveLength(5);
+    expect(manifest.itemCount).toBe(5);
+  });
+
+  test('accepts reports with numeric values and percent weights via normalization', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
+    let manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
+    const batch = manifest.batches[0]!;
+    const buildUp = completeBuildUp(batch.itemIds[0]!) as Record<string, any>;
+    buildUp.directCost = 10;
+    buildUp.productivityBasis.workingHoursPerDay = 8;
+    buildUp.productivityBasis.scenarios = buildUp.productivityBasis.scenarios.map((scenario: Record<string, any>) => ({
+      ...scenario,
+      effectiveFactor: scenario.scenario === 'base' ? '50' : scenario.effectiveFactor,
+    }));
+    buildUp.costComponents[0].rate = 10;
+    writeFileSync(batch.reportPath, JSON.stringify({
+      schemaVersion: 1,
+      batchId: batch.batchId,
+      itemBuildUps: [buildUp],
+    }));
+    manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
+
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(manifest.batches[0]?.validationWarnings.some((warning) => warning.includes('effectiveFactor'))).toBe(true);
+  });
+
   test('cannot pass from a completion claim when zero child batches have validated coverage', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
     const manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
@@ -130,7 +184,7 @@ describe('tender BOQ batch manifest', () => {
   test('rejects deterministic resource, productivity, and activity conflicts across batches', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
     let manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(41));
-    expect(manifest.batches).toHaveLength(4);
+    expect(manifest.batches).toHaveLength(2);
 
     const buildUps = manifest.batches.flatMap((batch, batchIndex) => batch.itemIds.map((boqItemId, itemIndex) => {
       const buildUp = completeBuildUp(boqItemId);

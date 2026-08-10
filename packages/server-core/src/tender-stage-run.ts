@@ -7,6 +7,7 @@ import {
   createNodeFileSystem,
   handleTenderCapability,
   handleTenderWorkspace,
+  mergeBoqBatchReports,
   type SessionToolContext,
 } from '@craft-agent/session-tools-core';
 import {
@@ -97,6 +98,12 @@ export interface TenderStageRunResult {
     failedBatches: number;
     blockedBatches: number;
     tasks: TenderStageTaskRecord[];
+    /** Batches whose reports failed acceptance, with the top reasons. */
+    invalidBatches?: Array<{ batchId: string; errors: string[] }>;
+    /** Non-blocking normalization notes collected while accepting reports. */
+    validationWarningCount?: number;
+    /** Reconciliation rows excluded from pricing (summary rows, composites). */
+    skippedItems?: Array<{ itemId: string; code: string; reason: string }>;
   };
   sourceBoundary: TenderSourceBoundary;
   updatedAt: string;
@@ -126,6 +133,10 @@ interface PersistedTenderStageState {
   stages: Record<string, Omit<TenderStageRunResult, 'sourceBoundary' | 'paths'>>;
 }
 
+// V2.4.0 stage consolidation: 9 hard-gated micro-stages → 5 business stages.
+// Capability packs underneath are unchanged; only the orchestration wrappers
+// merged. Legacy stage ids resolve through STAGE_ALIASES so existing projects
+// keep loading.
 const STAGES: TenderStageDefinition[] = [
   { id: 'project-setup', requiredCapabilities: [], producedCapabilities: [] },
   {
@@ -136,39 +147,32 @@ const STAGES: TenderStageDefinition[] = [
   {
     id: 'boq-five-step-pricing',
     requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
-    producedCapabilities: ['boq_five_step_pricing'],
+    producedCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
   },
   {
-    id: 'bidder-commitments',
-    requiredCapabilities: ['document_analysis', 'boq_five_step_pricing'],
-    producedCapabilities: ['bidder_commitments'],
+    id: 'planning',
+    requiredCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
+    producedCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
   },
   {
-    id: 'work-plan-methodology',
-    requiredCapabilities: ['document_analysis', 'boq_reconciliation', 'boq_five_step_pricing', 'bidder_commitments'],
-    producedCapabilities: ['execution_plan'],
-  },
-  {
-    id: 'schedule-resource-planning',
-    requiredCapabilities: ['execution_plan', 'boq_five_step_pricing'],
-    producedCapabilities: ['schedule_resources'],
-  },
-  {
-    id: 'cost-cashflow-planning',
-    requiredCapabilities: ['boq_reconciliation', 'boq_five_step_pricing', 'schedule_resources'],
-    producedCapabilities: ['cost_cashflow'],
-  },
-  {
-    id: 'tender-submission-documents',
+    id: 'submission',
     requiredCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
-    producedCapabilities: ['submission_documents'],
-  },
-  {
-    id: 'submission-audit',
-    requiredCapabilities: ['submission_documents'],
-    producedCapabilities: ['submission_audit'],
+    producedCapabilities: ['submission_documents', 'submission_audit'],
   },
 ];
+
+const STAGE_ALIASES: Record<string, string> = {
+  'bidder-commitments': 'boq-five-step-pricing',
+  'work-plan-methodology': 'planning',
+  'schedule-resource-planning': 'planning',
+  'cost-cashflow-planning': 'planning',
+  'tender-submission-documents': 'submission',
+  'submission-audit': 'submission',
+};
+
+function canonicalStageId(stageId: string): string {
+  return STAGE_ALIASES[stageId] ?? stageId;
+}
 
 export async function runTenderStage(
   request: TenderStageRunRequest,
@@ -177,7 +181,7 @@ export async function runTenderStage(
   const project = listBusinessProjects(request.workspaceRootPath, 'tender')
     .find((candidate) => candidate.projectId === request.projectId);
   if (!project) throw new Error(`Tender Business Project ${request.projectId} does not exist.`);
-  const stage = STAGES.find((candidate) => candidate.id === request.stageId);
+  const stage = STAGES.find((candidate) => candidate.id === canonicalStageId(request.stageId));
   if (!stage) throw new Error(`Unknown tender stage: ${request.stageId}`);
 
   const paths = resolvePaths(project.rootPath, project.projectId);
@@ -253,19 +257,45 @@ export async function runTenderStage(
     documentMergeRuntimeErrors.push(...mergeResult.errors);
     if (existsSync(paths.capabilityIndexPath)) {
       capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
-      generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest);
+      generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
     }
   } else {
-    generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest);
+    generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
+  }
+
+  // Same deterministic ownership for BOQ pricing: once every pricing batch is
+  // complete, merge child reports into packs/boq-five-step-pricing.json instead
+  // of letting the parent hand-assemble (and compress) the pack.
+  const boqMergeRuntimeErrors: string[] = [];
+  if (
+    stage.id === 'boq-five-step-pricing'
+    && boqBatchManifest
+    && boqBatchManifest.batchCount > 0
+    && boqBatchManifest.completedBatches === boqBatchManifest.batchCount
+    && boqBatchManifest.missingItemIds.length === 0
+    && boqBatchManifest.batches.every((batch) => batch.status === 'complete')
+  ) {
+    const mergeResult = await ensureBoqPackMerged({
+      context,
+      paths,
+      projectId: project.projectId,
+      manifest: boqBatchManifest,
+      workspace,
+    });
+    boqMergeRuntimeErrors.push(...mergeResult.errors);
+    if (existsSync(paths.capabilityIndexPath)) {
+      capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
+      generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
+    }
   }
 
   const persisted = readStageState(paths.stageStatePath, project.projectId);
-  const previous = persisted.stages[stage.id];
+  const previous = persisted.stages[stage.id] ?? latestLegacyStageState(persisted, stage.id);
   const baseMissingItems = [
     ...sourceBoundary.missingPaths.map((path) => `source:${path}`),
     ...(sourceBoundary.registeredCount === 0 ? ['source:registered-file-required'] : []),
     ...stage.requiredCapabilities
-      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest))
+      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest))
       .map((capability) => `capability:${capability}`),
   ];
   if (stage.id === 'tender-document-analysis') {
@@ -298,7 +328,7 @@ export async function runTenderStage(
   const completionMissingItems: string[] = [];
   if (shouldEvaluateCompletion) {
     completionMissingItems.push(...stage.producedCapabilities
-      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest))
+      .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest))
       .map((capability) => `output:${capability}`));
     if (
       stage.id === 'tender-document-analysis'
@@ -331,10 +361,11 @@ export async function runTenderStage(
       && boqBatchManifest
       && boqBatchManifest.completedBatches === boqBatchManifest.batchCount
       && boqBatchManifest.missingItemIds.length === 0
-      && generatedPacks.includes('boq_five_step_pricing')
     ) {
-      completionMissingItems.push(...validateFinalBoqMerge(paths, boqBatchManifest)
-        .map((error) => `boq-merge:${error}`));
+      completionMissingItems.push(
+        ...boqMergeRuntimeErrors.map((error) => `boq-merge:${error}`),
+        ...validateFinalBoqMerge(paths, boqBatchManifest).map((error) => `boq-merge:${error}`),
+      );
     }
   }
 
@@ -422,16 +453,25 @@ function listSatisfiedPacks(
   index: TenderCapabilityIndex,
   paths: ReturnType<typeof resolvePaths>,
   documentManifest?: TenderDocumentAnalysisBatchManifest,
+  boqManifest?: TenderBoqBatchManifest,
 ): TenderCapabilityId[] {
   const ready = listReadyPacks(index);
+  const satisfied = [...ready];
   if (
     documentManifest
-    && isCapabilitySatisfied('document_analysis', index, paths, documentManifest)
-    && !ready.includes('document_analysis')
+    && isCapabilitySatisfied('document_analysis', index, paths, documentManifest, boqManifest)
+    && !satisfied.includes('document_analysis')
   ) {
-    return [...ready, 'document_analysis'];
+    satisfied.push('document_analysis');
   }
-  return ready;
+  if (
+    boqManifest
+    && isCapabilitySatisfied('boq_five_step_pricing', index, paths, documentManifest, boqManifest)
+    && !satisfied.includes('boq_five_step_pricing')
+  ) {
+    satisfied.push('boq_five_step_pricing');
+  }
+  return satisfied;
 }
 
 function isCapabilitySatisfied(
@@ -439,19 +479,31 @@ function isCapabilitySatisfied(
   index: TenderCapabilityIndex,
   paths: ReturnType<typeof resolvePaths>,
   documentManifest?: TenderDocumentAnalysisBatchManifest,
+  boqManifest?: TenderBoqBatchManifest,
 ): boolean {
   const entry = index.capabilities.find((candidate) => candidate.capability === capability);
   if (!entry || entry.revision <= 0 || entry.stale) return false;
   if (entry.readiness === 'ready') return true;
-  // Deterministic document-analysis merge may land as needs_review when some
-  // child sections are still draft; accept it once the pack exists and matches.
-  if (
-    capability === 'document_analysis'
-    && entry.readiness === 'needs_review'
-    && documentManifest
-    && validateFinalDocumentAnalysisMerge(paths, documentManifest).length === 0
-  ) {
-    return true;
+  // Deterministic merges may land as needs_review when some child records are
+  // still draft; accept them once the pack exists and matches the merge.
+  if (entry.readiness === 'needs_review') {
+    if (
+      capability === 'document_analysis'
+      && documentManifest
+      && validateFinalDocumentAnalysisMerge(paths, documentManifest).length === 0
+    ) {
+      return true;
+    }
+    if (
+      capability === 'boq_five_step_pricing'
+      && boqManifest
+      && boqManifest.batchCount > 0
+      && boqManifest.completedBatches === boqManifest.batchCount
+      && boqManifest.missingItemIds.length === 0
+      && validateFinalBoqMerge(paths, boqManifest).length === 0
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -518,6 +570,54 @@ function validateFinalDocumentAnalysisMerge(
   );
 }
 
+async function ensureBoqPackMerged(input: {
+  context: SessionToolContext;
+  paths: ReturnType<typeof resolvePaths>;
+  projectId: string;
+  manifest: TenderBoqBatchManifest;
+  workspace: TenderWorkspace;
+}): Promise<{ errors: string[] }> {
+  const packPath = join(input.paths.projectDirectory, 'packs', 'boq-five-step-pricing.json');
+  const existingMergeErrors = existsSync(packPath)
+    ? validateFinalBoqMerge(input.paths, input.manifest)
+    : ['missing'];
+  const currency = /^[A-Z]{3}$/.test(input.workspace.project.currency ?? '')
+    ? input.workspace.project.currency!
+    : 'USD';
+  const merged = mergeBoqBatchReports(input.manifest.batches, currency);
+  if (merged.errors.length > 0 || !merged.data) return { errors: merged.errors };
+  if (existingMergeErrors.length === 0) return { errors: [] };
+
+  const action = existsSync(packPath) ? 'replace' : 'init';
+  // Omit inline data — tender_capability syncs from batch reports when complete.
+  const result = await handleTenderCapability(input.context, {
+    action,
+    projectId: input.projectId,
+    capability: 'boq_five_step_pricing',
+  });
+  if (result.isError) {
+    return {
+      errors: [result.content.map((block) => block.text).join('\n') || 'boq_five_step_pricing merge write failed'],
+    };
+  }
+  return { errors: [] };
+}
+
+function latestLegacyStageState(
+  persisted: PersistedTenderStageState,
+  canonicalId: string,
+): Omit<TenderStageRunResult, 'sourceBoundary' | 'paths'> | undefined {
+  const legacyIds = Object.entries(STAGE_ALIASES)
+    .filter(([, canonical]) => canonical === canonicalId)
+    .map(([legacy]) => legacy);
+  let latest: Omit<TenderStageRunResult, 'sourceBoundary' | 'paths'> | undefined;
+  for (const legacyId of legacyIds) {
+    const candidate = persisted.stages[legacyId];
+    if (candidate && (!latest || candidate.updatedAt > latest.updatedAt)) latest = candidate;
+  }
+  return latest;
+}
+
 function validateFinalBoqMerge(
   paths: ReturnType<typeof resolvePaths>,
   manifest: TenderBoqBatchManifest,
@@ -549,6 +649,9 @@ function documentBatchProgress(
     missingItemCount: manifest.missingDocumentIds.length,
     manifestPath: manifest.manifestPath,
     ...taskBoardProgress(taskBoard),
+    invalidBatches: manifest.batches
+      .filter((batch) => batch.status === 'invalid')
+      .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
   };
 }
 
@@ -564,6 +667,11 @@ function boqBatchProgress(
     missingItemCount: manifest.missingItemIds.length,
     manifestPath: manifest.manifestPath,
     ...taskBoardProgress(taskBoard),
+    invalidBatches: manifest.batches
+      .filter((batch) => batch.status === 'invalid')
+      .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
+    validationWarningCount: manifest.batches.reduce((sum, batch) => sum + (batch.validationWarnings?.length ?? 0), 0),
+    skippedItems: manifest.skippedItems ?? [],
   };
 }
 

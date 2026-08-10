@@ -150,6 +150,12 @@ export {
   validateDocumentAnalysisBatchMerge,
   type DocumentAnalysisMergeBatch,
 } from './tender/document-analysis-merge.ts';
+export {
+  mergeBoqBatchReports,
+  validateBoqPricingBatchMerge,
+  type BoqPricingMergeBatch,
+  type BoqPricingMergeResult,
+} from './tender/boq-pricing-merge.ts';
 
 // Handlers
 export {

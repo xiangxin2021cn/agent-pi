@@ -76,7 +76,7 @@ describe('tender stage runner', () => {
     expect(result.missingItems).toContain('capability:boq_reconciliation');
   });
 
-  test('requires user-confirmed bidder commitments before construction methodology planning', async () => {
+  test('requires user-confirmed bidder commitments before planning (legacy stage ids resolve)', async () => {
     const fixture = createFixture();
     await runTenderStage({
       action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
@@ -98,19 +98,34 @@ describe('tender stage runner', () => {
       ],
     }));
 
-    const commitments = await runTenderStage({
-      action: 'start', workspaceRootPath: fixture.workspaceRoot,
-      projectId: 'n3-tender', stageId: 'bidder-commitments',
-    });
-    const methodology = await runTenderStage({
+    // V2.4.0: bidder commitments merged into the pricing stage; methodology/
+    // schedule/cost stages merged into planning. Legacy ids still resolve.
+    const planning = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'work-plan-methodology',
     });
 
-    expect(commitments.status).toBe('running');
-    expect(commitments.producedCapabilities).toEqual(['bidder_commitments']);
-    expect(methodology.status).toBe('blocked');
-    expect(methodology.missingItems).toContain('capability:bidder_commitments');
+    expect(planning.stageId).toBe('planning');
+    expect(planning.status).toBe('blocked');
+    expect(planning.missingItems).toContain('capability:bidder_commitments');
+
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      coreRevision: 3,
+      capabilities: [
+        entry('document_analysis'),
+        entry('boq_reconciliation'),
+        entry('boq_five_step_pricing'),
+        entry('bidder_commitments'),
+      ],
+    }));
+    const unblocked = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'planning',
+    });
+    expect(unblocked.status).toBe('running');
+    expect(unblocked.producedCapabilities).toEqual(['execution_plan', 'schedule_resources', 'cost_cashflow']);
   });
 
   test('uses manual stage closeout evidence to satisfy document-analysis upstream readiness', async () => {
@@ -162,7 +177,7 @@ describe('tender stage runner', () => {
       .toBe('ready');
   });
 
-  test('keeps schedule/resources and cost/cashflow as separate gated stages', async () => {
+  test('gates submission on all planning packs under the consolidated stages', async () => {
     const fixture = createFixture();
     await runTenderStage({
       action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
@@ -181,23 +196,27 @@ describe('tender stage runner', () => {
       capabilities: [
         entry('boq_reconciliation'),
         entry('boq_five_step_pricing'),
-        entry('execution_plan'),
+        entry('bidder_commitments'),
       ],
     }));
 
-    const schedule = await runTenderStage({
+    const planning = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
-      projectId: 'n3-tender', stageId: 'schedule-resource-planning',
+      projectId: 'n3-tender', stageId: 'planning',
     });
-    const costBlocked = await runTenderStage({
+    // Legacy id for the old standalone audit stage resolves to 'submission'.
+    const submissionBlocked = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
-      projectId: 'n3-tender', stageId: 'cost-cashflow-planning',
+      projectId: 'n3-tender', stageId: 'submission-audit',
     });
 
-    expect(schedule.status).toBe('running');
-    expect(schedule.producedCapabilities).toEqual(['schedule_resources']);
-    expect(costBlocked.status).toBe('blocked');
-    expect(costBlocked.missingItems).toContain('capability:schedule_resources');
+    expect(planning.status).toBe('running');
+    expect(planning.producedCapabilities).toEqual(['execution_plan', 'schedule_resources', 'cost_cashflow']);
+    expect(submissionBlocked.stageId).toBe('submission');
+    expect(submissionBlocked.status).toBe('blocked');
+    expect(submissionBlocked.missingItems).toContain('capability:execution_plan');
+    expect(submissionBlocked.missingItems).toContain('capability:schedule_resources');
+    expect(submissionBlocked.missingItems).toContain('capability:cost_cashflow');
   });
 
   test('creates one document-analysis batch per registered source and gates the stage merge', async () => {
@@ -409,15 +428,27 @@ describe('tender stage runner', () => {
       itemBuildUps: [buildUp],
     }));
     writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(true)));
+    // A stale hand-written pack that disagrees with the child report gets
+    // deterministically replaced by the runtime merge — no boq-merge deadlock.
     writeCapabilityPack(projectDirectory, 'boq_five_step_pricing', pricingData([{ ...buildUp, directCost: '11' }]));
-    const mergeBlocked = await runTenderStage({
+    const merged = await runTenderStage({
       action: 'complete', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
     });
-    expect(mergeBlocked.status).toBe('blocked');
-    expect(mergeBlocked.missingItems.some((item) => item.startsWith('boq-merge:'))).toBe(true);
+    expect(merged.missingItems.some((item) => item.startsWith('boq-merge:'))).toBe(false);
+    // V2.4.0: the pricing stage also gates on user-confirmed bidder commitments.
+    expect(merged.status).toBe('blocked');
+    expect(merged.missingItems).toContain('output:bidder_commitments');
+    const packAfterMerge = JSON.parse(readFileSync(join(projectDirectory, 'packs', 'boq-five-step-pricing.json'), 'utf8'));
+    expect(packAfterMerge.data.itemBuildUps[0].directCost).toBe('10');
 
-    writeCapabilityPack(projectDirectory, 'boq_five_step_pricing', pricingData([buildUp]));
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      ...capabilityIndex(true),
+      capabilities: [...capabilityIndex(true).capabilities, {
+        capability: 'bidder_commitments', enabled: true, required: true, revision: 1, readiness: 'ready',
+        issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+      }],
+    }));
     const completed = await runTenderStage({
       action: 'complete', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'boq-five-step-pricing',

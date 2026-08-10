@@ -96,6 +96,13 @@ const TenderBoqResourceCoverageSchema = z.object({
   basis: NonEmptyString,
 }).strict();
 
+const TenderBoqRateWebEvidenceSchema = z.object({
+  url: z.string().regex(/^https?:\/\//i, 'Expected an http(s) evidence URL.'),
+  title: NonEmptyString.optional(),
+  accessedAt: DateSchema,
+  note: NonEmptyString.optional(),
+}).strict();
+
 const TenderBoqRateBasisSchema = z.object({
   sourceType: z.enum([
     'supplier_quote', 'historical_purchase', 'internal_ledger', 'published_schedule',
@@ -105,6 +112,7 @@ const TenderBoqRateBasisSchema = z.object({
   location: NonEmptyString,
   effectiveDate: DateSchema,
   vatTreatment: z.literal('exclusive'),
+  webEvidence: z.array(TenderBoqRateWebEvidenceSchema).optional(),
 }).strict();
 
 const TenderBoqDirectCostSummarySchema = z.object({

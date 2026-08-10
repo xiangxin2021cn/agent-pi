@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
   inspectTenderBoqItemC51Quality,
-  parseTenderBoqFiveStepPricingData,
+  boqPricingIneligibilityReason,
+  normalizeAndValidateBoqItemBuildUps,
+  parseTenderBoqFiveStepPricingDataLenient,
   decimalStringsEqual,
   type TenderBoqReconciliationData,
   type TenderBoqFiveStepItemBuildUp,
@@ -48,6 +50,14 @@ export interface TenderBoqBatchRecord {
   reportPath: string;
   status: 'pending' | 'complete' | 'invalid';
   validationErrors: string[];
+  /** Coercions applied during lenient report parsing — reviewable, non-blocking. */
+  validationWarnings: string[];
+}
+
+export interface TenderBoqSkippedItem {
+  itemId: string;
+  code: string;
+  reason: string;
 }
 
 export interface TenderBoqBatchManifest {
@@ -58,11 +68,15 @@ export interface TenderBoqBatchManifest {
   batchCount: number;
   completedBatches: number;
   missingItemIds: string[];
+  skippedItems: TenderBoqSkippedItem[];
   batches: TenderBoqBatchRecord[];
   manifestPath: string;
 }
 
-const MAX_ITEMS_PER_BATCH = 12;
+// Business-boundary batching: one batch per BOQ sheet chapter (each BOQ page is
+// roughly one COTO chapter). Oversized chapters split by row order; small
+// chapters merge up to the cap so a subagent always sees a whole chapter.
+const MAX_ITEMS_PER_BATCH = 25;
 
 export function createOrRefreshBoqBatchManifest(
   projectDirectory: string,
@@ -77,8 +91,16 @@ export function createOrRefreshBoqBatchManifest(
   mkdirSync(reportDirectory, { recursive: true });
 
   const scopeLinkByItemId = new Map(boq.scopeLinks.map((link) => [link.boqItemId, link]));
-  const grouped = new Map<string, typeof boq.items>();
+  const eligibleItems: typeof boq.items = [];
+  const skippedItems: TenderBoqSkippedItem[] = [];
   for (const item of boq.items) {
+    const reason = boqPricingIneligibilityReason(item);
+    if (reason) skippedItems.push({ itemId: item.id, code: item.code, reason });
+    else eligibleItems.push(item);
+  }
+
+  const grouped = new Map<string, typeof boq.items>();
+  for (const item of eligibleItems) {
     const key = `${item.source.documentId}\u0000${item.source.sheet ?? '(unspecified)'}`;
     const items = grouped.get(key) ?? [];
     items.push(item);
@@ -87,12 +109,13 @@ export function createOrRefreshBoqBatchManifest(
 
   const batches: TenderBoqBatchRecord[] = [];
   for (const items of grouped.values()) {
-    for (let start = 0; start < items.length; start += MAX_ITEMS_PER_BATCH) {
-      const chunk = items.slice(start, start + MAX_ITEMS_PER_BATCH);
+    const chunks = segmentIntoChapterBatches(items);
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      const chunk = chunks[chunkIndex]!;
       const first = chunk[0]!;
       const last = chunk[chunk.length - 1]!;
       const sheet = first.source.sheet ?? '(unspecified)';
-      const batchNumber = Math.floor(start / MAX_ITEMS_PER_BATCH) + 1;
+      const batchNumber = chunkIndex + 1;
       const batchId = createBatchId(first.source.documentId, sheet, batchNumber);
       const briefPath = join(briefDirectory, `${batchId}.json`);
       const reportPath = join(reportDirectory, `${batchId}.json`);
@@ -108,7 +131,7 @@ export function createOrRefreshBoqBatchManifest(
         schemaVersion: 1,
         projectId,
         batchId,
-        objective: 'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register.',
+        objective: 'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register. Tender documents are the only valid basis for scope, quantities, specifications, and measurement rules; for resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt). If a rate cannot be verified online, set assumptionStatus "unverified" — never invent a rate.',
         scope,
         itemIds,
         items: chunk.map((item) => ({
@@ -126,10 +149,10 @@ export function createOrRefreshBoqBatchManifest(
             'Step 1 must cite specification and measurement/payment clauses and state inclusions, exclusions, testing, and method constraints.',
             'Step 2 must state method sequence, labour/plant crew, bottleneck formula, working hours, and optimistic/base/pessimistic productivity.',
             'Step 3 must calculate every included resource consumption per BOQ unit and link it to a cost component.',
-            'Step 4 must use dated, located, VAT-exclusive rates with acquisition mode and source type; item rate is pure direct cost only.',
+            'Step 4 must use dated, located, VAT-exclusive rates with acquisition mode and source type; item rate is pure direct cost only. Verify key rates online and attach webEvidence (url + accessedAt); rates that cannot be verified stay assumptionStatus "unverified".',
             'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
             'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
-            'Every numeric fact is sourced, an explicit scenario, or unverified; unverified values cannot be marked reviewed.',
+            'Every numeric fact is sourced, an explicit scenario, or unverified. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions (0.85, not 85). Mark an item "reviewed" only when its core records carry no unverified values; otherwise keep it "draft".',
           ],
         },
         outputSchema: batchReportSchema(batchId, itemIds),
@@ -148,6 +171,7 @@ export function createOrRefreshBoqBatchManifest(
         reportPath,
         status: validation.status,
         validationErrors: validation.errors,
+        validationWarnings: validation.warnings,
       });
     }
   }
@@ -159,15 +183,70 @@ export function createOrRefreshBoqBatchManifest(
     schemaVersion: 1,
     projectId,
     generatedAt: new Date().toISOString(),
-    itemCount: boq.items.length,
+    itemCount: eligibleItems.length,
     batchCount: batches.length,
     completedBatches: batches.filter((batch) => batch.status === 'complete').length,
-    missingItemIds: boq.items.map((item) => item.id).filter((itemId) => !completeItemIds.has(itemId)),
+    missingItemIds: eligibleItems.map((item) => item.id).filter((itemId) => !completeItemIds.has(itemId)),
+    skippedItems,
     batches,
     manifestPath,
   };
   atomicWriteJson(manifestPath, manifest);
   return manifest;
+}
+
+/**
+ * Segment one sheet's items along business boundaries: items are grouped by
+ * chapter key (leading code prefix, e.g. C1.2 / B0510) in source-row order.
+ * Chapters never split unless a single chapter exceeds the batch cap; small
+ * adjacent chapters merge up to the cap so one subagent prices one page.
+ */
+function segmentIntoChapterBatches(items: TenderBoqReconciliationData['items']): Array<typeof items> {
+  const ordered = [...items].sort(compareBySourceRow);
+  const chapters: Array<{ key: string; items: typeof items }> = [];
+  for (const item of ordered) {
+    const key = chapterKeyOf(item);
+    const last = chapters[chapters.length - 1];
+    if (last && last.key === key) last.items.push(item);
+    else chapters.push({ key, items: [item] });
+  }
+  const chunks: Array<typeof items> = [];
+  let current: typeof items = [] as unknown as typeof items;
+  for (const chapter of chapters) {
+    if (chapter.items.length >= MAX_ITEMS_PER_BATCH) {
+      if (current.length > 0) chunks.push(current);
+      for (let start = 0; start < chapter.items.length; start += MAX_ITEMS_PER_BATCH) {
+        chunks.push(chapter.items.slice(start, start + MAX_ITEMS_PER_BATCH) as typeof items);
+      }
+      current = [] as unknown as typeof items;
+      continue;
+    }
+    if (current.length + chapter.items.length > MAX_ITEMS_PER_BATCH) {
+      chunks.push(current);
+      current = [] as unknown as typeof items;
+    }
+    current.push(...chapter.items);
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+function chapterKeyOf(item: TenderBoqReconciliationData['items'][number]): string {
+  const code = item.code.trim();
+  const match = code.match(/^([A-Za-z]{0,4}\d+(?:\.\d+)?)/);
+  if (match) return match[1]!.toLowerCase();
+  return `sheet:${item.source.sheet ?? '(unspecified)'}`;
+}
+
+function compareBySourceRow(
+  left: TenderBoqReconciliationData['items'][number],
+  right: TenderBoqReconciliationData['items'][number],
+): number {
+  const row = (cell?: string) => {
+    const match = cell?.match(/(\d+)/);
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  return row(left.source.cell) - row(right.source.cell);
 }
 
 export function validateBoqBatchMerge(
@@ -177,7 +256,9 @@ export function validateBoqBatchMerge(
   const errors: string[] = [];
   let finalData: TenderBoqFiveStepPricingData;
   try {
-    finalData = parseTenderBoqFiveStepPricingData(finalValue);
+    // Lenient parse: the runtime-written merge is already normalized; a
+    // hand-written pack gets the same coercion so format details don't block.
+    finalData = parseTenderBoqFiveStepPricingDataLenient(finalValue).data;
   } catch (error) {
     return [`invalid final pricing pack: ${error instanceof Error ? error.message : String(error)}`];
   }
@@ -242,13 +323,13 @@ function validateBatchReport(
   itemIds: string[],
   items: TenderBoqReconciliationData['items'],
   scopeLinkByItemId: Map<string, TenderBoqReconciliationData['scopeLinks'][number]>,
-): { status: TenderBoqBatchRecord['status']; errors: string[] } {
-  if (!existsSync(reportPath)) return { status: 'pending', errors: [] };
+): { status: TenderBoqBatchRecord['status']; errors: string[]; warnings: string[] } {
+  if (!existsSync(reportPath)) return { status: 'pending', errors: [], warnings: [] };
   try {
-    const { errors } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
-    return { status: errors.length === 0 ? 'complete' : 'invalid', errors };
+    const { errors, warnings } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
+    return { status: errors.length === 0 ? 'complete' : 'invalid', errors, warnings };
   } catch (error) {
-    return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)] };
+    return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)], warnings: [] };
   }
 }
 
@@ -258,46 +339,50 @@ function readBatchReport(
   itemIds: string[],
   expectedItems?: TenderBoqReconciliationData['items'],
   scopeLinkByItemId: Map<string, TenderBoqReconciliationData['scopeLinks'][number]> = new Map(),
-): { itemBuildUps: TenderBoqFiveStepItemBuildUp[]; errors: string[] } {
+): { itemBuildUps: TenderBoqFiveStepItemBuildUp[]; errors: string[]; warnings: string[] } {
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as {
     schemaVersion?: unknown;
     batchId?: unknown;
     itemBuildUps?: unknown;
   };
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (report.schemaVersion !== 1) errors.push('schemaVersion must be 1');
   if (report.batchId !== batchId) errors.push(`batchId must be ${batchId}`);
   if (!Array.isArray(report.itemBuildUps)) {
     errors.push('itemBuildUps must be an array');
-    return { itemBuildUps: [], errors };
+    return { itemBuildUps: [], errors, warnings };
   }
 
-  let itemBuildUps: TenderBoqFiveStepItemBuildUp[] = [];
-  try {
-    itemBuildUps = parseTenderBoqFiveStepPricingData({
-      currency: 'USD',
-      pricingStandard: 'c51_pure_direct_cost_v1',
-      vatTreatment: 'exclusive',
-      indirectCostPolicy: 'excluded_from_item_direct_cost',
-      pricingStatus: 'reviewed',
-      itemBuildUps: report.itemBuildUps,
-      resourceSummary: [],
-      assumptions: [],
-    }).itemBuildUps;
-  } catch (error) {
-    errors.push(`itemBuildUps schema is invalid: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  // Normalize first, then validate item-by-item so one malformed build-up can
+  // no longer condemn the whole batch (the V2.3.x invalid-loop failure mode).
+  const normalized = normalizeAndValidateBoqItemBuildUps(report.itemBuildUps, {
+    currency: 'USD',
+    pricingStandard: 'c51_pure_direct_cost_v1',
+    vatTreatment: 'exclusive',
+    indirectCostPolicy: 'excluded_from_item_direct_cost',
+    pricingStatus: 'reviewed',
+    resourceSummary: [],
+    assumptions: [],
+  });
+  const itemBuildUps = normalized.itemBuildUps;
+  errors.push(...normalized.errors.map((error) => `itemBuildUp rejected: ${error}`));
+  warnings.push(...normalized.warnings);
+
   if (expectedItems) {
     const expectedById = new Map(expectedItems.map((item) => [item.id, item]));
     for (const buildUp of itemBuildUps) {
       const item = expectedById.get(buildUp.boqItemId);
       if (!item) continue;
-      if (buildUp.status !== 'reviewed') {
-        errors.push(`BOQ item ${buildUp.boqItemId} must be reviewed before the child batch can complete`);
+      if (buildUp.status === 'blocked') {
+        errors.push(`BOQ item ${buildUp.boqItemId} is blocked and cannot complete the batch`);
+      } else if (buildUp.status !== 'reviewed') {
+        warnings.push(`BOQ item ${buildUp.boqItemId} is ${buildUp.status}, not reviewed — flagged for human review`);
       }
-      errors.push(...inspectTenderBoqItemC51Quality(item, scopeLinkByItemId.get(item.id), buildUp)
-        .filter((issue) => issue.severity === 'error')
-        .map((issue) => `${issue.code}: ${issue.message}`));
+      for (const issue of inspectTenderBoqItemC51Quality(item, scopeLinkByItemId.get(item.id), buildUp)) {
+        if (issue.severity === 'error') errors.push(`${issue.code}: ${issue.message}`);
+        else warnings.push(`${issue.code}: ${issue.message}`);
+      }
     }
   }
   const actualIds = itemBuildUps.map((item) => item.boqItemId);
@@ -308,7 +393,7 @@ function readBatchReport(
   if (actualIds.length !== actual.size) errors.push('itemBuildUps contains duplicate BOQ item IDs');
   if (missing.length > 0) errors.push(`missing BOQ item IDs: ${missing.join(', ')}`);
   if (extras.length > 0) errors.push(`unexpected BOQ item IDs: ${extras.join(', ')}`);
-  return { itemBuildUps, errors };
+  return { itemBuildUps, errors, warnings };
 }
 
 function createBatchId(documentId: string, sheet: string, batchNumber: number): string {
@@ -318,8 +403,18 @@ function createBatchId(documentId: string, sheet: string, batchNumber: number): 
 }
 
 function batchReportSchema(batchId: string, itemIds: string[]): Record<string, unknown> {
-  const decimal = { type: 'string', pattern: '^(?:0|[1-9]\\d*)(?:\\.\\d+)?$' };
-  const positiveDecimal = { type: 'string', pattern: '^(?=.*[1-9])(?:0|[1-9]\\d*)(?:\\.\\d+)?$' };
+  const decimal = {
+    type: ['string', 'number'],
+    description: 'Plain non-negative decimal, no thousands separators (e.g. "1200.5" or 1200.5).',
+  };
+  const positiveDecimal = {
+    type: ['string', 'number'],
+    description: 'Plain positive decimal greater than zero, no thousands separators.',
+  };
+  const weightDecimal = {
+    type: ['string', 'number'],
+    description: 'Allocation weight as a 0-1 fraction (e.g. 0.85, not 85).',
+  };
   const sourceRef = {
     type: 'object',
     required: ['documentId'],
@@ -442,7 +537,7 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
                       productionRate: positiveDecimal,
                       quantityUnit: { type: 'string', minLength: 1 },
                       timeUnit: { enum: ['hour', 'shift', 'working_day', 'week'] },
-                      effectiveFactor: { type: 'string' },
+                      effectiveFactor: weightDecimal,
                       basis: { type: 'string', minLength: 1 },
                       assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
                       sourceRefs: { type: 'array', items: sourceRef },
@@ -517,7 +612,7 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
                 properties: {
                   period: { type: 'string', pattern: '^\\d{4}-(?:0[1-9]|1[0-2])$' },
                   activityId: { type: 'string' },
-                  weight: { type: 'string', description: 'Exact fraction of item direct cost allocated to the period.' },
+                  weight: { ...weightDecimal, description: 'Exact fraction of item direct cost allocated to the period (0-1).' },
                   amount: { type: 'string' },
                   basis: { type: 'string' },
                   assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },
@@ -557,6 +652,21 @@ function batchReportSchema(batchId: string, itemIds: string[]): Record<string, u
                       location: { type: 'string', minLength: 1 },
                       effectiveDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
                       vatTreatment: { const: 'exclusive' },
+                      webEvidence: {
+                        type: 'array',
+                        description: 'Web price-verification hits from C5.1 Step 3 (url + accessedAt required per hit).',
+                        items: {
+                          type: 'object',
+                          additionalProperties: false,
+                          required: ['url', 'accessedAt'],
+                          properties: {
+                            url: { type: 'string', description: 'http(s) URL of the price evidence page' },
+                            title: { type: 'string' },
+                            accessedAt: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+                            note: { type: 'string' },
+                          },
+                        },
+                      },
                     },
                   },
                   assumptionStatus: { enum: ['sourced', 'scenario', 'unverified'] },

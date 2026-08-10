@@ -5,6 +5,7 @@ import type { TenderCapabilityAuditIssue } from '../types.ts';
 import { compareDecimalStrings, decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
 import { inspectTenderBoqItemC51Quality } from './quality.ts';
 import { parseTenderBoqFiveStepPricingData } from './schema.ts';
+import { remapBoqPricingIssueSeverity } from './severity.ts';
 import type { TenderBoqFiveStepItemBuildUp, TenderBoqFiveStepPricingAudit, TenderBoqFiveStepPricingData } from './types.ts';
 
 const STEP_KEYS: Array<keyof TenderBoqFiveStepItemBuildUp['steps']> = [
@@ -347,7 +348,7 @@ export function auditTenderBoqFiveStepPricing(
       }
     });
 
-    if (buildUp.status === 'reviewed' && !issues.slice(itemIssueStart).some((issue) => issue.severity === 'error')) {
+    if (buildUp.status === 'reviewed' && !issues.slice(itemIssueStart).some((issue) => remapBoqPricingIssueSeverity(issue.code, issue.severity) === 'error')) {
       completeItemIds.add(buildUp.boqItemId);
     }
   }
@@ -373,9 +374,14 @@ export function auditTenderBoqFiveStepPricing(
     assumption.sourceRefs.forEach((source) => inspectSource(documentById, source, issues, assumption.id));
   }
 
-  const readiness = issues.some((issue) => issue.severity === 'error')
+  const remappedIssues = issues.map((issue) => ({
+    ...issue,
+    severity: remapBoqPricingIssueSeverity(issue.code, issue.severity),
+  }));
+
+  const readiness = remappedIssues.some((issue) => issue.severity === 'error')
     ? 'not_ready'
-    : issues.length > 0
+    : remappedIssues.length > 0
       ? 'needs_review'
       : 'ready';
 
@@ -397,7 +403,7 @@ export function auditTenderBoqFiveStepPricing(
       estimatedUnitRateSum: sumDecimalStrings(data.itemBuildUps.map((buildUp) => buildUp.directCost)),
       estimatedDirectCost: sumDecimalStrings(data.itemBuildUps.map((buildUp) => buildUp.directCostSummary?.itemDirectCost ?? '0')),
     },
-    issues,
+    issues: remappedIssues,
   };
 }
 

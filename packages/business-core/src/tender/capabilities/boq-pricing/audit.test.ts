@@ -289,9 +289,12 @@ describe('tender BOQ five-step pricing audit', () => {
     }, '2026-07-15T00:00:00.000Z');
 
     const issueCodes = audit.issues.map((issue) => issue.code);
-    expect(audit.readiness).toBe('not_ready');
+    // V2.4.0: arithmetic self-consistency is a human-review warning, not a
+    // machine gate — the pack stays usable while the reviewer checks numbers.
+    expect(audit.readiness).toBe('needs_review');
     expect(issueCodes).toContain('boq_pricing_cash_flow_weight_mismatch');
     expect(issueCodes).toContain('boq_pricing_cash_flow_amount_mismatch');
+    expect(audit.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
   });
 
   test('rejects a generic resource database or prose-only record that lacks C5.1 item controls', () => {
@@ -380,8 +383,11 @@ describe('tender BOQ five-step pricing audit', () => {
     }, '2026-07-15T00:00:00.000Z');
 
     const issueCodes = audit.issues.map((issue) => issue.code);
-    expect(audit.readiness).toBe('not_ready');
+    // V2.4.0: formula rounding and honest unverified records no longer
+    // deadlock the pack; they surface as review warnings instead.
+    expect(audit.readiness).toBe('needs_review');
     expect(issueCodes).toContain('boq_pricing_productivity_formula_mismatch');
     expect(issueCodes).toContain('boq_pricing_reviewed_core_unverified');
+    expect(audit.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
   });
 });
