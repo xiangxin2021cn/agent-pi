@@ -51,6 +51,7 @@ import {
   TurnCard,
   UserMessageBubble,
   groupMessagesByTurn,
+  reuseStableTurns,
   formatTurnAsMarkdown,
   formatActivityAsMarkdown,
   getAssistantTurnUiKey,
@@ -559,6 +560,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   isFocusedPanelRef.current = isFocusedPanel
   // Skip smooth scroll briefly after session switch (instant scroll already happened)
   const skipSmoothScrollUntilRef = React.useRef(0)
+  // Prefer instant auto-scroll briefly after processing ends (layout settle / conclusion card)
+  const preferInstantScrollUntilRef = React.useRef(0)
   // Track message commit boundaries so we can auto-scroll when a new user message
   // actually lands in state (important when attachments delay optimistic insertion).
   const prevLastMessageIdRef = React.useRef<string | null>(null)
@@ -1218,6 +1221,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       debounceTimer = setTimeout(() => {
         // Skip smooth scroll if we just did an instant scroll (session switch/lazy load)
         if (Date.now() < skipSmoothScrollUntilRef.current) return
+        // After a turn ends, Markdown/layout still settles for a bit. Skip further
+        // auto-scroll so we don't fight the user dragging/scrolling the conclusion card
+        // (a single settle scroll is fired when isProcessing flips to false).
+        if (Date.now() < preferInstantScrollUntilRef.current) return
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
       }, 200)
     })
@@ -1233,6 +1240,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       if (debounceTimer) clearTimeout(debounceTimer)
     }
   }, [session?.id])
+
+  // After processing ends: one instant settle, then pause ResizeObserver auto-scroll
+  // briefly so conclusion-card scroll/drag stays responsive while layout settles.
+  React.useEffect(() => {
+    if (session?.isProcessing) return
+    preferInstantScrollUntilRef.current = Date.now() + 1500
+    if (!isStickToBottomRef.current) return
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
+    })
+  }, [session?.isProcessing])
 
   // Commit-time auto-scroll for new user messages.
   // This complements submit-time scrolling and covers cases where attachments delay
@@ -1434,10 +1452,19 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return undefined
   }, [pendingPermission, pendingCredential])
 
-  // Memoize turn grouping - avoids O(n) iteration on every render/keystroke
+  // Memoize turn grouping - avoids O(n) iteration on every render/keystroke.
+  // reuseStableTurns keeps completed ResponseCard object identity stable across
+  // isProcessing / goalState flickers so Markdown is not re-parsed after finish.
+  const previousTurnsRef = React.useRef<Turn[]>([])
   const allTurns = React.useMemo(() => {
-    if (!session) return []
-    return groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
+    if (!session) {
+      previousTurnsRef.current = []
+      return []
+    }
+    const grouped = groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
+    const stabilized = reuseStableTurns(previousTurnsRef.current, grouped)
+    previousTurnsRef.current = stabilized
+    return stabilized
   }, [session?.messages, session?.isProcessing])
 
   // Keep ref in sync for scroll handler

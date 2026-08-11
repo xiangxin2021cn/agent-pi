@@ -538,7 +538,15 @@ export interface TenderWorkspaceMutationRequest {
   args: Record<string, unknown>;
 }
 
-export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'resume' | 'complete';
+export type TenderStageRunAction =
+  | 'preflight'
+  | 'start'
+  | 'status'
+  | 'resume'
+  | 'advance'
+  | 'complete'
+  | 'reset_orchestration'
+  | 'set_dispatch';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -547,6 +555,27 @@ export interface TenderStageRunRequest {
   projectId: string;
   stageId: string;
   parentSessionId?: string;
+  /** Used with action `set_dispatch`. When false, advance/resume will not spawn. */
+  dispatchEnabled?: boolean;
+  /** Mark a per-document parse MD as human-accepted/rejected (stage 2). */
+  documentReview?: {
+    documentId: string;
+    humanReview: 'accepted' | 'rejected';
+    notes?: string;
+  };
+  /** Mark planning 4-A methodology report as human-accepted/rejected. */
+  planningReview?: {
+    artifact: 'methodology_report';
+    humanReview: 'accepted' | 'rejected';
+    notes?: string;
+  };
+  /** Allow replacing the project parent pointer (migration / recovery). */
+  forceRebindParent?: boolean;
+  /**
+   * Reset these failed/blocked batch tasks to pending (quarantine stale reports)
+   * then allow advance/resume to re-dispatch them. Empty/omitted = no selective retry.
+   */
+  retryBatchIds?: string[];
 }
 
 export interface TenderStageRunResultDto {
@@ -558,6 +587,15 @@ export interface TenderStageRunResultDto {
   producedCapabilities: string[];
   generatedPacks: string[];
   missingItems: string[];
+  substeps?: Array<{
+    id: 'plan-methodology' | 'plan-programme-resources-cashflow' | 'plan-submission';
+    label: string;
+    status: 'pending' | 'ready' | 'complete' | 'blocked';
+    missingItems: string[];
+  }>;
+  migratedFromLegacy?: boolean;
+  /** Single project-lifetime parent session shared across stages. */
+  projectParentSessionId?: string;
   batchProgress?: {
     batchType: 'document_analysis' | 'boq_five_step_pricing';
     itemCount: number;
@@ -715,6 +753,7 @@ export type SessionFileSource =
   | 'note'
   | 'official-output'
   | 'tender-workspace'
+  | 'working-directory'
 
 export interface SessionOutputDirectory {
   path: string

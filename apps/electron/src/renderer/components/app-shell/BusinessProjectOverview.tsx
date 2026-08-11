@@ -1,15 +1,32 @@
 import * as React from 'react'
-import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, SearchCheck, Square } from 'lucide-react'
+import { useAtom, useAtomValue } from 'jotai'
+import { useTranslation } from 'react-i18next'
+import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, SearchCheck, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import { Button } from '@/components/ui/button'
+import {
+  businessProjectsCacheAtom,
+  businessProjectsCacheKey,
+  findCachedBusinessProject,
+} from '@/atoms/business-projects'
+import { sessionMetaMapAtom } from '@/atoms/sessions'
+import { isTenderMonitorActiveFor, tenderLiveMonitorAtom } from '@/atoms/tender-monitor'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { useNavigation } from '@/contexts/NavigationContext'
-import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
+import { buildBusinessTaskDraft, buildStageHandoffDraft } from '@/pages/business-module-launcher'
 import {
+  acceptPlanningMethodologyReview,
+  advanceTenderStageLaunch,
+  enterTenderStageInProjectParent,
   preflightTenderStageLaunch,
+  resetTenderStageOrchestration,
+  resolveProjectParentSessionId,
+  resolveStageParentSessionId,
   resumeTenderStageLaunch,
+  setTenderStageDispatch,
+  startAndAdvanceTenderStageLaunch,
   startTenderStageLaunch,
   summarizeTenderStage,
 } from '@/pages/business-tender-stage'
@@ -69,20 +86,53 @@ function linkedSessionId(task: StageTask): string | undefined {
 }
 
 export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId }: BusinessProjectOverviewProps) {
+  const { t } = useTranslation()
   const { openNewChat, onOpenFile } = useAppShellContext()
   const { navigate } = useNavigation()
+  const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
+  const sessionMetaMapRef = React.useRef(sessionMetaMap)
+  sessionMetaMapRef.current = sessionMetaMap
+  const [projectsCache, setProjectsCache] = useAtom(businessProjectsCacheAtom)
+  const projectsCacheRef = React.useRef(projectsCache)
+  projectsCacheRef.current = projectsCache
+  const [liveMonitor, setLiveMonitor] = useAtom(tenderLiveMonitorAtom)
   const workflow = React.useMemo(() => getBusinessWorkflow(moduleId), [moduleId])
-  const [project, setProject] = React.useState<BusinessProjectRecord | null>(null)
+  const cachedProject = findCachedBusinessProject(projectsCache, moduleId, workspaceRootPath, projectId)
+  const [project, setProject] = React.useState<BusinessProjectRecord | null>(cachedProject)
+  const projectRef = React.useRef(project)
+  projectRef.current = project
+  const [projectLoadState, setProjectLoadState] = React.useState<'loading' | 'ready' | 'missing'>(
+    cachedProject ? 'ready' : 'loading',
+  )
   const [stageRuns, setStageRuns] = React.useState<Record<string, TenderStageRunResultDto>>({})
   const [startingStageId, setStartingStageId] = React.useState<string | null>(null)
+  const [retryingBatchId, setRetryingBatchId] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [lastRefreshAt, setLastRefreshAt] = React.useState<number | null>(null)
   const [refreshing, setRefreshing] = React.useState(false)
   const [nowMs, setNowMs] = React.useState(() => Date.now())
   const [expandedStageIds, setExpandedStageIds] = React.useState<Record<string, boolean>>({})
-  /** Opt-in only — never auto-enable on open from persisted pending/running board state. */
-  const [monitoringActive, setMonitoringActive] = React.useState(false)
+  /** Survives chat navigation via tenderLiveMonitorAtom (host keeps resume polling). */
+  const monitoringActive = moduleId === 'tender'
+    && isTenderMonitorActiveFor(liveMonitor, projectId, workspaceRootPath)
+  const setMonitoringActive = React.useCallback((active: boolean) => {
+    if (moduleId !== 'tender') return
+    setLiveMonitor(active
+      ? {
+          moduleId: 'tender',
+          workspaceRootPath,
+          projectId,
+          active: true,
+          lastTickAt: Date.now(),
+        }
+      : (current) => (
+        current?.projectId === projectId
+          ? { ...current, active: false, lastTickAt: Date.now() }
+          : current
+      ))
+  }, [moduleId, projectId, setLiveMonitor, workspaceRootPath])
   const refreshInFlight = React.useRef(false)
+  const refreshQueued = React.useRef<{ action: 'status' | 'resume'; stages?: BusinessWorkflowStage[] } | null>(null)
   const stageRunsRef = React.useRef(stageRuns)
   stageRunsRef.current = stageRuns
 
@@ -92,88 +142,148 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     action?: 'status' | 'resume'
     stages?: BusinessWorkflowStage[]
   }): Promise<Record<string, TenderStageRunResultDto>> => {
-    if (refreshInFlight.current && !options?.force) return stageRunsRef.current
+    const requestedAction = options?.action ?? 'status'
+    // Coalesce overlapping refreshes — force must NOT pile concurrent stageRuns
+    // (sessionMetaMap churn previously recreated this callback and stacked IPC).
+    if (refreshInFlight.current) {
+      refreshQueued.current = {
+        action: requestedAction,
+        ...(options?.stages ? { stages: options.stages } : {}),
+      }
+      return stageRunsRef.current
+    }
     refreshInFlight.current = true
     setRefreshing(true)
-    const action = options?.action ?? 'status'
+    let action = requestedAction
+    let stageFilter = options?.stages
+    let forceAll = Boolean(options?.force)
     try {
-      const projects = await window.electronAPI.listBusinessProjects({ workspaceRootPath, module: moduleId })
-      const selected = projects.find((entry) => entry.projectId === projectId) ?? null
-      setProject(selected)
-      if (moduleId === 'tender' && selected) {
-        const currentRuns = stageRunsRef.current
-        const targets = options?.stages ?? (
-          options?.force
-            ? workflow.stages
-            : workflow.stages.filter((stage) => {
-                const run = currentRuns[stage.id]
-                return !run || stageHasLiveWork(run) || stageHasResumableWork(run) || run.status === 'blocked'
-              })
-        )
-        const results = await Promise.all(targets.map(async (stage) => {
-          try {
-            const parentSessionId = currentRuns[stage.id]?.batchProgress?.parentSessionId
-            return [stage.id, await window.electronAPI.runTenderStage({
-              action,
-              workspaceRootPath,
-              projectId: selected.projectId,
-              stageId: stage.id,
-              ...(action === 'resume' && parentSessionId ? { parentSessionId } : {}),
-            })] as const
-          } catch {
-            return null
-          }
+      // eslint-disable-next-line no-constant-condition -- drain one coalesced follow-up
+      while (true) {
+        const projects = await window.electronAPI.listBusinessProjects({ workspaceRootPath, module: moduleId })
+        setProjectsCache((current) => ({
+          ...current,
+          [businessProjectsCacheKey(moduleId, workspaceRootPath)]: projects,
         }))
-        const next = { ...currentRuns }
-        for (const entry of results) {
-          if (!entry) continue
-          next[entry[0]] = entry[1]
-        }
-        stageRunsRef.current = next
-        setStageRuns(next)
-        setExpandedStageIds((current) => {
-          const expanded = { ...current }
-          for (const entry of results) {
-            if (!entry) continue
-            const [stageId, run] = entry
-            if ((stageHasLiveWork(run) || stageHasResumableWork(run)) && current[stageId] === undefined) {
-              expanded[stageId] = true
+        const selected = projects.find((entry) => entry.projectId === projectId)
+          ?? projects.find((entry) => entry.name === projectId)
+          ?? null
+        setProject(selected)
+        setProjectLoadState(selected ? 'ready' : 'missing')
+        if (moduleId === 'tender' && selected) {
+          const currentRuns = stageRunsRef.current
+          const targets = stageFilter ?? (
+            forceAll
+              ? workflow.stages
+              : workflow.stages.filter((stage) => {
+                  const run = currentRuns[stage.id]
+                  return !run || stageHasLiveWork(run) || stageHasResumableWork(run) || run.status === 'blocked'
+                })
+          )
+          const next = { ...currentRuns }
+          const touched: Array<[string, TenderStageRunResultDto]> = []
+          for (const stage of targets) {
+            try {
+              // Prefer healed project parent; never re-send a deleted board pointer.
+              const parentSessionId = currentRuns[stage.id]?.projectParentSessionId
+                ?? currentRuns[stage.id]?.batchProgress?.parentSessionId
+              const liveParentSessionId = parentSessionId && sessionMetaMapRef.current.has(parentSessionId)
+                ? parentSessionId
+                : undefined
+              const run = await window.electronAPI.runTenderStage({
+                action,
+                workspaceRootPath,
+                projectId: selected.projectId,
+                stageId: stage.id,
+                ...(action === 'resume' && liveParentSessionId ? { parentSessionId: liveParentSessionId } : {}),
+              })
+              next[stage.id] = run
+              touched.push([stage.id, run])
+            } catch {
+              // keep previous snapshot for this stage
             }
           }
-          return expanded
-        })
-        setLastRefreshAt(Date.now())
-        setError(null)
-        return next
+          stageRunsRef.current = next
+          setStageRuns(next)
+          setExpandedStageIds((current) => {
+            const expanded = { ...current }
+            for (const [stageId, run] of touched) {
+              if ((stageHasLiveWork(run) || stageHasResumableWork(run)) && current[stageId] === undefined) {
+                expanded[stageId] = true
+              }
+            }
+            return expanded
+          })
+          setLastRefreshAt(Date.now())
+          setError(null)
+        } else {
+          stageRunsRef.current = {}
+          setStageRuns({})
+          setLastRefreshAt(Date.now())
+          setError(null)
+        }
+
+        const queued = refreshQueued.current
+        refreshQueued.current = null
+        if (!queued) return stageRunsRef.current
+        action = queued.action
+        stageFilter = queued.stages
+        forceAll = false
       }
-      stageRunsRef.current = {}
-      setStageRuns({})
-      setLastRefreshAt(Date.now())
-      setError(null)
-      return {}
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      // Keep a cached project painted if list/status is only temporarily starved.
+      const warm = projectRef.current
+        ?? findCachedBusinessProject(projectsCacheRef.current, moduleId, workspaceRootPath, projectId)
+      if (warm) {
+        setProject(warm)
+        setProjectLoadState('ready')
+        toast.error(message)
+        setError(null)
+      } else {
+        setError(message)
+        setProjectLoadState('missing')
+      }
       return stageRunsRef.current
     } finally {
       refreshInFlight.current = false
       setRefreshing(false)
     }
-  }, [moduleId, projectId, workflow.stages, workspaceRootPath])
+  }, [moduleId, projectId, setProjectsCache, workflow.stages, workspaceRootPath])
 
-  // Snapshot inspect on open / project list change — never auto-dispatch or auto-monitor.
+  // Snapshot inspect on open / project switch — do NOT clear live monitor
+  // (host keeps resume polling while user is in chat).
   React.useEffect(() => {
-    setMonitoringActive(false)
+    const warm = findCachedBusinessProject(projectsCacheRef.current, moduleId, workspaceRootPath, projectId)
+    setProject(warm)
+    setProjectLoadState(warm ? 'ready' : 'loading')
+    stageRunsRef.current = {}
+    setStageRuns({})
     void refresh({ force: true, action: 'status' })
     const handleChanged = () => void refresh({ force: true, action: 'status' })
     window.addEventListener('craft:business-projects-changed', handleChanged)
     return () => window.removeEventListener('craft:business-projects-changed', handleChanged)
-  }, [refresh])
+    // Intentionally depend on identity keys, not `refresh` (session meta must not re-mount).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- project/workspace identity only
+  }, [moduleId, projectId, workspaceRootPath])
 
+  // Apply background host ticks into the overview snapshot when mounted.
   React.useEffect(() => {
-    if (!monitoringActive) return
-    const timer = window.setInterval(() => void refresh({ action: 'resume' }), LIVE_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [monitoringActive, refresh])
+    if (moduleId !== 'tender') return
+    const onTick = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: string; runs: TenderStageRunResultDto[] }>).detail
+      if (!detail || detail.projectId !== projectId) return
+      setStageRuns((current) => {
+        const next = { ...current }
+        for (const run of detail.runs) next[run.stageId] = run
+        stageRunsRef.current = next
+        return next
+      })
+      setLastRefreshAt(Date.now())
+    }
+    window.addEventListener('craft:tender-monitor-tick', onTick)
+    return () => window.removeEventListener('craft:tender-monitor-tick', onTick)
+  }, [moduleId, projectId])
 
   React.useEffect(() => {
     if (!monitoringActive) return
@@ -181,17 +291,9 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     return () => window.clearInterval(timer)
   }, [monitoringActive])
 
-  // Auto-stop monitor when nothing is actually running anymore.
-  React.useEffect(() => {
-    if (!monitoringActive) return
-    const stillLive = Object.values(stageRuns).some((run) => stageHasLiveWork(run) || stageHasResumableWork(run))
-    if (!stillLive && lastRefreshAt !== null) {
-      setMonitoringActive(false)
-    }
-  }, [monitoringActive, stageRuns, lastRefreshAt])
-
   React.useEffect(() => {
     if (moduleId !== 'tender' || !monitoringActive) return
+    let debounceTimer: number | null = null
     const cleanup = window.electronAPI.onSessionEvent((event) => {
       if (
         event.type !== 'complete'
@@ -201,12 +303,22 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       ) return
       if (!('sessionId' in event)) return
       const related = Object.values(stageRunsRef.current).some((run) => {
+        if (run.projectParentSessionId === event.sessionId) return true
         if (run.batchProgress?.parentSessionId === event.sessionId) return true
         return run.batchProgress?.tasks.some((task) => linkedSessionId(task) === event.sessionId) ?? false
       })
-      if (related) void refresh({ action: 'resume' })
+      // Host owns resume fill-up; overview only refreshes the status snapshot (debounced).
+      if (!related) return
+      if (debounceTimer != null) window.clearTimeout(debounceTimer)
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null
+        void refresh({ action: 'status' })
+      }, 1500)
     })
-    return cleanup
+    return () => {
+      if (debounceTimer != null) window.clearTimeout(debounceTimer)
+      cleanup()
+    }
   }, [moduleId, monitoringActive, refresh])
 
   const handleInspect = async () => {
@@ -244,8 +356,109 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     void refresh({ force: true, action: 'status' })
   }
 
+  const handleRemoveProject = async () => {
+    if (!project) return
+    const confirmed = window.confirm(t('businessProjects.deleteProjectConfirm', { name: project.name }))
+    if (!confirmed) return
+    try {
+      await window.electronAPI.unregisterBusinessProject({
+        workspaceRootPath,
+        module: moduleId,
+        projectId: project.projectId,
+      })
+      window.dispatchEvent(new CustomEvent('craft:business-projects-changed', { detail: { moduleId } }))
+      toast.success(t('businessProjects.projectRemoved'))
+      const listRoute = moduleId === 'tender'
+        ? routes.view.tenderWorkspaces()
+        : moduleId === 'delivery'
+          ? routes.view.deliveryWorkspaces()
+          : routes.view.investmentWorkspaces()
+      navigate(listRoute)
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const handleCompleteSetupStage = async () => {
+    if (!project || moduleId !== 'tender') return
+    setStartingStageId('project-setup')
+    try {
+      const completed = await window.electronAPI.runTenderStage({
+        action: 'complete',
+        workspaceRootPath,
+        projectId: project.projectId,
+        stageId: 'project-setup',
+      })
+      setStageRuns((current) => ({ ...current, 'project-setup': completed }))
+      if (completed.status === 'complete') {
+        toast.success('资料齐套已确认，可进入招标文件解析')
+      } else {
+        const summary = summarizeTenderStage(completed)
+        toast.error(`尚不能确认齐套：${summary.missingLabel ?? summary.statusLabel}`)
+      }
+    } finally {
+      setStartingStageId(null)
+      void refresh({ force: true, action: 'status' })
+    }
+  }
+
+  const handleAcceptMethodologyReview = async () => {
+    if (!project || moduleId !== 'tender') return
+    setStartingStageId('planning-and-submission')
+    try {
+      const accepted = await acceptPlanningMethodologyReview(window.electronAPI.runTenderStage, {
+        workspaceRootPath,
+        projectId: project.projectId,
+        stageId: 'planning-and-submission',
+      })
+      setStageRuns((current) => ({ ...current, 'planning-and-submission': accepted.result }))
+      toast.success('已接受 4-A 施工策划报告，可继续进度/资源/现金流')
+    } finally {
+      setStartingStageId(null)
+      void refresh({ force: true, action: 'status' })
+    }
+  }
+
+  const sendStageHandoff = async (
+    parentSessionId: string,
+    stage: BusinessWorkflowStage,
+    stageRun?: TenderStageRunResultDto,
+  ) => {
+    if (!project || moduleId !== 'tender') return
+    const draft = buildStageHandoffDraft(moduleId, project, stage, stageRun)
+    try {
+      await window.electronAPI.sendMessage(parentSessionId, draft, [], [], {})
+    } catch (cause) {
+      console.warn('[BusinessProjectOverview] failed to send stage handoff', cause)
+      toast.message('主会话已切到本阶段；请在对话中发送阶段说明或点「进入阶段」重试交接')
+    }
+  }
+
+  const handleOpenProjectParent = async () => {
+    const openIfLive = (parentId: string | undefined): boolean => {
+      if (!parentId) return false
+      if (!sessionMetaMap.has(parentId)) return false
+      openLinkedSession(parentId)
+      toast.success('已打开项目主会话')
+      return true
+    }
+
+    if (openIfLive(resolveProjectParentSessionId(stageRuns))) return
+
+    // Old projects may still advertise a deleted pointer — status heals it.
+    toast.message('主会话指针可能已失效，正在修复…')
+    const next = await refresh({ force: true, action: 'status' })
+    if (openIfLive(resolveProjectParentSessionId(next))) return
+
+    toast.error('找不到存活的项目主会话。请从左侧打开当前 Todo 主会话，或对解析阶段使用「重置编排」后重试。')
+  }
+
   const handleStartStage = async (stage: BusinessWorkflowStage) => {
     if (!project) return
+    if (moduleId === 'tender' && stage.id === 'project-setup') {
+      await handleCompleteSetupStage()
+      return
+    }
     setStartingStageId(stage.id)
     try {
       let stageRun: TenderStageRunResultDto | undefined
@@ -260,15 +473,49 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
           return
         }
+
+        const existingParentId = resolveProjectParentSessionId({
+          ...stageRuns,
+          [stage.id]: launch.result,
+        }) ?? resolveStageParentSessionId(launch.result)
+
+        if (existingParentId) {
+          openLinkedSession(existingParentId)
+          const prior = stageRuns[stage.id]
+          const alreadyActive = Boolean(
+            prior
+            && resolveStageParentSessionId(prior) === existingParentId
+            && (prior.status === 'running' || prior.status === 'complete'),
+          )
+          const advanced = await enterTenderStageInProjectParent(window.electronAPI.runTenderStage, {
+            workspaceRootPath, projectId: project.projectId, stageId: stage.id,
+          }, existingParentId)
+          setStageRuns((current) => ({ ...current, [stage.id]: advanced.result }))
+          setExpandedStageIds((current) => ({ ...current, [stage.id]: true }))
+          setMonitoringActive(true)
+          if (!alreadyActive) {
+            await sendStageHandoff(existingParentId, stage, advanced.result)
+          }
+          const progress = advanced.result.batchProgress
+          toast.success(
+            progress
+              ? `已在项目主会话派发：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+              : alreadyActive
+                ? '已打开项目主会话'
+                : '已在项目主会话进入本阶段',
+          )
+          return
+        }
       }
+      // First-ever project parent only — never per-stage.
       const parentSession = await openNewChat?.({
-        name: `${project.name} · ${stage.label}`,
+        name: project.name,
         workingDirectory: project.rootPath,
         businessContext: { module: moduleId, projectId: project.projectId, workflowId: project.workflowId, stageId: stage.id },
         input: buildBusinessTaskDraft(moduleId, project, stage, stageRun),
       })
       if (moduleId === 'tender' && parentSession) {
-        const launch = await startTenderStageLaunch(window.electronAPI.runTenderStage, {
+        const launch = await startAndAdvanceTenderStageLaunch(window.electronAPI.runTenderStage, {
           workspaceRootPath, projectId: project.projectId, stageId: stage.id,
         }, parentSession.id)
         setStageRuns((current) => ({ ...current, [stage.id]: launch.result }))
@@ -286,23 +533,95 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     }
   }
 
+  const handleEnterNextStage = async (fromStage: BusinessWorkflowStage) => {
+    const index = workflow.stages.findIndex((entry) => entry.id === fromStage.id)
+    const next = index >= 0 ? workflow.stages[index + 1] : undefined
+    if (!next) {
+      toast.message('已是最后阶段')
+      return
+    }
+    if (stageHasLiveWork(stageRuns[fromStage.id])) {
+      toast.error('当前阶段仍有运行中任务，请先等待完成或「停止派发」后再进入下一阶段')
+      return
+    }
+    await handleStartStage(next)
+  }
+
+  const resolveLiveParentId = (run?: TenderStageRunResultDto): string | undefined => {
+    const candidate = run?.projectParentSessionId
+      ?? resolveStageParentSessionId(run)
+      ?? resolveProjectParentSessionId(stageRuns)
+    if (candidate && sessionMetaMap.has(candidate)) return candidate
+    return undefined
+  }
+
+  const handleRetryBatches = async (stage: BusinessWorkflowStage, batchIds: string[]) => {
+    const ids = [...new Set(batchIds.map((id) => id.trim()).filter(Boolean))]
+    if (ids.length === 0) return
+    const parentSessionId = resolveLiveParentId(stageRuns[stage.id])
+    if (!parentSessionId) {
+      toast.error('找不到存活的项目主会话，请先打开左侧主会话或点「打开项目主会话」修复指针')
+      return
+    }
+    setStartingStageId(stage.id)
+    setRetryingBatchId(ids.length === 1 ? ids[0]! : '__multi__')
+    try {
+      const result = await window.electronAPI.runTenderStage({
+        action: 'advance',
+        workspaceRootPath,
+        projectId,
+        stageId: stage.id,
+        parentSessionId,
+        retryBatchIds: ids,
+        dispatchEnabled: true,
+      })
+      setStageRuns((current) => ({ ...current, [stage.id]: result }))
+      setExpandedStageIds((current) => ({ ...current, [stage.id]: true }))
+      setMonitoringActive(true)
+      const progress = result.batchProgress
+      toast.success(
+        progress
+          ? `已重试 ${ids.length} 个批次：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+          : `已重试 ${ids.length} 个批次`,
+      )
+    } catch (cause) {
+      toast.error(`重试失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setStartingStageId(null)
+      setRetryingBatchId(null)
+      void refresh({ force: true, action: 'status' })
+    }
+  }
+
   const handleRetryStage = async (stage: BusinessWorkflowStage) => {
     const run = stageRuns[stage.id]
-    const parentSessionId = run?.batchProgress?.parentSessionId
+    const failedIds = (run?.batchProgress?.tasks ?? [])
+      .filter((task) => task.status === 'failed' || task.status === 'blocked')
+      .map((task) => task.batchId)
+    const invalidIds = (run?.batchProgress?.invalidBatches ?? []).map((batch) => batch.batchId)
+    const retryIds = [...new Set([...failedIds, ...invalidIds])]
+    if (retryIds.length > 0) {
+      await handleRetryBatches(stage, retryIds)
+      return
+    }
+    const parentSessionId = resolveLiveParentId(run)
     if (!parentSessionId) {
       await handleStartStage(stage)
       return
     }
     setStartingStageId(stage.id)
     try {
-      const retried = await startTenderStageLaunch(window.electronAPI.runTenderStage, {
+      await startTenderStageLaunch(window.electronAPI.runTenderStage, {
         workspaceRootPath, projectId, stageId: stage.id,
       }, parentSessionId)
-      setStageRuns((current) => ({ ...current, [stage.id]: retried.result }))
+      const advanced = await advanceTenderStageLaunch(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId, stageId: stage.id,
+      }, parentSessionId)
+      setStageRuns((current) => ({ ...current, [stage.id]: advanced.result }))
       setExpandedStageIds((current) => ({ ...current, [stage.id]: true }))
-      const progress = retried.result.batchProgress
+      const progress = advanced.result.batchProgress
       const inFlight = (progress?.runningBatches ?? 0) + (progress?.pendingBatches ?? 0)
-      if (retried.ok || inFlight > 0) {
+      if (advanced.ok || inFlight > 0) {
         setMonitoringActive(true)
         toast.success(
           progress
@@ -311,7 +630,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         )
         return
       }
-      const summary = summarizeTenderStage(retried.result)
+      const summary = summarizeTenderStage(advanced.result)
       toast.error(`重试失败：${summary.missingLabel ?? summary.statusLabel}`)
     } finally {
       setStartingStageId(null)
@@ -320,7 +639,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   }
 
   const handleResumeStage = async (stage: BusinessWorkflowStage) => {
-    const parentSessionId = stageRuns[stage.id]?.batchProgress?.parentSessionId
+    const parentSessionId = resolveStageParentSessionId(stageRuns[stage.id])
     if (!parentSessionId) {
       await handleStartStage(stage)
       return
@@ -344,12 +663,69 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     }
   }
 
+  const handleAdvanceStage = async (stage: BusinessWorkflowStage) => {
+    const parentSessionId = resolveStageParentSessionId(stageRuns[stage.id])
+    if (!parentSessionId) {
+      await handleStartStage(stage)
+      return
+    }
+    setStartingStageId(stage.id)
+    try {
+      const advanced = await advanceTenderStageLaunch(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId, stageId: stage.id,
+      }, parentSessionId)
+      setStageRuns((current) => ({ ...current, [stage.id]: advanced.result }))
+      setMonitoringActive(true)
+      const progress = advanced.result.batchProgress
+      toast.success(
+        progress
+          ? `已派发下一步：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+          : '已派发下一步',
+      )
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
+  const handleStopDispatch = async (stage: BusinessWorkflowStage) => {
+    setStartingStageId(stage.id)
+    try {
+      const stopped = await setTenderStageDispatch(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId, stageId: stage.id,
+      }, false)
+      setStageRuns((current) => ({ ...current, [stage.id]: stopped.result }))
+      toast.message('已停止派发新子任务（进行中的会话不会自动杀掉）')
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
+  const handleResetOrchestration = async (stage: BusinessWorkflowStage) => {
+    if (!window.confirm(`重置「${stage.label}」编排状态？已验收的解析 MD / 能力包默认保留。`)) return
+    setStartingStageId(stage.id)
+    try {
+      const reset = await resetTenderStageOrchestration(window.electronAPI.runTenderStage, {
+        workspaceRootPath, projectId, stageId: stage.id,
+      })
+      setStageRuns((current) => ({ ...current, [stage.id]: reset.result }))
+      toast.success('已重置本阶段编排队列')
+    } finally {
+      setStartingStageId(null)
+      void refresh({ force: true, action: 'status' })
+    }
+  }
+
   const openLinkedSession = (sessionId: string) => {
     navigate(routes.view.tenderWorkspaces(projectId, sessionId))
   }
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>
-  if (!project) return <div className="p-6 text-sm text-muted-foreground">未找到该项目，请从左侧项目列表重新选择。</div>
+  if (projectLoadState === 'loading' || (refreshing && !project)) {
+    return <div className="p-6 text-sm text-muted-foreground">正在加载项目监控…</div>
+  }
+  if (!project || projectLoadState === 'missing') {
+    return <div className="p-6 text-sm text-muted-foreground">未找到该项目，请从左侧项目列表重新选择。</div>
+  }
 
   return (
     <div className="h-full overflow-auto">
@@ -363,23 +739,42 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           </div>
           <div className="flex shrink-0 gap-2">
             <Button type="button" variant="outline" onClick={() => void handleAddInputs()}><FilePlus2 className="size-4" />添加资料</Button>
-            <Button type="button" onClick={() => void handleStartStage(workflow.stages[0]!)}><MessageSquarePlus className="size-4" />新建任务</Button>
+            <Button type="button" onClick={() => {
+              if (moduleId === 'tender' && resolveProjectParentSessionId(stageRuns)) {
+                void handleOpenProjectParent()
+                return
+              }
+              void handleStartStage(workflow.stages[0]!)
+            }}>
+              <MessageSquarePlus className="size-4" />
+              {moduleId === 'tender' && resolveProjectParentSessionId(stageRuns) ? '打开项目主会话' : '新建任务'}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => void handleRemoveProject()} title={t('businessProjects.deleteProject')}>
+              <Trash2 className="size-4" />
+              {t('businessProjects.deleteProject')}
+            </Button>
           </div>
         </div>
       </header>
+
+      {moduleId === 'tender' && Object.values(stageRuns).some((run) => run?.migratedFromLegacy) && (
+        <div className="border-b bg-muted/40 px-6 py-3 text-xs text-muted-foreground">
+          已合并为单一项目主会话（含旧版多阶段主会话选举）。旧阶段会话仍保留在侧栏（可只读回顾）；请在主会话继续。若子会话或批次队列异常，可对对应阶段使用「重置编排」（已验收的解析 MD 会保留）。
+        </div>
+      )}
 
       <section className="border-b px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">流程监控</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              打开项目仅快照检查，不会自动调度。先点「检查」对齐左侧会话，再点「恢复未完任务」唤起排队。
+              打开项目仅快照检查，不会自动调度。开启「恢复未完任务 / 下一步」后，切换到主会话对话也会继续后台跟踪与补位派发；失败批次可在任务行点「重试」。
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className={cn('inline-flex items-center gap-1.5', monitoringActive && 'text-accent')}>
               <span className={cn('size-1.5 rounded-full', monitoringActive ? 'animate-pulse bg-accent' : 'bg-muted-foreground/40')} />
-              {monitoringActive ? `监控中 ${LIVE_POLL_MS / 1000}s` : '监控未开启'}
+              {monitoringActive ? `监控中 ${LIVE_POLL_MS / 1000}s（含对话页）` : '监控未开启'}
             </span>
             <span title={lastRefreshAt ? new Date(lastRefreshAt).toLocaleString() : undefined}>
               检查于 {lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—'}
@@ -451,6 +846,46 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         {summary.packsLabel && <span className="max-w-full truncate" title={summary.packsLabel}>{summary.packsLabel}</span>}
                       </div>
                     )}
+                    {run?.substeps?.length ? (
+                      <div className="mt-2 space-y-1.5 rounded-md border px-3 py-2 text-xs">
+                        <p className="font-medium text-foreground">策划子步骤门禁</p>
+                        {run.substeps.map((substep) => (
+                          <div key={substep.id} className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className={cn(
+                                'font-medium',
+                                substep.status === 'complete' && 'text-success',
+                                substep.status === 'ready' && 'text-accent',
+                                substep.status === 'blocked' && 'text-destructive',
+                                substep.status === 'pending' && 'text-muted-foreground',
+                              )}>
+                                {substep.label}
+                                <span className="ml-2 font-normal text-muted-foreground">
+                                  {substep.status === 'complete' ? '完成'
+                                    : substep.status === 'ready' ? '待人审'
+                                      : substep.status === 'blocked' ? '缺件'
+                                        : '等待前置'}
+                                </span>
+                              </p>
+                              {substep.missingItems.length > 0 && (
+                                <p className="truncate text-muted-foreground" title={substep.missingItems.join('；')}>
+                                  {substep.missingItems.join('；')}
+                                </p>
+                              )}
+                            </div>
+                            {substep.id === 'plan-methodology' && substep.status === 'ready' && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={startingStageId !== null}
+                                onClick={() => void handleAcceptMethodologyReview()}
+                              >接受策划稿</Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     {progress && total > 0 && (
                       <div className="mt-2">
                         <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -470,14 +905,43 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     )}
                     {progress?.invalidBatches?.length ? (
                       <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
-                        <p className="font-medium text-destructive">报告未通过验收（{progress.invalidBatches.length} 批）</p>
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="font-medium text-destructive">报告未通过验收（{progress.invalidBatches.length} 批）</p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 shrink-0"
+                            disabled={startingStageId !== null}
+                            onClick={() => void handleRetryBatches(
+                              stage,
+                              progress.invalidBatches!.map((batch) => batch.batchId),
+                            )}
+                          >
+                            {startingStageId === stage.id && retryingBatchId === '__multi__'
+                              ? '重试中…'
+                              : '重试未通过批次'}
+                          </Button>
+                        </div>
                         <ul className="mt-1 space-y-1 text-muted-foreground">
                           {progress.invalidBatches.slice(0, 4).map((batch) => (
-                            <li key={batch.batchId} className="min-w-0">
-                              <span className="font-mono text-[11px]">{batch.batchId}</span>
-                              {batch.errors.slice(0, 2).map((err, i) => (
-                                <p key={i} className="truncate" title={err}>· {err}</p>
-                              ))}
+                            <li key={batch.batchId} className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="min-w-0">
+                                <span className="font-mono text-[11px]">{batch.batchId}</span>
+                                {batch.errors.slice(0, 2).map((err, i) => (
+                                  <p key={i} className="truncate" title={err}>· {err}</p>
+                                ))}
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 shrink-0 px-2"
+                                disabled={startingStageId !== null}
+                                onClick={() => void handleRetryBatches(stage, [batch.batchId])}
+                              >
+                                {retryingBatchId === batch.batchId ? '…' : '重试'}
+                              </Button>
                             </li>
                           ))}
                         </ul>
@@ -512,6 +976,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                   : null
                               const sessionId = linkedSessionId(task)
                               const idleLinked = Boolean(sessionId) && task.linkedIsProcessing === false
+                              const canRetryTask = task.status === 'failed' || task.status === 'blocked'
                               return (
                                 <div key={task.batchId} className="flex items-start gap-3 py-2">
                                   <span className={cn(
@@ -545,6 +1010,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                         ].filter(Boolean).join(' · ')}
                                     </p>
                                   </div>
+                                  {canRetryTask && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 shrink-0"
+                                      disabled={startingStageId !== null}
+                                      onClick={() => void handleRetryBatches(stage, [task.batchId])}
+                                    >
+                                      {retryingBatchId === task.batchId ? '重试中…' : '重试'}
+                                    </Button>
+                                  )}
                                 </div>
                               )
                             })}
@@ -554,31 +1031,76 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-col gap-1">
-                    {resumable && !failed && (
+                    {stage.id === 'project-setup' ? (
                       <Button
                         type="button"
-                        variant="outline"
                         size="sm"
-                        disabled={startingStageId !== null}
-                        onClick={() => void handleResumeStage(stage)}
-                      >{startingStageId === stage.id ? '恢复中…' : '恢复本阶段'}</Button>
+                        disabled={startingStageId !== null || run?.status === 'complete'}
+                        onClick={() => void handleCompleteSetupStage()}
+                      >{startingStageId === stage.id ? '确认中…' : run?.status === 'complete' ? '已齐套' : '资料齐套，进入解析'}</Button>
+                    ) : (
+                      <>
+                        {resumable && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            onClick={() => void handleAdvanceStage(stage)}
+                          >{startingStageId === stage.id ? '派发中…' : '下一步'}</Button>
+                        )}
+                        {resumable && !failed && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            onClick={() => void handleResumeStage(stage)}
+                          >{startingStageId === stage.id ? '恢复中…' : '恢复本阶段'}</Button>
+                        )}
+                        {(live || resumable) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            onClick={() => void handleStopDispatch(stage)}
+                          >停止派发</Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={startingStageId !== null || (live && !failed)}
+                          title={live && !failed
+                            ? '阶段有运行中任务 — 用「下一步」或「停止派发」'
+                            : run?.status === 'blocked' && !resumable ? summary?.missingLabel : undefined}
+                          onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
+                        >{startingStageId === stage.id
+                            ? '处理中…'
+                            : failed
+                              ? '重试失败批次'
+                              : resolveProjectParentSessionId(stageRuns) || resolveStageParentSessionId(run)
+                                ? '打开项目主会话'
+                                : '进入阶段'}</Button>
+                        {run?.status === 'complete' && index < workflow.stages.length - 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={startingStageId !== null || live}
+                            title={live ? '请先等待本阶段运行中任务结束' : undefined}
+                            onClick={() => void handleEnterNextStage(stage)}
+                          >进入下一阶段</Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={startingStageId !== null}
+                          onClick={() => void handleResetOrchestration(stage)}
+                        >重置编排</Button>
+                      </>
                     )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={startingStageId !== null || (live && !failed) || (run?.status === 'blocked' && !failed && !resumable)}
-                      title={live && !failed
-                        ? '阶段监控中'
-                        : run?.status === 'blocked' && !resumable ? summary?.missingLabel : undefined}
-                      onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
-                    >{startingStageId === stage.id
-                        ? '处理中…'
-                        : failed
-                          ? '重试失败批次'
-                          : live
-                            ? '监控中'
-                            : '进入阶段'}</Button>
                   </div>
                 </div>
               </div>

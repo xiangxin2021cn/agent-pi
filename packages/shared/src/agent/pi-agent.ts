@@ -1481,6 +1481,8 @@ export class PiAgent extends BaseAgent {
         this.onAuthRequest?.(request as any);
       },
     });
+    this._sessionToolContext.workingDirectory = this.config.session?.workingDirectory;
+    this._sessionToolContext.businessContext = this.config.session?.businessContext;
 
     // Attach session self-management bindings (lazy getters from callback registry)
     attachSessionSelfManagementBindings(this._sessionToolContext, sessionId);
@@ -1583,6 +1585,9 @@ export class PiAgent extends BaseAgent {
       }
 
       const ctx = this.getSessionToolContext();
+      // Keep stage gating in sync if the session business context changes mid-life.
+      ctx.workingDirectory = this.config.session?.workingDirectory;
+      ctx.businessContext = this.config.session?.businessContext;
       const result: SessionToolResult = await def.handler(ctx, args);
 
       // Convert ToolResult to subprocess response format

@@ -305,6 +305,21 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return () => { cancelled = true }
   }, [sessionId, hydrateDraftAttachments])
 
+  // External attach paths (e.g. session file tree "Add to chat") update App drafts
+  // without going through FreeFormInput — sync composer UI when this session is open.
+  React.useEffect(() => {
+    const handleExternalAttachments = (
+      event: Event,
+    ) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; attachments?: import('../../shared/types').FileAttachment[] }>).detail
+      if (!detail?.sessionId || detail.sessionId !== sessionId) return
+      if (!Array.isArray(detail.attachments)) return
+      setAttachmentsValue(detail.attachments)
+    }
+    window.addEventListener('craft:session-attachments-changed', handleExternalAttachments as EventListener)
+    return () => window.removeEventListener('craft:session-attachments-changed', handleExternalAttachments as EventListener)
+  }, [sessionId])
+
   const handleAttachmentsChange = React.useCallback((attachments: import('../../shared/types').FileAttachment[]) => {
     setAttachmentsValue(attachments)
     onAttachmentsChange(sessionId, attachments)
@@ -833,7 +848,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         <>
           <div className="h-full flex flex-col">
             <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
-            <BusinessWorkflowBar context={sessionMeta.businessContext} workingDirectory={sessionMeta.workingDirectory} />
+            <BusinessWorkflowBar context={sessionMeta.businessContext} workingDirectory={sessionMeta.workingDirectory} sessionId={sessionMeta.id} />
             <div className="flex-1 flex min-h-0">
               <div className="min-w-0 flex-1 flex flex-col">
                 <ChatDisplay
@@ -917,7 +932,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     <>
       <div className="h-full flex flex-col">
         <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
-        <BusinessWorkflowBar context={session.businessContext ?? sessionMeta?.businessContext} workingDirectory={session.workingDirectory} />
+        <BusinessWorkflowBar context={session.businessContext ?? sessionMeta?.businessContext} workingDirectory={session.workingDirectory} sessionId={session.id} />
         <div className="flex-1 flex min-h-0">
           <div className="min-w-0 flex-1 flex flex-col">
             <ChatDisplay

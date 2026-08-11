@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createBusinessProject } from '@craft-agent/shared/business-projects';
 import type { SpawnSessionRequest } from '@craft-agent/shared/agent';
+import { documentArtifactPath } from './tender-document-artifacts.ts';
 import { runTenderStage } from './tender-stage-run.ts';
 
 describe('tender stage runner', () => {
@@ -105,9 +106,10 @@ describe('tender stage runner', () => {
       projectId: 'n3-tender', stageId: 'work-plan-methodology',
     });
 
-    expect(planning.stageId).toBe('planning');
+    expect(planning.stageId).toBe('planning-and-submission');
     expect(planning.status).toBe('blocked');
     expect(planning.missingItems).toContain('capability:bidder_commitments');
+    expect(planning.missingItems).toContain('capability:construction_resource_schedule');
 
     writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
       schemaVersion: 1,
@@ -117,6 +119,7 @@ describe('tender stage runner', () => {
         entry('document_analysis'),
         entry('boq_reconciliation'),
         entry('boq_five_step_pricing'),
+        entry('construction_resource_schedule'),
         entry('bidder_commitments'),
       ],
     }));
@@ -125,7 +128,13 @@ describe('tender stage runner', () => {
       projectId: 'n3-tender', stageId: 'planning',
     });
     expect(unblocked.status).toBe('running');
-    expect(unblocked.producedCapabilities).toEqual(['execution_plan', 'schedule_resources', 'cost_cashflow']);
+    expect(unblocked.producedCapabilities).toEqual([
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+      'submission_documents',
+      'submission_audit',
+    ]);
   });
 
   test('uses manual stage closeout evidence to satisfy document-analysis upstream readiness', async () => {
@@ -196,6 +205,7 @@ describe('tender stage runner', () => {
       capabilities: [
         entry('boq_reconciliation'),
         entry('boq_five_step_pricing'),
+        entry('construction_resource_schedule'),
         entry('bidder_commitments'),
       ],
     }));
@@ -204,19 +214,31 @@ describe('tender stage runner', () => {
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'planning',
     });
-    // Legacy id for the old standalone audit stage resolves to 'submission'.
-    const submissionBlocked = await runTenderStage({
-      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+    // Legacy audit id resolves into the consolidated planning-and-submission stage.
+    const aliased = await runTenderStage({
+      action: 'status', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'submission-audit',
+    });
+    const completionBlocked = await runTenderStage({
+      action: 'complete', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'planning-and-submission',
     });
 
     expect(planning.status).toBe('running');
-    expect(planning.producedCapabilities).toEqual(['execution_plan', 'schedule_resources', 'cost_cashflow']);
-    expect(submissionBlocked.stageId).toBe('submission');
-    expect(submissionBlocked.status).toBe('blocked');
-    expect(submissionBlocked.missingItems).toContain('capability:execution_plan');
-    expect(submissionBlocked.missingItems).toContain('capability:schedule_resources');
-    expect(submissionBlocked.missingItems).toContain('capability:cost_cashflow');
+    expect(planning.stageId).toBe('planning-and-submission');
+    expect(planning.producedCapabilities).toEqual([
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+      'submission_documents',
+      'submission_audit',
+    ]);
+    expect(aliased.stageId).toBe('planning-and-submission');
+    expect(completionBlocked.status).toBe('blocked');
+    expect(completionBlocked.missingItems).toContain('output:execution_plan');
+    expect(completionBlocked.missingItems).toContain('output:schedule_resources');
+    expect(completionBlocked.missingItems).toContain('output:cost_cashflow');
+    expect(completionBlocked.missingItems).toContain('output:submission_documents');
   });
 
   test('creates one document-analysis batch per registered source and gates the stage merge', async () => {
@@ -268,6 +290,25 @@ describe('tender stage runner', () => {
       projectId: 'n3-tender', stageId: 'tender-document-analysis',
       parentSessionId: 'parent-doc-analysis',
     });
+
+    for (const file of started.sourceBoundary.files.filter((entry) => entry.status === 'registered')) {
+      const artifactPath = documentArtifactPath(fixture.projectRoot, 'n3-tender', file.documentId, file.name);
+      mkdirSync(dirname(artifactPath), { recursive: true });
+      writeFileSync(
+        artifactPath,
+        `# ${file.name}\n\n## 摘要\n\nEvidence-linked parse summary for ${file.documentId}.\n`,
+        'utf8',
+      );
+      await runTenderStage({
+        action: 'status',
+        workspaceRootPath: fixture.workspaceRoot,
+        projectId: 'n3-tender',
+        stageId: 'tender-document-analysis',
+        parentSessionId: 'parent-doc-analysis',
+        documentReview: { documentId: file.documentId, humanReview: 'accepted' },
+      });
+    }
+
     const completed = await runTenderStage({
       action: 'status', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'tender-document-analysis',
@@ -316,14 +357,23 @@ describe('tender stage runner', () => {
     }, { execution });
 
     expect(started.status).toBe('running');
+    expect(spawnRequests).toHaveLength(0);
+    expect(started.batchProgress?.runningBatches).toBe(0);
+    expect(started.batchProgress?.pendingBatches).toBe(2);
+
+    const advanced = await runTenderStage({
+      action: 'advance', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'tender-document-analysis', parentSessionId: 'parent-1',
+    }, { execution });
+
     expect(spawnRequests).toHaveLength(2);
     expect(spawnRequests.every((entry) => entry.parentSessionId === 'parent-1')).toBe(true);
     expect(spawnRequests.map((entry) => entry.request.briefPath)).toEqual(
-      started.batchProgress?.tasks.map((task) => task.briefPath) ?? [],
+      advanced.batchProgress?.tasks.map((task) => task.briefPath) ?? [],
     );
-    expect(started.batchProgress?.runningBatches).toBe(2);
-    expect(started.batchProgress?.pendingBatches).toBe(0);
-    expect(started.batchProgress?.tasks.every((task) => task.status === 'running')).toBe(true);
+    expect(advanced.batchProgress?.runningBatches).toBe(2);
+    expect(advanced.batchProgress?.pendingBatches).toBe(0);
+    expect(advanced.batchProgress?.tasks.every((task) => task.status === 'running')).toBe(true);
 
     const polled = await runTenderStage({
       action: 'status', workspaceRootPath: fixture.workspaceRoot,
@@ -436,6 +486,15 @@ describe('tender stage runner', () => {
       projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
     });
     expect(merged.missingItems.some((item) => item.startsWith('boq-merge:'))).toBe(false);
+    expect(merged.missingItems.filter((item) => item.startsWith('resource-schedule:'))).toEqual([]);
+    expect(existsSync(join(projectDirectory, 'packs', 'construction-resource-schedule.json'))).toBe(true);
+    expect(existsSync(join(
+      fixture.projectRoot,
+      'Agent Pi Outputs',
+      'n3-tender',
+      'boq-pricing',
+      '施工资源消耗总表.md',
+    ))).toBe(true);
     // V2.4.0: the pricing stage also gates on user-confirmed bidder commitments.
     expect(merged.status).toBe('blocked');
     expect(merged.missingItems).toContain('output:bidder_commitments');
@@ -444,10 +503,17 @@ describe('tender stage runner', () => {
 
     writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
       ...capabilityIndex(true),
-      capabilities: [...capabilityIndex(true).capabilities, {
-        capability: 'bidder_commitments', enabled: true, required: true, revision: 1, readiness: 'ready',
-        issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
-      }],
+      capabilities: [
+        ...capabilityIndex(true).capabilities,
+        {
+          capability: 'construction_resource_schedule', enabled: true, required: true, revision: 1, readiness: 'ready',
+          issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+        },
+        {
+          capability: 'bidder_commitments', enabled: true, required: true, revision: 1, readiness: 'ready',
+          issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+        },
+      ],
     }));
     const completed = await runTenderStage({
       action: 'complete', workspaceRootPath: fixture.workspaceRoot,

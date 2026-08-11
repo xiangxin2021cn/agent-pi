@@ -49,6 +49,7 @@ import {
   createSession as createStoredSession,
   deleteSession as deleteStoredSession,
   updateSessionMetadata,
+  setSessionBusinessStage,
   canUpdateSdkCwd,
   setPendingPlanExecution as setStoredPendingPlanExecution,
   markCompactionComplete as markStoredCompactionComplete,
@@ -130,6 +131,7 @@ import {
   readSpawnMemoryGuardEnvLimits,
   type SpawnMemoryGuardDecision,
 } from './runtime-memory-guard'
+import { decideTenderParentSpawnGate } from './tender-spawn-gate'
 import {
   getSpawnActivityTimeoutMs,
   isSpawnReportReady,
@@ -161,7 +163,12 @@ import {
 } from './knowledge-base-category-suggestion'
 import { createSpreadsheetMarkdownPreview } from '../handlers/rpc/files'
 import { ensureProjectMemoryLite, loadProjectMemoryReviewerPerformanceSummary, recordProjectMemoryGoalAudit } from '../project-memory-lite'
-import { resolveTenderStageParentBarrier } from '../tender-stage-executor'
+import {
+  resolveTenderStageParentBarrier,
+  readTenderStageBoardMaxConcurrency,
+  bindTenderStageTaskToSpawnedSession,
+  readMarkdownPathFromBrief,
+} from '../tender-stage-executor'
 import { collectSessionThreadIds, isSessionInsideViewedThread } from './unread-thread'
 import {
   createToolRecoveryRuntime,
@@ -990,6 +997,9 @@ interface ManagedSession {
     resumeScheduled: boolean
     source: 'goal_orchestration' | 'tender_task_board'
     reportPaths: string[]
+    markdownPaths: string[]
+    /** Path-backed child deliverables (JSON + MD + brief) attached on parent resume. */
+    handoffArtifactPaths: string[]
     reviewNotified?: boolean
   }
   /** True until a restored session starts a new live turn in this process. */
@@ -1415,6 +1425,8 @@ export const SPAWNED_CHILD_SEND_OPTIONS = Object.freeze({
 interface ParentSpawnHandoffBarrierContext extends ParentSpawnHandoffBarrierDecision {
   source: 'none' | 'goal_orchestration' | 'tender_task_board'
   reportPaths: string[]
+  markdownPaths: string[]
+  handoffArtifactPaths: string[]
   taskBoardPath?: string
 }
 
@@ -3727,6 +3739,11 @@ export class SessionManager implements ISessionManager {
       .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
   }
 
+  /** Sync membership check for tender parent healing (deleted sessions are absent). */
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId)
+  }
+
   /**
    * Aggregate unread state across all workspaces.
    * Excludes hidden and archived sessions from counts/indicators.
@@ -5447,8 +5464,24 @@ export class SessionManager implements ISessionManager {
         }
 
         const activeSpawnCount = this.getActiveSpawnHandoffCount(managed.id)
-        if (activeSpawnCount >= SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT) {
-          throw new Error(`spawn_session active handoff limit reached (${activeSpawnCount}/${SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT}). Return control and let the runtime monitor existing handoffs before spawning more.`)
+        const dispatchSource = request.dispatchSource ?? 'agent'
+        const tenderSpawnGate = decideTenderParentSpawnGate({
+          businessContext: managed.businessContext,
+          dispatchSource,
+          activeSpawnCount,
+          boardMaxConcurrency: this.readTenderStageBoardMaxConcurrency(managed),
+        })
+        if (!tenderSpawnGate.allowed) {
+          throw new Error(tenderSpawnGate.message ?? 'spawn_session blocked by tender stage concurrency.')
+        }
+
+        // Global / stage-aware cap for agent-initiated spawns. Stage-controller
+        // dispatches are already limited by the task board maxConcurrency.
+        if (dispatchSource !== 'stage-controller') {
+          const spawnLimit = tenderSpawnGate.concurrencyLimit ?? SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT
+          if (activeSpawnCount >= spawnLimit) {
+            throw new Error(`spawn_session active handoff limit reached (${activeSpawnCount}/${spawnLimit}). Return control and let the runtime monitor existing handoffs before spawning more.`)
+          }
         }
         this.assertSpawnMemoryAvailable()
 
@@ -5467,12 +5500,23 @@ export class SessionManager implements ISessionManager {
           : request.enabledSourceSlugs ?? managed.enabledSourceSlugs ?? parentOrchestration?.policy.selectedSourceSlugs ?? []
         const reportPath = explicitDispatch.reportPath
           ?? (artifacts ? getOrchestrationReportPath(artifacts, spawnTask?.id ?? request.name) : undefined)
-        const latestParentAttachments = [...managed.messages].reverse().find(message =>
-          message.role === 'user' && (message.attachments?.length ?? 0) > 0
-        )?.attachments ?? []
+        // Tender / explicit brief+report dispatches already list allowed sources.
+        // Do not also pull the parent's latest user attachments (often large PDFs)
+        // into every child — that multiplies RSS and caused OOM exits.
+        const hasExplicitSpawnAttachments = (request.attachments?.length ?? 0) > 0
+        const skipParentAttachmentInherit = hasExplicitSpawnAttachments && (
+          request.dispatchSource === 'stage-controller'
+          || Boolean(explicitDispatch.briefPath && explicitDispatch.reportPath)
+          || managed.businessContext?.module === 'tender'
+        )
         const spawnAttachmentRequests = new Map<string, { path: string; name?: string }>()
-        for (const attachment of latestParentAttachments) {
-          if (attachment.storedPath) spawnAttachmentRequests.set(attachment.storedPath, { path: attachment.storedPath, name: attachment.name })
+        if (!skipParentAttachmentInherit) {
+          const latestParentAttachments = [...managed.messages].reverse().find(message =>
+            message.role === 'user' && (message.attachments?.length ?? 0) > 0
+          )?.attachments ?? []
+          for (const attachment of latestParentAttachments) {
+            if (attachment.storedPath) spawnAttachmentRequests.set(attachment.storedPath, { path: attachment.storedPath, name: attachment.name })
+          }
         }
         for (const attachment of request.attachments ?? []) {
           spawnAttachmentRequests.set(attachment.path, attachment)
@@ -5508,7 +5552,10 @@ export class SessionManager implements ISessionManager {
           workingDirectory: spawnedWorkingDirectory,
           parentSessionId: managed.id,
           parentSessionKind: 'spawn',
-          businessContext: managed.businessContext,
+          // Snapshot at spawn — parent stageId may mutate later on the project parent.
+          businessContext: managed.businessContext
+            ? { ...managed.businessContext }
+            : undefined,
         })
 
         // Build FileAttachment[] from paths (if any)
@@ -5520,7 +5567,11 @@ export class SessionManager implements ISessionManager {
               const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
               if (spawnedWorkingDirectory && spawnedWorkingDirectory !== 'none') extraDirs.push(spawnedWorkingDirectory)
               const safePath = await validateFilePath(a.path, extraDirs)
-              const attachment = readFileAttachment(safePath, { allowPathBackedLargeFile: true })
+              // Path metadata only — never inflate PDF/Office into base64 per child.
+              const attachment = readFileAttachment(safePath, {
+                allowPathBackedLargeFile: true,
+                pathBackedOnly: true,
+              })
               if (attachment) {
                 if (a.name) attachment.name = a.name
                 attachment.storedPath = safePath
@@ -5589,6 +5640,31 @@ export class SessionManager implements ISessionManager {
         ).catch(err => {
           sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
         })
+
+        // Keep tender task board / 流程监控 aligned when the parent agent spawns
+        // against an existing batch reportPath (UI advance uses the same board).
+        if (
+          reportPath
+          && managed.businessContext?.module === 'tender'
+          && dispatchSource !== 'stage-controller'
+        ) {
+          try {
+            bindTenderStageTaskToSpawnedSession({
+              workingDirectory: managed.workingDirectory,
+              projectId: managed.businessContext.projectId,
+              stageId: managed.businessContext.stageId,
+              parentSessionId: managed.id,
+              childSessionId: session.id,
+              reportPath,
+              briefPath: taskBriefPath,
+              name: session.name || request.name,
+            })
+          } catch (error) {
+            sessionLog.warn(
+              `Failed to bind tender task board for spawn ${session.id}: ${error instanceof Error ? error.message : error}`,
+            )
+          }
+        }
 
         if (reportPath) {
           const spawnBarrier = this.getParentSpawnHandoffBarrierDecision(managed)
@@ -6486,6 +6562,15 @@ export class SessionManager implements ISessionManager {
       }).length
   }
 
+  private readTenderStageBoardMaxConcurrency(managed: ManagedSession): number | undefined {
+    if (managed.businessContext?.module !== 'tender') return undefined
+    return readTenderStageBoardMaxConcurrency({
+      workingDirectory: managed.workingDirectory,
+      projectId: managed.businessContext.projectId,
+      stageId: managed.businessContext.stageId,
+    })
+  }
+
   private evaluateSpawnMemoryGuard(): SpawnMemoryGuardDecision {
     const snapshot = this.runtimeMemoryProbe?.() ?? {
       mainRssBytes: process.memoryUsage().rss,
@@ -6516,12 +6601,25 @@ export class SessionManager implements ISessionManager {
       const pendingSessionIds: string[] = []
       const reviewSessionIds = new Set(tenderBarrier.reviewSessionIds)
       const reportPaths = new Set(tenderBarrier.reportPaths)
+      const markdownPaths = new Set(tenderBarrier.markdownPaths)
+      const handoffArtifactPaths = new Set(tenderBarrier.handoffArtifactPaths)
       for (const sessionId of tenderBarrier.pendingSessionIds) {
         const runtime = this.getSpawnStatus(sessionId)
         if (!runtime) {
           pendingSessionIds.push(sessionId)
         } else if (runtime.handoffStatus === 'ready') {
-          if (runtime.reportPath) reportPaths.add(runtime.reportPath)
+          if (runtime.reportPath) {
+            reportPaths.add(runtime.reportPath)
+            handoffArtifactPaths.add(runtime.reportPath)
+          }
+          if (runtime.briefPath) {
+            const markdownPath = readMarkdownPathFromBrief(runtime.briefPath)
+            if (markdownPath) {
+              markdownPaths.add(markdownPath)
+              handoffArtifactPaths.add(markdownPath)
+            }
+            handoffArtifactPaths.add(runtime.briefPath)
+          }
         } else if (runtime.handoffStatus === 'failed' || runtime.handoffStatus === 'missing') {
           reviewSessionIds.add(sessionId)
         } else {
@@ -6538,6 +6636,8 @@ export class SessionManager implements ISessionManager {
         pendingSessionIds,
         reviewSessionIds: [...reviewSessionIds],
         reportPaths: [...reportPaths],
+        markdownPaths: [...markdownPaths],
+        handoffArtifactPaths: [...handoffArtifactPaths],
         source: 'tender_task_board',
       }
     }
@@ -6549,6 +6649,8 @@ export class SessionManager implements ISessionManager {
         pendingSessionIds: [],
         reviewSessionIds: [],
         reportPaths: [],
+        markdownPaths: [],
+        handoffArtifactPaths: [],
         source: 'none',
       }
     }
@@ -6560,6 +6662,7 @@ export class SessionManager implements ISessionManager {
           sessionId: agent.sessionId,
           handoffStatus: runtime.handoffStatus,
           reportPath: runtime.reportPath ?? agent.reportPath,
+          briefPath: runtime.briefPath ?? agent.briefPath,
         }
       }
 
@@ -6575,6 +6678,7 @@ export class SessionManager implements ISessionManager {
             ? 'failed' as const
             : 'missing' as const,
         reportPath: agent.reportPath,
+        briefPath: agent.briefPath,
       }
     })
 
@@ -6583,13 +6687,24 @@ export class SessionManager implements ISessionManager {
         || activeSubAgents.some(agent => Boolean(agent.reportPath)),
       statuses: handoffStatuses,
     })
+    const ready = handoffStatuses.filter((status) => status.handoffStatus === 'ready')
+    const reportPaths = ready
+      .map((status) => status.reportPath)
+      .filter((path): path is string => Boolean(path))
+    const markdownPaths = ready
+      .map((status) => readMarkdownPathFromBrief(status.briefPath))
+      .filter((path): path is string => Boolean(path))
+    const handoffArtifactPaths = [
+      ...reportPaths,
+      ...markdownPaths,
+      ...ready.map((status) => status.briefPath).filter((path): path is string => Boolean(path)),
+    ].filter((path, index, all) => all.indexOf(path) === index && existsSync(path))
     return {
       ...decision,
       source: 'goal_orchestration',
-      reportPaths: handoffStatuses
-        .filter((status) => status.handoffStatus === 'ready')
-        .map((status) => status.reportPath)
-        .filter((path): path is string => Boolean(path)),
+      reportPaths,
+      markdownPaths,
+      handoffArtifactPaths,
     }
   }
 
@@ -6603,6 +6718,8 @@ export class SessionManager implements ISessionManager {
       resumeScheduled: false,
       source: barrier.source === 'tender_task_board' ? 'tender_task_board' : 'goal_orchestration',
       reportPaths: barrier.reportPaths,
+      markdownPaths: barrier.markdownPaths,
+      handoffArtifactPaths: barrier.handoffArtifactPaths,
       reviewNotified: parent.spawnHandoffWait?.reviewNotified,
     }
 
@@ -6690,6 +6807,8 @@ export class SessionManager implements ISessionManager {
     if (decision.action === 'wait') {
       parent.spawnHandoffWait.childSessionIds = decision.pendingSessionIds
       parent.spawnHandoffWait.reportPaths = decision.reportPaths
+      parent.spawnHandoffWait.markdownPaths = decision.markdownPaths
+      parent.spawnHandoffWait.handoffArtifactPaths = decision.handoffArtifactPaths
       this.scheduleSpawnHandoffMonitor(parent)
       return
     }
@@ -6718,36 +6837,57 @@ export class SessionManager implements ISessionManager {
       if (parent.spawnHandoffWait.resumeScheduled) return
       parent.spawnHandoffWait.resumeScheduled = true
       const tenderReports = decision.reportPaths.map((path) => `- ${path}`).join('\n')
+      const tenderMarkdown = decision.markdownPaths.map((path) => `- ${path}`).join('\n')
+      const tenderArtifacts = decision.handoffArtifactPaths.map((path) => `- ${path}`).join('\n')
       const tenderPrompt = [
         '<tender-batches-ready>',
         'All tender batch subagents have finished and their reports passed runtime acceptance.',
-        'Read the accepted batch reports listed below. Do not repeat delegated analysis and do not rewrite or compress the reports — the runtime owns the deterministic pack merge.',
+        'Child deliverables are attached path-backed to this parent turn (JSON handoff + customer-facing Markdown + brief). Prefer the Markdown for customer-facing review; use JSON only for pack merge / machine checks.',
+        'Do not repeat delegated analysis and do not rewrite or compress child Markdown — the runtime owns the deterministic pack merge.',
+        'Accepted JSON reports:',
         tenderReports || '(No report paths were recorded.)',
+        'Customer-facing Markdown:',
+        tenderMarkdown || '(No markdown paths were recorded.)',
+        'All attached handoff artifacts:',
+        tenderArtifacts || '(No handoff artifact paths were recorded.)',
         'Then run the tender stage status/complete check for the current stage, surface any normalization warnings or unverified rates to the user for review, and continue the stage workflow.',
         '</tender-batches-ready>',
       ].join('\n')
-      this.scheduleSpawnHandoffContinuation(parent, tenderPrompt)
+      this.scheduleSpawnHandoffContinuation(parent, tenderPrompt, decision.handoffArtifactPaths)
       return
     }
     if (parent.spawnHandoffWait.resumeScheduled) return
 
     parent.spawnHandoffWait.resumeScheduled = true
     const reports = decision.reportPaths.map((path) => `- ${path}`).join('\n')
+    const markdown = decision.markdownPaths.map((path) => `- ${path}`).join('\n')
+    const artifacts = decision.handoffArtifactPaths.map((path) => `- ${path}`).join('\n')
     const prompt = [
       '<spawn-handoffs-ready>',
       'All delegated agents have finished and their structured handoffs are ready.',
-      'Read and merge only the handoff reports listed below. Do not repeat delegated source analysis, calculations, searches, or child report writing.',
+      'Child deliverables are attached path-backed to this parent turn (JSON / Markdown / brief where available).',
+      'Read and merge only the handoff artifacts listed below. Do not repeat delegated source analysis, calculations, searches, or child report writing.',
+      'JSON / structured reports:',
       reports || '(No report paths were recorded.)',
+      'Customer-facing Markdown:',
+      markdown || '(No markdown paths were recorded.)',
+      'All attached handoff artifacts:',
+      artifacts || '(No handoff artifact paths were recorded.)',
       'Resolve any contradictions explicitly. If a handoff is incomplete or contradictory, pause for user review instead of substituting parent-generated data.',
       '</spawn-handoffs-ready>',
     ].join('\n')
-    this.scheduleSpawnHandoffContinuation(parent, prompt)
+    this.scheduleSpawnHandoffContinuation(parent, prompt, decision.handoffArtifactPaths)
   }
 
-  private scheduleSpawnHandoffContinuation(parent: ManagedSession, prompt: string): void {
+  private scheduleSpawnHandoffContinuation(
+    parent: ManagedSession,
+    prompt: string,
+    handoffArtifactPaths: string[] = [],
+  ): void {
     const iteration = parent.goalState?.iteration ?? 0
+    const artifactPaths = [...handoffArtifactPaths]
     setImmediate(() => {
-      this.runGoalContinuation(parent.id, prompt, iteration, 0, 'spawn_handoff').catch(error => {
+      this.runGoalContinuation(parent.id, prompt, iteration, 0, 'spawn_handoff', artifactPaths).catch(error => {
         sessionLog.error('spawn handoff continuation failed', {
           sessionId: parent.id,
           error: error instanceof Error ? error.message : String(error),
@@ -7472,6 +7612,28 @@ export class SessionManager implements ISessionManager {
       // Notify renderer of the working directory change
       this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
     }
+  }
+
+  /**
+   * Move a tender business session to another workflow stageId without creating
+   * a new parent chat. Updates in-memory managed state, agent config, and disk.
+   */
+  async setBusinessContextStage(sessionId: string, stageId: string): Promise<boolean> {
+    const managed = this.sessions.get(sessionId)
+    if (managed?.businessContext?.module === 'tender') {
+      const next = { ...managed.businessContext, stageId }
+      managed.businessContext = next
+      const agentSession = (managed.agent as { config?: { session?: { businessContext?: typeof next } } } | undefined)
+        ?.config?.session
+      if (agentSession) agentSession.businessContext = next
+      await updateSessionMetadata(managed.workspace.rootPath, sessionId, { businessContext: next })
+      return true
+    }
+    const workspaceRoot = managed?.workspace.rootPath
+      ?? [...this.sessions.values()][0]?.workspace.rootPath
+    if (!workspaceRoot) return false
+    const updated = await setSessionBusinessStage(workspaceRoot, sessionId, stageId)
+    return Boolean(updated)
   }
 
   /**
@@ -9444,12 +9606,39 @@ export class SessionManager implements ISessionManager {
     return attachments
   }
 
+  private buildPathBackedHandoffAttachments(paths: string[]): FileAttachment[] {
+    const attachments: FileAttachment[] = []
+    const seen = new Set<string>()
+    for (const path of paths) {
+      if (!path?.trim()) continue
+      const key = path.replace(/\\/g, '/').toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      try {
+        const attachment = readFileAttachment(path, {
+          allowPathBackedLargeFile: true,
+          pathBackedOnly: true,
+        })
+        if (!attachment) continue
+        attachment.storedPath = attachment.path
+        attachments.push(attachment)
+      } catch (error) {
+        sessionLog.warn('Failed to attach child handoff artifact to parent continuation', {
+          path,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return attachments
+  }
+
   private async runGoalContinuation(
     sessionId: string,
     prompt: string,
     iteration: number,
     activeRetryCount = 0,
     continuationKind: 'goal' | 'spawn_handoff' = 'goal',
+    handoffArtifactPaths: string[] = [],
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
@@ -9501,7 +9690,14 @@ export class SessionManager implements ISessionManager {
           queueLength: managed.messageQueue.length,
         })
         setTimeout(() => {
-          this.runGoalContinuation(sessionId, prompt, iteration, activeRetryCount + 1, continuationKind).catch(err => {
+          this.runGoalContinuation(
+            sessionId,
+            prompt,
+            iteration,
+            activeRetryCount + 1,
+            continuationKind,
+            handoffArtifactPaths,
+          ).catch(err => {
             sessionLog.error('goal continuation retry failed', {
               sessionId,
               iteration,
@@ -9535,11 +9731,22 @@ export class SessionManager implements ISessionManager {
       return
     }
 
+    const resolvedHandoffArtifactPaths = continuationKind === 'spawn_handoff'
+      ? (handoffArtifactPaths.length > 0
+        ? handoffArtifactPaths
+        : [...(managed.spawnHandoffWait?.handoffArtifactPaths ?? [])])
+      : []
+    const handoffAttachments = continuationKind === 'spawn_handoff'
+      ? this.buildPathBackedHandoffAttachments(resolvedHandoffArtifactPaths)
+      : []
+
     const infoMessage: Message = {
       id: generateMessageId(),
       role: 'info',
       content: continuationKind === 'spawn_handoff'
-        ? 'All structured child handoffs are ready. Resuming the parent for audited merge only.'
+        ? handoffAttachments.length > 0
+          ? `All structured child handoffs are ready (${handoffAttachments.length} path-backed artifact(s) attached). Resuming the parent for audited merge only.`
+          : 'All structured child handoffs are ready. Resuming the parent for audited merge only.'
         : `Goal audit requested improvement pass ${iteration + 1}.`,
       timestamp: this.monotonic(),
       infoLevel: 'info',
@@ -9554,6 +9761,35 @@ export class SessionManager implements ISessionManager {
     }, managed.workspace.id)
 
     if (continuationKind === 'spawn_handoff') this.clearSpawnHandoffWait(managed)
+
+    if (handoffAttachments.length > 0) {
+      const handoffUserMessage: Message = {
+        id: generateMessageId(),
+        role: 'user',
+        content: [
+          'Child batch deliverables attached for this parent turn (path-backed).',
+          'Prefer customer-facing Markdown for review; use JSON handoffs for pack merge only.',
+          ...handoffAttachments.map((attachment) => `- ${attachment.path}`),
+        ].join('\n'),
+        timestamp: this.monotonic(),
+        attachments: handoffAttachments.map((attachment) => ({
+          id: randomUUID(),
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          storedPath: attachment.storedPath ?? attachment.path,
+          type: attachment.type,
+        })),
+      }
+      managed.messages.push(handoffUserMessage)
+      this.sendEvent({
+        type: 'user_message',
+        sessionId,
+        message: handoffUserMessage,
+        status: 'accepted',
+      }, managed.workspace.id)
+      managed.lastSentAttachments = handoffAttachments
+    }
 
     managed.lastMessageAt = Date.now()
     this.setProcessing(managed, true)
@@ -9571,7 +9807,10 @@ export class SessionManager implements ISessionManager {
       const agent = await this.getOrCreateAgent(managed)
 
       sessionLog.info(`Starting ${continuationKind} continuation for session:`, sessionId)
-      const chatIterator = agent.chat(prompt, this.getGoalContinuationAttachments(managed))
+      const continuationAttachments = handoffAttachments.length > 0
+        ? handoffAttachments
+        : this.getGoalContinuationAttachments(managed)
+      const chatIterator = agent.chat(prompt, continuationAttachments)
 
       for await (const event of chatIterator) {
         if (event.type !== 'text_delta') {

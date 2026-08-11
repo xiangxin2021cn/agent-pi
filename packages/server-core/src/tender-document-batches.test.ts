@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   createOrRefreshDocumentAnalysisBatchManifest,
   mergeDocumentAnalysisBatchReports,
   validateDocumentAnalysisBatchMerge,
   type TenderDocumentAnalysisBatchBrief,
 } from './tender-document-batches.ts';
+
+function writeAcceptableMarkdown(path: string, title = 'Analysis'): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `# ${title}\n\n## 摘要\n\nCustomer-facing summary for review.\n`);
+}
 
 describe('tender document analysis batch manifest', () => {
   let root = '';
@@ -16,13 +21,13 @@ describe('tender document analysis batch manifest', () => {
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('creates one exact child brief per registered tender source', () => {
+  test('creates one exact child brief per registered tender source with markdownPath', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
     const sources = [
       { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
       { documentId: 'boq', path: 'C:/inputs/BOQ.xlsx', name: 'BOQ.xlsx', kind: 'boq', priority: 2 },
     ];
-    const manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    const manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
 
     expect(manifest.documentCount).toBe(2);
     expect(manifest.batchCount).toBe(2);
@@ -31,14 +36,16 @@ describe('tender document analysis batch manifest', () => {
     expect(brief.allowedSources).toEqual([{ documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf' }]);
     expect(brief.scope).toEqual({ documentId: 'tender-data', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 });
     expect(brief.spawnPolicy).toBe('forbidden');
-    expect(brief.finalArtifactPolicy).toBe('report-only');
+    expect(brief.finalArtifactPolicy).toBe('report-and-markdown');
+    expect(brief.markdownPath).toContain(join('Agent Pi Outputs', 'n3', 'document-analysis'));
+    expect(manifest.batches[0]?.markdownPath).toBe(brief.markdownPath);
   });
 
-  test('accepts only schema-valid reports that cite the assigned document', () => {
+  test('accepts only schema-valid reports that cite the assigned document and include MD', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
-    let manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [
+    let manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [
       { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
-    ]);
+    ], { projectRoot: root });
     const batch = manifest.batches[0]!;
     writeFileSync(batch.reportPath, JSON.stringify({
       schemaVersion: 1,
@@ -50,9 +57,9 @@ describe('tender document analysis batch manifest', () => {
       }],
     }));
 
-    manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
       documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1,
-    }]);
+    }], { projectRoot: root });
     expect(manifest.batches[0]?.status).toBe('invalid');
 
     writeFileSync(batch.reportPath, JSON.stringify({
@@ -64,21 +71,28 @@ describe('tender document analysis batch manifest', () => {
         sourceRefs: [{ documentId: 'tender-data', page: 3 }], status: 'reviewed',
       }],
     }));
-    manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
       documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1,
-    }]);
+    }], { projectRoot: root });
+    expect(manifest.batches[0]?.status).toBe('invalid');
+    expect(manifest.batches[0]?.validationErrors.some((error) => error.includes('Markdown'))).toBe(true);
+
+    writeAcceptableMarkdown(batch.markdownPath, 'Tender Data');
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
+      documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1,
+    }], { projectRoot: root });
 
     expect(manifest.batches[0]?.status).toBe('complete');
     expect(manifest.completedBatches).toBe(1);
     expect(manifest.missingDocumentIds).toEqual([]);
   });
 
-  test('rejects a final analysis pack that omits or changes a completed child section', () => {
+  test('rejects a final analysis pack that omits or changes a completed child section', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
     const sources = [{
       documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1,
     }];
-    let manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    let manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
     const batch = manifest.batches[0]!;
     writeFileSync(batch.reportPath, JSON.stringify({
       schemaVersion: 1,
@@ -89,7 +103,8 @@ describe('tender document analysis batch manifest', () => {
         sourceRefs: [{ documentId: batch.documentId, page: 3 }], status: 'reviewed',
       }],
     }));
-    manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    writeAcceptableMarkdown(batch.markdownPath);
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
     const section = {
       id: 'tender-data--requirements-1', documentId: batch.documentId, kind: 'tender_requirements', title: 'Requirements',
       summary: 'Exact requirement.', sourceRefs: [{ documentId: batch.documentId, page: 3 }], status: 'reviewed',
@@ -104,13 +119,13 @@ describe('tender document analysis batch manifest', () => {
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [section] })).toEqual([]);
   });
 
-  test('deterministically merges complete batch reports into final pack data', () => {
+  test('deterministically merges complete batch reports into final pack data', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
     const sources = [
       { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
       { documentId: 'boq', path: 'C:/inputs/BOQ.xlsx', name: 'BOQ.xlsx', kind: 'boq', priority: 2 },
     ];
-    let manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    let manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
     for (const batch of manifest.batches) {
       writeFileSync(batch.reportPath, JSON.stringify({
         schemaVersion: 1,
@@ -126,8 +141,9 @@ describe('tender document analysis batch manifest', () => {
           status: 'reviewed',
         }],
       }));
+      writeAcceptableMarkdown(batch.markdownPath, batch.documentId);
     }
-    manifest = createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources);
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
 
     const merged = mergeDocumentAnalysisBatchReports(manifest);
     expect(merged.errors).toEqual([]);
@@ -136,5 +152,21 @@ describe('tender document analysis batch manifest', () => {
       'boq--sec-02-tender-requirements',
     ]);
     expect(validateDocumentAnalysisBatchMerge(manifest, merged.data)).toEqual([]);
+  });
+
+  test('skips rewriting unchanged briefs on repeated refresh', async () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
+    const sources = [
+      { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
+    ];
+    const first = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
+    const briefPath = first.batches[0]!.briefPath;
+    const before = readFileSync(briefPath, 'utf8');
+    const mtimeBefore = Bun.file(briefPath).lastModified;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const second = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
+    expect(readFileSync(briefPath, 'utf8')).toBe(before);
+    expect(second.batches[0]?.batchId).toBe(first.batches[0]?.batchId);
+    expect(Bun.file(briefPath).lastModified).toBe(mtimeBefore);
   });
 });

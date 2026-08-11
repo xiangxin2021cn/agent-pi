@@ -1,6 +1,6 @@
 {
   "name": "agent-pi",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "license": "Apache-2.0",
   "description": "Agent Pi desktop agent application",
   "type": "module",
@@ -138,14 +138,14 @@
     "vite": "^6.2.4"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.226",
-    "@anthropic-ai/sdk": "^0.112.3",
+    "@anthropic-ai/claude-agent-sdk": "0.3.227",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@dnd-kit/dom": "^0.4.0-beta-20260227032529",
     "@dnd-kit/helpers": "^0.4.0-beta-20260227032529",
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
     "@github/copilot-sdk": "^0.1.23",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

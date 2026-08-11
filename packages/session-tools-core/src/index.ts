@@ -156,6 +156,11 @@ export {
   type BoqPricingMergeBatch,
   type BoqPricingMergeResult,
 } from './tender/boq-pricing-merge.ts';
+export {
+  assertCapabilityWriteAllowed,
+  allowedCapabilitiesForStage,
+  canonicalTenderStageId,
+} from './tender/capability-stage-guard.ts';
 
 // Handlers
 export {

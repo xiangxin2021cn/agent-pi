@@ -105,6 +105,12 @@ export interface SpawnSessionRequest {
   /** Exclusive structured handoff path owned by the spawned child. */
   reportPath?: string;
   attachments?: Array<{ path: string; name?: string }>;
+  /**
+   * Who initiated the spawn. Parent chat (`agent`) is the tender command surface;
+   * `stage-controller` is complementary UI fill-up (下一步/恢复). Controlled stages
+   * apply a tighter concurrency cap to agent spawns.
+   */
+  dispatchSource?: 'agent' | 'stage-controller';
 }
 
 export interface SpawnSessionResult {

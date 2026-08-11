@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { TenderBoqReconciliationData } from '@agent-pi/business-core/tender';
 import {
   createOrRefreshBoqBatchManifest,
   validateBoqBatchMerge,
   type TenderBoqBatchBrief,
 } from './tender-boq-batches.ts';
+
+function writeAcceptableMarkdown(path: string, title = 'BOQ chapter'): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `# ${title}\n\n## Summary\n\nCustomer-facing chapter workpaper.\n`);
+}
 
 describe('tender BOQ batch manifest', () => {
   let root = '';
@@ -32,14 +37,20 @@ describe('tender BOQ batch manifest', () => {
     expect(manifest.batches[0]?.source.lastCell).toBe('A25:F25');
 
     const brief = JSON.parse(readFileSync(manifest.batches[0]!.briefPath, 'utf8')) as TenderBoqBatchBrief;
-    expect(Object.keys(brief).sort()).toEqual([
-      'allowedSources', 'batchId', 'finalArtifactPolicy', 'itemIds', 'items', 'objective',
+    expect(Object.keys(brief)).toEqual(expect.arrayContaining([
+      'allowedSources', 'batchId', 'finalArtifactPolicy', 'itemIds', 'items', 'markdownPath', 'objective',
       'outputSchema', 'projectId', 'qualityStandard', 'reportPath', 'schemaVersion', 'scope', 'spawnPolicy',
-    ]);
+    ]));
     expect(brief.itemIds).toEqual(manifest.batches[0]?.itemIds);
     expect(brief.spawnPolicy).toBe('forbidden');
-    expect(brief.finalArtifactPolicy).toBe('report-only');
+    expect(brief.finalArtifactPolicy).toBe('report-and-markdown');
+    expect(brief.markdownPath).toContain('boq-pricing');
     expect(brief.qualityStandard.id).toBe('c51_pure_direct_cost_v1');
+    expect(brief.objective).toContain('methodStandard');
+    if (brief.methodStandard) {
+      expect(brief.methodStandard.role).toBe('method_and_depth_standard');
+      expect(brief.methodStandard.path.length).toBeGreaterThan(0);
+    }
     expect(brief.items[0]?.item.code).toBe('5.1.1');
     expect(brief.allowedSources.map((source) => source.documentId).sort()).toEqual(['boq', 'spec']);
     expect(brief.allowedSources).toContainEqual({ documentId: 'boq', path: 'C:/inputs/BOQ.xlsx' });
@@ -80,6 +91,11 @@ describe('tender BOQ batch manifest', () => {
       itemBuildUps: batch.itemIds.map((itemId) => ({ ...completeBuildUp(itemId), status: 'draft' })),
     }));
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
+    expect(manifest.batches[0]?.status).toBe('invalid');
+    expect(manifest.batches[0]?.validationErrors.some((error) => error.includes('Markdown'))).toBe(true);
+
+    writeAcceptableMarkdown(batch.markdownPath);
+    manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
 
     // V2.4.0: complete-but-unreviewed workpapers are accepted with a warning —
     // commercial sign-off belongs to the human reviewer, not the batch gate.
@@ -91,6 +107,7 @@ describe('tender BOQ batch manifest', () => {
       batchId: batch.batchId,
       itemBuildUps: batch.itemIds.map(completeBuildUp),
     }));
+    writeAcceptableMarkdown(batch.markdownPath);
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
 
     expect(manifest.batches[0]?.status).toBe('complete');
@@ -108,6 +125,7 @@ describe('tender BOQ batch manifest', () => {
       batchId: batch.batchId,
       itemBuildUps: [buildUp],
     }));
+    writeAcceptableMarkdown(batch.markdownPath);
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
 
     expect(validateBoqBatchMerge(manifest, pricingData([]))).toContain('missing final BOQ item: item-1');
@@ -161,6 +179,7 @@ describe('tender BOQ batch manifest', () => {
       batchId: batch.batchId,
       itemBuildUps: [buildUp],
     }));
+    writeAcceptableMarkdown(batch.markdownPath);
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
 
     expect(manifest.batches[0]?.status).toBe('complete');
@@ -242,6 +261,7 @@ describe('tender BOQ batch manifest', () => {
         batchId: batch.batchId,
         itemBuildUps: batchBuildUps,
       }));
+      writeAcceptableMarkdown(batch.markdownPath, batch.batchId);
     }
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(41));
 

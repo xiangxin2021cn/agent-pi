@@ -11,6 +11,7 @@ import {
   mergeDocumentAnalysisBatchReports as mergeDocumentAnalysisBatchReportsCore,
   validateDocumentAnalysisBatchMerge as validateDocumentAnalysisBatchMergeCore,
 } from '@craft-agent/session-tools-core';
+import { artifactLooksAcceptable, documentArtifactPath } from './tender-document-artifacts.ts';
 
 export interface TenderDocumentBatchSource {
   documentId: string;
@@ -35,8 +36,10 @@ export interface TenderDocumentAnalysisBatchBrief {
   allowedSources: Array<{ documentId: string; path: string }>;
   outputSchema: Record<string, unknown>;
   reportPath: string;
+  /** Customer-facing readable parse — written by the child, not the parent. */
+  markdownPath: string;
   spawnPolicy: 'forbidden';
-  finalArtifactPolicy: 'report-only';
+  finalArtifactPolicy: 'report-and-markdown';
 }
 
 export interface TenderDocumentAnalysisBatchRecord {
@@ -45,6 +48,7 @@ export interface TenderDocumentAnalysisBatchRecord {
   sourcePath: string;
   briefPath: string;
   reportPath: string;
+  markdownPath: string;
   status: 'pending' | 'complete' | 'invalid';
   validationErrors: string[];
 }
@@ -71,61 +75,89 @@ const SECTION_KINDS = [
   'other',
 ] as const;
 
-export function createOrRefreshDocumentAnalysisBatchManifest(
+export async function createOrRefreshDocumentAnalysisBatchManifest(
   projectDirectory: string,
   projectId: string,
   sources: TenderDocumentBatchSource[],
-): TenderDocumentAnalysisBatchManifest {
+  options: { projectRoot?: string } = {},
+): Promise<TenderDocumentAnalysisBatchManifest> {
+  const projectRoot = options.projectRoot ?? inferProjectRoot(projectDirectory);
   const briefDirectory = join(projectDirectory, 'orchestration', 'briefs', 'document-analysis');
   const reportDirectory = join(projectDirectory, 'orchestration', 'reports', 'document-analysis');
   const manifestPath = join(projectDirectory, 'document-analysis-batch-manifest.json');
   mkdirSync(briefDirectory, { recursive: true });
   mkdirSync(reportDirectory, { recursive: true });
 
-  const batches = [...sources]
-    .sort((left, right) => left.priority - right.priority || left.documentId.localeCompare(right.documentId))
-    .map((source): TenderDocumentAnalysisBatchRecord => {
-      const batchId = `document-${createHash('sha256').update(`${source.documentId}\u0000${source.path}`).digest('hex').slice(0, 12)}`;
-      const briefPath = join(briefDirectory, `${batchId}.json`);
-      const reportPath = join(reportDirectory, `${batchId}.json`);
-      const brief: TenderDocumentAnalysisBatchBrief = {
-        schemaVersion: 1,
-        projectId,
-        batchId,
-        objective: 'Analyze exactly one registered tender source and return evidence-linked structured sections without cross-document inference.',
-        scope: {
-          documentId: source.documentId,
-          name: source.name,
-          kind: source.kind,
-          priority: source.priority,
-        },
-        requiredSectionKinds: [...SECTION_KINDS],
-        allowedSources: [{ documentId: source.documentId, path: source.path }],
-        outputSchema: reportSchema(batchId, source.documentId),
-        reportPath,
-        spawnPolicy: 'forbidden',
-        finalArtifactPolicy: 'report-only',
-      };
-      atomicWriteJson(briefPath, brief);
-      const validation = validateReport(reportPath, batchId, source.documentId);
-      return {
-        batchId,
+  const sorted = [...sources]
+    .sort((left, right) => left.priority - right.priority || left.documentId.localeCompare(right.documentId));
+  const batches: TenderDocumentAnalysisBatchRecord[] = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const source = sorted[index]!;
+    const batchId = `document-${createHash('sha256').update(`${source.documentId}\u0000${source.path}`).digest('hex').slice(0, 12)}`;
+    const briefPath = join(briefDirectory, `${batchId}.json`);
+    const reportPath = join(reportDirectory, `${batchId}.json`);
+    const markdownPath = documentArtifactPath(projectRoot, projectId, source.documentId, source.name);
+    const brief: TenderDocumentAnalysisBatchBrief = {
+      schemaVersion: 1,
+      projectId,
+      batchId,
+      objective:
+        'Analyze exactly one registered tender source. Write (1) evidence-linked structured sections to reportPath and '
+        + '(2) a customer-facing readable Markdown analysis to markdownPath. The Markdown is a first-class deliverable — '
+        + 'do not leave it for the parent session. No cross-document inference.',
+      scope: {
         documentId: source.documentId,
-        sourcePath: source.path,
-        briefPath,
-        reportPath,
-        status: validation.status,
-        validationErrors: validation.errors,
-      };
+        name: source.name,
+        kind: source.kind,
+        priority: source.priority,
+      },
+      requiredSectionKinds: [...SECTION_KINDS],
+      allowedSources: [{ documentId: source.documentId, path: source.path }],
+      outputSchema: reportSchema(batchId, source.documentId),
+      reportPath,
+      markdownPath,
+      spawnPolicy: 'forbidden',
+      finalArtifactPolicy: 'report-and-markdown',
+    };
+    // Status polls used to rewrite every brief on each tick and starve IPC
+    // (businessProjects:list timed out at 30s while returning to Overview).
+    writeJsonIfChanged(briefPath, brief);
+    const validation = validateReport(reportPath, markdownPath, batchId, source.documentId);
+    batches.push({
+      batchId,
+      documentId: source.documentId,
+      sourcePath: source.path,
+      briefPath,
+      reportPath,
+      markdownPath,
+      status: validation.status,
+      validationErrors: validation.errors,
     });
+    if (index > 0 && index % 3 === 0) await yieldToEventLoop();
+  }
 
   const completedDocumentIds = new Set(
     batches.filter((batch) => batch.status === 'complete').map((batch) => batch.documentId),
   );
+  const previousManifest = existsSync(manifestPath)
+    ? (() => {
+      try {
+        return JSON.parse(readFileSync(manifestPath, 'utf8')) as TenderDocumentAnalysisBatchManifest;
+      } catch {
+        return undefined;
+      }
+    })()
+    : undefined;
   const manifest: TenderDocumentAnalysisBatchManifest = {
     schemaVersion: 1,
     projectId,
-    generatedAt: new Date().toISOString(),
+    // Keep generatedAt stable when batch set/status is unchanged so we can skip the rewrite.
+    generatedAt: previousManifest
+      && previousManifest.projectId === projectId
+      && previousManifest.batchCount === batches.length
+      && JSON.stringify(previousManifest.batches) === JSON.stringify(batches)
+      ? previousManifest.generatedAt
+      : new Date().toISOString(),
     documentCount: sources.length,
     batchCount: batches.length,
     completedBatches: batches.filter((batch) => batch.status === 'complete').length,
@@ -133,7 +165,7 @@ export function createOrRefreshDocumentAnalysisBatchManifest(
     batches,
     manifestPath,
   };
-  atomicWriteJson(manifestPath, manifest);
+  writeJsonIfChanged(manifestPath, manifest);
   return manifest;
 }
 
@@ -165,12 +197,19 @@ export function validateDocumentAnalysisBatchMerge(
 
 function validateReport(
   reportPath: string,
+  markdownPath: string,
   batchId: string,
   documentId: string,
 ): { status: TenderDocumentAnalysisBatchRecord['status']; errors: string[] } {
   if (!existsSync(reportPath)) return { status: 'pending', errors: [] };
   try {
     const { errors } = readReport(reportPath, batchId, documentId);
+    if (!artifactLooksAcceptable(markdownPath)) {
+      errors.push(
+        `Customer-facing Markdown missing or too thin at ${markdownPath}. `
+          + 'The child must write this MD (with a title and summary section); do not leave it for the parent.',
+      );
+    }
     return { status: errors.length === 0 ? 'complete' : 'invalid', errors };
   } catch (error) {
     return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)] };
@@ -248,9 +287,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function atomicWriteJson(filePath: string, value: unknown): void {
+/** Prefer `<root>` when projectDirectory is `<root>/.agent-pi/business/tender/<id>`. */
+function inferProjectRoot(projectDirectory: string): string {
+  const normalized = projectDirectory.replace(/\\/g, '/').toLowerCase();
+  const marker = '/.agent-pi/business/tender/';
+  const index = normalized.lastIndexOf(marker);
+  if (index >= 0) return projectDirectory.slice(0, index);
+  return projectDirectory;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function writeJsonIfChanged(filePath: string, value: unknown): boolean {
+  const next = `${JSON.stringify(value, null, 2)}\n`;
+  if (existsSync(filePath)) {
+    try {
+      if (readFileSync(filePath, 'utf8') === next) return false;
+    } catch {
+      // fall through to write
+    }
+  }
   mkdirSync(dirname(filePath), { recursive: true });
-  const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  renameSync(temporary, filePath);
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, next, 'utf8');
+  renameSync(tempPath, filePath);
+  return true;
 }

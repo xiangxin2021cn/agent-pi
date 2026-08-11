@@ -25,7 +25,7 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { Markdown } from '../markdown'
+import { MemoizedMarkdown } from '../markdown'
 import { Spinner } from '../ui/LoadingIndicator'
 import { type IslandTransitionConfig } from '../ui'
 import { AnnotationIslandMenu } from '../annotations/AnnotationIslandMenu'
@@ -38,7 +38,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../tooltip'
 import { parseDiffFromFile, type FileContents } from '@pierre/diffs'
 import { getDiffStats, getUnifiedDiffStats } from '../code-viewer'
 import { TurnCardActionsMenu } from './TurnCardActionsMenu'
-import { computeLastChildSet, groupActivitiesByParent, isActivityGroup, formatDuration, formatTokens, deriveTurnPhase, shouldShowThinkingIndicator, type ActivityGroup, type AssistantTurn } from './turn-utils'
+import { computeLastChildSet, groupActivitiesByParent, isActivityGroup, formatDuration, formatTokens, deriveTurnPhase, shouldShowThinkingIndicator, areActivitiesContentEqual, areResponsesContentEqual, type ActivityGroup, type AssistantTurn } from './turn-utils'
 import { extractAnnotationSelectedText } from './follow-up-helpers'
 import {
   formatAnnotationFollowUpTooltipText,
@@ -2406,8 +2406,8 @@ export function ResponseCard({
   // Updates immediately when streaming ends to show final content
   useEffect(() => {
     if (!isStreaming) {
-      // Streaming ended - show final content immediately
-      setDisplayedText(text)
+      // Streaming ended — only commit when text actually changed (avoid remount churn).
+      setDisplayedText((prev) => (prev === text ? prev : text))
       return
     }
 
@@ -2495,13 +2495,14 @@ export function ResponseCard({
             }}
           >
             <div ref={contentLayerRef} className="relative">
-              <Markdown
+              <MemoizedMarkdown
+                id={messageId ? `response-${messageId}` : undefined}
                 mode="minimal"
                 onUrlClick={onOpenUrl}
                 onFileClick={onOpenFile}
               >
                 {text}
-              </Markdown>
+              </MemoizedMarkdown>
               {annotationOverlayLayer}
             </div>
           </div>
@@ -2641,13 +2642,14 @@ export function ResponseCard({
           }}
         >
           <div ref={contentLayerRef} className="relative">
-            <Markdown
+            <MemoizedMarkdown
+              id={messageId ? `stream-${messageId}` : undefined}
               mode="minimal"
               onUrlClick={onOpenUrl}
               onFileClick={onOpenFile}
             >
               {displayedText}
-            </Markdown>
+            </MemoizedMarkdown>
             {annotationOverlayLayer}
           </div>
         </div>
@@ -3260,11 +3262,10 @@ export const TurnCard = React.memo(function TurnCard({
   // Re-render if annotation interaction mode changed (interactive vs tooltip-only)
   if (prev.annotationInteractionMode !== next.annotationInteractionMode) return false
 
-  // Re-render if activities changed (important for playground/testing scenarios)
-  if (prev.activities !== next.activities) return false
-
-  // Re-render when response object changes (e.g., annotation updates)
-  if (prev.response !== next.response) return false
+  // Content equality — regroup after isProcessing/goal flicker creates new array refs
+  // with identical payloads; reference checks alone remount ResponseCard Markdown.
+  if (!areActivitiesContentEqual(prev.activities, next.activities)) return false
+  if (!areResponsesContentEqual(prev.response, next.response)) return false
 
   // Re-render when external annotation-open requests change
   if (prev.openAnnotationRequest !== next.openAnnotationRequest) return false

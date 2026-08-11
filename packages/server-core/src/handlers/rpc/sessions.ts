@@ -176,6 +176,8 @@ interface SessionDirectoryScanOptions {
   sourceOverride?: SessionFileSource
   maxDepth?: number
   depth?: number
+  /** When true, include empty directories (useful for working-directory browsing). */
+  includeEmptyDirectories?: boolean
 }
 
 function normalizeSessionFilesScanDepth(depth?: number): number {
@@ -228,11 +230,12 @@ async function scanSessionDirectory(
             sourceOverride: options.sourceOverride,
             maxDepth,
             depth: depth + 1,
+            includeEmptyDirectories: options.includeEmptyDirectories,
           })
         : []
       const hasMoreChildren = shouldLoadChildren ? false : await hasVisibleDirectoryEntries(fullPath)
       // Only include directories that contain visible entries or already loaded children.
-      if (children.length > 0 || hasMoreChildren) {
+      if (children.length > 0 || hasMoreChildren || options.includeEmptyDirectories) {
         files.push({
           name: entry.name,
           path: fullPath,
@@ -337,11 +340,36 @@ async function scanTenderWorkspaceTrees(
   return trees
 }
 
+async function scanWorkingDirectoryTree(
+  workingDirectory: string | undefined,
+  maxDepth = SESSION_FILES_INITIAL_SCAN_DEPTH,
+): Promise<SessionFile | null> {
+  if (!workingDirectory?.trim()) return null
+  if (!await pathExists(workingDirectory)) return null
+  const children = await scanSessionDirectory(workingDirectory, workingDirectory, {
+    sourceOverride: 'working-directory',
+    maxDepth,
+    includeEmptyDirectories: true,
+  })
+  return {
+    name: basename(workingDirectory) || 'Working Directory',
+    path: workingDirectory,
+    type: 'directory',
+    source: 'working-directory',
+    relativePath: '',
+    promoted: false,
+    children,
+    childrenLoaded: true,
+    hasMoreChildren: false,
+  }
+}
+
 function resolveSessionFilesParentPath(
   parentPath: string,
   sessionPath: string,
   outputPath: string,
   tenderWorkspacePaths: string[] = [],
+  workingDirectory?: string,
 ): { path: string; rootPath: string; sourceOverride?: SessionFileSource } | null {
   const resolvedParentPath = resolve(parentPath)
   if (pathStartsWith(resolvedParentPath, sessionPath)) {
@@ -353,6 +381,13 @@ function resolveSessionFilesParentPath(
   for (const tenderPath of tenderWorkspacePaths) {
     if (pathStartsWith(resolvedParentPath, tenderPath)) {
       return { path: resolvedParentPath, rootPath: tenderPath, sourceOverride: 'tender-workspace' }
+    }
+  }
+  if (workingDirectory && pathStartsWith(resolvedParentPath, resolve(workingDirectory))) {
+    return {
+      path: resolvedParentPath,
+      rootPath: resolve(workingDirectory),
+      sourceOverride: 'working-directory',
     }
   }
   return null
@@ -850,6 +885,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const session = sessionManager.getSessions().find(s => s.id === sessionId)
       const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
       const tenderWorkspacePaths = resolveTenderWorkspacePaths(session?.workingDirectory, session?.businessContext)
+      const workingDirectory = session?.workingDirectory
       const requestedParentPath = typeof options?.parentPath === 'string' && options.parentPath.trim().length > 0
         ? options.parentPath
         : null
@@ -863,6 +899,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           sessionPath,
           outputPath,
           tenderWorkspacePaths,
+          workingDirectory,
         )
         if (!target || !await pathExists(target.path)) {
           return []
@@ -870,6 +907,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return await scanSessionDirectory(target.path, target.rootPath, {
           sourceOverride: target.sourceOverride,
           maxDepth: scanDepth,
+          includeEmptyDirectories: target.sourceOverride === 'working-directory',
         })
       }
 
@@ -885,6 +923,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const tenderTrees = await scanTenderWorkspaceTrees(tenderWorkspacePaths, scanDepth)
       if (tenderTrees.length > 0) {
         files.unshift(...tenderTrees)
+      }
+
+      // Prefer browsing the bound project/working folder for tender (and any) sessions.
+      const workingTree = await scanWorkingDirectoryTree(workingDirectory, scanDepth)
+      if (workingTree && !pathStartsWith(workingTree.path, sessionPath)) {
+        files.unshift(workingTree)
       }
 
       return files
@@ -1091,6 +1135,15 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         if (await pathExists(tenderPath)) {
           state.watchers.push(watch(tenderPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
         }
+      }
+
+      const workingDirectory = session?.workingDirectory
+      if (
+        workingDirectory
+        && !pathStartsWith(workingDirectory, sessionPath)
+        && await pathExists(workingDirectory)
+      ) {
+        state.watchers.push(watch(workingDirectory, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
       }
 
       clientSessionWatches.set(clientId, state)

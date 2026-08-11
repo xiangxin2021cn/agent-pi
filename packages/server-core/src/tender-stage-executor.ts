@@ -16,6 +16,8 @@ export interface TenderStageBatchTaskSpec {
   batchId: string;
   briefPath: string;
   reportPath: string;
+  /** Customer-facing Markdown deliverable written by the child (path-backed). */
+  markdownPath?: string;
   allowedSourcePaths: string[];
   validationStatus: 'pending' | 'complete' | 'invalid';
   validationErrors: string[];
@@ -28,6 +30,8 @@ export interface TenderStageTaskRecord {
   status: TenderStageTaskStatus;
   briefPath: string;
   reportPath: string;
+  /** Customer-facing Markdown deliverable written by the child (path-backed). */
+  markdownPath?: string;
   allowedSourcePaths: string[];
   sessionId?: string;
   /** Previous child session kept for left-panel linkage after an idle release. */
@@ -48,9 +52,37 @@ export interface TenderStageTaskBoard {
   stageId: string;
   parentSessionId?: string;
   maxConcurrency: number;
+  /** When false, advance/resume must not spawn new children. Default true. */
+  dispatchEnabled?: boolean;
   updatedAt: string;
   tasks: TenderStageTaskRecord[];
   taskBoardPath: string;
+}
+
+export type TenderStageBoardAction =
+  | 'preflight'
+  | 'start'
+  | 'status'
+  | 'resume'
+  | 'advance'
+  | 'complete'
+  | 'reset_orchestration'
+  | 'set_dispatch';
+
+function resetTaskForRetry(task: TenderStageTaskRecord, now: string): TenderStageTaskRecord {
+  quarantineInvalidReport(task.reportPath);
+  return {
+    ...task,
+    status: 'pending' as const,
+    error: undefined,
+    sessionId: undefined,
+    lastSessionId: task.sessionId ?? task.lastSessionId,
+    linkedIsProcessing: undefined,
+    linkedSessionStatus: undefined,
+    startedAt: undefined,
+    completedAt: undefined,
+    updatedAt: now,
+  };
 }
 
 export interface TenderStageParentBarrier {
@@ -58,6 +90,13 @@ export interface TenderStageParentBarrier {
   pendingSessionIds: string[];
   reviewSessionIds: string[];
   reportPaths: string[];
+  /** Accepted customer-facing Markdown paths from completed child batches. */
+  markdownPaths: string[];
+  /**
+   * Path-backed files to attach on parent resume: JSON reports + Markdown
+   * (+ brief when present). Parent must not re-author these; it only reads them.
+   */
+  handoffArtifactPaths: string[];
   taskBoardPath?: string;
 }
 
@@ -72,8 +111,14 @@ export interface TenderStageExecutionRuntime {
 }
 
 export interface UpdateTenderStageTaskBoardOptions {
-  /** status/preflight/complete = inspect only; start/resume = may dispatch. */
-  action: 'preflight' | 'start' | 'status' | 'resume' | 'complete';
+  /**
+   * status/preflight/complete = inspect only;
+   * start = bind parent + reset failed→pending, no spawn;
+   * advance/resume = may dispatch up to maxConcurrency when dispatchEnabled;
+   * set_dispatch = toggle dispatchEnabled;
+   * reset_orchestration = clear session bindings, pending queue.
+   */
+  action: TenderStageBoardAction;
   projectDirectory: string;
   projectId: string;
   stageId: string;
@@ -82,6 +127,9 @@ export interface UpdateTenderStageTaskBoardOptions {
   tasks: TenderStageBatchTaskSpec[];
   execution?: TenderStageExecutionRuntime;
   maxConcurrency?: number;
+  dispatchEnabled?: boolean;
+  /** When set, re-queue only these failed/blocked batches (and re-enable dispatch). */
+  retryBatchIds?: string[];
 }
 
 const DEFAULT_MAX_CONCURRENCY = 4;
@@ -124,19 +172,73 @@ export function resolveTenderStageParentBarrier(options: {
   const pendingSessionIds = board.tasks
     .filter((task) => task.status === 'pending' || task.status === 'running')
     .map(taskIdentifier);
-  const reportPaths = board.tasks
-    .filter((task) => task.status === 'complete')
-    .map((task) => task.reportPath);
+  const completed = board.tasks.filter((task) => task.status === 'complete');
+  const reportPaths = completed.map((task) => task.reportPath).filter(Boolean);
+  const markdownPaths = completed
+    .map((task) => resolveTaskMarkdownPath(task))
+    .filter((path): path is string => Boolean(path));
+  const handoffArtifactPaths = uniqueExistingPaths([
+    ...completed.flatMap((task) => [
+      task.reportPath,
+      resolveTaskMarkdownPath(task),
+      task.briefPath,
+    ]),
+  ]);
   const action = reviewSessionIds.length > 0
     ? 'review' as const
     : pendingSessionIds.length > 0
       ? 'wait' as const
       : 'resume' as const;
-  return { action, pendingSessionIds, reviewSessionIds, reportPaths, taskBoardPath };
+  return {
+    action,
+    pendingSessionIds,
+    reviewSessionIds,
+    reportPaths,
+    markdownPaths,
+    handoffArtifactPaths,
+    taskBoardPath,
+  };
 }
 
 function emptyParentBarrier(): TenderStageParentBarrier {
-  return { action: 'none', pendingSessionIds: [], reviewSessionIds: [], reportPaths: [] };
+  return {
+    action: 'none',
+    pendingSessionIds: [],
+    reviewSessionIds: [],
+    reportPaths: [],
+    markdownPaths: [],
+    handoffArtifactPaths: [],
+  };
+}
+
+function resolveTaskMarkdownPath(task: Pick<TenderStageTaskRecord, 'markdownPath' | 'briefPath'>): string | undefined {
+  if (task.markdownPath?.trim()) return task.markdownPath;
+  return readMarkdownPathFromBrief(task.briefPath);
+}
+
+export function readMarkdownPathFromBrief(briefPath: string | undefined): string | undefined {
+  if (!briefPath || !existsSync(briefPath)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(briefPath, 'utf8')) as { markdownPath?: unknown };
+    return typeof parsed.markdownPath === 'string' && parsed.markdownPath.trim()
+      ? parsed.markdownPath
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function uniqueExistingPaths(paths: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const path of paths) {
+    if (!path?.trim()) continue;
+    const key = path.replace(/\\/g, '/').toLowerCase();
+    if (seen.has(key) || !existsSync(path)) continue;
+    seen.add(key);
+    out.push(path);
+  }
+  return out;
 }
 
 export async function updateTenderStageTaskBoard(
@@ -148,12 +250,16 @@ export async function updateTenderStageTaskBoard(
   const parentSessionId = options.parentSessionId ?? previous?.parentSessionId;
   const previousByBatchId = new Map(previous?.tasks.map((task) => [task.batchId, task]) ?? []);
   const tasks = options.tasks.map((spec) => reconcileTask(spec, previousByBatchId.get(spec.batchId), now));
+  const dispatchEnabled = options.action === 'set_dispatch'
+    ? options.dispatchEnabled !== false
+    : options.dispatchEnabled ?? previous?.dispatchEnabled ?? true;
   let board: TenderStageTaskBoard = {
     schemaVersion: 1,
     projectId: options.projectId,
     stageId: options.stageId,
     ...(parentSessionId ? { parentSessionId } : {}),
     maxConcurrency: options.maxConcurrency ?? previous?.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY,
+    dispatchEnabled,
     updatedAt: now,
     tasks,
     taskBoardPath,
@@ -162,34 +268,50 @@ export async function updateTenderStageTaskBoard(
   if (options.execution) {
     board = await reconcileRuntime(board, options.execution);
   }
-  if (options.action === 'start') {
+  const retryBatchIds = new Set(
+    (options.retryBatchIds ?? []).map((id) => id.trim()).filter(Boolean),
+  );
+  if (retryBatchIds.size > 0) {
+    board = {
+      ...board,
+      // Selective retry implies the user wants dispatch again.
+      dispatchEnabled: true,
+      tasks: board.tasks.map((task) => {
+        if (!retryBatchIds.has(task.batchId)) return task;
+        if (task.status === 'complete' || task.status === 'running') return task;
+        return resetTaskForRetry(task, now);
+      }),
+    };
+  } else if (options.action === 'start') {
     board = {
       ...board,
       tasks: board.tasks.map((task) => {
         if (task.status !== 'failed') return task;
         // Quarantine stale invalid reports so retry is not immediately re-failed
         // by the previous schema-invalid handoff while a new child is still writing.
-        quarantineInvalidReport(task.reportPath);
+        return resetTaskForRetry(task, now);
+      }),
+    };
+  }
+  if (options.action === 'reset_orchestration') {
+    board = {
+      ...board,
+      tasks: board.tasks.map((task) => {
+        if (task.status === 'complete') return task;
         return {
-          ...task,
-          status: 'pending' as const,
-          error: undefined,
-          sessionId: undefined,
-          lastSessionId: task.sessionId ?? task.lastSessionId,
-          linkedIsProcessing: undefined,
-          linkedSessionStatus: undefined,
-          startedAt: undefined,
-          completedAt: undefined,
-          updatedAt: now,
+          ...resetTaskForRetry(task, now),
+          attemptCount: 0,
         };
       }),
     };
   }
-  // Explicit start/resume only — status/preflight never auto-dispatch on app open.
+  // advance/resume may dispatch; start / selective-retry reset only bind/re-queue.
+  // Pair retryBatchIds with action=advance (or resume) so one click re-runs the batch.
   if (
     options.execution
     && parentSessionId
-    && (options.action === 'start' || options.action === 'resume')
+    && board.dispatchEnabled !== false
+    && (options.action === 'advance' || options.action === 'resume')
   ) {
     board = await dispatchPendingTasks(board, options, options.execution, parentSessionId);
   }
@@ -204,11 +326,13 @@ function reconcileTask(
   previous: TenderStageTaskRecord | undefined,
   now: string,
 ): TenderStageTaskRecord {
+  const markdownPath = spec.markdownPath ?? previous?.markdownPath ?? readMarkdownPathFromBrief(spec.briefPath);
   const base = {
     batchId: spec.batchId,
     name: spec.name,
     briefPath: spec.briefPath,
     reportPath: spec.reportPath,
+    ...(markdownPath ? { markdownPath } : {}),
     allowedSourcePaths: [...spec.allowedSourcePaths],
     attemptCount: previous?.attemptCount ?? 0,
     updatedAt: now,
@@ -359,10 +483,11 @@ async function dispatchPendingTasks(
     try {
       const result = await execution.spawnSession(parentSessionId, {
         name: spec.name,
-        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. The tender documents attached to this task are the only valid basis for scope, quantities, specifications, and measurement rules. For BOQ pricing, complete one C5.1 pure-direct-cost workpaper per assigned item; a resource database or summary report is not a valid substitute. For resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt); rates that cannot be verified online stay assumptionStatus "unverified" — never invent a rate. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
+        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. The tender documents attached to this task are the only valid basis for scope, quantities, specifications, and measurement rules. For document analysis: write BOTH the structured JSON handoff AND the human-readable Markdown at brief.markdownPath (customer-facing; do not leave MD for the parent). For BOQ pricing: complete one C5.1 pure-direct-cost workpaper per assigned item and write BOTH the JSON handoff and the readable chapter Markdown at brief.markdownPath; a resource database or summary report is not a valid substitute. For resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt); rates that cannot be verified online stay assumptionStatus "unverified" — never invent a rate. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
         workingDirectory: options.workingDirectory,
         briefPath: spec.briefPath,
         reportPath: spec.reportPath,
+        dispatchSource: 'stage-controller',
         attachments: [
           { path: spec.briefPath },
           ...spec.allowedSourcePaths.map((path) => ({ path })),
@@ -433,6 +558,84 @@ function readTaskBoard(
   } catch {
     return undefined;
   }
+}
+
+/** Read maxConcurrency from the live stage task board (if present). */
+export function readTenderStageBoardMaxConcurrency(options: {
+  workingDirectory?: string;
+  projectId?: string;
+  stageId?: string;
+}): number | undefined {
+  if (!options.workingDirectory || !options.projectId || !options.stageId) return undefined;
+  const taskBoardPath = join(
+    options.workingDirectory,
+    '.agent-pi',
+    'business',
+    'tender',
+    options.projectId,
+    'orchestration',
+    'task-boards',
+    `${options.stageId}.json`,
+  );
+  const board = readTaskBoard(taskBoardPath, options.projectId, options.stageId);
+  return typeof board?.maxConcurrency === 'number' && board.maxConcurrency > 0
+    ? board.maxConcurrency
+    : undefined;
+}
+
+/**
+ * When the parent agent spawns with a reportPath that matches a pending/failed
+ * board task, mark that task running so Overview / 流程监控 stay aligned.
+ */
+export function bindTenderStageTaskToSpawnedSession(options: {
+  workingDirectory?: string;
+  projectId?: string;
+  stageId?: string;
+  parentSessionId: string;
+  childSessionId: string;
+  reportPath: string;
+  briefPath?: string;
+  name?: string;
+}): boolean {
+  if (!options.workingDirectory || !options.projectId || !options.stageId) return false;
+  const taskBoardPath = join(
+    options.workingDirectory,
+    '.agent-pi',
+    'business',
+    'tender',
+    options.projectId,
+    'orchestration',
+    'task-boards',
+    `${options.stageId}.json`,
+  );
+  const board = readTaskBoard(taskBoardPath, options.projectId, options.stageId);
+  if (!board) return false;
+
+  const normalize = (value: string) => value.replace(/\\/g, '/').toLowerCase();
+  const targetReport = normalize(options.reportPath);
+  const index = board.tasks.findIndex((task) => normalize(task.reportPath) === targetReport);
+  if (index < 0) return false;
+
+  const now = new Date().toISOString();
+  const previous = board.tasks[index]!;
+  board.tasks[index] = {
+    ...previous,
+    status: 'running',
+    sessionId: options.childSessionId,
+    lastSessionId: previous.sessionId ?? previous.lastSessionId,
+    attemptCount: previous.attemptCount + (previous.status === 'running' ? 0 : 1),
+    startedAt: previous.startedAt ?? now,
+    updatedAt: now,
+    error: undefined,
+    linkedIsProcessing: true,
+    linkedSessionStatus: 'todo',
+    ...(options.briefPath ? { briefPath: options.briefPath } : {}),
+    ...(options.name ? { name: options.name } : {}),
+  };
+  board.parentSessionId = options.parentSessionId;
+  board.updatedAt = now;
+  atomicWriteJson(taskBoardPath, board);
+  return true;
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {

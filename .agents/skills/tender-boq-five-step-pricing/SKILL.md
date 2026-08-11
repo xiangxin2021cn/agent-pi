@@ -9,8 +9,13 @@ Use `tender_capability` as the BOQ five-step pricing system of record. This skil
 
 The required quality profile is `c51_pure_direct_cost_v1`. The C5.1 reference standard is an item-by-item workpaper: each BOQ row preserves its original identity, interprets exact specification and measurement clauses, derives a constructible method and bottleneck productivity, calculates per-unit resource consumption, applies traceable VAT-exclusive rates, and reconciles the pure direct unit rate and item total. A labour/material/equipment database is only a Step 3 rate source. It is never the stage deliverable.
 
+When the child brief includes `methodStandard.path`, open that file and match its derivation depth and workpaper shape. The path is resolved from project `bindings.json` (default: bundled SANRAL C5.1 路床单价推导). Do not invent a shallower substitute.
+
 ## Guardrails
 
+- The **project parent session is continuous** for the whole tender project; BOQ pricing is a stageId change on that same chat, not a new main conversation.
+- BOQ chapter batches **require child sessions**. Use controlled sub-agents only from the main session (default max concurrency **4**). Child agents must not call `spawn_session`.
+- Children inherit `businessContext` as a **spawn-time snapshot**; if the parent advances while a child is still running, that child may keep the prior `stageId` until finish — acceptable; new spawns pick up the updated parent context.
 - Use only user-selected sources, registered Tender Workspace records, and explicitly loaded knowledge-base entries.
 - Do not scan the working directory as a source corpus.
 - Require ready, non-stale `document_analysis` and `boq_reconciliation` packs.
@@ -20,8 +25,7 @@ The required quality profile is `c51_pure_direct_cost_v1`. The C5.1 reference st
 - Keep item direct cost pure: exclude overhead, P&G, profit, general contingency, and escalation. Handle those in downstream commercial planning. All rates are VAT exclusive.
 - Keep sourced facts, engineering assumptions, commercial assumptions, and unresolved gaps separate.
 - Unverified assumptions may not enter the core conclusion as facts.
-- Use controlled sub-agents only from the main session. Child agents must not call `spawn_session`.
-- Child agents write structured handoff reports only; once every batch report is accepted, the **runtime** owns merging and writes the final capability pack deterministically — the main session must never hand-assemble, compress, or rewrite pricing content into `tender_capability`.
+- Child agents write **both** the structured JSON handoff (`reportPath`) and the customer-facing chapter Markdown (`markdownPath`: summary table + five-step sections). Readable MD is first-class — do not leave MD authoring to the parent. Once every batch is accepted, the **runtime** merges JSON into the capability pack; the main session must never hand-assemble, compress, or rewrite pricing content into `tender_capability`.
 - A child retains exclusive ownership of its assigned BOQ range until its terminal structured handoff is ready. The main session must wait, retry, or request user review; it must never derive substitute rows or write the child report after a timeout.
 - Key resource rates (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract) must be verified against current market levels via web search/fetch; record each hit in `rateBasis.webEvidence` (`url` + `accessedAt`). Rates that cannot be verified online stay `assumptionStatus: unverified` — never invent a rate.
 - Numeric fields are plain decimals without thousands separators; allocation weights and effective factors are 0–1 fractions (`0.85`, not `85`). Format slips are normalized by the runtime and surfaced as review warnings; completeness and BOQ identity are the hard gates.
@@ -39,9 +43,10 @@ The required quality profile is `c51_pure_direct_cost_v1`. The C5.1 reference st
    - **Step 5 - reconciliation and item risk:** reconcile scope, unit, quantity, production, duration, and amount; record item-specific optimistic/base/pessimistic sensitivity, trigger, treatment, conditions, and unresolved evidence. Do not insert macro political or FX commentary unless it changes this item calculation.
 5. A reviewed item must declare `pricingStandard: c51_pure_direct_cost_v1`, `vatTreatment: exclusive`, and `indirectCostPolicy: excluded_from_item_direct_cost`. Missing structured fields, unsupported numbers, unlinked resources, and unverified core rates prevent readiness.
 6. Wait until the task board reports every child handoff accepted. Never price an unfinished child range in the main session. Then call `tender_capability` with `init` (or `replace`) for `boq_five_step_pricing` **with no inline data** — the runtime merges batch reports into the pack deterministically and runs duplicate, coverage, and cross-batch conflict checks. Hand-written packs cannot pass the merge gate.
-7. Review the merge result with the user: normalization warnings, unverified rates, and draft items are review items, not blockers.
-8. Call `validate`. Resolve every error before downstream planning. Initial item cash-flow allocations are optional here; schedule-based cash flow belongs to the later planning stage.
+7. After a successful pricing merge, the runtime aggregates `resourceConsumptions × BOQ quantities` into `construction_resource_schedule` and writes `Agent Pi Outputs/<projectId>/boq-pricing/施工资源消耗总表.md`. Do not hand-assemble that schedule in the main session.
+8. Review the merge result with the user: normalization warnings, unverified rates, draft items, and the resource schedule are review items. Confirm bidder commitments (`bidder_commitments`) before planning.
+9. Call `validate` on pricing (and review the resource schedule pack). Resolve every error before downstream planning. Initial item cash-flow allocations are optional here; schedule-based cash flow belongs to the later planning stage.
 
 ## Completion
 
-Report the pack revision, readiness, BOQ item coverage, C5.1-complete item count, pure direct item-total cost, unverified assumptions, rate gaps, batch status, and audit path. The human-readable workpaper must contain a summary table followed by a full five-step section for every BOQ item. Keep it as an internal pricing control artifact unless the user explicitly requests a formal submission document.
+Report the pricing pack revision, readiness, BOQ item coverage, C5.1-complete item count, pure direct item-total cost, unverified assumptions, rate gaps, batch status, resource-schedule row count / markdown path, and audit path. The human-readable workpaper must contain a summary table followed by a full five-step section for every BOQ item. Keep it as an internal pricing control artifact unless the user explicitly requests a formal submission document.

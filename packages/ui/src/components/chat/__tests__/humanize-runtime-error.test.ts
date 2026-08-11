@@ -24,6 +24,13 @@ describe('humanizeRuntimeError', () => {
     expect(result).toContain('Nested spawn_session is disabled')
   })
 
+  it('rewrites tender stage concurrency blocks', () => {
+    const result = humanizeRuntimeError(
+      'spawn_session active handoff limit reached (2/2) for tender stage "tender-document-analysis". Return control.',
+    )
+    expect(result).toContain('Tender stage concurrency full')
+  })
+
   it('leaves unrelated errors unchanged', () => {
     expect(humanizeRuntimeError('ENOENT: no such file')).toBe('ENOENT: no such file')
   })

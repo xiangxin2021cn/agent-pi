@@ -251,6 +251,7 @@ export const TenderCapabilityToolSchema = z.object({
     'evaluation_strategy',
     'boq_reconciliation',
     'boq_five_step_pricing',
+    'construction_resource_schedule',
     'bidder_commitments',
     'execution_plan',
     'schedule_resources',

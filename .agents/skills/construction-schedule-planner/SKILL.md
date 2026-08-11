@@ -133,3 +133,12 @@ For a normal request, produce:
 - A validation report.
 - A short user-facing summary of assumptions and planner review points.
 
+## Tender workbench (Agent Pi stage 4-B)
+
+When producing the tender programme under `Agent Pi Outputs/<projectId>/planning/`, **always emit both**:
+
+- `tender-programme.msp.xml` — Microsoft Project XML (`Project` root / MSP namespace)
+- `tender-programme.p6.xml` — Primavera P6 BusinessObjects XML (`APIBusinessObjects` root)
+
+Stage completion probes require both files. Do not ship only one format.
+

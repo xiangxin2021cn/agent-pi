@@ -65,10 +65,11 @@ export const CHANNEL_MAP = {
   listInvestmentWorkspaces: invoke(RPC_CHANNELS.investmentWorkspace.LIST),
   getInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.GET),
   mutateInvestmentWorkspace: invoke(RPC_CHANNELS.investmentWorkspace.MUTATE),
-  listBusinessProjects: invoke(RPC_CHANNELS.businessProjects.LIST),
-  createBusinessProject: invoke(RPC_CHANNELS.businessProjects.CREATE),
-  updateBusinessProjectInputs: invoke(RPC_CHANNELS.businessProjects.UPDATE_INPUTS),
-  unregisterBusinessProject: invoke(RPC_CHANNELS.businessProjects.UNREGISTER),
+  // List itself is cheap, but may queue behind a long tender stage status on the main thread.
+  listBusinessProjects: invoke(RPC_CHANNELS.businessProjects.LIST, undefined, { timeoutMs: 120_000 }),
+  createBusinessProject: invoke(RPC_CHANNELS.businessProjects.CREATE, undefined, { timeoutMs: 120_000 }),
+  updateBusinessProjectInputs: invoke(RPC_CHANNELS.businessProjects.UPDATE_INPUTS, undefined, { timeoutMs: 120_000 }),
+  unregisterBusinessProject: invoke(RPC_CHANNELS.businessProjects.UNREGISTER, undefined, { timeoutMs: 120_000 }),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 
   // Server-level workspace operations (REMOTE_ELIGIBLE)

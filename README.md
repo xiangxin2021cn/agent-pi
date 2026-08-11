@@ -51,15 +51,21 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.4.0.**
+**Current release: V2.5.0.**
 
-**当前发布版：V2.4.0。**
+**当前发布版：V2.5.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.5.0 Tender Control Plane + Runtime Uplift / V2.5.0 投标控制面与运行时升级
+
+V2.5.0 ships the tender workbench control plane (start/advance/stop/reset, selective batch retry, monitor that survives chat navigation), stops main-process starvation that blocked returning to Overview (`businessProjects:list` timeout), and uplifts Claude Agent SDK to 0.3.227 (Pi stays on latest 0.84.1).
+
+V2.5.0 交付投标工作台控制面（start/advance/停止派发/重置编排、按批重试、切到对话仍监控补位），修复主进程饿死导致无法立刻回到监控面板（`businessProjects:list` 超时）的问题，并将 Claude Agent SDK 升级到 0.3.227（Pi 保持最新 0.84.1）。
 
 ### V2.4.0 Tender Workbench Restructure / V2.4.0 投标工作台业务化重构
 

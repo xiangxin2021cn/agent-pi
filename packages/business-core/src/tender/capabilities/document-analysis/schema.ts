@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TenderSourceLocatorSchema } from '../../schema.ts';
+import { normalizeDocumentAnalysis } from './normalize.ts';
 import type { TenderDocumentAnalysisData } from './types.ts';
 
 const EntityIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i, 'Entity ID must be filesystem-safe.');
@@ -28,5 +29,6 @@ export const TenderDocumentAnalysisDataSchema = z.object({
 }).strict();
 
 export function parseTenderDocumentAnalysisData(value: unknown): TenderDocumentAnalysisData {
-  return TenderDocumentAnalysisDataSchema.parse(value) as TenderDocumentAnalysisData;
+  const { data } = normalizeDocumentAnalysis(value);
+  return TenderDocumentAnalysisDataSchema.parse(data) as TenderDocumentAnalysisData;
 }

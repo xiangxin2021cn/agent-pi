@@ -118,4 +118,15 @@ describe('readFileAttachment — large path-backed files', () => {
     expect(att?.base64).toBeUndefined()
     expect(att?.text).toBeUndefined()
   })
+
+  test('pathBackedOnly skips base64 even for small PDFs (spawn-safe)', () => {
+    const dir = makeTmp()
+    const path = join(dir, 'small.pdf')
+    writeFileSync(path, '%PDF-1.4 small')
+
+    const att = readFileAttachment(path, { pathBackedOnly: true })
+    expect(att?.type).toBe('pdf')
+    expect(att?.base64).toBeUndefined()
+    expect(att?.size).toBeGreaterThan(0)
+  })
 })

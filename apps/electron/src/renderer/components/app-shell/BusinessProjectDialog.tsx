@@ -138,7 +138,7 @@ export function BusinessProjectDialog({
         return
       }
       const parentSession = await openNewChat?.({
-        name: `${project.name} · ${firstStage.label}`,
+        name: moduleId === 'tender' ? project.name : `${project.name} · ${firstStage.label}`,
         workingDirectory: project.rootPath,
         businessContext: {
           module: moduleId,

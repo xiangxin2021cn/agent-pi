@@ -15,8 +15,12 @@ tender sources.
 
 - Use only user-selected sources and registered Tender Workspace records.
 - Do not scan the working directory.
-- Require ready, non-stale `document_analysis`, `boq_reconciliation`, `boq_five_step_pricing`, and
-  `bidder_commitments` packs.
+- Require ready, non-stale `document_analysis`, `boq_reconciliation`, `boq_five_step_pricing`,
+  `construction_resource_schedule`, and `bidder_commitments` packs.
+- Write the human-readable methodology draft to
+  `Agent Pi Outputs/<projectId>/planning/施工策划报告.md` (stage 4-A gate). Match the depth of the
+  bound N2 planning template from project `bindings.json` / bundled SANRAL knowledge pack.
+- Do not advance to programme XML or Work Plan DOCX until the user accepts the 4-A report.
 - Treat bidder-confirmed resource, procurement, camp, method, productivity, sequence, and
   subcontract decisions as binding planning inputs. Explain conflicts with calculated BOQ demand;
   do not silently replace the user decision with a model estimate.

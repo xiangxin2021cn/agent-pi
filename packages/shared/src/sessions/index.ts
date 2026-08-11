@@ -130,6 +130,7 @@ export {
   // Metadata updates
   updateSessionSdkId,
   updateSessionMetadata,
+  setSessionBusinessStage,
   canUpdateSdkCwd,
   flagSession,
   unflagSession,

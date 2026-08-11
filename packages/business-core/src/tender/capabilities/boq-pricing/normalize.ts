@@ -1,3 +1,4 @@
+import { normalizeSourceRef, normalizeSourceRefs } from '../../source-locator.ts';
 import { parseTenderBoqFiveStepPricingData } from './schema.ts';
 import type { TenderBoqFiveStepItemBuildUp, TenderBoqFiveStepPricingData } from './types.ts';
 
@@ -471,28 +472,6 @@ function normalizeRiskScenarios(value: unknown, warn: (message: string) => void)
       sourceRefs: normalizeSourceRefs(record.sourceRefs),
     }];
   });
-}
-
-function normalizeSourceRefs(value: unknown): Array<{ documentId: string }> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const ref = normalizeSourceRef(entry);
-    return ref ? [ref] : [];
-  });
-}
-
-function normalizeSourceRef(value: unknown): { documentId: string } | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const record = value as Record<string, unknown>;
-  if (typeof record.documentId !== 'string' || !record.documentId.trim()) return undefined;
-  const ref: Record<string, unknown> = { documentId: record.documentId.trim().slice(0, ENTITY_ID_MAX) };
-  for (const key of ['sheet', 'clause', 'section', 'cell'] as const) {
-    const text = normalizeText(record[key]);
-    if (text) ref[key] = text;
-  }
-  const page = Number(record.page);
-  if (Number.isInteger(page) && page > 0) ref.page = page;
-  return ref as { documentId: string };
 }
 
 function normalizeCurrency(value: unknown, warnings: string[]): string | undefined {

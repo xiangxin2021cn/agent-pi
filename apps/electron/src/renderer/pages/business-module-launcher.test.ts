@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildBusinessTaskDraft, getBusinessModuleLaunchPreset } from './business-module-launcher.ts'
+import { buildBusinessTaskDraft, buildStageHandoffDraft, getBusinessModuleLaunchPreset } from './business-module-launcher.ts'
 import { getBusinessWorkflow } from './business-workflows.ts'
 
 describe('business module launcher', () => {
@@ -14,6 +14,42 @@ describe('business module launcher', () => {
     expect(preset.input).toContain('user-selected')
     expect(preset.input).toContain('Task:')
     expect(preset.send).toBe(false)
+  })
+
+  test('tender stage draft states single parent and runtime-owned children', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'tender-document-analysis')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/tender.pdf'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage)
+    expect(draft).toContain('单一主会话')
+    expect(draft).toContain('子会话')
+  })
+
+  test('stage handoff draft keeps same chat and forbids free spawn', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'boq-five-step-pricing')!
+    const draft = buildStageHandoffDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/boq.xlsx'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage)
+    expect(draft).toContain('boq-five-step-pricing')
+    expect(draft).toContain('同一条主对话')
+    expect(draft).toContain('spawn_session')
+    expect(draft).toContain('不要一次打满')
   })
 
   test('stage draft activates the specialist skill and lists only registered inputs', () => {
@@ -52,11 +88,10 @@ describe('business module launcher', () => {
 
     expect(draft).toContain('<controlled_subagent_dispatch>')
     expect(draft).toContain('spawn_session')
-    expect(draft).toContain('backend stage controller owns BOQ batch dispatch')
-    expect(draft).toContain('main session must not call spawn_session')
+    expect(draft).toContain('parent session is the command surface')
     expect(draft).toContain('task_board_path')
     expect(draft).toContain('boq_batch_manifest_path')
-    expect(draft).toContain('must not call spawn_session, rewrite child briefs')
+    expect(draft).toContain('rewrite child briefs')
     expect(draft).toContain('boq_five_step_pricing')
     expect(draft).toContain('document_analysis')
     expect(draft).toContain('boq_reconciliation')
@@ -76,14 +111,14 @@ describe('business module launcher', () => {
       updatedAt: '2026-07-14T00:00:00.000Z',
     }, stage)
 
-    expect(draft).toContain('backend stage controller owns document batch dispatch')
+    expect(draft).toContain('parent session is the command surface')
     expect(draft).toContain('document_analysis_batch_manifest_path')
-    expect(draft).toContain('main session must not call spawn_session')
+    expect(draft).toContain('at most 4 in flight')
     expect(draft).toContain('document_analysis')
   })
 
-  test('schedule stage deterministically activates planning and export skills', () => {
-    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'schedule-resource-planning')!
+  test('planning stage deterministically activates planning and export skills', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'planning-and-submission')!
     const draft = buildBusinessTaskDraft('tender', {
       schemaVersion: 1,
       module: 'tender',

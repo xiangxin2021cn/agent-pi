@@ -22,6 +22,7 @@ export type BusinessCapabilityId =
   | 'evaluation_strategy'
   | 'boq_reconciliation'
   | 'boq_five_step_pricing'
+  | 'construction_resource_schedule'
   | 'bidder_commitments'
   | 'execution_plan'
   | 'schedule_resources'
@@ -34,39 +35,48 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
     id: 'tender-main',
     label: '投标全流程',
     stages: [
-      { id: 'project-setup', label: '项目与资料确认', prompt: '确认项目边界、用户指定资料、文件优先级和交付物。不得把工作目录当作来源扫描。' },
+      {
+        id: 'project-setup',
+        label: '项目资料登记',
+        prompt: '上传并登记招标资料即可。资料齐套后由用户确认进入解析；本步不派生子智能体，不进行组价或策划。',
+      },
       {
         id: 'tender-document-analysis',
-        label: '招标文件与合规分析',
-        prompt: '按册/卷拆解招标文件，产出项目认知、项目基本信息、硬性递交要求、评分点、专用条款及修订、答疑分析、BOQ 清单解析和工程量特征。每一类结论必须保留来源，不得提前进入施工策划或组价。',
-        skillSlug: 'tender-evaluation-strategy',
-        producesCapabilities: ['document_analysis', 'evaluation_strategy', 'boq_reconciliation'],
+        label: '招标文件解析',
+        prompt: '对每个已登记文件产出可读 Markdown 解析稿（一等成果），归纳关键约束与交叉引用；完成后合成 document_analysis 与 boq_reconciliation。evaluation_strategy 可选，不阻塞本阶段。默认最多 4 并发；子会话同时交付 JSON+MD，不得由主会话代写 MD；不得提前进入组价或策划。',
+        skillSlug: 'tender-document-parsing',
+        producesCapabilities: ['document_analysis', 'boq_reconciliation'],
         dispatchPolicy: 'controlled-subagents',
       },
       {
         id: 'boq-five-step-pricing',
-        label: 'BOQ 逐页组价与投入确认',
-        prompt: '按 C5.1 纯直接费标准，以 BOQ 页（每个 COTO 章节）为单位派生子智能体逐项组价：原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；费率必须注明日期、地点、来源类型、取得方式且不含 VAT，关键费率（柴油/人工/设备租赁/水泥/骨料/沥青/分包）必须联网询价核证并留 webEvidence 链接，无法核证的标 unverified 不得编造。随后由用户确认拟投入条件（人机料、营地、方法、工效、顺序、分包），模型不得替用户默认确认。汇总行与人造组合项不属于本阶段定价对象；间接费、利润、一般预备费和调价不得计入逐项纯直接费。',
+        label: 'BOQ 逐页组价与资源汇总',
+        prompt: '按 C5.1 纯直接费标准，以 BOQ 页（每个 COTO 章节）为单位逐项组价：原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；费率必须注明日期、地点、来源类型、取得方式且不含 VAT，关键费率必须联网询价核证并留 webEvidence。默认串行按页；汇总行与人造组合项不属于定价对象。结束后汇总施工资源消耗总表，并由用户确认投入条件。',
         skillSlugs: ['tender-boq-five-step-pricing', 'tender-bidder-commitments'],
         requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
-        producesCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
+        producesCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
         dispatchPolicy: 'controlled-subagents',
       },
       {
-        id: 'planning',
-        label: '施工策划、进度与成本',
-        prompt: '基于招标工期要求、BOQ 五步法推导和用户已确认的投标投入条件，一次性完成施工总策划（WORK PLAN AND PROPOSED METHODOLOGY）、施工总进度与人材机资源计划、以及成本与现金流计划。用户确认的资源、采购、营地、生产率、顺序和分包决策优先于模型推算，差异必须显式说明；每项金额可追溯到 BOQ 项、资源费率、计划活动或明确假设。需要专业计划文件时，再依据 schedule_resources 能力包生成 P6、Project 或 Candy 导入文件。',
-        skillSlugs: ['tender-execution-planning', 'tender-schedule-resource-planning', 'construction-schedule-planner', 'tender-cost-cashflow-planning'],
-        requiredCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
-        producesCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
-      },
-      {
-        id: 'submission',
-        label: '出稿与递交审查',
-        prompt: '按投标要求汇编正式递交文档（WORK PLAN AND PROPOSED METHODOLOGY、施工进度计划、人员/材料/机械计划、现金流计划及招标明确要求的其他格式），随后立即做递交前红队审查：格式、模板、签章、哈希、证据覆盖与内部一致性，重点核查递交文件与招标边界、BOQ 组价、施工策划一致。只在用户或招标文件要求时导出 PDF/DOCX/XLSX/Project/P6；默认先产出可审阅的正式 Markdown/结构化源文件。',
-        skillSlugs: ['tender-submission-documents', 'tender-submission-audit'],
-        requiredCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
-        producesCapabilities: ['submission_documents', 'submission_audit'],
+        id: 'planning-and-submission',
+        label: '施工策划、进度、成本与出稿',
+        prompt: '按可见子步骤推进：4-A 施工策划（对标 N2-18 策划深度）→ 4-B 进度/资源/现金流（同时产出 MS Project 与 P6 XML、人机直方图、S 曲线）→ 4-C Work Plan DOCX 与一致性核对。必须充分阅读第 2 步解析 MD 与原文，结合工期、项目特征与第 3 步工效/资源；不得跳过子步骤门禁。',
+        skillSlugs: [
+          'tender-execution-planning',
+          'tender-schedule-resource-planning',
+          'construction-schedule-planner',
+          'tender-cost-cashflow-planning',
+          'tender-submission-documents',
+          'tender-submission-audit',
+        ],
+        requiredCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
+        producesCapabilities: [
+          'execution_plan',
+          'schedule_resources',
+          'cost_cashflow',
+          'submission_documents',
+          'submission_audit',
+        ],
       },
     ],
   },

@@ -89,6 +89,10 @@ import { buildPlanApprovalMessage } from '../plan-approval-message'
 import { shouldHandleScopedInputEvent } from './input-event-guards'
 import { clearPendingFocusForSession, consumePendingFocusForSession } from './focus-input-events'
 import {
+  SESSION_ATTACHMENTS_LOADING_EVENT,
+  type SessionAttachmentsLoadingDetail,
+} from './attachment-events'
+import {
   getRecentWorkingDirs,
   addRecentWorkingDir,
 } from './working-directory-history'
@@ -918,6 +922,18 @@ export function FreeFormInput({
       richInputRef.current?.focus()
     }, 0)
   }, [sessionId, richInputRef])
+
+  // External "Add to chat" (file tree) shows the same loading bubbles as paperclip attach.
+  React.useEffect(() => {
+    if (!sessionId) return
+    const handleLoading = (event: Event) => {
+      const detail = (event as CustomEvent<SessionAttachmentsLoadingDetail>).detail
+      if (!detail?.sessionId || detail.sessionId !== sessionId) return
+      setLoadingCount((prev) => Math.max(0, prev + detail.delta))
+    }
+    window.addEventListener(SESSION_ATTACHMENTS_LOADING_EVENT, handleLoading)
+    return () => window.removeEventListener(SESSION_ATTACHMENTS_LOADING_EVENT, handleLoading)
+  }, [sessionId])
 
   // Get the next available number for a pasted file prefix (e.g., pasted-image-1, pasted-image-2)
   const getNextPastedNumber = (

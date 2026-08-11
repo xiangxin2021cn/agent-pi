@@ -171,6 +171,17 @@ export interface SessionToolContext {
   /** Working directory (project root) for the session, if set */
   workingDirectory?: string;
 
+  /**
+   * Optional business workbench context (tender/delivery/investment).
+   * When present on tender sessions, capability writes are stage-gated.
+   */
+  businessContext?: {
+    module: string;
+    projectId: string;
+    workflowId: string;
+    stageId: string;
+  };
+
   /** Optional app-level root for user-global knowledge base registry metadata. */
   knowledgeBaseRegistryRootPath?: string;
 

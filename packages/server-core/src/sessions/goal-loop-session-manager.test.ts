@@ -401,6 +401,8 @@ describe('SessionManager goal loop routing', () => {
       pendingSessionIds: ['child-1'],
       reviewSessionIds: [],
       reportPaths: ['report.md'],
+      markdownPaths: [],
+      handoffArtifactPaths: ['report.md'],
       source: 'goal_orchestration' as const,
     }
     const manager = sm as unknown as {
@@ -430,6 +432,8 @@ describe('SessionManager goal loop routing', () => {
       resumeScheduled: false,
       source: 'goal_orchestration',
       reportPaths: [join(tmpRoot, 'child-1.md')],
+      markdownPaths: [],
+      handoffArtifactPaths: [join(tmpRoot, 'child-1.md')],
     }
     parent.agent = {
       interruptForHandoff: (reason: AbortReason) => abortReasons.push(reason),

@@ -122,6 +122,7 @@ import { SourcesListPanel } from "./SourcesListPanel"
 import { SkillsListPanel } from "./SkillsListPanel"
 import { AutomationsListPanel } from "../automations/AutomationsListPanel"
 import { TenderWorkspaceListPanel } from "./TenderWorkspaceListPanel"
+import { TenderLiveMonitorHost } from "./TenderLiveMonitorHost"
 import { DeliveryWorkspaceListPanel } from "./DeliveryWorkspaceListPanel"
 import { InvestmentWorkspaceListPanel } from "./InvestmentWorkspaceListPanel"
 import { type AutomationFilterKind, AUTOMATION_TYPE_TO_FILTER_KIND } from "../automations/types"
@@ -2203,6 +2204,7 @@ function AppShellContent({
 
   return (
     <AppShellProvider value={appShellContextValue}>
+        <TenderLiveMonitorHost />
         {/* === TOP BAR === */}
         <TopBar
           workspaces={workspaces}

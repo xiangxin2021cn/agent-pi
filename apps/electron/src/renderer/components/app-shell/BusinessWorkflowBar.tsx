@@ -5,18 +5,29 @@ import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useAppShellContext } from '@/context/AppShellContext'
-import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
-import { preflightTenderStageLaunch, startTenderStageLaunch, summarizeTenderStage } from '@/pages/business-tender-stage'
+import { useNavigation } from '@/contexts/NavigationContext'
+import { buildBusinessTaskDraft, buildStageHandoffDraft } from '@/pages/business-module-launcher'
+import {
+  enterTenderStageInProjectParent,
+  preflightTenderStageLaunch,
+  resolveStageParentSessionId,
+  startTenderStageLaunch,
+  summarizeTenderStage,
+} from '@/pages/business-tender-stage'
 import { getBusinessWorkflow, type BusinessWorkflowStage } from '@/pages/business-workflows'
+import { routes } from '../../../shared/routes'
 import { cn } from '@/lib/utils'
 
 interface BusinessWorkflowBarProps {
   context?: SessionBusinessContext
   workingDirectory?: string
+  /** Current chat id — tender stage advances reuse this parent instead of openNewChat. */
+  sessionId?: string
 }
 
-export function BusinessWorkflowBar({ context, workingDirectory }: BusinessWorkflowBarProps) {
+export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: BusinessWorkflowBarProps) {
   const { activeWorkspaceId, workspaces, openNewChat } = useAppShellContext()
+  const { navigate } = useNavigation()
   const [stageRuns, setStageRuns] = React.useState<Record<string, TenderStageRunResultDto>>({})
   const [startingStageId, setStartingStageId] = React.useState<string | null>(null)
   const workspaceRootPath = workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.rootPath
@@ -72,9 +83,40 @@ export function BusinessWorkflowBar({ context, workingDirectory }: BusinessWorkf
           toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
           return
         }
+
+        const projectParentId = launch.result.projectParentSessionId
+          ?? resolveStageParentSessionId(launch.result)
+          ?? sessionId
+
+        if (projectParentId) {
+          if (sessionId && projectParentId !== sessionId) {
+            navigate(routes.view.tenderWorkspaces(project.projectId, projectParentId))
+            toast.message('已切换到项目主会话；阶段在主会话推进')
+          }
+          const advanced = await enterTenderStageInProjectParent(window.electronAPI.runTenderStage, {
+            workspaceRootPath, projectId: project.projectId, stageId: stage.id,
+          }, projectParentId)
+          setStageRuns((current) => ({ ...current, [stage.id]: advanced.result }))
+          if (stage.id !== context.stageId) {
+            try {
+              await window.electronAPI.sendMessage(
+                projectParentId,
+                buildStageHandoffDraft(context.module, project, stage, advanced.result),
+                [],
+                [],
+                {},
+              )
+            } catch (cause) {
+              console.warn('[BusinessWorkflowBar] failed to send stage handoff', cause)
+            }
+          }
+          toast.success(advanced.ok ? '已在项目主会话进入本阶段' : '阶段已绑定主会话，请查看门禁提示')
+          return
+        }
       }
+
       const parentSession = await openNewChat?.({
-        name: `${project.name} · ${stage.label}`,
+        name: context.module === 'tender' ? project.name : `${project.name} · ${stage.label}`,
         workingDirectory: project.rootPath || workingDirectory,
         businessContext: { ...context, stageId: stage.id },
         input: buildBusinessTaskDraft(context.module, project, stage, stageRun),

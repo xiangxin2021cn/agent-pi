@@ -30,6 +30,7 @@ const CAPABILITY_FILES: Record<TenderCapabilityId, string> = {
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
   boq_five_step_pricing: 'boq-five-step-pricing',
+  construction_resource_schedule: 'construction-resource-schedule',
   bidder_commitments: 'bidder-commitments',
   execution_plan: 'execution-plan',
   schedule_resources: 'schedule-resources',
@@ -70,13 +71,33 @@ export function registerTenderWorkspaceHandlers(
   });
   // Long-running status polls may reconcile many batch reports + dispatch the next slot.
   server.handle(RPC_CHANNELS.tenderWorkspace.STAGE_RUN, async (_ctx, request: TenderStageRunRequest) => {
-    const execution = deps?.sessionManager
+    const sessionManager = deps?.sessionManager;
+    const execution = sessionManager
       ? {
-          spawnSession: deps.sessionManager.spawnSession.bind(deps.sessionManager),
-          getSession: deps.sessionManager.getSession.bind(deps.sessionManager),
+          spawnSession: sessionManager.spawnSession.bind(sessionManager),
+          getSession: sessionManager.getSession.bind(sessionManager),
         }
       : undefined;
-    return runTenderStage(request, { execution });
+    return runTenderStage(request, {
+      execution,
+      setBusinessContextStage: sessionManager
+        ? (sessionId, stageId) => sessionManager.setBusinessContextStage(sessionId, stageId)
+        : undefined,
+      isSessionAlive: sessionManager
+        ? (sessionId) => sessionManager.hasSession?.(sessionId)
+          ?? sessionManager.getSessions().some((session) => session.id === sessionId)
+        : undefined,
+      listAliveProjectSessionIds: sessionManager
+        ? (projectId) => sessionManager.getSessions()
+          .filter((session) => (
+            session.businessContext?.module === 'tender'
+            && session.businessContext.projectId === projectId
+            // Prefer project roots — spawned children keep parentSessionId.
+            && !session.parentSessionId
+          ))
+          .map((session) => session.id)
+        : undefined,
+    });
   }, { timeoutMs: 180_000 });
 }
 

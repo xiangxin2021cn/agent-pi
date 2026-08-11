@@ -11,7 +11,9 @@ Create the structured tender programme before rendering P6, Microsoft Project, C
 
 - Use only user-selected sources and registered Tender Workspace records.
 - Do not scan the working directory.
-- Require a ready, non-stale `execution_plan`.
+- Require a ready, non-stale `execution_plan` and user-accepted 4-A `施工策划报告.md`.
+- For Agent Pi stage 4-B, write both `tender-programme.msp.xml` and `tender-programme.p6.xml`
+  under `Agent Pi Outputs/<projectId>/planning/` (plus plant/labour histogram HTML). Dual XML is a hard gate.
 - Record a programme start date, calendars, positive durations, duration bases, and predecessor logic.
 - Preserve FS, SS, FF, SF, and lag semantics; do not replace missing logic with narrative order.
 - Link contractual milestones to registered requirements.

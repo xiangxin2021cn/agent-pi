@@ -19,6 +19,7 @@ This folder contains assets that are bundled with the Electron app and synced to
 | `tool-icons/` | `~/.agent-pi/tool-icons/` | Always overwrite on launch |
 | `release-notes/` | `~/.agent-pi/release-notes/` | Always overwrite on launch |
 | `config-defaults.json` | `~/.agent-pi/config-defaults.json` | Always overwrite on launch |
+| `knowledge/tender-sa-sanral/` | Resolved via `getBundledAssetsDir('knowledge/tender-sa-sanral')` (not home-synced) | Project `bindings.json` may override paths; defaults point at this pack |
 
 ## Why Sync on Every Launch?
 

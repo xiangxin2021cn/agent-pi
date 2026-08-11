@@ -994,4 +994,30 @@ describe('tender_capability handler', () => {
     expect(output.audit.issues.map((issue: { code: string }) => issue.code)).toContain('submission_file_missing');
     expect(output.audit.issues.map((issue: { code: string }) => issue.code)).toContain('submission_hash_failed');
   });
+
+  test('rejects skip-ahead capability writes for the session business stage', async () => {
+    const handler = await loadHandler();
+    context.businessContext = {
+      module: 'tender',
+      projectId: 'n3-upgrade',
+      workflowId: 'tender-main',
+      stageId: 'tender-document-analysis',
+    };
+    const blocked = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'boq_five_step_pricing',
+      data: { currency: 'ZAR', itemBuildUps: [], resourceSummary: [], assumptions: [] },
+    });
+    expect(blocked.isError).toBe(true);
+    expect(blocked.content[0]?.text).toContain('not allowed during stage');
+
+    const allowed = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'document_analysis',
+      data: documentAnalysisData(),
+    });
+    expect(allowed.isError).toBe(false);
+  });
 });

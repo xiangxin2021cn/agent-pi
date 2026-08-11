@@ -3,6 +3,7 @@ import {
   auditTenderEvaluationStrategy,
   auditTenderBoqReconciliation,
   auditTenderBoqFiveStepPricing,
+  auditTenderConstructionResourceSchedule,
   auditTenderBidderCommitments,
   auditTenderExecutionPlan,
   auditTenderScheduleResources,
@@ -17,6 +18,7 @@ import {
   parseTenderEvaluationStrategyData,
   parseTenderBoqReconciliationData,
   parseTenderBoqFiveStepPricingData,
+  parseTenderConstructionResourceScheduleData,
   parseTenderBidderCommitmentsData,
   parseTenderExecutionPlanData,
   parseTenderScheduleResourceData,
@@ -34,6 +36,7 @@ import {
   type TenderEvaluationStrategyAudit,
   type TenderBoqReconciliationAudit,
   type TenderBoqFiveStepPricingAudit,
+  type TenderConstructionResourceScheduleAudit,
   type TenderBidderCommitmentsAudit,
   type TenderExecutionPlanAudit,
   type TenderScheduleResourceAudit,
@@ -59,6 +62,7 @@ import {
 } from '../tender/boq-pricing-merge.ts';
 import { parseTenderBoqFiveStepPricingDataLenient } from '@agent-pi/business-core/tender';
 import { applyManualTenderCloseoutEvidence } from './tender-manual-closeout.ts';
+import { assertCapabilityWriteAllowed } from '../tender/capability-stage-guard.ts';
 
 export type TenderCapabilityAction = 'configure' | 'init' | 'replace' | 'status' | 'validate';
 
@@ -79,6 +83,7 @@ type ImplementedAudit =
   | TenderEvaluationStrategyAudit
   | TenderBoqReconciliationAudit
   | TenderBoqFiveStepPricingAudit
+  | TenderConstructionResourceScheduleAudit
   | TenderBidderCommitmentsAudit
   | TenderExecutionPlanAudit
   | TenderScheduleResourceAudit
@@ -92,6 +97,7 @@ const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
   boq_five_step_pricing: 'boq-five-step-pricing',
+  construction_resource_schedule: 'construction-resource-schedule',
   bidder_commitments: 'bidder-commitments',
   execution_plan: 'execution-plan',
   schedule_resources: 'schedule-resources',
@@ -168,6 +174,13 @@ export async function handleTenderCapability(
     }
 
     if (args.action === 'init' || args.action === 'replace') {
+      if (ctx.businessContext?.module === 'tender') {
+        try {
+          assertCapabilityWriteAllowed(ctx.businessContext.stageId, args.capability);
+        } catch (error) {
+          return errorResponse(error instanceof Error ? error.message : String(error));
+        }
+      }
       const resolvedData = resolveCapabilityWriteData(args, workingDirectory, paths.projectDirectory);
       if ('error' in resolvedData) return errorResponse(resolvedData.error);
       const upstreamError = findUpstreamReadinessError(index, args.capability, workspace);
@@ -240,6 +253,7 @@ function isImplementedCapability(
   | 'evaluation_strategy'
   | 'boq_reconciliation'
   | 'boq_five_step_pricing'
+  | 'construction_resource_schedule'
   | 'bidder_commitments'
   | 'execution_plan'
   | 'schedule_resources'
@@ -250,6 +264,7 @@ function isImplementedCapability(
     || capability === 'evaluation_strategy'
     || capability === 'boq_reconciliation'
     || capability === 'boq_five_step_pricing'
+    || capability === 'construction_resource_schedule'
     || capability === 'bidder_commitments'
     || capability === 'execution_plan'
     || capability === 'schedule_resources'
@@ -271,6 +286,9 @@ async function parseCapabilityData(
     // etc. Format coercions are recorded as warnings; identity/completeness
     // rules still fail hard downstream in the audit.
     return parseTenderBoqFiveStepPricingDataLenient(data).data;
+  }
+  if (capability === 'construction_resource_schedule') {
+    return parseTenderConstructionResourceScheduleData(data);
   }
   if (capability === 'bidder_commitments') return parseTenderBidderCommitmentsData(data);
   if (capability === 'execution_plan') return parseTenderExecutionPlanData(data);
@@ -337,6 +355,14 @@ function auditCapability(
   }
   if (capability === 'boq_five_step_pricing') {
     return auditTenderBoqFiveStepPricing(workspace, upstreamData.boq_reconciliation, data, generatedAt);
+  }
+  if (capability === 'construction_resource_schedule') {
+    return auditTenderConstructionResourceSchedule(
+      workspace,
+      data as ReturnType<typeof parseTenderConstructionResourceScheduleData>,
+      index,
+      generatedAt,
+    );
   }
   if (capability === 'bidder_commitments') {
     return auditTenderBidderCommitments(workspace, upstreamData.boq_five_step_pricing, data, generatedAt);
@@ -510,7 +536,7 @@ function resolveCapabilityWriteData(
     } else if (synced.reason === 'merge_failed') {
       return {
         error: `document_analysis batch merge failed: ${synced.errors.join('; ')}. `
-          + 'Fix child batch reports, then retry with empty data (runtime will merge) or call stage status/resume.',
+          + 'Fix child batch reports, then retry with empty data (runtime will merge) or use the workbench 「恢复未完任务」.',
       };
     }
   }
@@ -532,7 +558,7 @@ function resolveCapabilityWriteData(
     if (synced.reason === 'merge_failed') {
       return {
         error: `boq_five_step_pricing batch merge failed: ${synced.errors.join('; ')}. `
-          + 'Fix child batch reports, then retry with empty data (runtime will merge) or call stage status/resume.',
+          + 'Fix child batch reports, then retry with empty data (runtime will merge) or use the workbench 「恢复未完任务」.',
       };
     }
     // 'incomplete' → fall through to explicit data while batches are running.
@@ -555,6 +581,13 @@ function resolveCapabilityWriteData(
   }
 
   if (args.data !== undefined) return { data: args.data, source: 'inline' };
+  if (args.capability === 'document_analysis' || args.capability === 'boq_five_step_pricing') {
+    return {
+      error: `${args.action} for ${args.capability} requires complete batch reports (or data/dataPath while batches are still running). `
+        + 'If children are still pending/running, wait for the stage task board — do not invent or compress a pack. '
+        + 'Parent may spawn_session using board brief/report paths within stage concurrency; use workbench 「下一步 / 恢复未完任务」 to fill or resume slots.',
+    };
+  }
   return { error: `${args.action} requires data, dataPath, or complete batch reports.` };
 }
 

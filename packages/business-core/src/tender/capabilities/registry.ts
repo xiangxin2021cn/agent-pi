@@ -9,6 +9,7 @@ const STATIC_DEPENDENCIES: Record<Exclude<TenderCapabilityId, 'submission_audit'
   evaluation_strategy: ['core', 'document_analysis'],
   boq_reconciliation: ['core', 'document_analysis'],
   boq_five_step_pricing: ['core', 'document_analysis', 'boq_reconciliation'],
+  construction_resource_schedule: ['core', 'boq_five_step_pricing'],
   bidder_commitments: ['core', 'document_analysis', 'boq_five_step_pricing'],
   execution_plan: ['core', 'document_analysis', 'boq_reconciliation', 'boq_five_step_pricing', 'bidder_commitments'],
   schedule_resources: ['core', 'execution_plan', 'boq_five_step_pricing'],

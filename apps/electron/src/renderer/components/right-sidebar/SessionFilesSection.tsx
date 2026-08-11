@@ -18,7 +18,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
-import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight, Database } from 'lucide-react'
+import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight, Database, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   ContextMenu,
@@ -30,7 +30,14 @@ import type { SessionFile, SessionOutputDirectory } from '../../../shared/types'
 import { cn } from '@/lib/utils'
 import * as storage from '@/lib/local-storage'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
+import { useNavigation } from '@/contexts/NavigationContext'
 import { getFileManagerName } from '@/lib/platform'
+import { dispatchFocusInputEvent } from '@/components/app-shell/input/focus-input-events'
+import {
+  dispatchSessionAttachmentsChanged,
+  dispatchSessionAttachmentsLoading,
+} from '@/components/app-shell/input/attachment-events'
+import { routes } from '../../../shared/routes'
 import { restoreSessionFileWatch } from './session-files-watch'
 import {
   KNOWLEDGE_BASE_METADATA_CATEGORY,
@@ -145,6 +152,8 @@ function getSourceLabel(t: ReturnType<typeof useTranslation>['t'], source: Sessi
       return t('chat.fileSourceFormal')
     case 'tender-workspace':
       return t('chat.fileSourceTenderWorkspace')
+    case 'working-directory':
+      return t('chat.fileSourceWorkingDirectory')
     case 'session':
       return t('chat.fileSourceSession')
     default:
@@ -157,7 +166,9 @@ function SourcePill({ file }: { file: SessionFile }) {
   const label = getSourceLabel(t, file.source)
   if (!label) return null
 
-  const isFormal = file.source === 'official-output' || file.source === 'tender-workspace'
+  const isFormal = file.source === 'official-output'
+    || file.source === 'tender-workspace'
+    || file.source === 'working-directory'
   return (
     <span
       className={cn(
@@ -285,6 +296,7 @@ interface FileTreeItemProps {
   onRevealInFileManager: (path: string) => void
   onPromoteFile: (file: SessionFile) => void
   onCreateFileMemorySource: (file: SessionFile) => void
+  onAddToChat: (file: SessionFile) => void
   /** Whether this item is inside an expanded folder (for stagger animation) */
   isNested?: boolean
 }
@@ -307,6 +319,7 @@ function FileTreeItem({
   onRevealInFileManager,
   onPromoteFile,
   onCreateFileMemorySource,
+  onAddToChat,
   isNested,
 }: FileTreeItemProps) {
   const { t } = useTranslation()
@@ -406,13 +419,21 @@ function FileTreeItem({
               {t("chat.openFile")}
             </StyledContextMenuItem>
           )}
+          {file.type !== 'directory' && (
+            <StyledContextMenuItem onSelect={() => onAddToChat(file)}>
+              <Paperclip className="h-3.5 w-3.5" />
+              {t('chat.addToChat')}
+            </StyledContextMenuItem>
+          )}
           {isKnowledgeBaseCandidate(file) && (
             <StyledContextMenuItem onSelect={() => onCreateFileMemorySource(file)}>
               <Database className="h-3.5 w-3.5" />
               {t('chat.addToKnowledgeBase')}
             </StyledContextMenuItem>
           )}
-          {file.source !== 'official-output' && (
+          {file.source !== 'official-output'
+            && file.source !== 'tender-workspace'
+            && file.source !== 'working-directory' && (
             <StyledContextMenuItem onSelect={() => onPromoteFile(file)}>
               <ArrowUpRight className="h-3.5 w-3.5" />
               {t('chat.promoteToFormalOutput')}
@@ -465,6 +486,7 @@ function FileTreeItem({
                         onRevealInFileManager={onRevealInFileManager}
                         onPromoteFile={onPromoteFile}
                         onCreateFileMemorySource={onCreateFileMemorySource}
+                        onAddToChat={onAddToChat}
                         isNested={true}
                       />
                     </motion.div>
@@ -561,16 +583,22 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         setFiles(sessionFiles)
         setOutputDirectory(outputInfo)
         setLoadingDirectoryPaths(new Set())
-        if (outputInfo?.exists) {
-          setExpandedPaths((prev) => {
-            if (prev.has(outputInfo.path)) return prev
-            const next = new Set(prev)
+        setExpandedPaths((prev) => {
+          let changed = false
+          const next = new Set(prev)
+          if (outputInfo?.exists && !next.has(outputInfo.path)) {
             next.add(outputInfo.path)
-            saveExpandedPaths(next)
-            return next
-          })
-        }
-
+            changed = true
+          }
+          const workingRoot = sessionFiles.find((file) => file.source === 'working-directory' && file.type === 'directory')
+          if (workingRoot && !next.has(workingRoot.path)) {
+            next.add(workingRoot.path)
+            changed = true
+          }
+          if (!changed) return prev
+          saveExpandedPaths(next)
+          return next
+        })
       }
     } catch (error) {
       console.error('Failed to load session files:', error)
@@ -653,7 +681,13 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   // Use the link interceptor (via context) so file clicks show in-app previews
   // instead of always opening in the file manager / default app.
-  const { onOpenFile, enabledSources = [] } = useAppShellContext()
+  const {
+    onOpenFile,
+    enabledSources = [],
+    onAttachmentsChange,
+    hydrateDraftAttachments,
+  } = useAppShellContext()
+  const { navigate } = useNavigation()
   const fileManagerName = getFileManagerName()
   const knowledgeBaseCategories = React.useMemo(() => {
     const categories = new Set<string>()
@@ -787,6 +821,59 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     setPendingKnowledgeBaseFile(file)
   }, [sessionId])
 
+  const handleAddToChat = useCallback(async (file: SessionFile) => {
+    if (!sessionId || file.type === 'directory') return
+
+    // Child/spawn sessions attach into the parent (tender project main chat).
+    const targetSessionId = session?.parentSessionKind === 'spawn' && session.parentSessionId
+      ? session.parentSessionId
+      : sessionId
+
+    dispatchSessionAttachmentsLoading({ sessionId: targetSessionId, delta: 1 })
+    try {
+      const attachment = await window.electronAPI.readUserAttachment(file.path)
+        ?? await window.electronAPI.readFileAttachment(file.path)
+      if (!attachment) {
+        toast.error(t('chat.failedToAddFileToChat'), { description: file.path })
+        return
+      }
+
+      const existing = await hydrateDraftAttachments(targetSessionId)
+      const already = existing.some((item) => item.path === attachment.path || item.storedPath === attachment.path)
+      const next = already ? existing : [...existing, attachment]
+      onAttachmentsChange(targetSessionId, next)
+      // ChatPage keeps a local attachmentsValue; notify so AttachmentPreview updates in-place.
+      dispatchSessionAttachmentsChanged({ sessionId: targetSessionId, attachments: next })
+
+      if (targetSessionId !== sessionId) {
+        const projectId = session?.businessContext?.projectId
+        if (session?.businessContext?.module === 'tender' && projectId) {
+          navigate(routes.view.tenderWorkspaces(projectId, targetSessionId))
+        } else {
+          navigate(routes.view.allSessions(targetSessionId))
+        }
+      }
+
+      dispatchFocusInputEvent({ sessionId: targetSessionId })
+      toast.success(t('chat.addedFileToChat', { name: file.name }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('chat.failedToAddFileToChat'), { description: message })
+    } finally {
+      dispatchSessionAttachmentsLoading({ sessionId: targetSessionId, delta: -1 })
+    }
+  }, [
+    hydrateDraftAttachments,
+    navigate,
+    onAttachmentsChange,
+    session?.businessContext?.module,
+    session?.businessContext?.projectId,
+    session?.parentSessionId,
+    session?.parentSessionKind,
+    sessionId,
+    t,
+  ])
+
   const handleConfirmKnowledgeBaseCategory = useCallback(async (category: string) => {
     if (!sessionId || !pendingKnowledgeBaseFile) return
 
@@ -877,6 +964,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
                 onRevealInFileManager={handleRevealInFileManager}
                 onPromoteFile={handlePromoteFile}
                 onCreateFileMemorySource={handleCreateFileMemorySource}
+                onAddToChat={handleAddToChat}
               />
             ))}
           </nav>

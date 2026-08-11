@@ -27,12 +27,36 @@ import {
   type TenderBoqBatchManifest,
 } from './tender-boq-batches.ts';
 import { writeDocumentAnalysisSummaryMarkdown } from './tender-document-analysis-md.ts';
+import { ensureDefaultTenderBindings } from './tender-bindings.ts';
+import {
+  assertDocumentParseGate,
+  ensureDocumentReviewEntries,
+  markDocumentHumanReview,
+  readDocumentReviewLedger,
+} from './tender-document-artifacts.ts';
 import {
   createOrRefreshDocumentAnalysisBatchManifest,
   mergeDocumentAnalysisBatchReports,
   validateDocumentAnalysisBatchMerge,
   type TenderDocumentAnalysisBatchManifest,
 } from './tender-document-batches.ts';
+import { migrateTenderStageState } from './tender-orchestration-migrate.ts';
+import {
+  bindProjectParentSession,
+  rebindAllTaskBoardParents,
+  resolveOrElectProjectParent,
+} from './tender-project-orchestration.ts';
+import {
+  assertPlanningSubstepGate,
+  evaluatePlanningSubsteps,
+  markPlanningMethodologyReview,
+  type PlanningSubstepState,
+} from './tender-planning-gates.ts';
+import { setSessionBusinessStage } from '@craft-agent/shared/sessions';
+import {
+  assertResourceScheduleArtifacts,
+  writeConstructionResourceScheduleArtifacts,
+} from './tender-resource-schedule.ts';
 import {
   updateTenderStageTaskBoard,
   type TenderStageBatchTaskSpec,
@@ -41,7 +65,15 @@ import {
   type TenderStageTaskRecord,
 } from './tender-stage-executor.ts';
 
-export type TenderStageRunAction = 'preflight' | 'start' | 'status' | 'resume' | 'complete';
+export type TenderStageRunAction =
+  | 'preflight'
+  | 'start'
+  | 'status'
+  | 'resume'
+  | 'advance'
+  | 'complete'
+  | 'reset_orchestration'
+  | 'set_dispatch';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -50,10 +82,35 @@ export interface TenderStageRunRequest {
   projectId: string;
   stageId: string;
   parentSessionId?: string;
+  dispatchEnabled?: boolean;
+  documentReview?: {
+    documentId: string;
+    humanReview: 'accepted' | 'rejected';
+    notes?: string;
+  };
+  /** Mark 4-A methodology report as human-accepted/rejected. */
+  planningReview?: {
+    artifact: 'methodology_report';
+    humanReview: 'accepted' | 'rejected';
+    notes?: string;
+  };
+  /** Allow replacing the project parent pointer (migration / recovery). */
+  forceRebindParent?: boolean;
+  /** Selective retry of failed/blocked batches (quarantine + re-queue). */
+  retryBatchIds?: string[];
 }
 
 export interface TenderStageRunOptions {
   execution?: TenderStageExecutionRuntime;
+  /** Refresh live session businessContext.stageId when the project parent advances. */
+  setBusinessContextStage?: (sessionId: string, stageId: string) => Promise<boolean>;
+  /** True when the session is still in the live SessionManager index (not deleted). */
+  isSessionAlive?: (sessionId: string) => boolean;
+  /**
+   * Alive root sessions for this tender project (sidebar-equivalent).
+   * Used to heal stale project-orchestration pointers on old projects.
+   */
+  listAliveProjectSessionIds?: (projectId: string) => string[];
 }
 
 export interface TenderSourceBoundaryFile {
@@ -105,6 +162,12 @@ export interface TenderStageRunResult {
     /** Reconciliation rows excluded from pricing (summary rows, composites). */
     skippedItems?: Array<{ itemId: string; code: string; reason: string }>;
   };
+  /** Visible 4-A / 4-B / 4-C checklist for planning-and-submission. */
+  substeps?: PlanningSubstepState[];
+  /** True when stage-state.json still carries folded V2.4 legacy keys. */
+  migratedFromLegacy?: boolean;
+  /** Single project-lifetime parent session shared across stages. */
+  projectParentSessionId?: string;
   sourceBoundary: TenderSourceBoundary;
   updatedAt: string;
   startedAt?: string;
@@ -131,50 +194,73 @@ interface PersistedTenderStageState {
   projectId: string;
   updatedAt: string;
   stages: Record<string, Omit<TenderStageRunResult, 'sourceBoundary' | 'paths'>>;
+  migratedFromLegacy?: boolean;
 }
 
-// V2.4.0 stage consolidation: 9 hard-gated micro-stages → 5 business stages.
-// Capability packs underneath are unchanged; only the orchestration wrappers
-// merged. Legacy stage ids resolve through STAGE_ALIASES so existing projects
-// keep loading.
+// V2.5: 4 business stages. evaluation_strategy is optional (not in producedCapabilities).
+// planning + submission collapse into planning-and-submission with UI substeps.
+// Legacy stage ids resolve through STAGE_ALIASES so existing projects keep loading.
 const STAGES: TenderStageDefinition[] = [
   { id: 'project-setup', requiredCapabilities: [], producedCapabilities: [] },
   {
     id: 'tender-document-analysis',
     requiredCapabilities: [],
-    producedCapabilities: ['document_analysis', 'evaluation_strategy', 'boq_reconciliation'],
+    producedCapabilities: ['document_analysis', 'boq_reconciliation'],
   },
   {
     id: 'boq-five-step-pricing',
     requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
-    producedCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
+    producedCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
   },
   {
-    id: 'planning',
-    requiredCapabilities: ['boq_five_step_pricing', 'bidder_commitments'],
-    producedCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
-  },
-  {
-    id: 'submission',
-    requiredCapabilities: ['execution_plan', 'schedule_resources', 'cost_cashflow'],
-    producedCapabilities: ['submission_documents', 'submission_audit'],
+    id: 'planning-and-submission',
+    requiredCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
+    producedCapabilities: [
+      'execution_plan',
+      'schedule_resources',
+      'cost_cashflow',
+      'submission_documents',
+      'submission_audit',
+    ],
   },
 ];
 
 const STAGE_ALIASES: Record<string, string> = {
   'bidder-commitments': 'boq-five-step-pricing',
-  'work-plan-methodology': 'planning',
-  'schedule-resource-planning': 'planning',
-  'cost-cashflow-planning': 'planning',
-  'tender-submission-documents': 'submission',
-  'submission-audit': 'submission',
+  planning: 'planning-and-submission',
+  submission: 'planning-and-submission',
+  'work-plan-methodology': 'planning-and-submission',
+  'schedule-resource-planning': 'planning-and-submission',
+  'cost-cashflow-planning': 'planning-and-submission',
+  'tender-submission-documents': 'planning-and-submission',
+  'submission-audit': 'planning-and-submission',
 };
 
 function canonicalStageId(stageId: string): string {
   return STAGE_ALIASES[stageId] ?? stageId;
 }
 
+/** Serialize stage runs so parallel Overview/Host ticks cannot starve short RPCs. */
+let tenderStageRunChain: Promise<unknown> = Promise.resolve();
+
 export async function runTenderStage(
+  request: TenderStageRunRequest,
+  options: TenderStageRunOptions = {},
+): Promise<TenderStageRunResult> {
+  const previous = tenderStageRunChain;
+  let release!: () => void;
+  tenderStageRunChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => undefined);
+  try {
+    return await runTenderStageUnlocked(request, options);
+  } finally {
+    release();
+  }
+}
+
+async function runTenderStageUnlocked(
   request: TenderStageRunRequest,
   options: TenderStageRunOptions = {},
 ): Promise<TenderStageRunResult> {
@@ -185,6 +271,82 @@ export async function runTenderStage(
   if (!stage) throw new Error(`Unknown tender stage: ${request.stageId}`);
 
   const paths = resolvePaths(project.rootPath, project.projectId);
+  ensureDefaultTenderBindings(paths.projectDirectory);
+
+  // Resolve / elect the single project parent before any stage dispatch.
+  // Prefer live sessions only — old project pointers to deleted parents must heal.
+  const isSessionAlive = options.isSessionAlive ?? (() => true);
+  const persistedPreview = readStageState(paths.stageStatePath, project.projectId);
+  const candidatesFromState = Object.values(persistedPreview.stages)
+    .map((entry) => entry.batchProgress?.parentSessionId)
+    .filter((id): id is string => Boolean(id));
+  const aliveProjectSessions = options.listAliveProjectSessionIds?.(project.projectId) ?? [];
+  const requestedParentAlive = Boolean(
+    request.parentSessionId
+    && isSessionAlive(request.parentSessionId),
+  );
+  const resolvedParent = resolveOrElectProjectParent({
+    projectDirectory: paths.projectDirectory,
+    projectId: project.projectId,
+    candidateSessionIds: [
+      ...(requestedParentAlive && request.parentSessionId ? [request.parentSessionId] : []),
+      ...aliveProjectSessions,
+      ...candidatesFromState,
+    ],
+    isSessionAlive,
+  });
+  let projectParentSessionId = resolvedParent.parentSessionId;
+  let parentMismatch: string | undefined;
+  let electedMultiParent = (
+    (resolvedParent.elected || resolvedParent.healedStalePointer)
+    && resolvedParent.legacyParentSessionIds.length > 0
+  );
+
+  if (requestedParentAlive && request.parentSessionId) {
+    const pointerAlive = Boolean(projectParentSessionId && isSessionAlive(projectParentSessionId));
+    // Auto-rebind when the stored pointer is dead/missing, or the caller forces it.
+    const shouldRebind = request.forceRebindParent
+      || !pointerAlive
+      || resolvedParent.elected
+      || resolvedParent.healedStalePointer;
+    if (
+      projectParentSessionId
+      && projectParentSessionId !== request.parentSessionId
+      && pointerAlive
+      && !shouldRebind
+    ) {
+      parentMismatch = `project-parent:mismatch:${projectParentSessionId}`;
+    } else {
+      bindProjectParentSession(paths.projectDirectory, project.projectId, request.parentSessionId);
+      projectParentSessionId = request.parentSessionId;
+      rebindAllTaskBoardParents(paths.projectDirectory, request.parentSessionId);
+    }
+  } else if ((resolvedParent.elected || resolvedParent.healedStalePointer) && projectParentSessionId) {
+    rebindAllTaskBoardParents(paths.projectDirectory, projectParentSessionId);
+  }
+
+  const requestedParentForBoard = requestedParentAlive ? request.parentSessionId : undefined;
+  const resolvedBoardParent = parentMismatch
+    ? projectParentSessionId
+    : (requestedParentForBoard ?? projectParentSessionId);
+  // Never write/dispatch against a deleted parent — that produced
+  // "Parent session … does not exist" storms on old projects.
+  const boardParentSessionId = resolvedBoardParent && isSessionAlive(resolvedBoardParent)
+    ? resolvedBoardParent
+    : undefined;
+
+  if (
+    boardParentSessionId
+    && isSessionAlive(boardParentSessionId)
+    && (request.action === 'start' || request.action === 'advance' || request.action === 'resume')
+  ) {
+    if (options.setBusinessContextStage) {
+      await options.setBusinessContextStage(boardParentSessionId, stage.id);
+    } else {
+      await setSessionBusinessStage(request.workspaceRootPath, boardParentSessionId, stage.id);
+    }
+  }
+
   const context = createContext(project.rootPath);
   const sourceBoundary = await syncSourceBoundary(context, paths, project);
   const workspace = parseTenderWorkspace(readJson(paths.workspacePath));
@@ -203,7 +365,7 @@ export async function runTenderStage(
   let capabilityIndexLive: TenderCapabilityIndex = capabilityIndex;
   let generatedPacks = listReadyPacks(capabilityIndexLive);
   const documentBatchManifest = stage.id === 'tender-document-analysis'
-    ? createOrRefreshDocumentAnalysisBatchManifest(
+    ? await createOrRefreshDocumentAnalysisBatchManifest(
         paths.projectDirectory,
         project.projectId,
         sourceBoundary.files
@@ -215,12 +377,49 @@ export async function runTenderStage(
             kind: file.kind,
             priority: file.priority,
           })),
+        { projectRoot: project.rootPath },
       )
     : undefined;
+  if (stage.id === 'tender-document-analysis') {
+    ensureDocumentReviewEntries(
+      paths.projectDirectory,
+      project.projectId,
+      project.rootPath,
+      sourceBoundary.files
+        .filter((file) => file.status === 'registered')
+        .map((file) => ({ documentId: file.documentId, name: file.name })),
+    );
+  }
+  if (request.documentReview && stage.id === 'tender-document-analysis') {
+    const source = sourceBoundary.files.find((file) => file.documentId === request.documentReview!.documentId);
+    markDocumentHumanReview({
+      projectDirectory: paths.projectDirectory,
+      projectId: project.projectId,
+      projectRoot: project.rootPath,
+      documentId: request.documentReview.documentId,
+      humanReview: request.documentReview.humanReview,
+      sourceName: source?.name,
+      notes: request.documentReview.notes,
+    });
+  }
+  if (
+    request.planningReview
+    && request.planningReview.artifact === 'methodology_report'
+    && stage.id === 'planning-and-submission'
+  ) {
+    markPlanningMethodologyReview({
+      projectDirectory: paths.projectDirectory,
+      projectId: project.projectId,
+      projectRoot: project.rootPath,
+      humanReview: request.planningReview.humanReview,
+      notes: request.planningReview.notes,
+    });
+  }
   const boqBatchManifest = stage.id === 'boq-five-step-pricing'
-    ? loadBoqBatchManifest(paths, project.projectId, generatedPacks, sourceBoundary)
+    ? loadBoqBatchManifest(paths, project.projectId, generatedPacks, sourceBoundary, project.rootPath)
     : undefined;
   const batchTaskSpecs = buildBatchTaskSpecs(documentBatchManifest, boqBatchManifest, sourceBoundary);
+  const defaultConcurrency = defaultStageConcurrency(stage.id);
   const taskBoard = batchTaskSpecs
     ? await updateTenderStageTaskBoard({
         action: request.action,
@@ -228,9 +427,12 @@ export async function runTenderStage(
         projectId: project.projectId,
         stageId: stage.id,
         workingDirectory: project.rootPath,
-        parentSessionId: request.parentSessionId,
+        parentSessionId: boardParentSessionId,
         tasks: batchTaskSpecs,
         execution: options.execution,
+        maxConcurrency: defaultConcurrency,
+        ...(request.dispatchEnabled !== undefined ? { dispatchEnabled: request.dispatchEnabled } : {}),
+        ...(request.retryBatchIds?.length ? { retryBatchIds: request.retryBatchIds } : {}),
       })
     : undefined;
 
@@ -267,6 +469,7 @@ export async function runTenderStage(
   // complete, merge child reports into packs/boq-five-step-pricing.json instead
   // of letting the parent hand-assemble (and compress) the pack.
   const boqMergeRuntimeErrors: string[] = [];
+  const resourceScheduleRuntimeErrors: string[] = [];
   if (
     stage.id === 'boq-five-step-pricing'
     && boqBatchManifest
@@ -283,13 +486,22 @@ export async function runTenderStage(
       workspace,
     });
     boqMergeRuntimeErrors.push(...mergeResult.errors);
+    if (mergeResult.errors.length === 0) {
+      const scheduleResult = await ensureResourceSchedulePack({
+        context,
+        paths,
+        projectId: project.projectId,
+        projectRoot: project.rootPath,
+      });
+      resourceScheduleRuntimeErrors.push(...scheduleResult.errors);
+    }
     if (existsSync(paths.capabilityIndexPath)) {
       capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
       generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
     }
   }
 
-  const persisted = readStageState(paths.stageStatePath, project.projectId);
+  const persisted = persistedPreview;
   const previous = persisted.stages[stage.id] ?? latestLegacyStageState(persisted, stage.id);
   const baseMissingItems = [
     ...sourceBoundary.missingPaths.map((path) => `source:${path}`),
@@ -297,6 +509,7 @@ export async function runTenderStage(
     ...stage.requiredCapabilities
       .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest))
       .map((capability) => `capability:${capability}`),
+    ...(parentMismatch ? [parentMismatch] : []),
   ];
   if (stage.id === 'tender-document-analysis') {
     if (!documentBatchManifest) baseMissingItems.push('document-batches:manifest-unavailable');
@@ -309,7 +522,7 @@ export async function runTenderStage(
   if (
     taskBoard
     && options.execution
-    && (request.action === 'start' || request.action === 'resume')
+    && (request.action === 'start' || request.action === 'resume' || request.action === 'advance')
     && !taskBoard.parentSessionId
   ) {
     baseMissingItems.push('task-board:parent-session-required');
@@ -348,6 +561,13 @@ export async function runTenderStage(
         ...validateFinalDocumentAnalysisMerge(paths, documentBatchManifest)
           .map((error) => `document-merge:${error}`),
       );
+      const reviewLedger = readDocumentReviewLedger(paths.projectDirectory, project.projectId);
+      completionMissingItems.push(
+        ...assertDocumentParseGate(
+          reviewLedger,
+          documentBatchManifest.batches.map((batch) => batch.documentId),
+        ),
+      );
     }
     if (
       stage.id === 'boq-five-step-pricing'
@@ -365,9 +585,20 @@ export async function runTenderStage(
       completionMissingItems.push(
         ...boqMergeRuntimeErrors.map((error) => `boq-merge:${error}`),
         ...validateFinalBoqMerge(paths, boqBatchManifest).map((error) => `boq-merge:${error}`),
+        ...resourceScheduleRuntimeErrors.map((error) => `resource-schedule:${error}`),
+        ...assertResourceScheduleArtifacts(project.rootPath, project.projectId, paths.projectDirectory),
+      );
+    }
+    if (stage.id === 'planning-and-submission') {
+      completionMissingItems.push(
+        ...assertPlanningSubstepGate(project.rootPath, paths.projectDirectory, project.projectId),
       );
     }
   }
+
+  const planningSubsteps = stage.id === 'planning-and-submission'
+    ? evaluatePlanningSubsteps(project.rootPath, paths.projectDirectory, project.projectId)
+    : undefined;
 
   const missingItems = shouldEvaluateCompletion
     ? [...baseMissingItems, ...completionMissingItems]
@@ -393,8 +624,11 @@ export async function runTenderStage(
       : boqBatchManifest
         ? boqBatchProgress(boqBatchManifest, taskBoard)
         : undefined,
+    ...(planningSubsteps ? { substeps: planningSubsteps } : {}),
+    ...(persisted.migratedFromLegacy || electedMultiParent ? { migratedFromLegacy: true } : {}),
+    ...(projectParentSessionId ? { projectParentSessionId } : {}),
     updatedAt: now,
-    startedAt: (request.action === 'start' || request.action === 'resume') && status === 'running'
+    startedAt: (request.action === 'start' || request.action === 'resume' || request.action === 'advance') && status === 'running'
       ? (previous?.startedAt ?? now)
       : previous?.startedAt,
     completedAt: status === 'complete' ? (previous?.completedAt ?? now) : undefined,
@@ -417,11 +651,19 @@ function determineStatus(
 ): TenderStageRunStatus {
   if (baseMissingItems.length > 0) return 'blocked';
   if (action === 'preflight') return 'ready';
-  if (action === 'start' || action === 'resume') return 'running';
+  if (action === 'start' || action === 'resume' || action === 'advance' || action === 'reset_orchestration' || action === 'set_dispatch') {
+    return 'running';
+  }
   if (action === 'complete') return completionMissingItems.length > 0 ? 'blocked' : 'complete';
   if (previous === 'running') return completionMissingItems.length > 0 ? 'running' : 'complete';
   if (previous === 'complete') return completionMissingItems.length > 0 ? 'blocked' : 'complete';
   return 'ready';
+}
+
+function defaultStageConcurrency(stageId: string): number {
+  if (stageId === 'tender-document-analysis') return 4;
+  if (stageId === 'boq-five-step-pricing') return 4;
+  return 1;
 }
 
 function loadBoqBatchManifest(
@@ -429,6 +671,7 @@ function loadBoqBatchManifest(
   projectId: string,
   generatedPacks: TenderCapabilityId[],
   sourceBoundary: TenderSourceBoundary,
+  projectRoot: string,
 ): TenderBoqBatchManifest | undefined {
   if (!generatedPacks.includes('boq_reconciliation')) return undefined;
   const modelPath = join(paths.projectDirectory, 'packs', 'boq-reconciliation.json');
@@ -440,7 +683,13 @@ function loadBoqBatchManifest(
       .filter((file) => file.status === 'registered')
       .map((file) => [file.documentId, file.path] as const),
   );
-  return createOrRefreshBoqBatchManifest(paths.projectDirectory, projectId, boq, sourcePathByDocumentId);
+  return createOrRefreshBoqBatchManifest(
+    paths.projectDirectory,
+    projectId,
+    boq,
+    sourcePathByDocumentId,
+    { projectRoot },
+  );
 }
 
 function listReadyPacks(index: TenderCapabilityIndex): TenderCapabilityId[] {
@@ -470,6 +719,12 @@ function listSatisfiedPacks(
     && !satisfied.includes('boq_five_step_pricing')
   ) {
     satisfied.push('boq_five_step_pricing');
+  }
+  if (
+    isCapabilitySatisfied('construction_resource_schedule', index, paths, documentManifest, boqManifest)
+    && !satisfied.includes('construction_resource_schedule')
+  ) {
+    satisfied.push('construction_resource_schedule');
   }
   return satisfied;
 }
@@ -504,8 +759,47 @@ function isCapabilitySatisfied(
     ) {
       return true;
     }
+    if (
+      capability === 'construction_resource_schedule'
+      && existsSync(join(paths.projectDirectory, 'packs', 'construction-resource-schedule.json'))
+    ) {
+      return true;
+    }
   }
   return false;
+}
+
+async function ensureResourceSchedulePack(input: {
+  context: SessionToolContext;
+  paths: ReturnType<typeof resolvePaths>;
+  projectId: string;
+  projectRoot: string;
+}): Promise<{ errors: string[] }> {
+  const pricingPackPath = join(input.paths.projectDirectory, 'packs', 'boq-five-step-pricing.json');
+  const artifacts = writeConstructionResourceScheduleArtifacts({
+    projectRoot: input.projectRoot,
+    projectId: input.projectId,
+    pricingPackPath,
+  });
+  if ('errors' in artifacts) return { errors: artifacts.errors };
+
+  const packPath = join(input.paths.projectDirectory, 'packs', 'construction-resource-schedule.json');
+  const action = existsSync(packPath) ? 'replace' : 'init';
+  const result = await handleTenderCapability(input.context, {
+    action,
+    projectId: input.projectId,
+    capability: 'construction_resource_schedule',
+    data: artifacts.data,
+  });
+  if (result.isError) {
+    return {
+      errors: [
+        result.content.map((block) => block.text).join('\n')
+          || 'construction_resource_schedule pack write failed',
+      ],
+    };
+  }
+  return { errors: [] };
 }
 
 async function ensureDocumentAnalysisPackMerged(input: {
@@ -698,6 +992,7 @@ function buildBatchTaskSpecs(
       batchId: batch.batchId,
       briefPath: batch.briefPath,
       reportPath: batch.reportPath,
+      markdownPath: batch.markdownPath,
       allowedSourcePaths: [batch.sourcePath],
       validationStatus: batch.status,
       validationErrors: batch.validationErrors,
@@ -714,6 +1009,7 @@ function buildBatchTaskSpecs(
     batchId: batch.batchId,
     briefPath: batch.briefPath,
     reportPath: batch.reportPath,
+    markdownPath: batch.markdownPath,
     allowedSourcePaths: batch.allowedDocumentIds
       .map((documentId) => sourcePathById.get(documentId))
       .filter((path): path is string => Boolean(path)),
@@ -729,37 +1025,55 @@ async function syncSourceBoundary(
   project: ReturnType<typeof listBusinessProjects>[number],
 ): Promise<TenderSourceBoundary> {
   mkdirSync(paths.projectDirectory, { recursive: true });
-  const files: TenderSourceBoundaryFile[] = project.inputPaths.map((path, index) => {
+  const files: TenderSourceBoundaryFile[] = [];
+  for (let index = 0; index < project.inputPaths.length; index += 1) {
+    const path = project.inputPaths[index]!;
     const name = basename(path);
     if (!existsSync(path)) {
-      return { documentId: sourceDocumentId(path), path, name, kind: inferDocumentKind(path), priority: index + 1, status: 'missing' };
+      files.push({ documentId: sourceDocumentId(path), path, name, kind: inferDocumentKind(path), priority: index + 1, status: 'missing' });
+    } else {
+      const stat = statSync(path);
+      if (!stat.isFile()) {
+        files.push({ documentId: sourceDocumentId(path), path, name, kind: inferDocumentKind(path), priority: index + 1, status: 'unsupported' });
+      } else {
+        files.push({
+          documentId: sourceDocumentId(path),
+          path,
+          name,
+          kind: inferDocumentKind(path),
+          priority: index + 1,
+          status: 'registered',
+          sizeBytes: stat.size,
+        });
+      }
     }
-    const stat = statSync(path);
-    if (!stat.isFile()) {
-      return { documentId: sourceDocumentId(path), path, name, kind: inferDocumentKind(path), priority: index + 1, status: 'unsupported' };
+    if (index > 0 && index % 5 === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    return {
-      documentId: sourceDocumentId(path),
-      path,
-      name,
-      kind: inferDocumentKind(path),
-      priority: index + 1,
-      status: 'registered',
-      sizeBytes: stat.size,
-    };
-  });
+  }
+  const previousBoundary = existsSync(paths.sourceBoundaryPath)
+    ? readJson(paths.sourceBoundaryPath) as unknown as TenderSourceBoundary
+    : undefined;
   const boundary: TenderSourceBoundary = {
     schemaVersion: 1,
     projectId: project.projectId,
-    generatedAt: new Date().toISOString(),
+    generatedAt: previousBoundary
+      && previousBoundary.projectId === project.projectId
+      && JSON.stringify(previousBoundary.files) === JSON.stringify(files)
+      ? previousBoundary.generatedAt
+      : new Date().toISOString(),
     files,
     registeredCount: files.filter((file) => file.status === 'registered').length,
     missingPaths: files.filter((file) => file.status !== 'registered').map((file) => file.path),
   };
-  const previousBoundary = existsSync(paths.sourceBoundaryPath)
-    ? readJson(paths.sourceBoundaryPath) as unknown as TenderSourceBoundary
-    : undefined;
-  atomicWriteJson(paths.sourceBoundaryPath, boundary);
+  const boundaryUnchanged = previousBoundary
+    && previousBoundary.projectId === boundary.projectId
+    && previousBoundary.registeredCount === boundary.registeredCount
+    && JSON.stringify(previousBoundary.files) === JSON.stringify(boundary.files)
+    && JSON.stringify(previousBoundary.missingPaths) === JSON.stringify(boundary.missingPaths);
+  if (!boundaryUnchanged) {
+    atomicWriteJson(paths.sourceBoundaryPath, boundary);
+  }
 
   if (!existsSync(paths.workspacePath)) {
     const initialized = await handleTenderWorkspace(context, {
@@ -867,7 +1181,21 @@ function publicPaths(
 
 function readStageState(filePath: string, projectId: string): PersistedTenderStageState {
   if (!existsSync(filePath)) return { schemaVersion: 1, projectId, updatedAt: new Date(0).toISOString(), stages: {} };
-  return readJson(filePath) as unknown as PersistedTenderStageState;
+  const raw = readJson(filePath) as unknown as PersistedTenderStageState;
+  const migrated = migrateTenderStageState({
+    schemaVersion: 1,
+    projectId: raw.projectId || projectId,
+    updatedAt: raw.updatedAt || new Date(0).toISOString(),
+    stages: raw.stages ?? {},
+    ...(raw.migratedFromLegacy ? { migratedFromLegacy: true } : {}),
+  });
+  return {
+    schemaVersion: 1,
+    projectId: migrated.projectId,
+    updatedAt: migrated.updatedAt,
+    stages: migrated.stages as PersistedTenderStageState['stages'],
+    ...(migrated.migratedFromLegacy ? { migratedFromLegacy: true } : {}),
+  };
 }
 
 function readJson(filePath: string): Record<string, unknown> {

@@ -13,7 +13,9 @@ Use `tender_capability` as the submission-documents system of record. This skill
 - Do not scan the working directory as a source corpus.
 - Require ready, non-stale `execution_plan`, `schedule_resources`, and `cost_cashflow` packs.
 - Prepare formal deliverables only when required by the user or the tender requirements.
-- PDF, DOCX, XLSX, Project XML, Primavera P6 XML, and other specialist formats are optional outputs. Generate them only when the user or tender requirement asks for them.
+- For Agent Pi stage 4-C, always write `Work_Plan_and_Proposed_Methodology.docx` and
+  `submission_audit.md` under `Agent Pi Outputs/<projectId>/planning/` (use the bound Work Plan DOCX template when present).
+- Other specialist formats remain optional unless the tender or user requires them.
 - Keep internal evidence matrices, audit ledgers, and review notes out of formal deliverables unless explicitly requested.
 - Match the tender template, language, headings, layout intent, and evaluation criteria when a template or instruction is provided.
 

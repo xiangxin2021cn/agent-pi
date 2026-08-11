@@ -13,12 +13,19 @@ import {
   type TenderBoqFiveStepPricingData,
   type TenderSourceLocator,
 } from '@agent-pi/business-core/tender';
+import { resolveTenderMethodStandardPath } from './tender-bindings.ts';
+import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 
 export interface TenderBoqBatchBrief {
   schemaVersion: 1;
   projectId: string;
   batchId: string;
   objective: string;
+  methodStandard?: {
+    title?: string;
+    path: string;
+    role: string;
+  };
   scope: {
     documentId: string;
     sheet: string;
@@ -37,8 +44,10 @@ export interface TenderBoqBatchBrief {
   };
   outputSchema: Record<string, unknown>;
   reportPath: string;
+  /** Customer-facing chapter workpaper MD — written by the child, not the parent. */
+  markdownPath: string;
   spawnPolicy: 'forbidden';
-  finalArtifactPolicy: 'report-only';
+  finalArtifactPolicy: 'report-and-markdown';
 }
 
 export interface TenderBoqBatchRecord {
@@ -48,6 +57,7 @@ export interface TenderBoqBatchRecord {
   allowedDocumentIds: string[];
   briefPath: string;
   reportPath: string;
+  markdownPath: string;
   status: 'pending' | 'complete' | 'invalid';
   validationErrors: string[];
   /** Coercions applied during lenient report parsing — reviewable, non-blocking. */
@@ -83,7 +93,9 @@ export function createOrRefreshBoqBatchManifest(
   projectId: string,
   boq: TenderBoqReconciliationData,
   sourcePathByDocumentId: ReadonlyMap<string, string> = new Map(),
+  options: { projectRoot?: string } = {},
 ): TenderBoqBatchManifest {
+  const projectRoot = options.projectRoot ?? resolveProjectRootFromTenderDir(projectDirectory);
   const briefDirectory = join(projectDirectory, 'orchestration', 'briefs', 'boq-pricing');
   const reportDirectory = join(projectDirectory, 'orchestration', 'reports', 'boq-pricing');
   const manifestPath = join(projectDirectory, 'boq-batch-manifest.json');
@@ -119,6 +131,7 @@ export function createOrRefreshBoqBatchManifest(
       const batchId = createBatchId(first.source.documentId, sheet, batchNumber);
       const briefPath = join(briefDirectory, `${batchId}.json`);
       const reportPath = join(reportDirectory, `${batchId}.json`);
+      const markdownPath = boqChapterArtifactPath(projectRoot, projectId, batchId, sheet);
       const itemIds = chunk.map((item) => item.id);
       const allowedDocumentIds = collectAllowedDocumentIds(chunk, scopeLinkByItemId);
       const scope = {
@@ -127,11 +140,27 @@ export function createOrRefreshBoqBatchManifest(
         firstCell: first.source.cell,
         lastCell: last.source.cell,
       };
+      let methodStandard: TenderBoqBatchBrief['methodStandard'];
+      try {
+        const resolved = resolveTenderMethodStandardPath(projectDirectory);
+        methodStandard = {
+          ...(resolved.title ? { title: resolved.title } : {}),
+          path: resolved.absolutePath,
+          role: 'method_and_depth_standard',
+        };
+      } catch {
+        methodStandard = undefined;
+      }
       const brief: TenderBoqBatchBrief = {
         schemaVersion: 1,
         projectId,
         batchId,
-        objective: 'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register. Tender documents are the only valid basis for scope, quantities, specifications, and measurement rules; for resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt). If a rate cannot be verified online, set assumptionStatus "unverified" — never invent a rate.',
+        objective:
+          'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. '
+          + 'Write (1) structured JSON to reportPath and (2) a customer-facing readable Markdown chapter workpaper to markdownPath '
+          + '(summary table + five-step sections). Do not leave the Markdown for the parent session. '
+          + 'Follow the bound methodStandard file for derivation depth and deliverable shape. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register. Tender documents are the only valid basis for scope, quantities, specifications, and measurement rules; for resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt). If a rate cannot be verified online, set assumptionStatus "unverified" — never invent a rate.',
+        ...(methodStandard ? { methodStandard } : {}),
         scope,
         itemIds,
         items: chunk.map((item) => ({
@@ -153,15 +182,17 @@ export function createOrRefreshBoqBatchManifest(
             'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
             'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
             'Every numeric fact is sourced, an explicit scenario, or unverified. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions (0.85, not 85). Mark an item "reviewed" only when its core records carry no unverified values; otherwise keep it "draft".',
+            'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff — customers review the MD first.',
           ],
         },
         outputSchema: batchReportSchema(batchId, itemIds),
         reportPath,
+        markdownPath,
         spawnPolicy: 'forbidden',
-        finalArtifactPolicy: 'report-only',
+        finalArtifactPolicy: 'report-and-markdown',
       };
       atomicWriteJson(briefPath, brief);
-      const validation = validateBatchReport(reportPath, batchId, itemIds, chunk, scopeLinkByItemId);
+      const validation = validateBatchReport(reportPath, markdownPath, batchId, itemIds, chunk, scopeLinkByItemId);
       batches.push({
         batchId,
         source: scope,
@@ -169,6 +200,7 @@ export function createOrRefreshBoqBatchManifest(
         allowedDocumentIds,
         briefPath,
         reportPath,
+        markdownPath,
         status: validation.status,
         validationErrors: validation.errors,
         validationWarnings: validation.warnings,
@@ -319,6 +351,7 @@ function collectAllowedDocumentIds(
 
 function validateBatchReport(
   reportPath: string,
+  markdownPath: string,
   batchId: string,
   itemIds: string[],
   items: TenderBoqReconciliationData['items'],
@@ -327,10 +360,44 @@ function validateBatchReport(
   if (!existsSync(reportPath)) return { status: 'pending', errors: [], warnings: [] };
   try {
     const { errors, warnings } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
+    if (!artifactLooksAcceptable(markdownPath)) {
+      errors.push(
+        `Customer-facing chapter Markdown missing or too thin at ${markdownPath}. `
+          + 'The child must write this MD (summary table + five-step sections); do not leave it for the parent.',
+      );
+    }
     return { status: errors.length === 0 ? 'complete' : 'invalid', errors, warnings };
   } catch (error) {
     return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)], warnings: [] };
   }
+}
+
+export function boqChapterArtifactPath(
+  projectRoot: string,
+  projectId: string,
+  batchId: string,
+  sheet: string,
+): string {
+  const sheetStem = sheet
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'chapter';
+  return join(
+    projectRoot,
+    'Agent Pi Outputs',
+    projectId,
+    'boq-pricing',
+    `${batchId}__${sheetStem}.md`,
+  );
+}
+
+function resolveProjectRootFromTenderDir(projectDirectory: string): string {
+  const normalized = projectDirectory.replace(/\\/g, '/').toLowerCase();
+  const marker = '/.agent-pi/business/tender/';
+  const index = normalized.lastIndexOf(marker);
+  if (index >= 0) return projectDirectory.slice(0, index);
+  return projectDirectory;
 }
 
 function readBatchReport(

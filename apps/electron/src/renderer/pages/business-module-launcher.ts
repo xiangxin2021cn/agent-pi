@@ -77,6 +77,35 @@ ${registeredInputs}
 
 只允许使用上述登记资料以及用户在本对话中明确添加的数据源或知识库条目。项目工作目录仅用于保存过程文件和交付物，不得将其扫描为来源。
 
+本项目使用单一主会话贯穿全部阶段；请在本对话中继续，不要另开阶段主会话。大文件解析与 BOQ 章节组价由运行时派发子会话完成。
+
+`
+}
+
+/** Injected when the same project parent advances into a new stageId. */
+export function buildStageHandoffDraft(
+  moduleId: BusinessModuleId,
+  project: BusinessProjectRecord,
+  stage: BusinessWorkflowStage,
+  stageRun?: TenderStageRunResultDto,
+): string {
+  if (moduleId !== 'tender') return buildBusinessTaskDraft(moduleId, project, stage, stageRun)
+  return `【阶段切换 — 请在本项目主会话继续】
+
+项目: ${project.name}
+新阶段: ${stage.label} (\`${stage.id}\`)
+阶段要求: ${stage.prompt}
+
+${buildCapabilityBlock(stage)}${buildStageControlBlock(stageRun)}${buildDispatchBlock(stage)}
+
+规则:
+- 这是同一条主对话的阶段推进，不是新会话；项目记忆与上文继续有效。
+- 大 PDF 解析 / BOQ 章节组价由**主会话**按 task board brief/report 调用 spawn_session 派发（默认并发最多 4）；工作台「下一步 / 恢复」是补位与停启控制，不要一次打满队列。
+- 子会话必须同时写出 JSON handoff 与客户可读 MD（brief.markdownPath）；禁止把写 MD 推回主会话。
+- 子会话禁止再 spawn；正式成果以项目目录下的 packs / Agent Pi Outputs / orchestration 为准。
+- 完成门禁所需制品后再请求进入下一阶段。
+
+请确认当前阶段目标，并按阶段要求推进。
 `
 }
 
@@ -113,16 +142,16 @@ function buildDispatchBlock(stage: BusinessWorkflowStage): string {
   if (stage.id === 'tender-document-analysis') {
     return `
 <controlled_subagent_dispatch>
-The backend stage controller owns document batch dispatch, concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, or take over an unfinished batch.
-Monitor the exact task_board_path and document_analysis_batch_manifest_path. When every batch report is schema-valid, call stage status/resume or tender_capability init/replace for document_analysis with NO inline data — runtime merges batch reports (namespaced ids) into packs/document-analysis.json and writes Agent Pi Outputs/<parentSession>/document-analysis-summary.md. Never compress, truncate, or rewrite section summaries to fit tool-call size limits; that breaks merge gates and causes retry loops. Then write evaluation_strategy and boq_reconciliation via dataPath or modest payloads.
+The parent session is the command surface for spawn_session. Dispatch children using the exact briefPath/reportPath/markdownPath from the task board / document_analysis_batch_manifest; keep at most 4 in flight (stage default). Each child must write JSON + customer-facing MD at markdownPath — parent must not author those MDs. Workbench 「下一步 / 恢复未完任务」 complements fill-up and stop/resume — do not flood beyond concurrency. Do not rewrite child briefs or take over an unfinished batch.
+Monitor the exact task_board_path and document_analysis_batch_manifest_path. When every batch report is schema-valid, wait for runtime/UI merge into packs/document-analysis.json (or call tender_capability init/replace for document_analysis with NO inline data as a fallback). Never compress, truncate, or rewrite section summaries to fit tool-call size limits; that breaks merge gates and causes retry loops. Optional evaluation_strategy and boq_reconciliation may use dataPath or modest payloads after merge.
 </controlled_subagent_dispatch>
 `
   }
   return `
 <controlled_subagent_dispatch>
-The backend stage controller owns BOQ batch dispatch, bounded concurrency, retry, and child-session lifecycle. The main session must not call spawn_session, rewrite child briefs, directly price an unfinished child range, or create substitute reports.
+The parent session is the command surface for spawn_session. Dispatch BOQ chapter children using exact briefPath/reportPath/markdownPath from the task board / boq_batch_manifest; default concurrency is 4. Each child must write JSON + customer-facing chapter MD at markdownPath — parent must not author those MDs. Workbench 「下一步 / 恢复未完任务」 complements fill-up and stop/resume. Do not rewrite child briefs, directly price an unfinished child range, or create substitute reports.
 Batches are segmented by BOQ sheet chapter (each BOQ page ≈ one COTO chapter). Each child follows the C5.1 pure-direct-cost quality standard embedded in its brief and verifies key resource rates online (webEvidence); unverifiable rates stay "unverified".
-Monitor the exact task_board_path and boq_batch_manifest_path. When every batch report is accepted, call stage status/resume or tender_capability init/replace for boq_five_step_pricing with NO inline data — the runtime merges batch reports into packs/boq-five-step-pricing.json deterministically. Never hand-assemble, compress, or rewrite pricing content into the tool call. Review normalization warnings and unverified rates with the user, then confirm bidder commitments (bidder_commitments) before downstream planning.
+Monitor the exact task_board_path and boq_batch_manifest_path. When every batch report is accepted, wait for runtime/UI merge into packs/boq-five-step-pricing.json (or call tender_capability init/replace with NO inline data as a fallback). Never hand-assemble, compress, or rewrite pricing content into the tool call. Review normalization warnings and unverified rates with the user, then confirm bidder commitments (bidder_commitments) before downstream planning.
 </controlled_subagent_dispatch>
 `
 }

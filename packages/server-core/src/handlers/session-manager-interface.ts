@@ -48,6 +48,8 @@ export interface ISessionManager {
 
   getSessions(workspaceId?: string): Session[]
   getSession(sessionId: string): Promise<Session | null>
+  /** True when the session is still loaded in the live index (not deleted). */
+  hasSession?(sessionId: string): boolean
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   spawnSession(parentSessionId: string, request: SpawnSessionRequest): Promise<SpawnSessionResult>
   deleteSession(sessionId: string): Promise<void>
@@ -83,6 +85,8 @@ export interface ISessionManager {
   setSessionLabels(sessionId: string, labels: string[]): void
   setSessionConnection(sessionId: string, connectionSlug: string): Promise<void>
   updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void>
+  /** Tender stage progression: refresh live businessContext.stageId on the project parent. */
+  setBusinessContextStage?(sessionId: string, stageId: string): Promise<boolean>
 
   // ---------------------------------------------------------------------------
   // Messaging

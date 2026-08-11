@@ -43,6 +43,9 @@ function stripErrorTags(content: string | undefined): string | undefined {
  */
 export function humanizeRuntimeError(content: string | undefined): string | undefined {
   if (!content) return content
+  if (/for tender stage "/i.test(content) && /active handoff limit reached/i.test(content)) {
+    return `Tender stage concurrency full. Wait for existing children to finish, or use workbench 「下一步」 after a slot frees.`
+  }
   if (/active handoff limit reached/i.test(content)) {
     const match = content.match(/\((\d+)\s*\/\s*(\d+)\)/)
     const current = match?.[1] ?? '?'
@@ -1234,3 +1237,152 @@ export function countTotalActivities(items: (ActivityItem | ActivityGroup)[]): n
   }
   return count
 }
+
+function areAnnotationsContentEqual(
+  prev?: ResponseContent['annotations'],
+  next?: ResponseContent['annotations'],
+): boolean {
+  if (prev === next) return true
+  if (!prev || !next) return (prev?.length ?? 0) === (next?.length ?? 0)
+  if (prev.length !== next.length) return false
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i]!
+    const b = next[i]!
+    if (a === b) continue
+    if (a.id !== b.id) return false
+    // Annotation note / meta edits must invalidate; stringify is rare (only on ref churn).
+    if (JSON.stringify(a) !== JSON.stringify(b)) return false
+  }
+  return true
+}
+
+/** Content equality for ResponseContent — used to keep completed cards from remounting Markdown. */
+export function areResponsesContentEqual(
+  prev?: ResponseContent,
+  next?: ResponseContent,
+): boolean {
+  if (prev === next) return true
+  if (!prev || !next) return false
+  return (
+    prev.messageId === next.messageId
+    && prev.text === next.text
+    && prev.isStreaming === next.isStreaming
+    && prev.isPlan === next.isPlan
+    && prev.streamStartTime === next.streamStartTime
+    && areAnnotationsContentEqual(prev.annotations, next.annotations)
+  )
+}
+
+/** Content equality for activity lists after regroup creates new array references. */
+export function areActivitiesContentEqual(
+  prev: ActivityItem[],
+  next: ActivityItem[],
+): boolean {
+  if (prev === next) return true
+  if (prev.length !== next.length) return false
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i]!
+    const b = next[i]!
+    if (
+      a.id !== b.id
+      || a.type !== b.type
+      || a.status !== b.status
+      || a.content !== b.content
+      || a.error !== b.error
+      || a.timestamp !== b.timestamp
+      || a.toolUseId !== b.toolUseId
+      || a.toolName !== b.toolName
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function areTodosContentEqual(
+  prev?: TodoItem[],
+  next?: TodoItem[],
+): boolean {
+  if (prev === next) return true
+  if (!prev || !next) return (prev?.length ?? 0) === (next?.length ?? 0)
+  if (prev.length !== next.length) return false
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i]!
+    const b = next[i]!
+    if (a.content !== b.content || a.status !== b.status || a.activeForm !== b.activeForm) return false
+  }
+  return true
+}
+
+/**
+ * Reuse previous Turn object (and nested response/activities) references when
+ * regrouping produced equal content. Prevents completed ResponseCards from
+ * re-parsing Markdown on every isProcessing / goalState flicker after a turn ends.
+ */
+export function reuseStableTurns(previous: Turn[], next: Turn[]): Turn[] {
+  if (previous.length === 0) return next
+  if (previous === next) return next
+
+  let changed = previous.length !== next.length
+  const out: Turn[] = next.map((turn, index) => {
+    const prev = previous[index]
+    if (!prev || prev.type !== turn.type) {
+      changed = true
+      return turn
+    }
+
+    if (turn.type === 'user' || turn.type === 'system' || turn.type === 'auth-request') {
+      if (prev.type === turn.type && prev.message === turn.message) return prev
+      if (
+        prev.type === turn.type
+        && prev.message.id === turn.message.id
+        && prev.message.content === turn.message.content
+        && prev.message.role === turn.message.role
+      ) {
+        return prev
+      }
+      changed = true
+      return turn
+    }
+
+    // assistant
+    if (prev.type !== 'assistant') {
+      changed = true
+      return turn
+    }
+
+    const responseEqual = areResponsesContentEqual(prev.response, turn.response)
+    const activitiesEqual = areActivitiesContentEqual(prev.activities, turn.activities)
+    const todosEqual = areTodosContentEqual(prev.todos, turn.todos)
+
+    if (
+      prev.turnId === turn.turnId
+      && prev.isStreaming === turn.isStreaming
+      && prev.isComplete === turn.isComplete
+      && prev.intent === turn.intent
+      && prev.timestamp === turn.timestamp
+      && responseEqual
+      && activitiesEqual
+      && todosEqual
+    ) {
+      return prev
+    }
+
+    // Partial reuse: keep nested refs stable so TurnCard memo / MemoizedMarkdown can skip work.
+    if (responseEqual || activitiesEqual || todosEqual) {
+      changed = true
+      return {
+        ...turn,
+        response: responseEqual ? prev.response : turn.response,
+        activities: activitiesEqual ? prev.activities : turn.activities,
+        todos: todosEqual ? prev.todos : turn.todos,
+      }
+    }
+
+    changed = true
+    return turn
+  })
+
+  return changed ? out : previous
+}
+

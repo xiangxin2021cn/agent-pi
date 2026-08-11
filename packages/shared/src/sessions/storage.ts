@@ -745,6 +745,7 @@ export async function updateSessionMetadata(
     | 'llmConnection'
     | 'isArchived'
     | 'archivedAt'
+    | 'businessContext'
   >>
 ): Promise<void> {
   const session = loadSession(workspaceRootPath, sessionId);
@@ -766,8 +767,28 @@ export async function updateSessionMetadata(
   if (updates.llmConnection !== undefined) session.llmConnection = updates.llmConnection;
   if (updates.isArchived !== undefined) session.isArchived = updates.isArchived;
   if ('archivedAt' in updates) session.archivedAt = updates.archivedAt;
+  if (updates.businessContext !== undefined) session.businessContext = updates.businessContext;
 
   await saveSession(session);
+}
+
+/**
+ * Move a tender session to another workflow stage without creating a new session.
+ * Returns undefined when the session is missing or not a tender business session.
+ */
+export async function setSessionBusinessStage(
+  workspaceRootPath: string,
+  sessionId: string,
+  stageId: string,
+): Promise<SessionConfig['businessContext'] | undefined> {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.businessContext || session.businessContext.module !== 'tender') return undefined;
+  const next = {
+    ...session.businessContext,
+    stageId,
+  };
+  await updateSessionMetadata(workspaceRootPath, sessionId, { businessContext: next });
+  return next;
 }
 
 /**

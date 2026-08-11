@@ -354,7 +354,7 @@ export function getMimeType(filePath: string): string {
  */
 export function readFileAttachment(
   filePath: string,
-  options: { allowPathBackedLargeFile?: boolean } = {},
+  options: { allowPathBackedLargeFile?: boolean; pathBackedOnly?: boolean } = {},
 ): FileAttachment | null {
   try {
     const resolved = resolvePath(filePath);
@@ -380,6 +380,12 @@ export function readFileAttachment(
       mimeType,
       size: stats.size,
     };
+
+    // Spawned children should receive path references only — loading PDF/Office
+    // base64 into every child multiplies main-process RSS and can OOM Electron.
+    if (options.pathBackedOnly) {
+      return attachment;
+    }
 
     if (stats.size > MAX_FILE_SIZE) {
       if (options.allowPathBackedLargeFile) return attachment;
