@@ -1163,6 +1163,7 @@ function taskBoardProgress(taskBoard?: TenderStageTaskBoard) {
   return {
     taskBoardPath: taskBoard?.taskBoardPath,
     parentSessionId: taskBoard?.parentSessionId,
+    dispatchEnabled: taskBoard?.dispatchEnabled !== false,
     pendingBatches: tasks.filter((task) => task.status === 'pending').length,
     runningBatches: visiblyRunning.length,
     failedBatches: visiblyFailed.length,

@@ -76,6 +76,9 @@ export function registerTenderWorkspaceHandlers(
       ? {
           spawnSession: sessionManager.spawnSession.bind(sessionManager),
           getSession: sessionManager.getSession.bind(sessionManager),
+          continueSession: async (sessionId: string, prompt: string) => {
+            await sessionManager.sendMessage(sessionId, prompt);
+          },
         }
       : undefined;
     return runTenderStage(request, {

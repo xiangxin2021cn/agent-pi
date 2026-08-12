@@ -20,6 +20,16 @@ import { createLogger } from '../../utils/debug.ts';
 /** MCP server name used by the pool server */
 const POOL_SERVER_MCP_NAME = 'sources';
 
+/**
+ * Soft cap for streamed tool output kept in memory.
+ * Unbounded `current + delta` hits V8 `RangeError: Invalid string length` on large
+ * PDF/OCR/Excel tool streams and storms the main process (see stability.log).
+ */
+export const MAX_COMMAND_OUTPUT_CHARS = 4 * 1024 * 1024; // 4 MiB of UTF-16 code units
+
+const COMMAND_OUTPUT_TRUNCATION_MARKER =
+  '\n\n[truncated: tool output exceeded in-memory cap; further deltas discarded]\n';
+
 export { type ReadCommandInfo } from './read-patterns.ts';
 
 type Logger = ReturnType<typeof createLogger>;
@@ -34,6 +44,8 @@ export abstract class BaseEventAdapter {
 
   // Shared state maps used by subclass event adapters
   protected commandOutput: Map<string, string> = new Map();
+  /** Tool call ids whose output was truncated — further deltas are ignored. */
+  protected truncatedCommandOutputIds: Set<string> = new Set();
   protected readCommands: Map<string, ReadCommandInfo> = new Map();
   protected blockReasons: Map<string, string> = new Map();
 
@@ -59,6 +71,7 @@ export abstract class BaseEventAdapter {
   startTurn(turnId?: string): void {
     this.turnIndex++;
     this.commandOutput.clear();
+    this.truncatedCommandOutputIds.clear();
     this.readCommands.clear();
     this.blockReasons.clear();
     this.currentTurnId = turnId || null;
@@ -134,10 +147,27 @@ export abstract class BaseEventAdapter {
   /**
    * Accumulate streaming command output for a tool call.
    * Called from output delta handlers (not emitted as an event).
+   * Caps size so large tool streams cannot throw `RangeError: Invalid string length`.
    */
   accumulateOutput(id: string, delta: string): void {
+    if (!delta || this.truncatedCommandOutputIds.has(id)) return;
+
     const current = this.commandOutput.get(id) || '';
-    this.commandOutput.set(id, current + delta);
+    const nextLength = current.length + delta.length;
+    if (nextLength <= MAX_COMMAND_OUTPUT_CHARS) {
+      this.commandOutput.set(id, current + delta);
+      return;
+    }
+
+    const room = Math.max(0, MAX_COMMAND_OUTPUT_CHARS - current.length - COMMAND_OUTPUT_TRUNCATION_MARKER.length);
+    const clipped = room > 0 ? current + delta.slice(0, room) : current.slice(0, Math.max(0, MAX_COMMAND_OUTPUT_CHARS - COMMAND_OUTPUT_TRUNCATION_MARKER.length));
+    this.commandOutput.set(id, clipped + COMMAND_OUTPUT_TRUNCATION_MARKER);
+    this.truncatedCommandOutputIds.add(id);
+    this.log.warn('Tool output truncated to in-memory cap', {
+      id,
+      maxChars: MAX_COMMAND_OUTPUT_CHARS,
+      discardedApprox: nextLength - MAX_COMMAND_OUTPUT_CHARS,
+    });
   }
 
   /**
@@ -147,6 +177,7 @@ export abstract class BaseEventAdapter {
     const output = this.commandOutput.get(id);
     if (output !== undefined) {
       this.commandOutput.delete(id);
+      this.truncatedCommandOutputIds.delete(id);
     }
     return output;
   }

@@ -607,6 +607,8 @@ export interface TenderStageRunResultDto {
     manifestPath: string;
     taskBoardPath?: string;
     parentSessionId?: string;
+    /** When false, monitor/advance must not spawn or continue children. */
+    dispatchEnabled?: boolean;
     pendingBatches: number;
     runningBatches: number;
     failedBatches: number;

@@ -139,7 +139,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   /** Survives chat navigation via tenderLiveMonitorAtom (host keeps resume polling). */
   const monitoringActive = moduleId === 'tender'
     && isTenderMonitorActiveFor(liveMonitor, projectId, workspaceRootPath)
-  const setMonitoringActive = React.useCallback((active: boolean) => {
+  const monitoringDispatchPaused = Boolean(monitoringActive && liveMonitor?.dispatchPaused)
+  const setMonitoringActive = React.useCallback((active: boolean, options?: { dispatchPaused?: boolean }) => {
     if (moduleId !== 'tender') return
     setLiveMonitor(active
       ? {
@@ -147,13 +148,30 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           workspaceRootPath,
           projectId,
           active: true,
+          dispatchPaused: options?.dispatchPaused ?? false,
           lastTickAt: Date.now(),
         }
       : (current) => (
         current?.projectId === projectId
-          ? { ...current, active: false, lastTickAt: Date.now() }
+          ? { ...current, active: false, dispatchPaused: false, lastTickAt: Date.now() }
           : current
       ))
+  }, [moduleId, projectId, setLiveMonitor, workspaceRootPath])
+  const setMonitoringDispatchPaused = React.useCallback((paused: boolean) => {
+    if (moduleId !== 'tender') return
+    setLiveMonitor((current) => {
+      if (!current || current.projectId !== projectId) {
+        return {
+          moduleId: 'tender',
+          workspaceRootPath,
+          projectId,
+          active: true,
+          dispatchPaused: paused,
+          lastTickAt: Date.now(),
+        }
+      }
+      return { ...current, active: true, dispatchPaused: paused, lastTickAt: Date.now() }
+    })
   }, [moduleId, projectId, setLiveMonitor, workspaceRootPath])
   const refreshInFlight = React.useRef(false)
   const refreshQueued = React.useRef<{ action: 'status' | 'resume'; stages?: BusinessWorkflowStage[] } | null>(null)
@@ -372,9 +390,60 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         toast.message('没有可恢复的未完批次；请先进入阶段或重试失败批次')
         return
       }
+      for (const stage of targets) {
+        const enabled = await setTenderStageDispatch(window.electronAPI.runTenderStage, {
+          workspaceRootPath, projectId, stageId: stage.id,
+        }, true)
+        setStageRuns((current) => ({ ...current, [stage.id]: enabled.result }))
+      }
       await refresh({ force: true, action: 'resume', stages: targets })
-      setMonitoringActive(true)
-      toast.success('已恢复未完任务，并开启流程监控')
+      setMonitoringActive(true, { dispatchPaused: false })
+      toast.success('已接续未完任务（优先同一子会话），并开启补位监控')
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
+  const handlePauseMonitorDispatch = async () => {
+    if (!project) return
+    setStartingStageId('__pause__')
+    try {
+      const targets = workflow.stages.filter((stage) => {
+        const run = stageRuns[stage.id]
+        return Boolean(run?.batchProgress)
+      })
+      for (const stage of targets) {
+        const stopped = await setTenderStageDispatch(window.electronAPI.runTenderStage, {
+          workspaceRootPath, projectId, stageId: stage.id,
+        }, false)
+        setStageRuns((current) => ({ ...current, [stage.id]: stopped.result }))
+      }
+      setMonitoringDispatchPaused(true)
+      await refresh({ force: true, action: 'status', stages: targets.length > 0 ? targets : undefined })
+      toast.message('已暂停补位：只读状态，不会新建或续跑子会话')
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
+  const handleResumeMonitorDispatch = async () => {
+    if (!project) return
+    setStartingStageId('__resume_dispatch__')
+    try {
+      const inspected = await refresh({ force: true, action: 'status' })
+      const targets = workflow.stages.filter((stage) => stageHasResumableWork(inspected[stage.id]) || stageHasLiveWork(inspected[stage.id]))
+      for (const stage of (targets.length > 0 ? targets : workflow.stages)) {
+        if (!inspected[stage.id]?.batchProgress) continue
+        const enabled = await setTenderStageDispatch(window.electronAPI.runTenderStage, {
+          workspaceRootPath, projectId, stageId: stage.id,
+        }, true)
+        setStageRuns((current) => ({ ...current, [stage.id]: enabled.result }))
+      }
+      setMonitoringDispatchPaused(false)
+      if (targets.length > 0) {
+        await refresh({ force: true, action: 'resume', stages: targets })
+      }
+      toast.success('已恢复补位：空闲子会话将接续，缺席槽位才会新建')
     } finally {
       setStartingStageId(null)
     }
@@ -730,7 +799,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         workspaceRootPath, projectId, stageId: stage.id,
       }, false)
       setStageRuns((current) => ({ ...current, [stage.id]: stopped.result }))
-      toast.message('已停止派发新子任务（进行中的会话不会自动杀掉）')
+      setMonitoringDispatchPaused(true)
+      toast.message('已停止本阶段派发；监控改为只读，不会新建子会话')
     } finally {
       setStartingStageId(null)
     }
@@ -840,13 +910,25 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">流程监控</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              打开项目仅快照检查，不会自动调度。开启「恢复未完任务 / 下一步」后，切换到主会话对话也会继续后台跟踪与补位派发；失败批次可在任务行点「重试」。
+              打开项目仅快照检查。恢复/下一步会优先接续已有子会话，不会因刷新盲目新建。
+              「暂停补位」后只读状态；「恢复补位」再继续。失败批次请点任务行「重试」。
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className={cn('inline-flex items-center gap-1.5', monitoringActive && 'text-accent')}>
-              <span className={cn('size-1.5 rounded-full', monitoringActive ? 'animate-pulse bg-accent' : 'bg-muted-foreground/40')} />
-              {monitoringActive ? `监控中 ${LIVE_POLL_MS / 1000}s（含对话页）` : '监控未开启'}
+            <span className={cn('inline-flex items-center gap-1.5', monitoringActive && !monitoringDispatchPaused && 'text-accent')}>
+              <span className={cn(
+                'size-1.5 rounded-full',
+                monitoringActive && !monitoringDispatchPaused
+                  ? 'animate-pulse bg-accent'
+                  : monitoringActive && monitoringDispatchPaused
+                    ? 'bg-amber-500'
+                    : 'bg-muted-foreground/40',
+              )} />
+              {monitoringActive
+                ? (monitoringDispatchPaused
+                  ? '监控暂停补位（只读状态）'
+                  : `监控补位中 ${LIVE_POLL_MS / 1000}s（含对话页）`)
+                : '监控未开启'}
             </span>
             <span title={lastRefreshAt ? new Date(lastRefreshAt).toLocaleString() : undefined}>
               检查于 {lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—'}
@@ -868,6 +950,30 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                   ? '未完成任务正在进行中…'
                   : '恢复未完任务'}
             </Button>
+            {monitoringActive && !monitoringDispatchPaused ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={startingStageId !== null}
+                onClick={() => void handlePauseMonitorDispatch()}
+              >
+                <Square className="size-3.5" />
+                {startingStageId === '__pause__' ? '暂停中…' : '暂停补位'}
+              </Button>
+            ) : null}
+            {monitoringActive && monitoringDispatchPaused ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={startingStageId !== null}
+                onClick={() => void handleResumeMonitorDispatch()}
+              >
+                <PlayCircle className="size-3.5" />
+                {startingStageId === '__resume_dispatch__' ? '恢复中…' : '恢复补位'}
+              </Button>
+            ) : null}
             {monitoringActive ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => setMonitoringActive(false)}>
                 <Square className="size-3.5" />

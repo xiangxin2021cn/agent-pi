@@ -9,6 +9,11 @@ export interface TenderLiveMonitorState {
   workspaceRootPath: string
   projectId: string
   active: boolean
+  /**
+   * When true, background ticks only inspect status — no resume fill-up /
+   * continue / spawn. Stage boards should also have dispatchEnabled=false.
+   */
+  dispatchPaused?: boolean
   /** ISO timestamp of last successful resume/status tick. */
   lastTickAt?: number
 }

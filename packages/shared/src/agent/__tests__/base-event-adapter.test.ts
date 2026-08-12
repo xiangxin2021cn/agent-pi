@@ -9,7 +9,7 @@
  * - Event construction helpers
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { BaseEventAdapter } from '../backend/base-event-adapter.ts';
+import { BaseEventAdapter, MAX_COMMAND_OUTPUT_CHARS } from '../backend/base-event-adapter.ts';
 import type { AgentEvent } from '@craft-agent/core/types';
 
 /**
@@ -184,6 +184,25 @@ describe('BaseEventAdapter', () => {
       adapter.accumulateOutput('t2', 'output-2');
       expect(adapter.testConsumeOutput('t1')).toBe('output-1');
       expect(adapter.testConsumeOutput('t2')).toBe('output-2');
+    });
+
+    it('should truncate oversized streamed output without throwing', () => {
+      const chunk = 'x'.repeat(256 * 1024);
+      const iterations = Math.ceil((MAX_COMMAND_OUTPUT_CHARS + chunk.length) / chunk.length) + 2;
+      expect(() => {
+        for (let i = 0; i < iterations; i += 1) {
+          adapter.accumulateOutput('huge', chunk);
+        }
+      }).not.toThrow();
+
+      const output = adapter.testConsumeOutput('huge');
+      expect(output).toBeDefined();
+      expect(output!.length).toBeLessThanOrEqual(MAX_COMMAND_OUTPUT_CHARS);
+      expect(output!).toContain('[truncated: tool output exceeded in-memory cap');
+
+      // Further deltas after consume start fresh
+      adapter.accumulateOutput('huge', 'again');
+      expect(adapter.testConsumeOutput('huge')).toBe('again');
     });
   });
 

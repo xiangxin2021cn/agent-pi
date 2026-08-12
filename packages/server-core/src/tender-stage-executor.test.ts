@@ -197,18 +197,24 @@ describe('tender stage task-board executor', () => {
     expect(isTenderStageCapacityError(new Error('spawn_session active handoff limit reached (5/4). Return control and let the runtime monitor existing handoffs before spawning more.'))).toBe(true);
   });
 
-  test('releases idle ghost running slots on inspect without dispatching', async () => {
+  test('continues idle child sessions on resume instead of spawning duplicates', async () => {
     const fixture = createTasks(2);
     const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
-    const calls: string[] = [];
+    const spawnCalls: string[] = [];
+    const continueCalls: string[] = [];
     const execution = {
       spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
-        calls.push(request.name ?? 'child');
-        const sessionId = `child-${calls.length}`;
+        spawnCalls.push(request.name ?? 'child');
+        const sessionId = `child-${spawnCalls.length}`;
         sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
         return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
       },
       getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+      continueSession: async (sessionId: string) => {
+        continueCalls.push(sessionId);
+        const session = sessions.get(sessionId);
+        if (session) session.isProcessing = true;
+      },
     };
 
     await updateTenderStageTaskBoard({
@@ -222,6 +228,7 @@ describe('tender stage task-board executor', () => {
       tasks: fixture.tasks, execution, maxConcurrency: 2,
     });
     expect(started.tasks.every((task) => task.status === 'running')).toBe(true);
+    expect(spawnCalls).toHaveLength(2);
 
     for (const session of sessions.values()) {
       session.isProcessing = false;
@@ -234,8 +241,8 @@ describe('tender stage task-board executor', () => {
       tasks: fixture.tasks, execution, maxConcurrency: 2,
     });
     expect(inspected.tasks.every((task) => task.status === 'pending')).toBe(true);
-    expect(inspected.tasks.every((task) => !task.sessionId && task.lastSessionId)).toBe(true);
-    expect(calls).toHaveLength(2);
+    expect(inspected.tasks.every((task) => Boolean(task.sessionId))).toBe(true);
+    expect(spawnCalls).toHaveLength(2);
 
     const resumed = await updateTenderStageTaskBoard({
       action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
@@ -243,7 +250,9 @@ describe('tender stage task-board executor', () => {
       tasks: fixture.tasks, execution, maxConcurrency: 2,
     });
     expect(resumed.tasks.every((task) => task.status === 'running')).toBe(true);
-    expect(calls).toHaveLength(4);
+    expect(spawnCalls).toHaveLength(2);
+    expect(continueCalls).toHaveLength(2);
+    expect(continueCalls.sort()).toEqual(['child-1', 'child-2']);
   });
 
   test('does not clobber an in-flight retry with a stale invalid report', async () => {

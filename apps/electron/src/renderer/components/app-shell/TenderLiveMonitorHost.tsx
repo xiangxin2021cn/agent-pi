@@ -22,6 +22,7 @@ function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
 /** Fill-up work only — failed batches wait for explicit 重试, not endless resume polls. */
 function stageNeedsFillUp(run?: TenderStageRunResultDto): boolean {
   if (!run?.batchProgress) return false
+  if (run.batchProgress.dispatchEnabled === false) return false
   return run.batchProgress.pendingBatches > 0
     || run.batchProgress.runningBatches > 0
 }
@@ -88,6 +89,7 @@ export function TenderLiveMonitorHost() {
         }
 
         for (const stage of workflow.stages) {
+          if (monitor.dispatchPaused) break
           if (!stageNeedsFillUp(byStage[stage.id])) continue
           try {
             const parentSessionId = byStage[stage.id]?.projectParentSessionId

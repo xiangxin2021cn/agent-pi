@@ -108,7 +108,23 @@ export interface TenderStageExecutionRuntime {
     sessionStatus?: string;
     goalState?: { status: string };
   } | null>;
+  /**
+   * Re-prompt an existing idle child instead of spawning a duplicate.
+   * Optional for unit tests that only cover spawn; production wires SessionManager.sendMessage.
+   */
+  continueSession?(sessionId: string, prompt: string): Promise<void>;
 }
+
+const CONTINUE_IDLE_CHILD_PROMPT = (
+  briefPath: string,
+  reportPath: string,
+): string => (
+  `Continue the assigned tender batch. Re-read the brief at ${briefPath} if needed, `
+  + `finish any remaining work, and ensure the structured JSON handoff is at ${reportPath} `
+  + `plus the Markdown deliverable at brief.markdownPath when provided. `
+  + `Do not restart from scratch if progress already exists in this session. `
+  + `Do not spawn further child sessions.`
+);
 
 export interface UpdateTenderStageTaskBoardOptions {
   /**
@@ -445,18 +461,18 @@ async function reconcileRuntime(
         updatedAt: now,
       };
     }
-    // After app restart / interrupt, children sit idle (Todo) while the board still
-    // claims "running" — that blocks the queue forever. Release the slot for an
-    // explicit resume; keep lastSessionId so the panel can open the left-tree session.
+    // After app restart / interrupt, children sit idle while the board still
+    // claims "running". Free the concurrency slot (pending) but KEEP sessionId so
+    // resume/advance can continue the same child instead of spawning a duplicate.
     if (!session.isProcessing) {
       return {
         ...task,
         ...linked,
         status: 'pending',
-        sessionId: undefined,
+        sessionId: task.sessionId,
         lastSessionId: task.sessionId,
         startedAt: undefined,
-        error: '子会话已空闲，请点击「恢复未完任务」重新调度',
+        error: '子会话已空闲，恢复时将接续同一会话（不会新建）',
         updatedAt: now,
       };
     }
@@ -493,6 +509,53 @@ async function dispatchPendingTasks(
       continue;
     }
     try {
+      const reusableId = task.sessionId ?? task.lastSessionId;
+      if (reusableId) {
+        const existing = await execution.getSession(reusableId);
+        const cancelled = existing?.sessionStatus === 'cancelled'
+          || existing?.goalState?.status === 'cancelled'
+          || existing?.goalState?.status === 'failed';
+        if (existing && !cancelled) {
+          if (existing.isProcessing) {
+            tasks[index] = {
+              ...task,
+              status: 'running',
+              sessionId: reusableId,
+              lastSessionId: reusableId,
+              startedAt: task.startedAt ?? now,
+              updatedAt: now,
+              error: undefined,
+              linkedIsProcessing: true,
+              linkedSessionStatus: existing.sessionStatus,
+            };
+            available -= 1;
+            atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
+            continue;
+          }
+          if (execution.continueSession) {
+            await execution.continueSession(
+              reusableId,
+              CONTINUE_IDLE_CHILD_PROMPT(spec.briefPath, spec.reportPath),
+            );
+            tasks[index] = {
+              ...task,
+              status: 'running',
+              sessionId: reusableId,
+              lastSessionId: reusableId,
+              // Continuations do not burn auto-dispatch attempts — same child, not a new spawn.
+              startedAt: now,
+              updatedAt: now,
+              error: undefined,
+              linkedIsProcessing: true,
+              linkedSessionStatus: existing.sessionStatus ?? 'todo',
+            };
+            available -= 1;
+            atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
+            continue;
+          }
+        }
+      }
+
       const result = await execution.spawnSession(parentSessionId, {
         name: spec.name,
         prompt: `Read the task brief at ${spec.briefPath} and produce useful analysis/pricing for the attached tender sources only. `
@@ -513,7 +576,7 @@ async function dispatchPendingTasks(
         ...task,
         status: 'running',
         sessionId: result.sessionId,
-        lastSessionId: task.sessionId ?? task.lastSessionId,
+        lastSessionId: task.sessionId ?? task.lastSessionId ?? result.sessionId,
         attemptCount: task.attemptCount + 1,
         startedAt: now,
         updatedAt: now,

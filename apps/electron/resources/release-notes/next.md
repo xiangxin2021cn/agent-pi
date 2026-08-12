@@ -8,6 +8,7 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
+<!-- Folded into 2.5.3.md: accumulateOutput cap, tender monitor continue idle children, pause/resume dispatch -->
 <!-- Folded into 2.5.2.md: soft gates, Official Outputs MD, deliverables catalog, working folder collapse -->
 <!-- Folded into 2.5.1.md: tender monitor button states, mid-flight retry conflict, poll load -->
 <!-- Folded into 2.5.0.md: tender control plane, monitor across chat, Overview starvation fix, Claude SDK 0.3.227 -->
