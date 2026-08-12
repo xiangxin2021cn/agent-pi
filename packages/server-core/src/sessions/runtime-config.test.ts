@@ -98,4 +98,33 @@ describe('filterAttachmentsForModelInput', () => {
     expect(result.omittedImages).toEqual([imageAttachment])
     expect(result.attachments).toBeUndefined()
   })
+
+  it('omits images for native Pi DeepSeek even when vision bridge is enabled', () => {
+    const deepseek: LlmConnection = {
+      slug: 'deepseek',
+      name: 'DeepSeek',
+      providerType: 'pi',
+      authType: 'api_key',
+      createdAt: 1,
+      piAuthProvider: 'deepseek',
+      visionBridge: { enabled: true, model: 'glm-4.6v-flash' },
+    }
+    const result = filterAttachmentsForModelInput([imageAttachment, textAttachment], deepseek, 'pi/deepseek-v4-flash')
+    expect(result.omittedImages).toEqual([imageAttachment])
+    expect(result.attachments?.map(a => a.name)).toEqual(['note.txt'])
+  })
+
+  it('keeps images for native Pi OpenAI', () => {
+    const openai: LlmConnection = {
+      slug: 'openai',
+      name: 'OpenAI',
+      providerType: 'pi',
+      authType: 'api_key',
+      createdAt: 1,
+      piAuthProvider: 'openai',
+    }
+    const result = filterAttachmentsForModelInput([imageAttachment], openai, 'pi/gpt-5.5')
+    expect(result.omittedImages).toHaveLength(0)
+    expect(result.attachments).toEqual([imageAttachment])
+  })
 })

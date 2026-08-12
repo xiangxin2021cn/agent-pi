@@ -101,6 +101,23 @@ describe('apiSetupMethodToConnectionSetup', () => {
     expect(setup.modelSelectionMode).toBe('userDefined3Tier')
   })
 
+  it('pi_api_key includes visionBridge and visionCredential', () => {
+    const setup = apiSetupMethodToConnectionSetup(
+      'pi_api_key',
+      {
+        credential: 'sk-ds',
+        piAuthProvider: 'deepseek',
+        visionBridge: { enabled: true, model: 'glm-4.6v-flash' },
+        visionApiKey: 'sk-vision',
+      },
+      null,
+      new Set(),
+    )
+    expect(setup.piAuthProvider).toBe('deepseek')
+    expect(setup.visionBridge).toEqual({ enabled: true, model: 'glm-4.6v-flash' })
+    expect(setup.visionCredential).toBe('sk-vision')
+  })
+
   it('uses editingSlug when editing', () => {
     const setup = apiSetupMethodToConnectionSetup(
       'anthropic_api_key',

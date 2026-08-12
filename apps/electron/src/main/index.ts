@@ -3,7 +3,7 @@
 import { loadShellEnv } from './shell-env'
 loadShellEnv()
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell } from 'electron'
 import { createHash, randomUUID } from 'crypto'
 import { hostname, homedir } from 'os'
 import * as Sentry from '@sentry/electron/main'
@@ -113,6 +113,7 @@ import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
+import { registerLocalPreviewHandler } from './local-preview-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, stabilityLog, getStabilityLogFilePath } from './logger'
 import { createStabilitySnapshot, shouldLogMemoryPeak, summarizeAppMetrics } from './stability-telemetry'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
@@ -448,6 +449,7 @@ app.whenReady().then(async () => {
       appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
       resourcesPath: process.resourcesPath,
       isPackaged: app.isPackaged,
+      ...(process.env.CRAFT_BUN ? { nodeRuntimePath: process.env.CRAFT_BUN } : {}),
     },
   })
 
@@ -472,6 +474,7 @@ app.whenReady().then(async () => {
 
   // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
   registerThumbnailHandler()
+  registerLocalPreviewHandler()
 
   // Re-apply proxy settings now that Electron sessions are available
   // (first call before app.whenReady only configured Node-level proxy)
@@ -829,6 +832,15 @@ app.whenReady().then(async () => {
         } catch {
           return { mainRssBytes }
         }
+      })
+
+      // After OS sleep/wake, Pi child processes are often dead while the parent
+      // Agent wrapper still thinks they are live. Drop idle runtimes so resume
+      // continues respawn cleanly instead of writing EPIPE into a corpse.
+      powerMonitor.on('resume', () => {
+        void sessionManager?.disposeIdleAgentRuntimes('os-resume').catch((error) => {
+          mainLog.warn('Failed to dispose idle agent runtimes after OS resume:', error)
+        })
       })
 
       // -----------------------------------------------------------------------
@@ -1409,6 +1421,15 @@ app.on('before-quit', async (event) => {
 // Handle uncaught exceptions — forward to Sentry explicitly since registering
 // a custom handler can interfere with @sentry/electron's automatic capture.
 process.on('uncaughtException', (error) => {
+  // Pipe writes to a dead Pi subprocess after sleep/wake are expected and
+  // recoverable — log without treating them as fatal app faults.
+  const message = error instanceof Error ? error.message : String(error)
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  if (code === 'EPIPE' || /write EPIPE/i.test(message)) {
+    mainLog.warn('Ignoring uncaught EPIPE (likely dead agent subprocess stdin):', error)
+    void logStabilityEvent('warn', 'ignored EPIPE write', { error })
+    return
+  }
   mainLog.error('Uncaught exception:', error)
   void logStabilityEvent('error', 'uncaught exception', { error })
   Sentry.captureException(error)

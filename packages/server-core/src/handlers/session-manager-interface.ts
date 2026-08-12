@@ -50,6 +50,17 @@ export interface ISessionManager {
   getSession(sessionId: string): Promise<Session | null>
   /** True when the session is still loaded in the live index (not deleted). */
   hasSession?(sessionId: string): boolean
+  /**
+   * Lightweight live snapshot for tender reconcile — must NOT load transcripts.
+   */
+  getSessionRuntimeState?(sessionId: string): {
+    id: string
+    isProcessing: boolean
+    sessionStatus?: string
+    goalState?: { status: string }
+  } | null
+  hasLiveAgentRuntime?(sessionId: string): boolean
+  assertSpawnMemoryAvailable?(): void
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
   spawnSession(parentSessionId: string, request: SpawnSessionRequest): Promise<SpawnSessionResult>
   deleteSession(sessionId: string): Promise<void>

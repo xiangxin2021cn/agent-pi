@@ -30,7 +30,7 @@ const IMAGE_EXTENSIONS = new Set([
  * Code file extensions — rendered in CodePreviewOverlay with syntax highlighting.
  * Mirrors LANGUAGE_MAP from file-utils.ts but as a flat set for classification only.
  */
-/** HTML files — rendered in HTMLPreviewOverlay (sandboxed iframe) */
+/** HTML files — rendered in HTMLPreviewOverlay as a live webpage when file-backed */
 const HTML_EXTENSIONS = new Set(['html', 'htm'])
 
 const CODE_EXTENSIONS = new Set([

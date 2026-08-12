@@ -719,6 +719,7 @@ export interface ElectronAPI {
   listLlmConnectionsWithStatus(): Promise<LlmConnectionWithStatus[]>
   getLlmConnection(slug: string): Promise<LlmConnection | null>
   getLlmConnectionApiKey(slug: string): Promise<string | null>
+  getLlmConnectionVisionApiKey(slug: string): Promise<string | null>
   saveLlmConnection(connection: LlmConnection): Promise<{ success: boolean; error?: string }>
   deleteLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   testLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>

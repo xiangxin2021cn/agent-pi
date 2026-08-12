@@ -125,41 +125,59 @@ function readFirstJsonlLine(sessionFile: string): string | null {
  */
 export function readSessionJsonl(sessionFile: string): StoredSession | null {
   try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-
-    const firstLine = lines[0];
-    if (!firstLine) return null;
-
-    const sessionDir = dirname(sessionFile);
-    const header = normalizeHeaderPermissionModes(
-      safeJsonParse(expandSessionPath(firstLine, sessionDir)) as SessionHeader
-    );
-    // Parse messages resiliently: skip lines that fail to parse (e.g. truncated by crash)
-    // rather than losing the entire session's messages.
-    // Expand session path tokens before parsing so embedded paths resolve correctly.
-    const expandedMessageLines = lines.slice(1).map(line => expandSessionPath(line, sessionDir));
-    const messages = parseMessagesResilient(expandedMessageLines);
-
-    // Migration: For sessions created before sdkCwd was added, use workingDirectory as fallback.
-    // This is correct because the old code used workingDirectory for SDK's cwd parameter.
-    const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
-    const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
-
-    return {
-      ...pickSessionFields(header),
-      // Path expansion for portable paths
-      workspaceRootPath: expandPath(header.workspaceRootPath),
-      workingDirectory: workingDir,
-      sdkCwd,
-      // Runtime fields
-      messages,
-      tokenUsage: header.tokenUsage,
-    } as StoredSession;
+    return parseSessionJsonlContent(readFileSync(sessionFile, 'utf-8'), sessionFile);
   } catch (error) {
     debug('[jsonl] Failed to read session:', sessionFile, error);
     return null;
   }
+}
+
+/**
+ * Non-blocking JSONL read for lazy session open. Tender parent transcripts can
+ * be hundreds of MB; a sync readFile+parse starves every other IPC (chat switch
+ * looks frozen). Disk I/O yields; parse still runs on this turn afterward.
+ */
+export async function readSessionJsonlAsync(sessionFile: string): Promise<StoredSession | null> {
+  try {
+    const content = await readFile(sessionFile, 'utf-8');
+    return parseSessionJsonlContent(content, sessionFile);
+  } catch (error) {
+    debug('[jsonl] Failed to read session async:', sessionFile, error);
+    return null;
+  }
+}
+
+function parseSessionJsonlContent(content: string, sessionFile: string): StoredSession | null {
+  const lines = content.split('\n').filter(Boolean);
+
+  const firstLine = lines[0];
+  if (!firstLine) return null;
+
+  const sessionDir = dirname(sessionFile);
+  const header = normalizeHeaderPermissionModes(
+    safeJsonParse(expandSessionPath(firstLine, sessionDir)) as SessionHeader
+  );
+  // Parse messages resiliently: skip lines that fail to parse (e.g. truncated by crash)
+  // rather than losing the entire session's messages.
+  // Expand session path tokens before parsing so embedded paths resolve correctly.
+  const expandedMessageLines = lines.slice(1).map(line => expandSessionPath(line, sessionDir));
+  const messages = parseMessagesResilient(expandedMessageLines);
+
+  // Migration: For sessions created before sdkCwd was added, use workingDirectory as fallback.
+  // This is correct because the old code used workingDirectory for SDK's cwd parameter.
+  const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
+  const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
+
+  return {
+    ...pickSessionFields(header),
+    // Path expansion for portable paths
+    workspaceRootPath: expandPath(header.workspaceRootPath),
+    workingDirectory: workingDir,
+    sdkCwd,
+    // Runtime fields
+    messages,
+    tokenUsage: header.tokenUsage,
+  } as StoredSession;
 }
 
 /**

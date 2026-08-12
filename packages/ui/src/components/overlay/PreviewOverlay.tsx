@@ -71,6 +71,12 @@ export interface PreviewOverlayProps {
 
   /** Custom class names for the overlay container (e.g., to override bg-background) */
   className?: string
+
+  /**
+   * `document` (default) — masked scrollable overlay.
+   * `browser` — full-bleed pane for live HTML pages.
+   */
+  layout?: 'document' | 'browser'
 }
 
 export function PreviewOverlay({
@@ -87,6 +93,7 @@ export function PreviewOverlay({
   children,
   embedded = false,
   className,
+  layout = 'document',
 }: PreviewOverlayProps) {
   // Use custom className if provided, otherwise fall back to default bg
   const bgClass = className || OVERLAY_BG
@@ -136,7 +143,16 @@ export function PreviewOverlay({
   const FADE_SIZE = 24
   const FADE_MASK = `linear-gradient(to bottom, transparent 0%, black ${FADE_SIZE}px, black calc(100% - ${FADE_SIZE}px), transparent 100%)`
 
-  const contentArea = (
+  const contentArea = layout === 'browser' ? (
+    <div className="relative min-h-0 flex-1 bg-white">
+      {error && (
+        <div className="absolute top-0 left-0 right-0 z-10 px-6 pt-3">
+          <OverlayErrorBanner label={error.label} message={error.message} />
+        </div>
+      )}
+      {children}
+    </div>
+  ) : (
     <div
       className="flex-1 min-h-0 relative"
       style={{ maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK }}
@@ -178,6 +194,7 @@ export function PreviewOverlay({
         subtitle={subtitle}
         headerActions={headerActions}
         error={error}
+        layout={layout}
       >
         {children}
       </FullscreenOverlayBase>

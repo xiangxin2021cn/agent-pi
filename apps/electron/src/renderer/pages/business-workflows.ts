@@ -21,6 +21,7 @@ export type BusinessCapabilityId =
   | 'document_analysis'
   | 'evaluation_strategy'
   | 'boq_reconciliation'
+  | 'project_boundary'
   | 'boq_five_step_pricing'
   | 'construction_resource_schedule'
   | 'bidder_commitments'
@@ -38,29 +39,38 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
       {
         id: 'project-setup',
         label: '项目资料登记',
-        prompt: '上传并登记招标资料即可。资料齐套后由用户确认进入解析；本步不派生子智能体，不进行组价或策划。',
+        prompt: '上传并登记招标资料即可。资料齐套后由用户确认进入解析；本步不派生子智能体，不进行组价或策划。登记说明沿用招标文件原名与原术语，禁止 AI 导读腔。',
       },
       {
         id: 'tender-document-analysis',
         label: '招标文件解析',
-        prompt: '对每个已登记文件产出可读 Markdown 解析稿（一等成果），归纳关键约束与交叉引用；完成后合成 document_analysis 与 boq_reconciliation。evaluation_strategy 可选，不阻塞本阶段。默认最多 4 并发；子会话同时交付 JSON+MD，不得由主会话代写 MD；不得提前进入组价或策划。',
+        prompt: '对每个已登记文件产出可读 Markdown 解析稿（一等成果），归纳关键约束与交叉引用；完成后合成 document_analysis 与 boq_reconciliation。evaluation_strategy 可选，不阻塞本阶段。默认最多 4 并发；子会话同时交付 JSON+MD，不得由主会话代写 MD；不得提前进入组价或策划。解析稿按本标书专业化写作并去 AI 味：用雇主术语与条款写组价/施工/合规含义，禁止套话与文件目录腔。',
         skillSlug: 'tender-document-parsing',
         producesCapabilities: ['document_analysis', 'boq_reconciliation'],
         dispatchPolicy: 'controlled-subagents',
       },
       {
+        id: 'project-boundary-conditions',
+        label: '项目边界条件',
+        prompt: '面板是登记台和确认台：选用企业知识库规范、勾选本标已解析规范、上传投标人自有文件（设备/队伍/营地/历史价/组织机构），不要再扫一遍招标资料。主会话按登记来源派发解析子会话，把抽出的规范与资源写入 project_boundary pack；人工确认后该 pack 成为组价 brief 的硬围栏。边界说明用本标书术语与已确认条件，禁止通用教材腔与 AI 套话。',
+        skillSlug: 'tender-project-boundary',
+        requiredCapabilities: ['document_analysis'],
+        producesCapabilities: ['project_boundary'],
+        dispatchPolicy: 'controlled-subagents',
+      },
+      {
         id: 'boq-five-step-pricing',
         label: 'BOQ 逐页组价与资源汇总',
-        prompt: '按 C5.1 纯直接费标准，以 BOQ 页（每个 COTO 章节）为单位逐项组价：原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；费率必须注明日期、地点、来源类型、取得方式且不含 VAT，关键费率必须联网询价核证并留 webEvidence。默认串行按页；汇总行与人造组合项不属于定价对象。结束后汇总施工资源消耗总表，并由用户确认投入条件。',
+        prompt: '按项目边界条件 pack 的硬围栏（allowedSourceIds / extractedInventory / pricingStandard / 计量标准）组价：以清单分册/章节为单位逐项组价；原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；费率必须注明日期、地点、来源类型、取得方式，关键费率必须联网询价核证并留 webEvidence。不得编造围栏外设备、工法或料源。默认串行按页；汇总行与人造组合项不属于定价对象。结束后汇总施工资源消耗总表，并由用户确认投入条件。组价工作底稿用本标清单/规范/计量支付用语书写并去 AI 味，禁止空泛施工教科书段落。',
         skillSlugs: ['tender-boq-five-step-pricing', 'tender-bidder-commitments'],
-        requiredCapabilities: ['document_analysis'],
+        requiredCapabilities: ['document_analysis', 'project_boundary'],
         producesCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
         dispatchPolicy: 'controlled-subagents',
       },
       {
         id: 'planning-and-submission',
         label: '施工策划、进度、成本与出稿',
-        prompt: '按可见子步骤推进：4-A 施工策划（对标 N2-18 策划深度）→ 4-B 进度/资源/现金流（同时产出 MS Project 与 P6 XML、人机直方图、S 曲线）→ 4-C Work Plan DOCX 与一致性核对。必须充分阅读第 2 步解析 MD 与原文，结合工期、项目特征与第 3 步工效/资源；不得跳过子步骤门禁。',
+        prompt: '按可见子步骤推进：施工策划 → 进度/资源/现金流（同时产出 MS Project 与 P6 XML、人机直方图、S 曲线）→ Work Plan DOCX 与一致性核对。必须充分阅读解析 MD、项目边界条件与组价成果；结合工期、项目特征与工效/资源；不得跳过子步骤门禁。策划、进度说明与正式出稿按招标回标格式与本标术语撰写并去 AI 味，禁止通用方案模板腔。',
         skillSlugs: [
           'tender-execution-planning',
           'tender-schedule-resource-planning',

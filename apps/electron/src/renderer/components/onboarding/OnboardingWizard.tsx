@@ -74,6 +74,10 @@ interface OnboardingWizardProps {
     activePreset?: string
     models?: ApiKeySubmitData['models']
     customApi?: CustomEndpointApi
+    visionEnabled?: boolean
+    visionApiKey?: string
+    visionBaseUrl?: string
+    visionModel?: string
   }
 
   className?: string

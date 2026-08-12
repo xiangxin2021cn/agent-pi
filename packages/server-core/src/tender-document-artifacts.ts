@@ -150,6 +150,26 @@ export function artifactLooksAcceptable(artifactPath: string): boolean {
 }
 
 /**
+ * Soft advisory: true when the MD looks like a path/meta dump instead of a
+ * professional tender reading note. Does not block stage completion.
+ */
+export function documentArtifactLooksMetaDense(artifactPath: string): boolean {
+  if (!existsSync(artifactPath)) return false;
+  try {
+    const text = readFileSync(artifactPath, 'utf8');
+    const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length === 0) return false;
+    const metaHits = lines.filter((line) =>
+      /documentId|batchId|sourceRefs|allowedSources|reportPath|markdownPath|Working Folder|knowledge\/tender|bindings\.json|artifactPath/i
+        .test(line)
+    ).length;
+    return metaHits / lines.length >= 0.35;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Soft document-parse gate for stage completion.
  * Human review is advisory only — pending/rejected must not block advancement.
  * Missing MD still soft-blocks because there is no customer-facing result yet.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { readSessionHeader, writeSessionJsonl } from '../jsonl.ts';
+import { readSessionHeader, readSessionJsonl, readSessionJsonlAsync, writeSessionJsonl } from '../jsonl.ts';
 import type { StoredSession } from '../types.ts';
 
 describe('jsonl header loading', () => {
@@ -61,6 +61,35 @@ describe('jsonl header loading', () => {
       expect(header?.goalState?.auditHistory.length).toBe(10);
       expect(header?.goalState?.auditHistory.at(0)?.iteration).toBe(31);
       expect(header?.goalState?.auditHistory.at(-1)?.iteration).toBe(40);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('async JSONL read matches the sync reader', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-jsonl-async-'));
+    try {
+      const sessionDir = join(root, 'sessions', 'session-1');
+      const sessionFile = join(sessionDir, 'session.jsonl');
+      mkdirSync(sessionDir, { recursive: true });
+      const session: StoredSession = {
+        id: 'session-1',
+        workspaceRootPath: root,
+        createdAt: 1,
+        lastUsedAt: 2,
+        messages: [
+          { id: 'm1', type: 'user', content: 'hello', timestamp: 1 },
+          { id: 'm2', type: 'assistant', content: 'world', timestamp: 2 },
+        ],
+      };
+
+      writeSessionJsonl(sessionFile, session);
+
+      const sync = readSessionJsonl(sessionFile);
+      const asyncLoaded = await readSessionJsonlAsync(sessionFile);
+
+      expect(asyncLoaded?.id).toBe(sync?.id);
+      expect(asyncLoaded?.messages).toEqual(sync?.messages);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

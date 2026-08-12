@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { useTranslation } from 'react-i18next'
-import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, SearchCheck, Square, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, SearchCheck, Square, Trash2, Unlock } from 'lucide-react'
 import { toast } from 'sonner'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
@@ -20,6 +20,7 @@ import {
   acceptPlanningMethodologyReview,
   advanceTenderStageLaunch,
   enterTenderStageInProjectParent,
+  forcePassTenderStage,
   preflightTenderStageLaunch,
   resetTenderStageOrchestration,
   resolveProjectParentSessionId,
@@ -31,6 +32,7 @@ import {
   summarizeTenderStage,
 } from '@/pages/business-tender-stage'
 import { getBusinessWorkflow, type BusinessWorkflowStage } from '@/pages/business-workflows'
+import { ProjectBoundaryEditorDialog } from '@/components/app-shell/ProjectBoundaryEditorDialog'
 import { routes } from '../../../shared/routes'
 import { cn } from '@/lib/utils'
 
@@ -44,6 +46,15 @@ const LIVE_POLL_MS = 45_000
 const TICK_MS = 1_000
 
 type StageTask = NonNullable<TenderStageRunResultDto['batchProgress']>['tasks'][number]
+
+function stageCanForcePass(run?: TenderStageRunResultDto): boolean {
+  if (!run) return false
+  if (run.status === 'blocked') return true
+  if ((run.missingItems?.length ?? 0) > 0) return true
+  return Boolean(run.substeps?.some((substep) => (
+    substep.status === 'blocked' || substep.missingItems.length > 0
+  )))
+}
 
 function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
   if (!run) return false
@@ -59,9 +70,8 @@ function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
 
 function stageHasResumableWork(run?: TenderStageRunResultDto): boolean {
   if (!run?.batchProgress) return false
+  if (run.batchProgress.dispatchEnabled === false) return false
   return run.batchProgress.pendingBatches > 0
-    || run.batchProgress.failedBatches > 0
-    || run.batchProgress.runningBatches > 0
 }
 
 /** Invalid-report banner must not invite a second retry while that batch is mid-flight. */
@@ -80,7 +90,10 @@ function actionableInvalidBatches(
   })
 }
 
-function taskIsMidFlight(task: StageTask): boolean {
+function taskIsMidFlight(task: StageTask, liveProcessing?: boolean): boolean {
+  if (task.status === 'complete') return false
+  if (liveProcessing === true) return true
+  if (liveProcessing === false && task.status !== 'running') return false
   return task.status === 'running'
     || (task.linkedIsProcessing === true && task.status !== 'complete')
 }
@@ -111,7 +124,7 @@ function linkedSessionId(task: StageTask): string | undefined {
 
 export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId }: BusinessProjectOverviewProps) {
   const { t } = useTranslation()
-  const { openNewChat, onOpenFile } = useAppShellContext()
+  const { openNewChat, onOpenFile, activeWorkspaceId } = useAppShellContext()
   const { navigate } = useNavigation()
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const sessionMetaMapRef = React.useRef(sessionMetaMap)
@@ -136,6 +149,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   const [refreshing, setRefreshing] = React.useState(false)
   const [nowMs, setNowMs] = React.useState(() => Date.now())
   const [expandedStageIds, setExpandedStageIds] = React.useState<Record<string, boolean>>({})
+  const [boundaryEditorOpen, setBoundaryEditorOpen] = React.useState(false)
   /** Survives chat navigation via tenderLiveMonitorAtom (host keeps resume polling). */
   const monitoringActive = moduleId === 'tender'
     && isTenderMonitorActiveFor(liveMonitor, projectId, workspaceRootPath)
@@ -236,9 +250,11 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
               // Prefer healed project parent; never re-send a deleted board pointer.
               const parentSessionId = currentRuns[stage.id]?.projectParentSessionId
                 ?? currentRuns[stage.id]?.batchProgress?.parentSessionId
+              // Prefer a left-rail live parent; for resume, still send a candidate and
+              // let the server heal/elect if the pointer is stale.
               const liveParentSessionId = parentSessionId && sessionMetaMapRef.current.has(parentSessionId)
                 ? parentSessionId
-                : undefined
+                : (action === 'resume' ? parentSessionId : undefined)
               const run = await window.electronAPI.runTenderStage({
                 action,
                 workspaceRootPath,
@@ -664,8 +680,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     const ids = [...new Set(batchIds.map((id) => id.trim()).filter(Boolean))]
     if (ids.length === 0) return
     const parentSessionId = resolveLiveParentId(stageRuns[stage.id])
+      ?? resolveStageParentSessionId(stageRuns[stage.id])
+      ?? resolveProjectParentSessionId(stageRuns)
     if (!parentSessionId) {
-      toast.error('找不到存活的项目主会话，请先打开左侧主会话或点「打开项目主会话」修复指针')
+      toast.error('找不到项目主会话，请先打开左侧主会话或点「打开项目主会话」修复指针')
       return
     }
     setStartingStageId(stage.id)
@@ -769,7 +787,15 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   }
 
   const handleAdvanceStage = async (stage: BusinessWorkflowStage) => {
-    const parentSessionId = resolveStageParentSessionId(stageRuns[stage.id])
+    const run = stageRuns[stage.id]
+    const failedIds = (run?.batchProgress?.tasks ?? [])
+      .filter((task) => task.status === 'failed' || task.status === 'blocked')
+      .map((task) => task.batchId)
+    if (failedIds.length > 0) {
+      await handleRetryBatches(stage, failedIds)
+      return
+    }
+    const parentSessionId = resolveStageParentSessionId(run)
     if (!parentSessionId) {
       await handleStartStage(stage)
       return
@@ -821,6 +847,38 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     }
   }
 
+  const handleForcePass = async (stage: BusinessWorkflowStage) => {
+    if (!window.confirm(t('businessProjects.forcePassConfirm'))) return
+    setStartingStageId(`${stage.id}::force_pass`)
+    try {
+      const parentSessionId = resolveProjectParentSessionId(stageRuns)
+        ?? resolveStageParentSessionId(stageRuns[stage.id])
+      const passed = await forcePassTenderStage(window.electronAPI.runTenderStage, {
+        workspaceRootPath,
+        projectId,
+        stageId: stage.id,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      })
+      setStageRuns((current) => ({ ...current, [stage.id]: passed.result }))
+      if (passed.ok) {
+        setMonitoringActive(true)
+        toast.success(
+          passed.result.status === 'running'
+            ? '已强制放行，继续使用已有成果'
+            : '已强制放行当前缺件门槛',
+        )
+      } else {
+        const summary = summarizeTenderStage(passed.result)
+        toast.error(`强制放行后仍阻塞：${summary.missingLabel ?? summary.statusLabel}`)
+      }
+    } catch (cause) {
+      toast.error(`强制放行失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setStartingStageId(null)
+      void refresh({ force: true, action: 'status' })
+    }
+  }
+
   const handleOrganizeDeliverables = async (stage: BusinessWorkflowStage) => {
     if (!project || moduleId !== 'tender') return
     setStartingStageId(`${stage.id}::organize`)
@@ -860,6 +918,9 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   const monitoringBusy = monitoringActive && workflow.stages.some((stage) => (
     stageHasLiveWork(stageRuns[stage.id]) || stageHasResumableWork(stageRuns[stage.id])
   ))
+  const forcePassTarget = moduleId === 'tender'
+    ? workflow.stages.find((stage) => stage.id !== 'project-setup' && stageCanForcePass(stageRuns[stage.id]))
+    : undefined
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>
   if (projectLoadState === 'loading' || (refreshing && !project)) {
@@ -937,6 +998,24 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
               <SearchCheck className={cn('size-3.5', refreshing && !monitoringActive && 'animate-pulse')} />
               检查
             </Button>
+            {moduleId === 'tender' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={startingStageId !== null || !forcePassTarget}
+                title={forcePassTarget
+                  ? `${t('businessProjects.forcePass')} · ${forcePassTarget.label}`
+                  : t('businessProjects.forcePassUnavailable')}
+                onClick={() => {
+                  if (!forcePassTarget) return
+                  void handleForcePass(forcePassTarget)
+                }}
+              >
+                <Unlock className="size-3.5" />
+                {t('businessProjects.forcePass')}
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"
@@ -1013,6 +1092,11 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                       {monitoredLive && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">监控中</span>}
                       {!live && resumable && (
                         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">有未完任务</span>
+                      )}
+                      {run?.userForcePass && run.userForcePass.waivedItems.length > 0 && (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {t('businessProjects.forcePassBadge')}
+                        </span>
                       )}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{stage.prompt}</p>
@@ -1168,14 +1252,20 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         {expanded && (
                           <div className="mt-2 max-h-80 overflow-auto divide-y border-y">
                             {progress.tasks.map((task) => {
-                              const midFlight = taskIsMidFlight(task)
+                              const sessionId = linkedSessionId(task)
+                              const meta = sessionId ? sessionMetaMap.get(sessionId) : undefined
+                              const liveProcessing = meta?.isProcessing
+                              const sessionMissing = Boolean(sessionId) && !meta
+                              const midFlight = taskIsMidFlight(task, liveProcessing)
                               const duration = midFlight || task.status === 'running'
                                 ? formatElapsed(task.startedAt, nowMs)
                                 : task.status === 'complete' && task.startedAt && task.completedAt
                                   ? formatElapsed(task.startedAt, Date.parse(task.completedAt))
                                   : null
-                              const sessionId = linkedSessionId(task)
-                              const idleLinked = Boolean(sessionId) && task.linkedIsProcessing === false
+                              const idleLinked = Boolean(sessionId) && !sessionMissing && (
+                                liveProcessing === false
+                                || (liveProcessing === undefined && task.linkedIsProcessing === false)
+                              )
                               const canRetryTask = (task.status === 'failed' || task.status === 'blocked') && !midFlight
                               return (
                                 <div key={task.batchId} className="flex items-start gap-3 py-2">
@@ -1187,7 +1277,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                     (task.status === 'failed' || task.status === 'blocked') && !midFlight && 'text-destructive',
                                   )}>{taskStatusLabel(task.status, midFlight)}</span>
                                   <div className="min-w-0 flex-1">
-                                    {sessionId ? (
+                                    {sessionId && !sessionMissing ? (
                                       <button
                                         type="button"
                                         className="block w-full truncate text-left text-foreground hover:text-primary hover:underline"
@@ -1202,8 +1292,13 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                     <p className="truncate text-muted-foreground" title={midFlight ? undefined : (task.error ?? task.reportPath)}>
                                       {(midFlight ? null : task.error)
                                         ?? [
-                                          sessionId ? (idleLinked ? `左侧空闲 · ${sessionId}` : `会话 ${sessionId}`) : null,
-                                          task.linkedSessionStatus ? `状态 ${task.linkedSessionStatus}` : null,
+                                          sessionMissing ? `原会话已不在左侧 · ${sessionId}` : null,
+                                          sessionId && !sessionMissing
+                                            ? (idleLinked ? `左侧空闲 · ${sessionId}` : `会话 ${sessionId}${liveProcessing ? ' · 运行中' : ''}`)
+                                            : null,
+                                          (meta?.sessionStatus ?? task.linkedSessionStatus)
+                                            ? `状态 ${meta?.sessionStatus ?? task.linkedSessionStatus}`
+                                            : null,
                                           `尝试 ${task.attemptCount}`,
                                           duration ? (midFlight ? `已运行 ${duration}` : `耗时 ${duration}`) : null,
                                           task.updatedAt ? `更新 ${formatClock(task.updatedAt)}` : null,
@@ -1288,7 +1383,9 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             onClick={() => void handleStopDispatch(stage)}
                           >停止派发</Button>
                         )}
-                        {(stage.id === 'tender-document-analysis' || stage.id === 'boq-five-step-pricing') && (
+                        {(stage.id === 'tender-document-analysis'
+                          || stage.id === 'boq-five-step-pricing'
+                          || stage.id === 'project-boundary-conditions') && (
                           <Button
                             type="button"
                             variant="outline"
@@ -1297,6 +1394,26 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             title="检查主会话/子会话成果路径，缺的补到正式输出并刷新成果目录"
                             onClick={() => void handleOrganizeDeliverables(stage)}
                           >{startingStageId === `${stage.id}::organize` ? '质检中…' : '成果质检并整理'}</Button>
+                        )}
+                        {stage.id === 'project-boundary-conditions' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            onClick={() => setBoundaryEditorOpen(true)}
+                          >打开边界登记/确认</Button>
+                        )}
+                        {stageCanForcePass(run) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            title={t('businessProjects.forcePassConfirm')}
+                            onClick={() => void handleForcePass(stage)}
+                          >{startingStageId === `${stage.id}::force_pass`
+                              ? '放行中…'
+                              : t('businessProjects.forcePass')}</Button>
                         )}
                         <Button
                           type="button"
@@ -1340,6 +1457,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           })}
         </div>
       </section>
+
+      <ProjectBoundaryEditorDialog
+        open={boundaryEditorOpen}
+        onOpenChange={setBoundaryEditorOpen}
+        workspaceRootPath={workspaceRootPath}
+        projectId={projectId}
+        parentSessionId={resolveProjectParentSessionId(stageRuns)}
+        workspaceId={activeWorkspaceId ?? undefined}
+        onSaved={() => {
+          void refresh({ force: true, action: 'status', stages: workflow.stages.filter((stage) => stage.id === 'project-boundary-conditions') })
+        }}
+      />
 
       <section className="px-6 py-5">
         <div className="flex items-center justify-between">

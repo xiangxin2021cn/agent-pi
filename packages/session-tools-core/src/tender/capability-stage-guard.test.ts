@@ -26,4 +26,11 @@ describe('capability stage guard', () => {
     expect(() => assertCapabilityWriteAllowed('project-setup', 'document_analysis'))
       .toThrow(/not allowed/);
   });
+
+  test('project-boundary-conditions allows only project_boundary', () => {
+    expect(() => assertCapabilityWriteAllowed('project-boundary-conditions', 'project_boundary'))
+      .not.toThrow();
+    expect(() => assertCapabilityWriteAllowed('project-boundary-conditions', 'boq_five_step_pricing'))
+      .toThrow(/not allowed/);
+  });
 });

@@ -43,6 +43,8 @@ Use deterministic IDs. Keep WBS codes stable and readable. Prefer short activity
 
 Derive WBS from the contract and method statement rather than inventing a generic software structure.
 
+**Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Activity names, WBS titles, and planner notes must use this tender's terms with AI filler stripped.
+
 Typical road/civil WBS:
 
 - Mobilisation and approvals.

@@ -349,6 +349,28 @@ export class CredentialManager {
   }
 
   /**
+   * Get the vision-bridge VLM API key for an LLM connection.
+   */
+  async getLlmVisionApiKey(connectionSlug: string): Promise<string | null> {
+    const cred = await this.get({ type: 'llm_vision_api_key', connectionSlug });
+    return cred?.value || null;
+  }
+
+  /**
+   * Set the vision-bridge VLM API key for an LLM connection.
+   */
+  async setLlmVisionApiKey(connectionSlug: string, apiKey: string): Promise<void> {
+    await this.set({ type: 'llm_vision_api_key', connectionSlug }, { value: apiKey });
+  }
+
+  /**
+   * Delete the vision-bridge VLM API key for an LLM connection.
+   */
+  async deleteLlmVisionApiKey(connectionSlug: string): Promise<boolean> {
+    return this.delete({ type: 'llm_vision_api_key', connectionSlug });
+  }
+
+  /**
    * Get OAuth token for an LLM connection.
    * @param connectionSlug - The connection slug
    * @returns OAuth credentials or null if not found
@@ -399,6 +421,7 @@ export class CredentialManager {
     await this.delete({ type: 'llm_oauth', connectionSlug });
     await this.delete({ type: 'llm_iam', connectionSlug });
     await this.delete({ type: 'llm_service_account', connectionSlug });
+    await this.delete({ type: 'llm_vision_api_key', connectionSlug });
   }
 
   // ============================================================

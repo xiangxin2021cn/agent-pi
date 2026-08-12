@@ -60,24 +60,51 @@ function resolveUpwards(base: string, relativePath: string, maxLevels = 4): stri
   return undefined;
 }
 
+function isElectronExecutable(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  return normalized.endsWith('/electron') || normalized.endsWith('/electron.exe');
+}
+
+function firstExistingRuntime(candidates: Array<string | undefined>): string | undefined {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (isElectronExecutable(candidate)) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function parseWhichOutput(output: string): string[] {
+  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function resolveSystemBun(): string | undefined {
+  try {
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const lines = parseWhichOutput(execFileSync(whichCmd, ['bun'], { encoding: 'utf-8' }));
+    const exe = lines.find((line) => /\.exe$/i.test(line) && existsSync(line));
+    if (exe) return exe;
+    return lines.find((line) => existsSync(line));
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): string | undefined {
   const bunBinary = process.platform === 'win32' ? 'bun.exe' : 'bun';
-  const bunBasePath = process.platform === 'win32'
-    ? (hostRuntime.resourcesPath || hostRuntime.appRootPath)
-    : hostRuntime.appRootPath;
-  const bunPath = join(bunBasePath, 'vendor', 'bun', bunBinary);
-  if (existsSync(bunPath)) return bunPath;
+  const found = firstExistingRuntime([
+    process.env.CRAFT_BUN,
+    hostRuntime.nodeRuntimePath,
+    hostRuntime.resourcesPath ? join(hostRuntime.resourcesPath, 'vendor', 'bun', bunBinary) : undefined,
+    join(hostRuntime.appRootPath, 'vendor', 'bun', bunBinary),
+    join(hostRuntime.appRootPath, 'apps', 'electron', 'vendor', 'bun', bunBinary),
+  ]);
+  if (found) return found;
 
   // Non-packaged (headless server, dev mode): fall back to system bun via PATH.
   // Packaged apps must ship their own bundled bun — never resolve from PATH
   // to avoid picking up an incompatible system install.
-  if (!hostRuntime.isPackaged) {
-    try {
-      const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-      const systemBun = execFileSync(whichCmd, ['bun'], { encoding: 'utf-8' }).trim();
-      if (systemBun && existsSync(systemBun)) return systemBun;
-    } catch { /* system bun not found */ }
-  }
+  if (!hostRuntime.isPackaged) return resolveSystemBun();
   return undefined;
 }
 
@@ -217,7 +244,12 @@ function resolveRipgrepPath(hostRuntime: BackendHostRuntimeContext): string | un
 }
 
 export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContext): ResolvedBackendRuntimePaths {
-  const bundledRuntimePath = hostRuntime.nodeRuntimePath || resolveBundledRuntimePath(hostRuntime);
+  const bundledRuntimePath = resolveBundledRuntimePath(hostRuntime);
+  const nodeRuntimePath = firstExistingRuntime([
+    hostRuntime.nodeRuntimePath,
+    bundledRuntimePath,
+    process.execPath,
+  ]);
 
   return {
     claudeCliPath: resolveClaudeBinaryPath(hostRuntime),
@@ -225,7 +257,7 @@ export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContex
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
     bridgeServerPath: resolveServerPath(hostRuntime, 'bridge-mcp-server'),
     piServerPath: resolveServerPath(hostRuntime, 'pi-agent-server'),
-    nodeRuntimePath: hostRuntime.nodeRuntimePath || bundledRuntimePath || process.execPath,
+    nodeRuntimePath,
     bundledRuntimePath,
   };
 }

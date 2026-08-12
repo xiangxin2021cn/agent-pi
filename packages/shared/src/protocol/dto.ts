@@ -16,7 +16,7 @@ import type {
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
-import type { CustomEndpointConfig } from '../config/llm-connections'
+import type { CustomEndpointConfig, VisionBridgeConfig } from '../config/llm-connections'
 import type {
   SessionGoalAuditResult,
   SessionGoalCriterionKind,
@@ -548,7 +548,15 @@ export type TenderStageRunAction =
   | 'reset_orchestration'
   | 'set_dispatch'
   /** Quality-check stage deliverables and heal Official Outputs from the control panel. */
-  | 'organize_deliverables';
+  | 'organize_deliverables'
+  /** Persist a draft project_boundary from bindings/profile without marking confirmed. */
+  | 'suggest_project_boundary'
+  /** Replace project_boundary pack data from the Overview editor. */
+  | 'save_project_boundary'
+  /** Register knowledge-base / bidder-file / tender-spec fence sources for the boundary stage. */
+  | 'register_boundary_sources'
+  /** User waives current missing-item gates and continues with existing results. */
+  | 'force_pass';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -578,6 +586,18 @@ export interface TenderStageRunRequest {
    * then allow advance/resume to re-dispatch them. Empty/omitted = no selective retry.
    */
   retryBatchIds?: string[];
+  /** Pack data for `save_project_boundary`. */
+  projectBoundaryData?: Record<string, unknown>;
+  /** Full replace of boundary fence sources for `register_boundary_sources`. */
+  boundarySources?: Array<{
+    id?: string;
+    kind: 'knowledge_standard' | 'tender_spec_binding' | 'bidder_resource';
+    role?: string;
+    title: string;
+    path?: string;
+    knowledgeSlug?: string;
+    documentId?: string;
+  }>;
 }
 
 export interface TenderStageRunResultDto {
@@ -589,6 +609,8 @@ export interface TenderStageRunResultDto {
   producedCapabilities: string[];
   generatedPacks: string[];
   missingItems: string[];
+  /** User-waived missing-item gates; status ignores these items. */
+  userForcePass?: { at: string; waivedItems: string[] };
   substeps?: Array<{
     id: 'plan-methodology' | 'plan-programme-resources-cashflow' | 'plan-submission';
     label: string;
@@ -599,7 +621,7 @@ export interface TenderStageRunResultDto {
   /** Single project-lifetime parent session shared across stages. */
   projectParentSessionId?: string;
   batchProgress?: {
-    batchType: 'document_analysis' | 'boq_five_step_pricing';
+    batchType: 'document_analysis' | 'boq_five_step_pricing' | 'project_boundary';
     itemCount: number;
     batchCount: number;
     completedBatches: number;
@@ -634,6 +656,20 @@ export interface TenderStageRunResultDto {
     validationWarningCount?: number;
     skippedItems?: Array<{ itemId: string; code: string; reason: string }>;
   };
+  boundaryDesk?: {
+    sources: Array<{
+      id: string;
+      kind: string;
+      role: string;
+      title: string;
+      path?: string;
+      knowledgeSlug?: string;
+      documentId?: string;
+      markdownPath?: string;
+      parseStatus: string;
+    }>;
+    suggestedSpecs: Array<{ documentId: string; title: string; path: string; kind: string }>;
+  };
   sourceBoundary: {
     schemaVersion: 1;
     projectId: string;
@@ -662,6 +698,7 @@ export interface TenderStageRunResultDto {
     boqBatchManifestPath?: string;
     taskBoardPath?: string;
     stageDeliverablesCatalogPath?: string;
+    boundaryBatchManifestPath?: string;
   };
   /** Stage deliverables quality catalog (present/missing/thin + Official Outputs). */
   deliverables?: {
@@ -854,6 +891,13 @@ export interface LlmConnectionSetup {
   awsRegion?: string
   /** Bedrock authentication method — determines auth type for Pi+Bedrock connections */
   bedrockAuthMethod?: 'iam_credentials' | 'environment'
+  /**
+   * Vision bridge for text-only chat models (DeepSeek V4). Persisted on the
+   * connection; the VLM key is `visionCredential`.
+   */
+  visionBridge?: VisionBridgeConfig
+  /** VLM API key for the vision bridge. Masked placeholders from GET are ignored. */
+  visionCredential?: string
   /**
    * Resolved Anthropic OAuth identity (issue #838), threaded through setup so it
    * persists for both new and re-auth connections. Optional and fail-soft.

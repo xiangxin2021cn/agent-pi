@@ -24,6 +24,7 @@ Create the structured tender programme before rendering P6, Microsoft Project, C
 - Do not create or overwrite a Project Delivery Controls baseline.
 - A stale capability pack is not ready.
 - Do not spawn nested agents.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Programme narratives and histogram notes must use this tender's WBS/activity language, with AI filler stripped.
 
 ## Workflow
 

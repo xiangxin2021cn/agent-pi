@@ -25,6 +25,7 @@ export type CredentialType =
   | 'llm_oauth'          // OAuth token for LLM connection
   | 'llm_iam'            // AWS IAM credentials (accessKeyId + secretAccessKey)
   | 'llm_service_account' // GCP service account JSON
+  | 'llm_vision_api_key' // VLM API key for a text-only connection's vision bridge
   // Workspace credentials
   | 'workspace_oauth'    // Workspace MCP OAuth token
   | 'document_api_token' // Workspace document-processing provider token
@@ -44,6 +45,7 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'llm_oauth',
   'llm_iam',
   'llm_service_account',
+  'llm_vision_api_key',
   'workspace_oauth',
   'document_api_token',
   'source_oauth',
@@ -167,6 +169,7 @@ const LLM_CREDENTIAL_TYPES = [
   'llm_oauth',
   'llm_iam',
   'llm_service_account',
+  'llm_vision_api_key',
 ] as const;
 
 /** Check if type is a source credential */

@@ -110,6 +110,42 @@ export function buildSessionOrchestrationState(input: BuildSessionOrchestrationS
   };
 }
 
+/**
+ * Keep the hard source-boundary snapshot aligned with the session's live
+ * enabled sources. Model-switch MCP remounts used to leave
+ * policy.selectedSourceSlugs frozen (e.g. anysearch) while new tools were
+ * already mounted, so image/other MCP calls stayed blocked.
+ */
+export function syncOrchestrationSelectedSources(
+  orchestration: SessionOrchestrationState | undefined,
+  enabledSourceSlugs: string[] | undefined,
+  now = Date.now(),
+): SessionOrchestrationState | undefined {
+  if (!orchestration) return orchestration;
+  // Cold sessions leave enabledSourceSlugs undefined until JSONL hydrate.
+  // Do not treat that as "no sources" or the snapshot would be wiped.
+  if (enabledSourceSlugs === undefined) return orchestration;
+
+  const selectedSourceSlugs = unique(enabledSourceSlugs);
+  const forbidWorkingDirectoryDiscovery = selectedSourceSlugs.length > 0;
+  if (
+    sameSlugSet(orchestration.policy.selectedSourceSlugs, selectedSourceSlugs)
+    && orchestration.policy.forbidWorkingDirectoryDiscovery === forbidWorkingDirectoryDiscovery
+  ) {
+    return orchestration;
+  }
+
+  return {
+    ...orchestration,
+    updatedAt: now,
+    policy: {
+      ...orchestration.policy,
+      selectedSourceSlugs,
+      forbidWorkingDirectoryDiscovery,
+    },
+  };
+}
+
 export function appendSubAgentLifecycleEntry(
   orchestration: SessionOrchestrationState | undefined,
   entry: Omit<SessionSubAgentLifecycleEntry, 'createdAt' | 'updatedAt' | 'expectedHandoff' | 'sourceSlugs'> & {
@@ -713,6 +749,13 @@ function transitionTo(
 
 function unique(values: string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+}
+
+function sameSlugSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.every((slug, index) => slug === b[index]);
 }
 
 function isSubAgentHandoffReady(agent: SessionSubAgentLifecycleEntry): boolean {

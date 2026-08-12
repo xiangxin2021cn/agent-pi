@@ -21,6 +21,7 @@ Create one controlled strategy record for every registered evaluation criterion.
 - Keep assumptions, differentiators, and risks separate from verified source facts.
 - A stale capability pack is not ready.
 - Do not spawn nested agents or expand the tender scope while using this skill.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Criterion themes and evidence notes must use the employer's evaluation language, with AI filler stripped.
 
 ## Workflow
 

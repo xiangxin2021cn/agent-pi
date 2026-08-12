@@ -81,6 +81,52 @@ export function resourceScheduleArtifactPaths(projectRoot: string, projectId: st
   };
 }
 
+function sanitizeDecimal(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const numeric = Number(String(value).replace(/,/g, '').trim());
+  if (!Number.isFinite(numeric) || numeric < 0) return undefined;
+  const text = String(Number(numeric.toFixed(6)));
+  return /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text) ? text : undefined;
+}
+
+function sanitizeScheduleData(data: TenderConstructionResourceScheduleData): TenderConstructionResourceScheduleData {
+  const usedIds = new Set<string>();
+  const rows: TenderConstructionResourceRow[] = [];
+  for (const row of data.rows) {
+    const totalQuantity = sanitizeDecimal(row.totalQuantity);
+    if (!totalQuantity) continue;
+    const sourceBoqItemIds = [...new Set(
+      row.sourceBoqItemIds.map((id) => coerceEntityId(id)).filter(Boolean),
+    )];
+    if (sourceBoqItemIds.length === 0) continue;
+    let id = coerceEntityId(row.id || `${row.category}-${row.name}`);
+    if (usedIds.has(id)) {
+      let suffix = 2;
+      while (usedIds.has(`${id}-${suffix}`)) suffix += 1;
+      id = `${id}-${suffix}`.slice(0, 80);
+    }
+    usedIds.add(id);
+    const unitRate = sanitizeDecimal(row.unitRate);
+    rows.push({
+      id,
+      category: row.category,
+      name: row.name.trim() || id,
+      unit: row.unit.trim() || 'unit',
+      totalQuantity,
+      ...(unitRate ? { unitRate } : {}),
+      ...(row.currency && /^[A-Z]{3}$/.test(row.currency) ? { currency: row.currency } : {}),
+      sourceBoqItemIds,
+      assumptionStatus: row.assumptionStatus,
+      sourceRefs: (row.sourceRefs ?? []).filter((ref) => /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(ref.documentId)),
+    });
+  }
+  return {
+    ...(data.currency && /^[A-Z]{3}$/.test(data.currency) ? { currency: data.currency } : {}),
+    rows,
+    notes: data.notes,
+  };
+}
+
 export function writeConstructionResourceScheduleArtifacts(options: {
   projectRoot: string;
   projectId: string;
@@ -92,7 +138,7 @@ export function writeConstructionResourceScheduleArtifacts(options: {
   try {
     const envelope = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(options.pricingPackPath, 'utf8')));
     const pricing = parseTenderBoqFiveStepPricingDataLenient(envelope.data).data;
-    const data = aggregateConstructionResourceSchedule(pricing);
+    const data = sanitizeScheduleData(aggregateConstructionResourceSchedule(pricing));
     if (data.rows.length === 0) {
       return { errors: ['no-rows'] };
     }

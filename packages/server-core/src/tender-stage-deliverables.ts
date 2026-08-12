@@ -2,8 +2,15 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync
 import { basename, dirname, join } from 'node:path';
 import type { TenderDocumentAnalysisBatchManifest } from './tender-document-batches.ts';
 import type { TenderBoqBatchManifest } from './tender-boq-batches.ts';
+import type { TenderBoundaryBatchManifest } from './tender-boundary-batches.ts';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 import { publishDocumentAnalysisArtifactsToOfficialOutputs } from './tender-document-analysis-md.ts';
+import {
+  publishProjectBoundaryMarkdown,
+  readProjectBoundaryPack,
+} from './tender-project-boundary.ts';
+import { publishBoqPricingOfficialOutputs } from './tender-boq-pricing-md.ts';
+import { resourceScheduleArtifactPaths } from './tender-resource-schedule.ts';
 
 export type TenderDeliverableKind = 'pack' | 'markdown' | 'summary' | 'report';
 export type TenderDeliverablePresence = 'present' | 'missing' | 'thin';
@@ -166,10 +173,79 @@ function buildDocumentAnalysisItems(input: {
   return items;
 }
 
+function buildProjectBoundaryItems(input: {
+  projectRoot: string;
+  projectDirectory: string;
+  parentSessionId?: string;
+  manifest?: TenderBoundaryBatchManifest;
+}): TenderStageDeliverableItem[] {
+  const items: TenderStageDeliverableItem[] = [];
+  const packPath = join(input.projectDirectory, 'packs', 'project-boundary.json');
+  const packPresence = probeFile(packPath);
+  items.push({
+    id: 'pack:project_boundary',
+    kind: 'pack',
+    label: 'project_boundary pack',
+    path: packPath,
+    presence: packPresence,
+    citable: packPresence === 'present',
+  });
+
+  if (input.parentSessionId) {
+    const mdPath = join(
+      input.projectRoot,
+      'Agent Pi Outputs',
+      input.parentSessionId,
+      'project-boundary',
+      '项目边界条件.md',
+    );
+    const presence = probeFile(mdPath, true);
+    items.push({
+      id: 'md:project_boundary',
+      kind: 'markdown',
+      label: '项目边界条件.md',
+      path: mdPath,
+      presence,
+      citable: presence === 'present',
+      publishedPath: mdPath,
+    });
+  }
+
+  const officialDir = input.parentSessionId
+    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary')
+    : undefined;
+  for (const batch of input.manifest?.batches ?? []) {
+    const projectMd = batch.markdownPath;
+    const publishedPath = officialDir
+      ? join(officialDir, basename(projectMd))
+      : undefined;
+    const sourcePresence = probeFile(projectMd, true);
+    const publishedPresence = publishedPath ? probeFile(publishedPath, true) : 'missing';
+    const presence = sourcePresence === 'present' || publishedPresence === 'present'
+      ? 'present'
+      : sourcePresence === 'thin' || publishedPresence === 'thin'
+        ? 'thin'
+        : 'missing';
+    items.push({
+      id: `md:boundary-source:${batch.sourceId}`,
+      kind: 'markdown',
+      label: basename(projectMd),
+      path: publishedPath && publishedPresence === 'present' ? publishedPath : projectMd,
+      sourcePath: projectMd,
+      publishedPath,
+      presence,
+      citable: presence === 'present',
+      notes: batch.status === 'complete' ? undefined : `batch:${batch.status}`,
+    });
+  }
+  return items;
+}
+
 function buildBoqItems(input: {
   projectRoot: string;
   projectId: string;
   projectDirectory: string;
+  parentSessionId?: string;
   manifest?: TenderBoqBatchManifest;
 }): TenderStageDeliverableItem[] {
   const items: TenderStageDeliverableItem[] = [];
@@ -183,13 +259,67 @@ function buildBoqItems(input: {
     presence: packPresence,
     citable: packPresence === 'present',
   });
+
+  const officialDir = input.parentSessionId
+    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing')
+    : undefined;
+  const summaryPath = input.parentSessionId
+    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing-summary.md')
+    : undefined;
+  if (summaryPath) {
+    const presence = probeFile(summaryPath, true);
+    items.push({
+      id: 'summary:boq_five_step_pricing',
+      kind: 'summary',
+      label: 'boq-pricing-summary.md',
+      path: summaryPath,
+      presence,
+      citable: presence === 'present',
+      publishedPath: summaryPath,
+    });
+  }
+
+  const schedule = resourceScheduleArtifactPaths(input.projectRoot, input.projectId);
+  const publishedSchedule = officialDir
+    ? join(officialDir, '施工资源消耗总表.md')
+    : undefined;
+  const scheduleSourcePresence = probeFile(schedule.markdownPath, true);
+  const schedulePublishedPresence = publishedSchedule ? probeFile(publishedSchedule, true) : 'missing';
+  const schedulePresence = schedulePublishedPresence === 'present' || scheduleSourcePresence === 'present'
+    ? 'present'
+    : schedulePublishedPresence === 'thin' || scheduleSourcePresence === 'thin'
+      ? 'thin'
+      : 'missing';
+  items.push({
+    id: 'md:construction_resource_schedule',
+    kind: 'markdown',
+    label: '施工资源消耗总表.md',
+    path: publishedSchedule && schedulePublishedPresence === 'present' ? publishedSchedule : schedule.markdownPath,
+    sourcePath: schedule.markdownPath,
+    publishedPath: publishedSchedule,
+    presence: schedulePresence,
+    citable: schedulePresence === 'present',
+  });
+
   for (const batch of input.manifest?.batches ?? []) {
-    const presence = probeFile(batch.markdownPath, true);
+    const projectMd = batch.markdownPath;
+    const publishedPath = officialDir
+      ? join(officialDir, basename(projectMd))
+      : undefined;
+    const sourcePresence = probeFile(projectMd, true);
+    const publishedPresence = publishedPath ? probeFile(publishedPath, true) : 'missing';
+    const presence = sourcePresence === 'present' || publishedPresence === 'present'
+      ? 'present'
+      : sourcePresence === 'thin' || publishedPresence === 'thin'
+        ? 'thin'
+        : 'missing';
     items.push({
       id: `md:${batch.batchId}`,
       kind: 'markdown',
-      label: basename(batch.markdownPath),
-      path: batch.markdownPath,
+      label: basename(projectMd),
+      path: publishedPath && publishedPresence === 'present' ? publishedPath : projectMd,
+      sourcePath: projectMd,
+      publishedPath,
       presence,
       citable: presence === 'present',
       notes: batch.status === 'complete' ? undefined : `batch:${batch.status}`,
@@ -242,6 +372,7 @@ export function buildStageDeliverablesCatalog(input: {
   parentSessionId?: string;
   documentManifest?: TenderDocumentAnalysisBatchManifest;
   boqManifest?: TenderBoqBatchManifest;
+  boundaryManifest?: TenderBoundaryBatchManifest;
 }): TenderStageDeliverablesCatalog {
   if (input.stageId === 'tender-document-analysis') {
     const items = buildDocumentAnalysisItems({
@@ -263,18 +394,43 @@ export function buildStageDeliverablesCatalog(input: {
       summaryPath,
     });
   }
-  if (input.stageId === 'boq-five-step-pricing') {
+  if (input.stageId === 'project-boundary-conditions') {
+    const items = buildProjectBoundaryItems({
+      projectRoot: input.projectRoot,
+      projectDirectory: input.projectDirectory,
+      parentSessionId: input.parentSessionId,
+      manifest: input.boundaryManifest,
+    });
+    const summaryPath = input.parentSessionId
+      ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary', '项目边界条件.md')
+      : undefined;
     return finalizeCatalog({
       projectId: input.projectId,
       stageId: input.stageId,
       projectDirectory: input.projectDirectory,
       parentSessionId: input.parentSessionId,
-      items: buildBoqItems({
-        projectRoot: input.projectRoot,
-        projectId: input.projectId,
-        projectDirectory: input.projectDirectory,
-        manifest: input.boqManifest,
-      }),
+      items,
+      summaryPath,
+    });
+  }
+  if (input.stageId === 'boq-five-step-pricing') {
+    const items = buildBoqItems({
+      projectRoot: input.projectRoot,
+      projectId: input.projectId,
+      projectDirectory: input.projectDirectory,
+      parentSessionId: input.parentSessionId,
+      manifest: input.boqManifest,
+    });
+    const summaryPath = input.parentSessionId
+      ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing-summary.md')
+      : undefined;
+    return finalizeCatalog({
+      projectId: input.projectId,
+      stageId: input.stageId,
+      projectDirectory: input.projectDirectory,
+      parentSessionId: input.parentSessionId,
+      items,
+      summaryPath,
     });
   }
   return finalizeCatalog({
@@ -298,6 +454,7 @@ export function organizeStageDeliverables(input: {
   parentSessionId?: string;
   documentManifest?: TenderDocumentAnalysisBatchManifest;
   boqManifest?: TenderBoqBatchManifest;
+  boundaryManifest?: TenderBoundaryBatchManifest;
 }): OrganizeStageDeliverablesResult {
   let healed = 0;
   let published = 0;
@@ -316,11 +473,34 @@ export function organizeStageDeliverables(input: {
     }
   }
 
-  if (input.stageId === 'boq-five-step-pricing' && input.boqManifest) {
-    for (const batch of input.boqManifest.batches) {
-      if (!existsSync(batch.reportPath) || existsSync(batch.markdownPath)) continue;
-      // Cannot invent MD from panel; only count missing for catalog.
+  if (input.stageId === 'project-boundary-conditions' && input.parentSessionId) {
+    const envelope = readProjectBoundaryPack(input.projectDirectory);
+    if (envelope) {
+      publishProjectBoundaryMarkdown({
+        projectRoot: input.projectRoot,
+        parentSessionId: input.parentSessionId,
+        pack: envelope.data,
+      });
+      published += 1;
     }
+    const destDir = join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary');
+    for (const batch of input.boundaryManifest?.batches ?? []) {
+      if (batch.status !== 'complete') continue;
+      const dest = join(destDir, basename(batch.markdownPath));
+      if (copyIfNeeded(batch.markdownPath, dest)) healed += 1;
+    }
+  }
+
+  if (input.stageId === 'boq-five-step-pricing' && input.boqManifest && input.parentSessionId) {
+    const publish = publishBoqPricingOfficialOutputs({
+      workingDirectory: input.projectRoot,
+      projectId: input.projectId,
+      projectDirectory: input.projectDirectory,
+      parentSessionId: input.parentSessionId,
+      manifest: input.boqManifest,
+    });
+    published += publish.published;
+    if (publish.summaryPath) healed += 1;
   }
 
   const catalog = buildStageDeliverablesCatalog(input);

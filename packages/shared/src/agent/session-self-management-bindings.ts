@@ -37,14 +37,24 @@ export function attachSessionSelfManagementBindings(
   context: SessionToolContext,
   sessionId: string,
 ): void {
-  // Live working directory — do NOT snapshot at context creation time.
-  // Restored/spawned sessions persist workingDirectory in metadata, but the
-  // tool context used to omit it, which broke tender_* / delivery_* / etc.
+  // Capture any data-property value before replacing it with an accessor.
+  // PiAgent assigns ctx.workingDirectory on every session-tool call; a
+  // getter-only property throws "Cannot set property workingDirectory" and
+  // takes down get_session_info / activate_source after model-switch remounts.
+  let workingDirectoryOverride: string | undefined =
+    typeof context.workingDirectory === 'string' && context.workingDirectory.length > 0
+      ? context.workingDirectory
+      : undefined;
+
   Object.defineProperty(context, 'workingDirectory', {
     get() {
       const fromInfo = getSessionScopedToolCallbacks(sessionId)?.getSessionInfoFn?.(sessionId)?.workingDirectory;
-      if (fromInfo) return fromInfo;
+      if (typeof fromInfo === 'string' && fromInfo.length > 0) return fromInfo;
+      if (workingDirectoryOverride) return workingDirectoryOverride;
       return resolveSessionWorkingDirectory(context.workspacePath, sessionId);
+    },
+    set(value: string | undefined) {
+      workingDirectoryOverride = typeof value === 'string' && value.length > 0 ? value : undefined;
     },
     configurable: true,
     enumerable: true,

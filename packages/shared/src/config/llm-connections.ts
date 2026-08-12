@@ -122,6 +122,74 @@ export interface CustomEndpointConfig {
 }
 
 /**
+ * Optional vision bridge for text-only chat models (DeepSeek V4 Flash/Pro).
+ * When enabled, attached images are read by an OpenAI-compatible VLM and the
+ * description is injected into the same user turn — no MCP source or extra
+ * agent tool. The VLM API key is stored separately as `llm_vision_api_key`.
+ */
+export interface VisionBridgeConfig {
+  enabled: boolean;
+  /** OpenAI-compatible VLM base URL. Default: Zhipu `https://open.bigmodel.cn/api/paas/v4`. */
+  baseUrl?: string;
+  /** Vision model id at the endpoint. Default: `glm-4.6v-flash`. */
+  model?: string;
+  /** Models tried in order when the primary returns 429/404/5xx. */
+  fallbackModels?: string[];
+}
+
+export const DEFAULT_VISION_BRIDGE_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
+export const DEFAULT_VISION_BRIDGE_MODEL = 'glm-4.6v-flash';
+export const DEFAULT_VISION_BRIDGE_FALLBACKS = ['glm-4.1v-thinking-flash', 'glm-4v-flash'] as const;
+
+/** Pi auth providers whose official chat models cannot accept image input. */
+export const TEXT_ONLY_PI_AUTH_PROVIDERS = new Set(['deepseek']);
+
+export function isTextOnlyPiAuthProvider(piAuthProvider?: string): boolean {
+  return piAuthProvider === 'deepseek';
+}
+
+export function isLocalVisionEndpoint(baseUrl: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(baseUrl);
+}
+
+export function connectionUsesVisionBridge(
+  connection: Pick<LlmConnection, 'visionBridge'> | null | undefined,
+): boolean {
+  return connection?.visionBridge?.enabled === true;
+}
+
+export interface ResolvedVisionBridgeConfig {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  fallbackModels: string[];
+  maxTokens: number;
+  timeoutMs: number;
+  maxImageBytes: number;
+}
+
+export function resolveVisionBridgeConfig(
+  config: VisionBridgeConfig | undefined,
+): ResolvedVisionBridgeConfig {
+  const baseUrl = (config?.baseUrl?.trim() || DEFAULT_VISION_BRIDGE_BASE_URL).replace(/\/$/, '');
+  const model = config?.model?.trim() || DEFAULT_VISION_BRIDGE_MODEL;
+  const usingDefaultEndpoint = baseUrl === DEFAULT_VISION_BRIDGE_BASE_URL;
+  const usingDefaultModel = model === DEFAULT_VISION_BRIDGE_MODEL;
+  const fallbackModels = config?.fallbackModels && config.fallbackModels.length > 0
+    ? config.fallbackModels
+    : (usingDefaultEndpoint && usingDefaultModel ? [...DEFAULT_VISION_BRIDGE_FALLBACKS] : []);
+  return {
+    enabled: config?.enabled === true,
+    baseUrl,
+    model,
+    fallbackModels,
+    maxTokens: 2048,
+    timeoutMs: 60_000,
+    maxImageBytes: 10 * 1024 * 1024,
+  };
+}
+
+/**
  * Per-connection behavior when the user sends a message while the agent is
  * still streaming/processing a previous turn.
  *
@@ -189,6 +257,13 @@ export interface LlmConnection {
    * Determines which streaming adapter the Pi SDK uses for requests.
    */
   customEndpoint?: CustomEndpointConfig;
+
+  /**
+   * Vision bridge for text-only models (DeepSeek V4). When enabled, attached
+   * images are captioned by a separate VLM and injected as text in the same
+   * turn so the chat model never receives `image_url` parts.
+   */
+  visionBridge?: VisionBridgeConfig;
 
   /**
    * Behavior when the user sends a message while the agent is still streaming.
@@ -568,6 +643,27 @@ export function modelSupportsImages(
     return entry.supportsImages;
   }
   return connection.customEndpoint?.supportsImages ?? false;
+}
+
+/**
+ * Whether the chat model can consume image parts natively (no vision bridge).
+ *
+ * Custom endpoints follow {@link modelSupportsImages}. Built-in Pi DeepSeek
+ * is text-only. Other non-compat connections keep the conservative `true`
+ * used by {@link modelSupportsImages} (the upstream catalog decides).
+ */
+export function modelAcceptsNativeImageInput(
+  connection: Pick<LlmConnection, 'providerType' | 'models' | 'customEndpoint' | 'piAuthProvider'> | null | undefined,
+  modelId: string,
+): boolean {
+  if (!connection) return true;
+  if (isCompatProvider(connection.providerType)) {
+    return modelSupportsImages(connection, modelId);
+  }
+  if (connection.providerType === 'pi' && isTextOnlyPiAuthProvider(connection.piAuthProvider)) {
+    return false;
+  }
+  return true;
 }
 
 /**

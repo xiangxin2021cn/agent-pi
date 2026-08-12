@@ -18,6 +18,7 @@ When the child brief includes `methodStandard.path`, open that file and match it
 - Children inherit `businessContext` as a **spawn-time snapshot**; if the parent advances while a child is still running, that child may keep the prior `stageId` until finish — acceptable; new spawns pick up the updated parent context.
 - Use only user-selected sources, registered Tender Workspace records, and explicitly loaded knowledge-base entries.
 - Do not scan the working directory as a source corpus.
+- Require a **human-confirmed** `project_boundary` pack. Child briefs inject `projectBoundary.fence`, `allowedSourceIds`, `allowedSourcePaths`, `knowledgeSlugs`, and `extractedInventory`. Do not invent plant, labour, materials, camp, or methods outside that fence.
 - Require ready, non-stale `document_analysis` and `boq_reconciliation` packs.
 - Price every selected BOQ item individually; never replace item analysis with a summary-only estimate.
 - Do not substitute a generic resource database, market-price report, chapter summary, unpriced scope register, or narrative methodology for item workpapers.
@@ -29,11 +30,12 @@ When the child brief includes `methodStandard.path`, open that file and match it
 - A child retains exclusive ownership of its assigned BOQ range until its terminal structured handoff is ready. The main session must wait, retry, or request user review; it must never derive substitute rows or write the child report after a timeout.
 - Key resource rates (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract) must be verified against current market levels via web search/fetch; record each hit in `rateBasis.webEvidence` (`url` + `accessedAt`). Rates that cannot be verified online stay `assumptionStatus: unverified` — never invent a rate.
 - Numeric fields are plain decimals without thousands separators; allocation weights and effective factors are 0–1 fractions (`0.85`, not `85`). Format slips are normalized by the runtime and surfaced as review warnings; completeness and BOQ identity are the hard gates.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Chapter Markdown must be this BOQ's workpaper in spec/measurement language, with AI filler stripped.
 
 ## Workflow
 
 1. Call `tender_workspace` with `status`, then call `tender_capability` with `status` for `document_analysis` and `boq_reconciliation`.
-2. Confirm selected BOQ item scope, source priority, currency, pricing location/date, and rate basis. Pause for user confirmation when those are ambiguous.
+2. Confirm selected BOQ item scope, source priority, currency, pricing location/date, and rate basis against `projectBoundary`. Pause for user confirmation when those are ambiguous. Stay inside the fence.
 3. Use only the backend-generated `boq_batch_manifest_path`, task board, and child briefs. Batches are segmented by BOQ sheet chapter (each BOQ page ≈ one COTO chapter, capped at 25 items; oversized chapters split by row order). Schedule summary rows and synthetic composite groupings are excluded from pricing by design. Do not enlarge, regroup, or bypass a batch.
 4. Complete all five steps for every assigned item:
    - **Step 1 - scope and quantity:** copy code, description, unit, quantity, and row source exactly; cite specification plus measurement/payment clauses; list inclusions, exclusions, materials, acceptance tests, and method constraints. Use an explicit reasoned `not applicable` entry instead of silence.

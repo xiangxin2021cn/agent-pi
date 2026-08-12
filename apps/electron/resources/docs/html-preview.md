@@ -13,6 +13,13 @@ The `html-preview` block renders HTML files in sandboxed iframes — perfect for
 
 **Key principle:** HTML content is always **file-backed** (referenced via `src`) to avoid inlining large HTML payloads as tokens. A typical email HTML body is 50-150KB — never inline this directly.
 
+### File-tree HTML vs `html-preview` blocks
+
+| Path | Behavior |
+|------|----------|
+| Right-hand **Session Files** `.html` / `.htm` | Full webpage via `agent-preview://` — scripts, relative CSS/JS, and `/assets/` paths run. Use **Open in browser** for the in-app browser window. Requires an app restart after upgrading so the custom protocol is registered. |
+| Chat `html-preview` blocks (this guide) | Sandboxed iframe **without** `allow-scripts`. Use for emails and static reports, not interactive dashboards. |
+
 ## When to Use
 
 Use `html-preview` when:

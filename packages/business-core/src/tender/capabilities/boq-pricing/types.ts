@@ -214,9 +214,10 @@ export interface TenderBoqPricingAssumption {
 
 export interface TenderBoqFiveStepPricingData {
   currency: string;
-  pricingStandard?: 'c51_pure_direct_cost_v1';
-  vatTreatment?: 'exclusive';
-  indirectCostPolicy?: 'excluded_from_item_direct_cost';
+  /** Strategy id from project_boundary.pricing.pricingStandard (was C5.1-only). */
+  pricingStandard?: string;
+  vatTreatment?: string;
+  indirectCostPolicy?: string;
   pricingStatus: 'draft' | 'reviewed' | 'blocked';
   itemBuildUps: TenderBoqFiveStepItemBuildUp[];
   resourceSummary: TenderBoqPricingResourceSummary[];

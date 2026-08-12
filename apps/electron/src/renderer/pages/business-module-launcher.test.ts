@@ -31,6 +31,9 @@ describe('business module launcher', () => {
     }, stage)
     expect(draft).toContain('单一主会话')
     expect(draft).toContain('子会话')
+    expect(draft).toContain('<tender_writing_contract>')
+    expect(draft).toContain('按本标书专业化写作')
+    expect(draft).toContain('去 AI 味道')
   })
 
   test('stage handoff draft keeps same chat and forbids free spawn', () => {
@@ -50,6 +53,8 @@ describe('business module launcher', () => {
     expect(draft).toContain('同一条主对话')
     expect(draft).toContain('spawn_session')
     expect(draft).toContain('不要一次打满')
+    expect(draft).toContain('<tender_writing_contract>')
+    expect(draft).toContain('按本标书专业化写作')
   })
 
   test('stage draft activates the specialist skill and lists only registered inputs', () => {
@@ -115,6 +120,27 @@ describe('business module launcher', () => {
     expect(draft).toContain('document_analysis_batch_manifest_path')
     expect(draft).toContain('at most 4 in flight')
     expect(draft).toContain('document_analysis')
+  })
+
+  test('project boundary stage dispatches parse briefs and forbids recataloging tender files', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'project-boundary-conditions')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/tender.pdf'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage)
+
+    expect(draft).toContain('<controlled_subagent_dispatch>')
+    expect(draft).toContain('boundary_batch_manifest')
+    expect(draft).toContain('registration/confirmation desk')
+    expect(draft).toContain('project_boundary')
+    expect(draft).toContain('不要再扫一遍招标资料')
   })
 
   test('planning stage deterministically activates planning and export skills', () => {

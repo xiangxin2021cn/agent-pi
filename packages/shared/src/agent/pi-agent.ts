@@ -385,12 +385,29 @@ export class PiAgent extends BaseAgent {
    * Lazy initialization -- spawns on first use.
    */
   private async ensureSubprocess(): Promise<void> {
-    if (this.subprocess && this.subprocessReady) {
+    if (this.subprocess && this.isSubprocessHealthy() && this.subprocessReady) {
       await this.subprocessReady;
       return;
     }
 
+    if (this.subprocess && !this.isSubprocessHealthy()) {
+      this.debug('Detected dead/unhealthy Pi subprocess — clearing before respawn');
+      this.killSubprocess();
+    }
+
     await this.spawnSubprocess();
+  }
+
+  /** True when the child is alive and stdin can accept JSONL commands. */
+  private isSubprocessHealthy(): boolean {
+    const child = this.subprocess;
+    if (!child) return false;
+    if (child.killed) return false;
+    if (child.exitCode !== null) return false;
+    if (child.signalCode) return false;
+    const stdin = child.stdin;
+    if (!stdin || stdin.destroyed || !stdin.writable) return false;
+    return true;
   }
 
   /**
@@ -403,7 +420,14 @@ export class PiAgent extends BaseAgent {
       throw new Error('piServerPath not configured. Cannot spawn Pi subprocess.');
     }
 
-    const nodePath = runtime.paths?.node || process.execPath;
+    const nodePath = runtime.paths?.node;
+    if (!nodePath || /(?:^|[\\/])electron(?:\.exe)?$/i.test(nodePath)) {
+      throw new Error(
+        'Pi subprocess needs Bun (pi-agent-server is a Bun ESM bundle). '
+          + 'electron.exe cannot run it (__require is not a function). '
+          + 'Set CRAFT_BUN or install bun on PATH.',
+      );
+    }
     const cwd = this.resolvedCwd();
 
     this.debug(`Spawning Pi subprocess: ${nodePath} ${piServerPath}`);
@@ -473,6 +497,17 @@ export class PiAgent extends BaseAgent {
     });
 
     this.subprocess = child;
+
+    // Without an stdin error listener, write-after-child-death becomes an
+    // uncaught `write EPIPE` in the Electron main process (common after OS
+    // sleep/wake). Swallow and tear down so the next turn can respawn.
+    child.stdin?.on('error', (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.debug(`Pi subprocess stdin error: ${message}`);
+      if (this.subprocess === child) {
+        this.handleSubprocessExit(child.exitCode, child.signalCode);
+      }
+    });
 
     // Set up readline for JSONL parsing from stdout
     this.readline = createInterface({
@@ -853,12 +888,27 @@ export class PiAgent extends BaseAgent {
    * Send a JSONL command to the subprocess stdin.
    */
   private send(cmd: Record<string, unknown>): void {
-    if (!this.subprocess?.stdin?.writable) {
-      this.debug('Cannot send to subprocess: stdin not writable');
+    if (!this.isSubprocessHealthy()) {
+      this.debug('Cannot send to subprocess: stdin not healthy/writable');
       return;
     }
+    const stdin = this.subprocess!.stdin!;
     const line = JSON.stringify(cmd);
-    this.subprocess.stdin.write(line + '\n');
+    try {
+      stdin.write(line + '\n', (error) => {
+        if (!error) return;
+        this.debug(`Pi subprocess stdin write failed: ${error.message}`);
+        if (this.subprocess) {
+          this.handleSubprocessExit(this.subprocess.exitCode, this.subprocess.signalCode);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.debug(`Pi subprocess stdin write threw: ${message}`);
+      if (this.subprocess) {
+        this.handleSubprocessExit(this.subprocess.exitCode, this.subprocess.signalCode);
+      }
+    }
   }
 
   /**
@@ -2543,13 +2593,19 @@ export class PiAgent extends BaseAgent {
     }
 
     if (this.subprocess) {
-      // Try graceful shutdown first
-      try {
-        this.send({ type: 'shutdown' });
-      } catch {
-        // stdin may already be closed
+      // Try graceful shutdown first (skip when stdin is already dead — avoids EPIPE).
+      if (this.isSubprocessHealthy()) {
+        try {
+          this.send({ type: 'shutdown' });
+        } catch {
+          // stdin may already be closed
+        }
       }
-      this.subprocess.kill('SIGTERM');
+      try {
+        this.subprocess.kill('SIGTERM');
+      } catch {
+        // process may already be gone after sleep/wake
+      }
       this.subprocess = null;
     }
 

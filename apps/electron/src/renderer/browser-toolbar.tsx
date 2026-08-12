@@ -17,7 +17,12 @@ import {
   StyledDropdownMenuContent,
   StyledDropdownMenuItem,
 } from '@/components/ui/styled-dropdown'
+import { setupI18n } from '@craft-agent/shared/i18n'
+import { initReactI18next } from 'react-i18next'
+import LanguageDetector from 'i18next-browser-languagedetector'
 import './index.css'
+
+setupI18n([LanguageDetector, initReactI18next])
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

@@ -12,6 +12,14 @@ import {
   validateDocumentAnalysisBatchMerge as validateDocumentAnalysisBatchMergeCore,
 } from '@craft-agent/session-tools-core';
 import { artifactLooksAcceptable, documentArtifactPath } from './tender-document-artifacts.ts';
+import {
+  buildProfessionalDocumentAnalysisObjective,
+  inferDocumentRole,
+  inferProjectIndustry,
+  type TenderDocumentRole,
+  type TenderProjectIndustry,
+} from './tender-document-roles.ts';
+import { TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 
 export interface TenderDocumentBatchSource {
   documentId: string;
@@ -26,12 +34,18 @@ export interface TenderDocumentAnalysisBatchBrief {
   projectId: string;
   batchId: string;
   objective: string;
+  /** Chain-wide tender-grounded writing contract for customer-facing MD. */
+  writingContract: string;
   scope: {
     documentId: string;
     name: string;
     kind: string;
     priority: number;
   };
+  /** Draft industry for professional writing (boundary stage may override later). */
+  projectIndustry: TenderProjectIndustry;
+  /** Draft document role for report body shape. */
+  documentRole: TenderDocumentRole;
   requiredSectionKinds: string[];
   allowedSources: Array<{ documentId: string; path: string }>;
   outputSchema: Record<string, unknown>;
@@ -51,6 +65,8 @@ export interface TenderDocumentAnalysisBatchRecord {
   markdownPath: string;
   status: 'pending' | 'complete' | 'invalid';
   validationErrors: string[];
+  /** Soft MD / citation notes — must not fail the batch or trigger retry. */
+  validationWarnings?: string[];
 }
 
 export interface TenderDocumentAnalysisBatchManifest {
@@ -90,6 +106,7 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
 
   const sorted = [...sources]
     .sort((left, right) => left.priority - right.priority || left.documentId.localeCompare(right.documentId));
+  const projectIndustry = inferProjectIndustry(sorted);
   const batches: TenderDocumentAnalysisBatchRecord[] = [];
   for (let index = 0; index < sorted.length; index += 1) {
     const source = sorted[index]!;
@@ -97,21 +114,25 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
     const briefPath = join(briefDirectory, `${batchId}.json`);
     const reportPath = join(reportDirectory, `${batchId}.json`);
     const markdownPath = documentArtifactPath(projectRoot, projectId, source.documentId, source.name);
+    const documentRole = inferDocumentRole({
+      name: source.name,
+      path: source.path,
+      kind: String(source.kind),
+    });
     const brief: TenderDocumentAnalysisBatchBrief = {
       schemaVersion: 1,
       projectId,
       batchId,
-      objective:
-        'Analyze exactly one registered tender source. Produce useful structured sections (JSON at reportPath) '
-        + 'and a readable Markdown analysis (markdownPath). Prefer substance over citation ritual — '
-        + 'empty sourceRefs are accepted; documentId/batchId are inferred from the brief when omitted. '
-        + 'No cross-document invention.',
+      objective: buildProfessionalDocumentAnalysisObjective({ projectIndustry, documentRole }),
+      writingContract: TENDER_WRITING_CONTRACT_BRIEF,
       scope: {
         documentId: source.documentId,
         name: source.name,
         kind: source.kind,
         priority: source.priority,
       },
+      projectIndustry,
+      documentRole,
       requiredSectionKinds: [...SECTION_KINDS],
       allowedSources: [{ documentId: source.documentId, path: source.path }],
       outputSchema: reportSchema(batchId, source.documentId),
@@ -133,6 +154,7 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
       markdownPath,
       status: validation.status,
       validationErrors: validation.errors,
+      ...(validation.warnings.length > 0 ? { validationWarnings: validation.warnings } : {}),
     });
     if (index > 0 && index % 3 === 0) await yieldToEventLoop();
   }
@@ -228,24 +250,25 @@ function validateReport(
   markdownPath: string,
   batchId: string,
   documentId: string,
-): { status: TenderDocumentAnalysisBatchRecord['status']; errors: string[] } {
+): { status: TenderDocumentAnalysisBatchRecord['status']; errors: string[]; warnings: string[] } {
   const resolved = resolveReportPathForValidation(reportPath);
-  if (!resolved) return { status: 'pending', errors: [] };
+  if (!resolved) return { status: 'pending', errors: [], warnings: [] };
   try {
     const { errors } = readReport(resolved.path, batchId, documentId);
+    const warnings: string[] = [];
     if (!artifactLooksAcceptable(markdownPath)) {
-      errors.push(
-        `Customer-facing Markdown missing or too thin at ${markdownPath}. `
-          + 'The child must write this MD (with a title and summary section); do not leave it for the parent.',
+      // Soft: JSON handoff is authoritative. Thin/missing MD must not fail the
+      // batch or the stage controller will quarantine a finished report and
+      // re-dispatch the child (token burn).
+      warnings.push(
+        `Customer-facing Markdown missing or too thin at ${markdownPath} (soft — JSON sections remain authoritative).`,
       );
     }
     if (errors.length === 0) {
-      // Heal: a previously quarantined report that now passes lenient gates is restored.
       if (resolved.quarantined && resolved.path !== reportPath) {
         try {
           renameSync(resolved.path, reportPath);
         } catch {
-          // Fall back to copying content if rename fails (e.g. cross-device).
           try {
             writeFileSync(reportPath, readFileSync(resolved.path));
           } catch {
@@ -253,11 +276,11 @@ function validateReport(
           }
         }
       }
-      return { status: 'complete', errors: [] };
+      return { status: 'complete', errors: [], warnings };
     }
-    return { status: 'invalid', errors };
+    return { status: 'invalid', errors, warnings };
   } catch (error) {
-    return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)] };
+    return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)], warnings: [] };
   }
 }
 

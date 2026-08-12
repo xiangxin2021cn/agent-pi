@@ -2,16 +2,17 @@
  * HTMLPreviewOverlay - Fullscreen overlay for viewing rendered HTML content.
  *
  * Uses PreviewOverlay as the base for consistent modal/fullscreen behavior.
- * Renders HTML in a sandboxed iframe. File-backed previews may enable scripts
- * (needed for simulation/report HTML); chat embeds keep scripts disabled.
- * Links open in the system browser via Electron's will-navigate handler.
+ * File-backed previews load via a live origin URL (full webpage: scripts,
+ * relative assets, dynamic components). Chat embeds keep srcDoc + sandbox
+ * with scripts disabled. Links in srcDoc previews open in the system browser
+ * via Electron's will-navigate handler.
  *
  * Supports Preview/Code modes, Save As, multi-item navigation, and copy.
  */
 
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Code2, Download, Eye, Globe } from 'lucide-react'
+import { Code2, Download, Eye, Globe, AppWindow } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
 import { CopyButton } from './CopyButton'
 import { ItemNavigator } from './ItemNavigator'
@@ -65,6 +66,14 @@ export interface HTMLPreviewOverlayProps {
    * Enable for trusted local artifact files (simulations/reports); keep false for chat embeds.
    */
   allowScripts?: boolean
+  /**
+   * Live origin URL for file-backed HTML (custom protocol). When set, preview
+   * loads as a full webpage instead of srcDoc so relative assets and dynamic
+   * components can run.
+   */
+  previewUrl?: string
+  /** Open the live page in the in-app browser window */
+  onOpenInBrowser?: () => void | Promise<unknown>
   /** Theme mode for dark/light styling */
   theme?: 'light' | 'dark'
   /** Error message if the file could not be read */
@@ -83,6 +92,8 @@ export function HTMLPreviewOverlay({
   filePath,
   onSaveAs,
   allowScripts = false,
+  previewUrl,
+  onOpenInBrowser,
   theme,
   error,
 }: HTMLPreviewOverlayProps) {
@@ -158,12 +169,14 @@ export function HTMLPreviewOverlay({
     [activeContent]
   )
 
+  const livePreview = Boolean(previewUrl) && viewMode === 'preview'
   const sandbox = allowScripts
     ? 'allow-scripts allow-same-origin allow-top-navigation-by-user-activation'
     : 'allow-same-origin allow-top-navigation-by-user-activation'
 
-  // Read iframe content dimensions after it loads
+  // Read iframe content dimensions after it loads (srcDoc previews only)
   const handleLoad = React.useCallback(() => {
+    if (previewUrl) return
     const iframe = iframeRef.current
     if (!iframe) return
     try {
@@ -181,7 +194,7 @@ export function HTMLPreviewOverlay({
       // Cross-origin access denied — fall back to viewport height
       setContentSize({ width: 0, height: Math.round(window.innerHeight * 0.7) })
     }
-  }, [])
+  }, [previewUrl])
 
   const handleSaveAs = React.useCallback(async () => {
     if (!onSaveAs || !activeContent || saving) return
@@ -233,6 +246,17 @@ export function HTMLPreviewOverlay({
         </button>
       </div>
       <ItemNavigator items={resolvedItems} activeIndex={activeIdx} onSelect={setActiveIdx} size="md" />
+      {onOpenInBrowser && previewUrl && (
+        <button
+          type="button"
+          className="inline-flex h-7 items-center justify-center gap-1 rounded-[6px] bg-background px-2 text-xs font-medium shadow-minimal text-muted-foreground hover:text-foreground"
+          onClick={() => { void onOpenInBrowser() }}
+          title={t('overlay.openInBrowser')}
+        >
+          <AppWindow className="w-3.5 h-3.5" />
+          {t('overlay.openInBrowser')}
+        </button>
+      )}
       {onSaveAs && (
         <button
           type="button"
@@ -250,6 +274,7 @@ export function HTMLPreviewOverlay({
   )
 
   const displayError = error || loadError
+  const overlayLayout = livePreview ? 'browser' : 'document'
 
   return (
     <PreviewOverlay
@@ -264,46 +289,56 @@ export function HTMLPreviewOverlay({
       filePath={filePath}
       title={filePath ? undefined : (title || activeItem?.label || t('preview.htmlPreview'))}
       headerActions={headerActions}
-      error={displayError && !activeContent ? { label: 'Read Failed', message: displayError } : undefined}
+      layout={overlayLayout}
+      error={displayError && !activeContent && !previewUrl ? { label: 'Read Failed', message: displayError } : undefined}
     >
-      <div className="px-6 pb-6">
-        {loadingItem && !activeContent && (
-          <div className="py-12 text-center text-muted-foreground text-sm">{t('common.loading')}</div>
-        )}
-        {viewMode === 'code' && activeContent && (
-          <ContentFrame title={t('overlay.code')} fitContent minWidth={850}>
-            <div>
-              <ShikiCodeViewer
-                code={activeContent}
-                filePath={filePath}
-                language="html"
-                theme={theme}
+      {livePreview && previewUrl ? (
+        <iframe
+          ref={iframeRef}
+          src={previewUrl}
+          title={activeItem?.label || title || t('preview.htmlPreview')}
+          className="absolute inset-0 h-full w-full border-0 bg-white"
+        />
+      ) : (
+        <div className="px-6 pb-6">
+          {loadingItem && !activeContent && (
+            <div className="py-12 text-center text-muted-foreground text-sm">{t('common.loading')}</div>
+          )}
+          {viewMode === 'code' && activeContent && (
+            <ContentFrame title={t('overlay.code')} fitContent minWidth={850}>
+              <div>
+                <ShikiCodeViewer
+                  code={activeContent}
+                  filePath={filePath}
+                  language="html"
+                  theme={theme}
+                />
+              </div>
+            </ContentFrame>
+          )}
+          {viewMode === 'preview' && processedHtml && (
+            <div
+              className="bg-white rounded-[12px] overflow-hidden shadow-minimal mx-auto"
+              style={{
+                maxWidth: contentSize?.width ? `${contentSize.width + 128}px` : undefined,
+                padding: '24px 64px 36px',
+                opacity: measured ? 1 : 0,
+                transition: 'opacity 200ms ease-in',
+              }}
+            >
+              <iframe
+                ref={iframeRef}
+                sandbox={sandbox}
+                srcDoc={processedHtml}
+                onLoad={handleLoad}
+                title={activeItem?.label || title || t('preview.htmlPreview')}
+                className="w-full border-0"
+                style={{ height: iframeHeight, minHeight: '400px' }}
               />
             </div>
-          </ContentFrame>
-        )}
-        {viewMode === 'preview' && processedHtml && (
-          <div
-            className="bg-white rounded-[12px] overflow-hidden shadow-minimal mx-auto"
-            style={{
-              maxWidth: contentSize?.width ? `${contentSize.width + 128}px` : undefined,
-              padding: '24px 64px 36px',
-              opacity: measured ? 1 : 0,
-              transition: 'opacity 200ms ease-in',
-            }}
-          >
-            <iframe
-              ref={iframeRef}
-              sandbox={sandbox}
-              srcDoc={processedHtml}
-              onLoad={handleLoad}
-              title={activeItem?.label || title || t('preview.htmlPreview')}
-              className="w-full border-0"
-              style={{ height: iframeHeight, minHeight: '400px' }}
-            />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </PreviewOverlay>
   )
 }

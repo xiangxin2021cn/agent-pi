@@ -1020,4 +1020,86 @@ describe('tender_capability handler', () => {
     });
     expect(allowed.isError).toBe(false);
   });
+
+  test('allows construction_resource_schedule when pricing pack is not_ready', async () => {
+    const handler = await loadHandler();
+    await handleTenderWorkspace(context, {
+      action: 'upsert_documents',
+      projectId: 'n3-upgrade',
+      documents: [
+        { id: 'boq', name: 'BOQ', path: 'C:/tender/boq.xlsx', kind: 'boq', status: 'active' },
+        { id: 'spec', name: 'Specification', path: 'C:/tender/spec.pdf', kind: 'specification', status: 'active' },
+        { id: 'drawing', name: 'Drawing', path: 'C:/tender/drawing.pdf', kind: 'drawing', status: 'active' },
+      ],
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'document_analysis',
+      data: documentAnalysisData(['tender-data', 'boq', 'spec', 'drawing']),
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'boq_reconciliation', data: boqData(),
+    });
+    await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'project_boundary',
+      data: {
+        schemaVersion: 1,
+        projectId: 'n3-upgrade',
+        profileId: 'generic-international',
+        jurisdiction: { currency: 'ZAR' },
+        standards: {
+          technicalSpecs: [],
+          measurementStandard: { id: 'employer-spec', title: 'Employer measurement rules' },
+        },
+        pricing: {
+          pricingStandard: 'c51_pure_direct_cost_v1',
+          indirectCostPolicy: 'exclude_from_item_direct_cost',
+          taxRegime: { vatTreatment: 'exclusive' },
+          ratePolicy: { location: 'Durban', mustVerifyOnline: [], allowUnverifiedLabel: true },
+        },
+        productivity: { basis: 'user_provided', sources: [] },
+        bidderResources: { outline: 'Own plant limited; major earthworks to be subcontracted.' },
+        organizationOutline: {
+          text: 'Establish site camps at km 12 and km 40; sequence earthworks ahead of pavement; protect school frontage traffic; use local borrow where EMP allows.',
+        },
+        readiness: 'ready',
+      },
+    });
+    await handler(context, {
+      action: 'init', projectId: 'n3-upgrade', capability: 'boq_five_step_pricing', data: boqPricingData(),
+    });
+
+    const indexPath = join(workingDirectory, '.agent-pi', 'business', 'tender', 'n3-upgrade', 'capability-index.json');
+    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      capabilities: Array<{ capability: string; readiness: string }>;
+    };
+    const pricing = index.capabilities.find((entry) => entry.capability === 'boq_five_step_pricing');
+    expect(pricing).toBeDefined();
+    pricing!.readiness = 'not_ready';
+    writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`);
+
+    const result = await handler(context, {
+      action: 'init',
+      projectId: 'n3-upgrade',
+      capability: 'construction_resource_schedule',
+      data: {
+        currency: 'ZAR',
+        rows: [{
+          id: 'labour-crew',
+          category: 'labour',
+          name: 'Drainage crew',
+          unit: 'h',
+          totalQuantity: '2501',
+          unitRate: '250',
+          sourceBoqItemIds: ['boq-5201'],
+          assumptionStatus: 'sourced',
+          sourceRefs: [{ documentId: 'spec', page: 20 }],
+        }],
+        notes: ['Aggregated from BOQ five-step resourceConsumptions.'],
+      },
+    });
+    expect(result.isError).toBe(false);
+    expect(resultJson(result).envelope.capability).toBe('construction_resource_schedule');
+  });
 });

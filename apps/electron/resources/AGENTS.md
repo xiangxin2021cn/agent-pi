@@ -19,7 +19,9 @@ This folder contains assets that are bundled with the Electron app and synced to
 | `tool-icons/` | `~/.agent-pi/tool-icons/` | Always overwrite on launch |
 | `release-notes/` | `~/.agent-pi/release-notes/` | Always overwrite on launch |
 | `config-defaults.json` | `~/.agent-pi/config-defaults.json` | Always overwrite on launch |
-| `knowledge/tender-sa-sanral/` | Resolved via `getBundledAssetsDir('knowledge/tender-sa-sanral')` (not home-synced) | Project `bindings.json` may override paths; defaults point at this pack |
+| `knowledge/tender-sa-sanral/` | Resolved via `getBundledAssetsDir('knowledge/tender-sa-sanral')` (not home-synced) | Profile `sa-sanral-highway`; project `bindings.json` may override |
+| `knowledge/tender-generic/` | Resolved via `getBundledAssetsDir('knowledge/tender-generic')` (not home-synced) | Profile `generic-international` (**default for new projects**) |
+| `knowledge/profiles.json` | Resolved via `getBundledAssetsDir('knowledge')` (not home-synced) | Jurisdiction profile registry → bindings + pricingStandard |
 
 ## Why Sync on Every Launch?
 

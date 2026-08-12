@@ -82,6 +82,7 @@ import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
+import { toLocalPreviewUrl } from '../shared/local-preview-url'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
 
@@ -2310,6 +2311,21 @@ async function downloadHtmlWithSaveDialog(sourcePath: string, content: string) {
   return { path: result.filePath }
 }
 
+function resolveHtmlPreviewUrl(filePath: string): string | undefined {
+  if (window.electronAPI.getRuntimeEnvironment() === 'web') return undefined
+  try {
+    return toLocalPreviewUrl(filePath)
+  } catch {
+    return undefined
+  }
+}
+
+async function openHtmlInBrowserWindow(previewUrl: string): Promise<void> {
+  const instanceId = await window.electronAPI.browserPane.create({ show: true })
+  await window.electronAPI.browserPane.navigate(instanceId, previewUrl)
+  await window.electronAPI.browserPane.focus(instanceId)
+}
+
 async function exportMarkdownWithSaveDialog(
   sourcePath: string,
   format: MarkdownDocumentExportFormat,
@@ -2365,6 +2381,7 @@ function FilePreviewRenderer({
   rewriteMarkdownSelection: (request: MarkdownSelectionRewriteInput) => Promise<string>
   isDark: boolean
 }) {
+  const { t } = useTranslation()
   const theme = isDark ? 'dark' : 'light' as const
   const getMarkdownSidecarActions = (markdownPath?: string): Omit<MarkdownSidecarActionsProps, 'onStatus' | 'onError'> | undefined => {
     if (!markdownPath) return undefined
@@ -2431,19 +2448,28 @@ function FilePreviewRenderer({
         />
       )
 
-    case 'html':
+    case 'html': {
+      const previewUrl = resolveHtmlPreviewUrl(state.filePath)
       return (
         <HTMLPreviewOverlay
           isOpen
           onClose={onClose}
           filePath={state.filePath}
           html={state.content ?? ''}
+          previewUrl={previewUrl}
           allowScripts
           theme={theme}
           error={state.error}
           onSaveAs={(content) => downloadHtmlWithSaveDialog(state.filePath, content)}
+          onOpenInBrowser={previewUrl
+            ? () => openHtmlInBrowserWindow(previewUrl).catch((cause) => {
+              console.error('[HTML preview] Failed to open browser window:', cause)
+              toast.error(t('toast.failedToCreateBrowser'))
+            })
+            : undefined}
         />
       )
+    }
 
     case 'markdown': {
       // Show PLAN header for .md files in plans folder (handles both absolute and relative paths)

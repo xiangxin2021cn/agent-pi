@@ -39,6 +39,12 @@ describe('tender document analysis batch manifest', () => {
     expect(brief.finalArtifactPolicy).toBe('report-and-markdown');
     expect(brief.markdownPath).toContain(join('Agent Pi Outputs', 'n3', 'document-analysis'));
     expect(manifest.batches[0]?.markdownPath).toBe(brief.markdownPath);
+    expect(brief.projectIndustry).toBeTruthy();
+    expect(brief.documentRole).toBe('tender_data');
+    expect(brief.objective).toContain('professional bid team');
+    expect(brief.objective).toContain('Do NOT center the report on filenames');
+    expect(brief.writingContract).toContain('THIS tender');
+    expect(brief.writingContract).toContain('综上所述');
   });
 
   test('accepts only schema-valid reports that cite the assigned document and include MD', async () => {
@@ -74,8 +80,9 @@ describe('tender document analysis batch manifest', () => {
     manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
       documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1,
     }], { projectRoot: root });
-    expect(manifest.batches[0]?.status).toBe('invalid');
-    expect(manifest.batches[0]?.validationErrors.some((error) => error.includes('Markdown'))).toBe(true);
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(manifest.batches[0]?.validationErrors).toEqual([]);
+    expect(manifest.batches[0]?.validationWarnings?.some((warning) => warning.includes('Markdown'))).toBe(true);
 
     writeAcceptableMarkdown(batch.markdownPath, 'Tender Data');
     manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [{
@@ -111,11 +118,10 @@ describe('tender document analysis batch manifest', () => {
     };
 
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [] })).toContain(
-      'missing final document section: tender-data--requirements-1',
+      'final document analysis pack has no sections',
     );
-    expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [{ ...section, summary: 'Changed.' }] })).toContain(
-      'final document section differs from merged batch report: tender-data--requirements-1',
-    );
+    // Soft gate: coverage by section id only — summary text drift does not hard-block.
+    expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [{ ...section, summary: 'Changed.' }] })).toEqual([]);
     expect(validateDocumentAnalysisBatchMerge(manifest, { sections: [section] })).toEqual([]);
   });
 

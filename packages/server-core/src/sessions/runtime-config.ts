@@ -1,5 +1,5 @@
 import type { AgentProvider, LlmAuthType } from '@craft-agent/shared/agent/backend'
-import { isCompatProvider, modelSupportsImages, type LlmConnection } from '@craft-agent/shared/config'
+import { isCompatProvider, modelAcceptsNativeImageInput, type LlmConnection } from '@craft-agent/shared/config'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
 
 export interface BackendRuntimeSignatureInput {
@@ -103,9 +103,10 @@ export function isImageAttachment(attachment: Pick<FileAttachment, 'type' | 'mim
 }
 
 /**
- * Enforce saved custom-endpoint image capability at send time. The session can
- * still persist/display image attachments, but they are not passed to text-only
- * models even if an older subprocess has stale vision-capable registry state.
+ * Enforce image capability at send time. The session can still persist/display
+ * image attachments, but they are not passed to text-only models (custom
+ * endpoints with supportsImages=false, and native Pi DeepSeek). A vision
+ * bridge may caption omitted images before the chat model runs.
  */
 export function filterAttachmentsForModelInput(
   attachments: FileAttachment[] | undefined,
@@ -113,8 +114,7 @@ export function filterAttachmentsForModelInput(
   modelId: string,
 ): ModelAttachmentFilterResult {
   if (!attachments?.length) return { attachments, omittedImages: [] }
-  if (!connection || !isCompatProvider(connection.providerType)) return { attachments, omittedImages: [] }
-  if (modelSupportsImages(connection, modelId)) return { attachments, omittedImages: [] }
+  if (modelAcceptsNativeImageInput(connection, modelId)) return { attachments, omittedImages: [] }
 
   const modelAttachments: FileAttachment[] = []
   const omittedImages: FileAttachment[] = []

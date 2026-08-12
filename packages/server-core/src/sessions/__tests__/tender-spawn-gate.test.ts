@@ -69,6 +69,7 @@ describe('decideTenderParentSpawnGate', () => {
 describe('isTenderControlledDispatchStage', () => {
   it('recognizes controlled stages and aliases', () => {
     expect(isTenderControlledDispatchStage('tender-document-analysis')).toBe(true)
+    expect(isTenderControlledDispatchStage('project-boundary-conditions')).toBe(true)
     expect(isTenderControlledDispatchStage('boq-five-step-pricing')).toBe(true)
     expect(isTenderControlledDispatchStage('bidder-commitments')).toBe(true)
     expect(isTenderControlledDispatchStage('project-setup')).toBe(false)
@@ -78,6 +79,7 @@ describe('isTenderControlledDispatchStage', () => {
 describe('defaultTenderAgentSpawnConcurrency', () => {
   it('returns stage defaults', () => {
     expect(defaultTenderAgentSpawnConcurrency('tender-document-analysis')).toBe(4)
+    expect(defaultTenderAgentSpawnConcurrency('project-boundary-conditions')).toBe(4)
     expect(defaultTenderAgentSpawnConcurrency('boq-five-step-pricing')).toBe(4)
     expect(defaultTenderAgentSpawnConcurrency('project-setup')).toBeUndefined()
   })

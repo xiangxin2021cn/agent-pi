@@ -19,6 +19,7 @@ system of record.
 - Do not mark this stage ready until the user explicitly confirms the complete planning basis.
 - Do not start `execution_plan`, schedule, cost/cash-flow, or submission drafting in this skill.
 - Do not spawn child agents. This is a focused user-decision and reconciliation stage.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Confirmation summaries must record decisions in this tender's terms, with AI filler stripped.
 
 ## Required Decisions
 

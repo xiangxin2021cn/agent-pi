@@ -42,6 +42,10 @@ interface CredentialsStepProps {
     activePreset?: string
     models?: ApiKeySubmitData['models']
     customApi?: CustomEndpointApi
+    visionEnabled?: boolean
+    visionApiKey?: string
+    visionBaseUrl?: string
+    visionModel?: string
   }
 }
 
@@ -272,6 +276,9 @@ export function CredentialsStep({
     editInitialValues?.connectionDefaultModel ?? '',
     (editInitialValues?.models ?? []).join('|'),
     editInitialValues?.customApi ?? '',
+    editInitialValues?.visionEnabled ? '1' : '0',
+    editInitialValues?.visionBaseUrl ?? '',
+    editInitialValues?.visionModel ?? '',
   ].join('::')
 
   return (

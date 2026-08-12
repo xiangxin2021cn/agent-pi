@@ -5,6 +5,7 @@ import type { TenderBoqFiveStepPricingData } from './types.ts';
 const EntityIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,79}$/i, 'Entity ID must be filesystem-safe.');
 const NonEmptyString = z.string().trim().min(1);
 const DecimalString = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Expected a non-negative unformatted decimal string.');
+const SignedDecimalString = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Expected an unformatted decimal string.');
 const PositiveDecimalString = DecimalString.refine((value) => /[1-9]/.test(value), 'Expected a positive decimal string.');
 const AllocationWeightSchema = z.string().regex(
   /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/,
@@ -34,7 +35,7 @@ const TenderBoqResourceConsumptionSchema = z.object({
   id: EntityIdSchema,
   kind: ResourceKindSchema,
   description: NonEmptyString,
-  quantity: DecimalString,
+  quantity: SignedDecimalString,
   unit: NonEmptyString,
   assumptionStatus: AssumptionStatusSchema,
   quantityBasis: z.literal('per_boq_unit').optional(),
@@ -116,16 +117,16 @@ const TenderBoqRateBasisSchema = z.object({
 }).strict();
 
 const TenderBoqDirectCostSummarySchema = z.object({
-  labour: DecimalString,
-  plant: DecimalString,
-  material: DecimalString,
-  subcontract: DecimalString,
-  transport: DecimalString,
-  waste: DecimalString,
-  other: DecimalString,
-  unitDirectCost: DecimalString,
+  labour: SignedDecimalString,
+  plant: SignedDecimalString,
+  material: SignedDecimalString,
+  subcontract: SignedDecimalString,
+  transport: SignedDecimalString,
+  waste: SignedDecimalString,
+  other: SignedDecimalString,
+  unitDirectCost: SignedDecimalString,
   boqQuantity: DecimalString,
-  itemDirectCost: DecimalString,
+  itemDirectCost: SignedDecimalString,
 }).strict();
 
 const TenderBoqRiskScenarioSchema = z.object({
@@ -144,10 +145,10 @@ const TenderBoqPricingCostComponentSchema = z.object({
   id: EntityIdSchema,
   kind: z.enum(['labour', 'plant', 'material', 'subcontract', 'transport', 'waste', 'overhead', 'contingency', 'escalation', 'other']),
   description: NonEmptyString,
-  quantity: DecimalString,
+  quantity: SignedDecimalString,
   unit: NonEmptyString,
-  rate: DecimalString,
-  amount: DecimalString,
+  rate: SignedDecimalString,
+  amount: SignedDecimalString,
   rateSourceRef: TenderSourceLocatorSchema.optional(),
   rateBasis: TenderBoqRateBasisSchema.optional(),
   assumptionStatus: AssumptionStatusSchema,
@@ -169,7 +170,7 @@ const TenderBoqInitialCashFlowAllocationSchema = z.object({
   period: z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, 'Expected a YYYY-MM period.'),
   activityId: EntityIdSchema,
   weight: AllocationWeightSchema,
-  amount: DecimalString,
+  amount: SignedDecimalString,
   basis: NonEmptyString,
   assumptionStatus: AssumptionStatusSchema,
   sourceRefs: z.array(TenderSourceLocatorSchema).default([]),
@@ -187,7 +188,7 @@ const TenderBoqFiveStepItemBuildUpSchema = z.object({
   planningBasis: TenderBoqPlanningBasisSchema.optional(),
   initialCashFlow: uniqueBy(TenderBoqInitialCashFlowAllocationSchema, 'period').optional(),
   costComponents: uniqueBy(TenderBoqPricingCostComponentSchema, 'id').default([]),
-  directCost: DecimalString,
+  directCost: SignedDecimalString,
   directCostSummary: TenderBoqDirectCostSummarySchema.optional(),
   riskScenarios: uniqueBy(TenderBoqRiskScenarioSchema, 'id').optional(),
   conditions: z.array(NonEmptyString).default([]),
@@ -210,9 +211,9 @@ const TenderBoqPricingAssumptionSchema = z.object({
 
 export const TenderBoqFiveStepPricingDataSchema = z.object({
   currency: CurrencySchema,
-  pricingStandard: z.literal('c51_pure_direct_cost_v1').optional(),
-  vatTreatment: z.literal('exclusive').optional(),
-  indirectCostPolicy: z.literal('excluded_from_item_direct_cost').optional(),
+  pricingStandard: NonEmptyString.optional(),
+  vatTreatment: NonEmptyString.optional(),
+  indirectCostPolicy: NonEmptyString.optional(),
   pricingStatus: z.enum(['draft', 'reviewed', 'blocked']),
   itemBuildUps: uniqueBy(TenderBoqFiveStepItemBuildUpSchema, 'boqItemId'),
   resourceSummary: z.array(TenderBoqPricingResourceSummarySchema).default([]),

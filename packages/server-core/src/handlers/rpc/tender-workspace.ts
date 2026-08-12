@@ -29,6 +29,7 @@ const CAPABILITY_FILES: Record<TenderCapabilityId, string> = {
   document_analysis: 'document-analysis',
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
+  project_boundary: 'project-boundary',
   boq_five_step_pricing: 'boq-five-step-pricing',
   construction_resource_schedule: 'construction-resource-schedule',
   bidder_commitments: 'bidder-commitments',
@@ -75,9 +76,37 @@ export function registerTenderWorkspaceHandlers(
     const execution = sessionManager
       ? {
           spawnSession: sessionManager.spawnSession.bind(sessionManager),
-          getSession: sessionManager.getSession.bind(sessionManager),
+          getSession: async (sessionId: string) => {
+            return sessionManager.getSessionRuntimeState
+              ? sessionManager.getSessionRuntimeState(sessionId)
+              : await sessionManager.getSession(sessionId);
+          },
           continueSession: async (sessionId: string, prompt: string) => {
-            await sessionManager.sendMessage(sessionId, prompt);
+            if (!sessionManager.hasLiveAgentRuntime?.(sessionId)) {
+              sessionManager.assertSpawnMemoryAvailable?.();
+            }
+            // sendMessage awaits the full agent turn. Awaiting that here would
+            // serialize resume fill-up to one child at a time (and often hit the
+            // STAGE_RUN timeout before maxConcurrency is filled). Resolve once
+            // the user message is accepted so up to N children can run together.
+            await new Promise<void>((resolve, reject) => {
+              let acked = false;
+              void sessionManager.sendMessage(
+                sessionId,
+                prompt,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                () => {
+                  acked = true;
+                  resolve();
+                },
+              ).then(() => {
+                if (!acked) resolve();
+              }).catch(reject);
+            });
           },
         }
       : undefined;

@@ -3,7 +3,7 @@ import {
   listBusinessProjects,
   registerBusinessProjectInputs,
   unregisterBusinessProject,
-} from '@craft-agent/shared/business-projects'
+} from '@craft-agent/shared/business-projects/storage'
 import {
   RPC_CHANNELS,
   type CreateBusinessProjectInput,

@@ -1,4 +1,8 @@
-import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
+import {
+  TENDER_WRITING_CONTRACT_DRAFT,
+  type BusinessModuleId,
+  type BusinessProjectRecord,
+} from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import type { BusinessWorkflowStage } from './business-workflows'
 
@@ -71,14 +75,14 @@ export function buildBusinessTaskDraft(
 项目 / Project: ${project.name}
 当前阶段 / Stage: ${stage.label}
 阶段要求: ${stage.prompt}
-${capabilityBlock}${stageControlBlock}${deliverablesBlock}${dispatchBlock}
+${capabilityBlock}${stageControlBlock}${deliverablesBlock}${dispatchBlock}${moduleId === 'tender' ? `\n${TENDER_WRITING_CONTRACT_DRAFT}\n` : ''}
 
 用户明确登记的输入资料:
 ${registeredInputs}
 
 只允许使用上述登记资料以及用户在本对话中明确添加的数据源或知识库条目。项目工作目录仅用于保存过程文件和交付物，不得将其扫描为来源。
 
-本项目使用单一主会话贯穿全部阶段；请在本对话中继续，不要另开阶段主会话。大文件解析与 BOQ 章节组价由运行时派发子会话完成。
+本项目使用单一主会话贯穿全部阶段；请在本对话中继续，不要另开阶段主会话。大文件解析、界限来源解析与 BOQ 章节组价由运行时派发子会话完成。
 
 `
 }
@@ -99,12 +103,15 @@ export function buildStageHandoffDraft(
 
 ${buildCapabilityBlock(stage)}${buildStageControlBlock(stageRun)}${buildDeliverablesBlock(stageRun)}${buildDispatchBlock(stage)}
 
+${TENDER_WRITING_CONTRACT_DRAFT}
+
 规则:
 - 这是同一条主对话的阶段推进，不是新会话；项目记忆与上文继续有效。
-- 大 PDF 解析 / BOQ 章节组价由**主会话**按 task board brief/report 调用 spawn_session 派发（默认并发最多 4）；工作台「下一步 / 恢复」是补位与停启控制，不要一次打满队列。
+- 大 PDF 解析 / 界限来源解析 / BOQ 章节组价由**主会话**按 task board brief/report 调用 spawn_session 派发（默认并发最多 4）；工作台「下一步 / 恢复」是补位与停启控制，不要一次打满队列。
 - 子会话写出 JSON handoff 与客户可读 MD；正式成果以 packs / Agent Pi Outputs / orchestration 为准。
 - 优先阅读 tender_stage_deliverables 索引与 catalog_path，不要扫工作目录找上游成果。
 - 完成门禁所需制品后再请求进入下一阶段。
+- 本阶段全部可读成果按本标书专业化写作并去 AI 味（见 tender_writing_contract）。
 
 请确认当前阶段目标，并按阶段要求推进。
 `
@@ -121,6 +128,7 @@ generated_capability_packs: ${stageRun.generatedPacks.join(', ') || '(none)'}
 missing_items: ${stageRun.missingItems.join(', ') || '(none)'}
 ${stageRun.paths.boqBatchManifestPath ? `boq_batch_manifest_path: ${stageRun.paths.boqBatchManifestPath}` : ''}
 ${stageRun.paths.documentAnalysisBatchManifestPath ? `document_analysis_batch_manifest_path: ${stageRun.paths.documentAnalysisBatchManifestPath}` : ''}
+${stageRun.paths.boundaryBatchManifestPath ? `boundary_batch_manifest_path: ${stageRun.paths.boundaryBatchManifestPath}` : ''}
 ${stageRun.paths.taskBoardPath ? `task_board_path: ${stageRun.paths.taskBoardPath}` : ''}
 ${stageRun.paths.stageDeliverablesCatalogPath ? `stage_deliverables_catalog_path: ${stageRun.paths.stageDeliverablesCatalogPath}` : ''}
 Use these exact controller paths. Do not discover or replace them by scanning the project working directory.
@@ -166,10 +174,18 @@ Monitor the exact task_board_path and document_analysis_batch_manifest_path. Whe
 </controlled_subagent_dispatch>
 `
   }
+  if (stage.id === 'project-boundary-conditions') {
+    return `
+<controlled_subagent_dispatch>
+The parent session is the command surface for spawn_session. The Overview panel is the registration/confirmation desk; do not recatalog employer tender files already parsed in document analysis. Dispatch children using the exact briefPath/reportPath/markdownPath from the task board / boundary_batch_manifest; keep at most 4 in flight. Each child parses one registered fence source (enterprise KB file or bidder-owned file) and writes JSON + customer-facing MD — parent must not author those MDs. After every parse batch is complete, wait for runtime merge into packs/project-boundary.json. Then ask the user to confirm the pack; unconfirmed packs are not a BOQ fence.
+Monitor the exact task_board_path and boundary_batch_manifest_path. Do not rewrite child briefs or invent plant/labour/specs outside the registered sources.
+</controlled_subagent_dispatch>
+`
+  }
   return `
 <controlled_subagent_dispatch>
 The parent session is the command surface for spawn_session. Dispatch BOQ chapter children using exact briefPath/reportPath/markdownPath from the task board / boq_batch_manifest; default concurrency is 4. Each child must write JSON + customer-facing chapter MD at markdownPath — parent must not author those MDs. Workbench 「下一步 / 恢复未完任务」 complements fill-up and stop/resume. Do not rewrite child briefs, directly price an unfinished child range, or create substitute reports.
-Batches are segmented by BOQ sheet chapter (each BOQ page ≈ one COTO chapter). Each child follows the C5.1 pure-direct-cost quality standard embedded in its brief and verifies key resource rates online (webEvidence); unverifiable rates stay "unverified".
+Batches are segmented by BOQ sheet/chapter. Each child follows the qualityStandard.id from its brief (from project_boundary.pricingStandard) and verifies key resource rates online (webEvidence); unverifiable rates stay "unverified". Read projectBoundary.fence / allowedSourceIds / extractedInventory / upstreamDeliverables before inventing method, plant, or tax assumptions. Do not invent resources outside that fence.
 Monitor the exact task_board_path and boq_batch_manifest_path. When every batch report is accepted, wait for runtime/UI merge into packs/boq-five-step-pricing.json (or call tender_capability init/replace with NO inline data as a fallback). Never hand-assemble, compress, or rewrite pricing content into the tool call. Review normalization warnings and unverified rates with the user, then confirm bidder commitments (bidder_commitments) before downstream planning.
 </controlled_subagent_dispatch>
 `

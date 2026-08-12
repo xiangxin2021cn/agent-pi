@@ -69,8 +69,21 @@ export type TenderStageBoardAction =
   | 'reset_orchestration'
   | 'set_dispatch';
 
+function reportLooksLikeBoqPricing(reportPath: string): boolean {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { itemBuildUps?: unknown };
+    return Array.isArray(report.itemBuildUps) && report.itemBuildUps.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function resetTaskForRetry(task: TenderStageTaskRecord, now: string): TenderStageTaskRecord {
-  quarantineInvalidReport(task.reportPath);
+  // Do not quarantine a usable BOQ JSON — retry used to rename valid reports
+  // to .invalid and then re-dispatch the closed child.
+  if (existsSync(task.reportPath) && !reportLooksLikeBoqPricing(task.reportPath)) {
+    quarantineInvalidReport(task.reportPath);
+  }
   return {
     ...task,
     status: 'pending' as const,
@@ -82,6 +95,8 @@ function resetTaskForRetry(task: TenderStageTaskRecord, now: string): TenderStag
     startedAt: undefined,
     completedAt: undefined,
     updatedAt: now,
+    // User retry / start-reset must get a fresh auto-dispatch budget.
+    attemptCount: 0,
   };
 }
 
@@ -110,7 +125,8 @@ export interface TenderStageExecutionRuntime {
   } | null>;
   /**
    * Re-prompt an existing idle child instead of spawning a duplicate.
-   * Optional for unit tests that only cover spawn; production wires SessionManager.sendMessage.
+   * Must resolve once the prompt is accepted (not after the full agent turn),
+   * otherwise resume fill-up serializes to one child. Optional for spawn-only tests.
    */
   continueSession?(sessionId: string, prompt: string): Promise<void>;
 }
@@ -118,11 +134,12 @@ export interface TenderStageExecutionRuntime {
 const CONTINUE_IDLE_CHILD_PROMPT = (
   briefPath: string,
   reportPath: string,
+  markdownPath?: string,
 ): string => (
   `Continue the assigned tender batch. Re-read the brief at ${briefPath} if needed, `
-  + `finish any remaining work, and ensure the structured JSON handoff is at ${reportPath} `
-  + `plus the Markdown deliverable at brief.markdownPath when provided. `
-  + `Do not restart from scratch if progress already exists in this session. `
+  + `finish any remaining work, and ensure the structured JSON handoff is at ${reportPath}`
+  + (markdownPath ? ` plus the Markdown deliverable at ${markdownPath}` : ' plus a Markdown deliverable at the path specified in the brief')
+  + `. Do not restart from scratch if progress already exists in this session. `
   + `Do not spawn further child sessions.`
 );
 
@@ -333,6 +350,8 @@ export async function updateTenderStageTaskBoard(
   }
 
   board = { ...board, updatedAt: new Date().toISOString() };
+  const skippedWrite = Boolean(previous && taskBoardFingerprint(previous) === taskBoardFingerprint(board));
+  if (skippedWrite && previous) return previous;
   atomicWriteJson(taskBoardPath, board);
   return board;
 }
@@ -353,6 +372,19 @@ function reconcileTask(
     attemptCount: previous?.attemptCount ?? 0,
     updatedAt: now,
   };
+  // Never demote an accepted batch back to pending/failed. A missing report on
+  // a later tick (quarantine, path flicker) used to reset complete → pending
+  // and the monitor re-dispatched a finished child.
+  if (previous?.status === 'complete') {
+    return {
+      ...base,
+      status: 'complete',
+      ...(previous.sessionId ? { sessionId: previous.sessionId } : {}),
+      ...(previous.lastSessionId ? { lastSessionId: previous.lastSessionId } : {}),
+      ...(previous.startedAt ? { startedAt: previous.startedAt } : {}),
+      completedAt: previous.completedAt ?? now,
+    };
+  }
   if (spec.validationStatus === 'complete') {
     return {
       ...base,
@@ -373,7 +405,9 @@ function reconcileTask(
         attemptCount: previous.attemptCount,
         ...(previous.sessionId ? { sessionId: previous.sessionId } : {}),
         ...(previous.startedAt ? { startedAt: previous.startedAt } : {}),
-        ...(previous.error ? { error: previous.error } : {}),
+        error: spec.validationErrors.length > 0
+          ? spec.validationErrors.join('; ')
+          : previous.error,
       };
     }
     return {
@@ -391,7 +425,7 @@ function reconcileTask(
   if (missingSource) {
     return { ...base, status: 'blocked', error: `Allowed source is missing: ${missingSource}` };
   }
-  if (!previous || previous.status === 'complete') return { ...base, status: 'pending' };
+  if (!previous) return { ...base, status: 'pending' };
   return {
     ...base,
     status: previous.status,
@@ -409,6 +443,9 @@ async function reconcileRuntime(
   const tasks = await Promise.all(board.tasks.map(async (task): Promise<TenderStageTaskRecord> => {
     const linkId = task.sessionId ?? task.lastSessionId;
     if (!linkId) {
+      if (task.linkedIsProcessing === undefined && task.linkedSessionStatus === undefined) {
+        return task;
+      }
       return {
         ...task,
         linkedIsProcessing: undefined,
@@ -417,22 +454,34 @@ async function reconcileRuntime(
     }
     const session = await execution.getSession(linkId);
     const now = new Date().toISOString();
-    if (task.status !== 'running' || !task.sessionId) {
+    const linkedUnchanged = (
+      session: { isProcessing: boolean; sessionStatus?: string },
+    ) => (
+      task.linkedIsProcessing === session.isProcessing
+      && task.linkedSessionStatus === session.sessionStatus
+    );
+    if (!session) {
+      // Board still points at a deleted left-rail session. Clear live sessionId
+      // so resume can spawn cleanly; keep lastSessionId for UI history.
       return {
         ...task,
-        linkedIsProcessing: session?.isProcessing,
-        linkedSessionStatus: session?.sessionStatus,
+        status: task.status === 'running' ? 'failed' : task.status,
+        sessionId: undefined,
+        lastSessionId: task.sessionId ?? task.lastSessionId,
+        linkedIsProcessing: false,
+        linkedSessionStatus: undefined,
+        error: task.status === 'running'
+          ? 'Spawned session is no longer available.'
+          : (task.error ?? '原绑定子会话已不存在，恢复时将新建'),
         updatedAt: now,
       };
     }
-    if (!session) {
+    if (task.status !== 'running' || !task.sessionId) {
+      if (linkedUnchanged(session)) return task;
       return {
         ...task,
-        status: 'failed',
-        error: 'Spawned session is no longer available.',
-        lastSessionId: task.sessionId,
-        linkedIsProcessing: false,
-        linkedSessionStatus: undefined,
+        linkedIsProcessing: session.isProcessing,
+        linkedSessionStatus: session.sessionStatus,
         updatedAt: now,
       };
     }
@@ -441,7 +490,7 @@ async function reconcileRuntime(
       linkedIsProcessing: session.isProcessing,
       linkedSessionStatus: session.sessionStatus,
     };
-    if (session.sessionStatus === 'cancelled' || goalStatus === 'failed' || goalStatus === 'cancelled') {
+    if (session.sessionStatus === 'cancelled' || goalStatus === 'cancelled') {
       return {
         ...task,
         ...linked,
@@ -451,7 +500,35 @@ async function reconcileRuntime(
         updatedAt: now,
       };
     }
-    if (!session.isProcessing && (session.sessionStatus === 'done' || goalStatus === 'passed')) {
+    const reportExists = existsSync(task.reportPath);
+    const sessionClosed = !session.isProcessing;
+    const sessionTerminal = session.sessionStatus === 'done' || goalStatus === 'passed' || goalStatus === 'failed';
+    // Pi children stay `todo` after the turn ends. Treat idle the same as
+    // done/passed when a report is already on disk — otherwise the monitor
+    // keeps Continue-ing a closed child.
+    if (sessionClosed && (sessionTerminal || reportExists)) {
+      if (reportExists && !task.error) {
+        return {
+          ...task,
+          ...linked,
+          status: 'complete',
+          sessionId: task.sessionId,
+          lastSessionId: task.sessionId,
+          completedAt: task.completedAt ?? now,
+          error: undefined,
+          updatedAt: now,
+        };
+      }
+      if (reportExists) {
+        return {
+          ...task,
+          ...linked,
+          status: 'failed',
+          error: task.error,
+          lastSessionId: task.sessionId,
+          updatedAt: now,
+        };
+      }
       return {
         ...task,
         ...linked,
@@ -461,10 +538,19 @@ async function reconcileRuntime(
         updatedAt: now,
       };
     }
-    // After app restart / interrupt, children sit idle while the board still
-    // claims "running". Free the concurrency slot (pending) but KEEP sessionId so
-    // resume/advance can continue the same child instead of spawning a duplicate.
-    if (!session.isProcessing) {
+    // After app restart / interrupt, children sit idle with no report yet.
+    // Free the slot (pending) but KEEP sessionId so resume continues the same child.
+    //
+    // Grace-period guard: dispatchPendingTasks stamps linkedIsProcessing=true right after
+    // sending a Continue. If the session hasn't started yet (isProcessing still false on the
+    // very next reconcileRuntime call), task.linkedIsProcessing is still true from the stamp.
+    // Resetting to pending immediately would cause a second Continue to fire before the child
+    // processes the first one.  Give the session one tick to start before treating it as idle.
+    if (sessionClosed) {
+      if (task.linkedIsProcessing === true) {
+        // Update linkedIsProcessing to false (session is idle); will reset to pending NEXT tick.
+        return { ...task, ...linked, updatedAt: now };
+      }
       return {
         ...task,
         ...linked,
@@ -476,6 +562,7 @@ async function reconcileRuntime(
         updatedAt: now,
       };
     }
+    if (linkedUnchanged(session)) return task;
     return { ...task, ...linked, updatedAt: now };
   }));
   return { ...board, tasks, updatedAt: new Date().toISOString() };
@@ -493,13 +580,35 @@ async function dispatchPendingTasks(
   const specs = new Map(options.tasks.map((task) => [task.batchId, task]));
   const tasks = [...board.tasks];
   let available = Math.max(0, board.maxConcurrency - tasks.filter((task) => task.status === 'running').length);
+
+  type DispatchJob =
+    | { index: number; kind: 'adopt-running'; reusableId: string; sessionStatus?: string }
+    | { index: number; kind: 'continue'; reusableId: string; spec: TenderStageBatchTaskSpec }
+    | { index: number; kind: 'spawn'; spec: TenderStageBatchTaskSpec };
+
+  const jobs: DispatchJob[] = [];
+
   for (let index = 0; index < tasks.length && available > 0; index += 1) {
     const task = tasks[index]!;
     if (task.status !== 'pending') continue;
     const spec = specs.get(task.batchId);
     if (!spec) continue;
+    // Belt-and-suspenders: if the manifest already shows complete, mark it so and skip dispatch.
+    // reconcileTask normally handles this; this guard defends against an out-of-order board write.
+    if (spec.validationStatus === 'complete') {
+      const now = new Date().toISOString();
+      tasks[index] = {
+        ...task,
+        status: 'complete',
+        completedAt: task.completedAt ?? now,
+        updatedAt: now,
+        error: undefined,
+      };
+      continue;
+    }
     const now = new Date().toISOString();
-    if (task.attemptCount >= MAX_AUTO_DISPATCH_ATTEMPTS) {
+    const userRetry = Boolean(options.retryBatchIds?.includes(task.batchId));
+    if (task.attemptCount >= MAX_AUTO_DISPATCH_ATTEMPTS && !userRetry) {
       tasks[index] = {
         ...task,
         status: 'failed',
@@ -508,107 +617,175 @@ async function dispatchPendingTasks(
       };
       continue;
     }
-    try {
-      const reusableId = task.sessionId ?? task.lastSessionId;
-      if (reusableId) {
-        const existing = await execution.getSession(reusableId);
-        const cancelled = existing?.sessionStatus === 'cancelled'
-          || existing?.goalState?.status === 'cancelled'
-          || existing?.goalState?.status === 'failed';
-        if (existing && !cancelled) {
-          if (existing.isProcessing) {
-            tasks[index] = {
-              ...task,
-              status: 'running',
-              sessionId: reusableId,
-              lastSessionId: reusableId,
-              startedAt: task.startedAt ?? now,
-              updatedAt: now,
-              error: undefined,
-              linkedIsProcessing: true,
-              linkedSessionStatus: existing.sessionStatus,
-            };
-            available -= 1;
-            atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
-            continue;
-          }
-          if (execution.continueSession) {
-            await execution.continueSession(
-              reusableId,
-              CONTINUE_IDLE_CHILD_PROMPT(spec.briefPath, spec.reportPath),
-            );
-            tasks[index] = {
-              ...task,
-              status: 'running',
-              sessionId: reusableId,
-              lastSessionId: reusableId,
-              // Continuations do not burn auto-dispatch attempts — same child, not a new spawn.
-              startedAt: now,
-              updatedAt: now,
-              error: undefined,
-              linkedIsProcessing: true,
-              linkedSessionStatus: existing.sessionStatus ?? 'todo',
-            };
-            available -= 1;
-            atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
-            continue;
-          }
+
+    const reusableId = task.sessionId ?? task.lastSessionId;
+    if (reusableId) {
+      const existing = await execution.getSession(reusableId);
+      const cancelled = existing?.sessionStatus === 'cancelled'
+        || existing?.goalState?.status === 'cancelled';
+      const finished = existing?.sessionStatus === 'done'
+        || existing?.goalState?.status === 'passed'
+        || existing?.goalState?.status === 'failed';
+      if (existing && !cancelled) {
+        if (existing.isProcessing) {
+          jobs.push({
+            index,
+            kind: 'adopt-running',
+            reusableId,
+            sessionStatus: existing.sessionStatus,
+          });
+          available -= 1;
+          continue;
+        }
+        const reportExists = existsSync(spec.reportPath);
+        if (finished || reportExists) {
+          // Closed children with a report must not be Continue-d. Reconcile
+          // already settled them (or will on the next status tick).
+          continue;
+        }
+        if (execution.continueSession) {
+          jobs.push({ index, kind: 'continue', reusableId, spec });
+          available -= 1;
+          continue;
         }
       }
+    }
 
+    jobs.push({ index, kind: 'spawn', spec });
+    available -= 1;
+  }
+
+  const stampAdopt = new Date().toISOString();
+  for (const job of jobs) {
+    if (job.kind !== 'adopt-running') continue;
+    const task = tasks[job.index]!;
+    tasks[job.index] = {
+      ...task,
+      status: 'running',
+      sessionId: job.reusableId,
+      lastSessionId: job.reusableId,
+      startedAt: task.startedAt ?? stampAdopt,
+      updatedAt: stampAdopt,
+      error: undefined,
+      linkedIsProcessing: true,
+      linkedSessionStatus: job.sessionStatus,
+    };
+  }
+
+  // Continues must kick in parallel so resume fills maxConcurrency, but after
+  // OS sleep/wake a full parallel cold-start of N Pi subprocesses can OOM the
+  // Electron main process. Chunk continues; keep spawns serial for capacity gates.
+  const CONTINUE_CHUNK_SIZE = 2;
+  const continueJobs = jobs.filter((job): job is Extract<DispatchJob, { kind: 'continue' }> => job.kind === 'continue');
+  const spawnJobs = jobs.filter((job): job is Extract<DispatchJob, { kind: 'spawn' }> => job.kind === 'spawn');
+
+  const continueResults: Array<
+    | { index: number; ok: true; kind: 'continue'; sessionId: string }
+    | { index: number; ok: false; error: unknown }
+  > = [];
+  for (let offset = 0; offset < continueJobs.length; offset += CONTINUE_CHUNK_SIZE) {
+    const chunk = continueJobs.slice(offset, offset + CONTINUE_CHUNK_SIZE);
+    const chunkResults = await Promise.all(chunk.map(async (job) => {
+      try {
+        await execution.continueSession!(
+          job.reusableId,
+          CONTINUE_IDLE_CHILD_PROMPT(job.spec.briefPath, job.spec.reportPath, job.spec.markdownPath),
+        );
+        return {
+          index: job.index,
+          ok: true as const,
+          kind: 'continue' as const,
+          sessionId: job.reusableId,
+        };
+      } catch (error) {
+        return { index: job.index, ok: false as const, error };
+      }
+    }));
+    continueResults.push(...chunkResults);
+    if (chunkResults.some((result) => !result.ok && isTenderStageCapacityError(result.error))) {
+      // Memory/capacity pressure — leave remaining continues pending.
+      break;
+    }
+  }
+
+  const spawnResults: Array<
+    | { index: number; ok: true; kind: 'spawn'; sessionId: string }
+    | { index: number; ok: false; error: unknown }
+  > = [];
+  for (const job of spawnJobs) {
+    try {
       const result = await execution.spawnSession(parentSessionId, {
-        name: spec.name,
-        prompt: `Read the task brief at ${spec.briefPath} and produce useful analysis/pricing for the attached tender sources only. `
-          + `Write a structured JSON handoff to ${spec.reportPath} and a readable Markdown deliverable to brief.markdownPath when provided. `
+        name: job.spec.name,
+        prompt: `Read the task brief at ${job.spec.briefPath} and produce useful analysis/pricing for the attached tender sources only. `
+          + `Write a structured JSON handoff to ${job.spec.reportPath} and a readable Markdown deliverable to brief.markdownPath when provided. `
           + `Prefer substance over format ritual: wrong batchId is auto-corrected; empty sourceRefs are accepted; do not burn tokens inventing IDs or chasing filenames. `
           + `For BOQ pricing: price the assigned items with plain decimal rates (verify market rates via web when possible; otherwise mark unverified — never invent). `
           + `Do not spawn further child sessions and do not write the final merged project pack.`,
         workingDirectory: options.workingDirectory,
-        briefPath: spec.briefPath,
-        reportPath: spec.reportPath,
+        briefPath: job.spec.briefPath,
+        reportPath: job.spec.reportPath,
         dispatchSource: 'stage-controller',
         attachments: [
-          { path: spec.briefPath },
-          ...spec.allowedSourcePaths.map((path) => ({ path })),
+          { path: job.spec.briefPath },
+          ...job.spec.allowedSourcePaths.map((path) => ({ path })),
         ],
       });
-      tasks[index] = {
+      spawnResults.push({
+        index: job.index,
+        ok: true,
+        kind: 'spawn',
+        sessionId: result.sessionId,
+      });
+    } catch (error) {
+      spawnResults.push({ index: job.index, ok: false, error });
+      if (isTenderStageCapacityError(error)) {
+        // Leave remaining spawn jobs untouched (still pending on the board).
+        break;
+      }
+    }
+  }
+
+  const kickResults = [...continueResults, ...spawnResults];
+
+  const now = new Date().toISOString();
+  for (const result of kickResults) {
+    const task = tasks[result.index]!;
+    if (result.ok) {
+      tasks[result.index] = {
         ...task,
         status: 'running',
         sessionId: result.sessionId,
         lastSessionId: task.sessionId ?? task.lastSessionId ?? result.sessionId,
-        attemptCount: task.attemptCount + 1,
+        // Continuations do not burn auto-dispatch attempts — same child, not a new spawn.
+        attemptCount: result.kind === 'spawn' ? task.attemptCount + 1 : task.attemptCount,
         startedAt: now,
         updatedAt: now,
         error: undefined,
         linkedIsProcessing: true,
         linkedSessionStatus: 'todo',
       };
-      available -= 1;
-    } catch (error) {
-      if (isTenderStageCapacityError(error)) {
-        // Slot is full or memory-guarded — leave the task queued. An explicit
-        // resume (or live monitor after the user opts in) will dispatch later.
-        tasks[index] = {
-          ...task,
-          status: 'pending',
-          updatedAt: now,
-          error: undefined,
-        };
-        atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
-        break;
-      }
-      tasks[index] = {
-        ...task,
-        status: 'failed',
-        attemptCount: task.attemptCount + 1,
-        updatedAt: now,
-        error: error instanceof Error ? error.message : String(error),
-      };
+      continue;
     }
-    atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
+    if (isTenderStageCapacityError(result.error)) {
+      tasks[result.index] = {
+        ...task,
+        status: 'pending',
+        updatedAt: now,
+        error: undefined,
+      };
+      continue;
+    }
+    tasks[result.index] = {
+      ...task,
+      status: 'failed',
+      attemptCount: task.attemptCount + 1,
+      updatedAt: now,
+      error: result.error instanceof Error ? result.error.message : String(result.error),
+    };
   }
-  return { ...board, tasks, updatedAt: new Date().toISOString() };
+
+  atomicWriteJson(board.taskBoardPath, { ...board, tasks, updatedAt: now });
+  return { ...board, tasks, updatedAt: now };
 }
 
 function quarantineInvalidReport(reportPath: string): void {
@@ -695,8 +872,10 @@ export function bindTenderStageTaskToSpawnedSession(options: {
   const index = board.tasks.findIndex((task) => normalize(task.reportPath) === targetReport);
   if (index < 0) return false;
 
-  const now = new Date().toISOString();
   const previous = board.tasks[index]!;
+  if (previous.status === 'complete') return false;
+
+  const now = new Date().toISOString();
   board.tasks[index] = {
     ...previous,
     status: 'running',
@@ -715,6 +894,14 @@ export function bindTenderStageTaskToSpawnedSession(options: {
   board.updatedAt = now;
   atomicWriteJson(taskBoardPath, board);
   return true;
+}
+
+function taskBoardFingerprint(board: TenderStageTaskBoard): string {
+  const { updatedAt: _updatedAt, ...rest } = board;
+  return JSON.stringify({
+    ...rest,
+    tasks: board.tasks.map(({ updatedAt: _taskUpdatedAt, ...task }) => task),
+  });
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {

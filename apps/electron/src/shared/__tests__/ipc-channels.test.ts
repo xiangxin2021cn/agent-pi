@@ -15,6 +15,7 @@ const EXPECTED_CHANNELS: string[] = [
   'LLM_Connection:delete',
   'LLM_Connection:get',
   'LLM_Connection:getApiKey',
+  'LLM_Connection:getVisionApiKey',
   'LLM_Connection:list',
   'LLM_Connection:listWithStatus',
   'LLM_Connection:refreshModels',

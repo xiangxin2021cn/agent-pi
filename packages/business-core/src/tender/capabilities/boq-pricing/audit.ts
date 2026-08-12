@@ -3,7 +3,7 @@ import { parseTenderBoqReconciliationData } from '../boq/schema.ts';
 import type { TenderBoqReconciliationData } from '../boq/types.ts';
 import type { TenderCapabilityAuditIssue } from '../types.ts';
 import { compareDecimalStrings, decimalStringsEqual, multiplyDecimalStrings, sumDecimalStrings } from '../cost/decimal.ts';
-import { inspectTenderBoqItemC51Quality } from './quality.ts';
+import { inspectTenderBoqItemQualityByStandard } from './quality.ts';
 import { parseTenderBoqFiveStepPricingData } from './schema.ts';
 import { remapBoqPricingIssueSeverity } from './severity.ts';
 import type { TenderBoqFiveStepItemBuildUp, TenderBoqFiveStepPricingAudit, TenderBoqFiveStepPricingData } from './types.ts';
@@ -49,15 +49,16 @@ export function auditTenderBoqFiveStepPricing(
       message: `BOQ pricing currency ${data.currency} does not match project currency ${workspace.project.currency}.`,
     });
   }
-  if (data.pricingStandard !== 'c51_pure_direct_cost_v1') {
+  if (!data.pricingStandard?.trim()) {
     issues.push({
       code: 'boq_pricing_standard_missing',
       severity: 'error',
       entityType: 'boq_pricing',
-      message: 'BOQ pricing must declare the C5.1 pure direct-cost standard.',
+      message: 'BOQ pricing must declare a pricingStandard from the project boundary.',
     });
   }
-  if (data.vatTreatment !== 'exclusive') {
+  const isC51 = data.pricingStandard === 'c51_pure_direct_cost_v1';
+  if (isC51 && data.vatTreatment !== 'exclusive') {
     issues.push({
       code: 'boq_pricing_vat_basis_invalid',
       severity: 'error',
@@ -65,12 +66,20 @@ export function auditTenderBoqFiveStepPricing(
       message: 'C5.1 BOQ direct-cost rates must be VAT exclusive.',
     });
   }
-  if (data.indirectCostPolicy !== 'excluded_from_item_direct_cost') {
+  if (isC51 && data.indirectCostPolicy !== 'excluded_from_item_direct_cost') {
     issues.push({
       code: 'boq_pricing_indirect_cost_policy_invalid',
       severity: 'error',
       entityType: 'boq_pricing',
       message: 'Indirect cost and profit must be excluded from item pure direct cost and handled downstream.',
+    });
+  }
+  if (!isC51 && data.pricingStandard) {
+    issues.push({
+      code: 'boq_pricing_standard_generic',
+      severity: 'warning',
+      entityType: 'boq_pricing',
+      message: `Using non-C5.1 pricingStandard ${data.pricingStandard}; COTO clause ritual is not enforced.`,
     });
   }
   if (data.pricingStatus === 'blocked') {
@@ -105,7 +114,8 @@ export function auditTenderBoqFiveStepPricing(
 
     const boqItem = itemById.get(buildUp.boqItemId);
     if (boqItem) {
-      for (const qualityIssue of inspectTenderBoqItemC51Quality(
+      for (const qualityIssue of inspectTenderBoqItemQualityByStandard(
+        data.pricingStandard,
         boqItem,
         scopeLinkByItemId.get(buildUp.boqItemId),
         buildUp,

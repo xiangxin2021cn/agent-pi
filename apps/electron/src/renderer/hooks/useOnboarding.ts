@@ -18,7 +18,7 @@ import type {
 import type { ProviderChoice } from '@/components/onboarding/ProviderSelectStep'
 import type { LocalModelSubmitData } from '@/components/onboarding/LocalModelStep'
 import type { ApiKeySubmitData } from '@/components/apisetup'
-import type { CustomEndpointConfig } from '@config/llm-connections'
+import type { CustomEndpointConfig, VisionBridgeConfig } from '@config/llm-connections'
 import type { SetupNeeds, LlmConnectionSetup, ClaudeOAuthIdentityDto } from '../../shared/types'
 
 interface UseOnboardingOptions {
@@ -148,6 +148,8 @@ export function apiSetupMethodToConnectionSetup(
     awsRegion?: string
     bedrockAuthMethod?: 'iam_credentials' | 'environment'
     oauthIdentity?: ClaudeOAuthIdentityDto
+    visionBridge?: VisionBridgeConfig
+    visionApiKey?: string
   },
   editingSlug: string | null,
   existingSlugs: Set<string>,
@@ -189,6 +191,8 @@ export function apiSetupMethodToConnectionSetup(
         iamCredentials: options.iamCredentials,
         awsRegion: options.awsRegion,
         bedrockAuthMethod: options.bedrockAuthMethod,
+        visionBridge: options.visionBridge,
+        visionCredential: options.visionApiKey,
       }
   }
 }
@@ -255,6 +259,8 @@ export function useOnboarding({
       awsRegion?: string
       bedrockAuthMethod?: 'iam_credentials' | 'environment'
       oauthIdentity?: ClaudeOAuthIdentityDto
+      visionBridge?: VisionBridgeConfig
+      visionApiKey?: string
     },
     methodOverride?: ApiSetupMethod,
     connectionSlugOverride?: string,
@@ -281,6 +287,8 @@ export function useOnboarding({
         awsRegion: options?.awsRegion,
         bedrockAuthMethod: options?.bedrockAuthMethod,
         oauthIdentity: options?.oauthIdentity,
+        visionBridge: options?.visionBridge,
+        visionApiKey: options?.visionApiKey,
       }, connectionSlugOverride ?? editingSlug, existingSlugs)
       // Use new unified API
       const result = await window.electronAPI.setupLlmConnection(
@@ -398,6 +406,8 @@ export function useOnboarding({
           iamCredentials: data.iamCredentials,
           awsRegion: data.awsRegion,
           bedrockAuthMethod: data.bedrockAuthMethod,
+          visionBridge: data.visionBridge,
+          visionApiKey: data.visionApiKey,
         })
         if (saved) {
           setState(s => ({ ...s, credentialStatus: 'success', step: 'complete' }))
@@ -416,6 +426,8 @@ export function useOnboarding({
           piAuthProvider: data.piAuthProvider,
           modelSelectionMode: data.modelSelectionMode,
           customEndpoint: data.customEndpoint,
+          visionBridge: data.visionBridge,
+          visionApiKey: data.visionApiKey,
         })
         if (saved) {
           setState(s => ({ ...s, credentialStatus: 'success', step: 'complete' }))
@@ -480,6 +492,8 @@ export function useOnboarding({
         piAuthProvider: data.piAuthProvider,
         modelSelectionMode: data.modelSelectionMode,
         customEndpoint: data.customEndpoint,
+        visionBridge: data.visionBridge,
+        visionApiKey: data.visionApiKey,
       })
 
       if (saved) {

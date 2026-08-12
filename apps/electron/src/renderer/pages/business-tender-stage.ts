@@ -78,6 +78,14 @@ export async function resetTenderStageOrchestration(
   return { ok: true, result }
 }
 
+export async function forcePassTenderStage(
+  run: RunTenderStage,
+  target: Omit<TenderStageRunRequest, 'action'>,
+): Promise<{ ok: boolean; result: TenderStageRunResultDto }> {
+  const result = await run({ ...target, action: 'force_pass' })
+  return { ok: result.status !== 'blocked', result }
+}
+
 export async function acceptPlanningMethodologyReview(
   run: RunTenderStage,
   target: Omit<TenderStageRunRequest, 'action' | 'planningReview'>,
@@ -206,5 +214,16 @@ function formatMissingItem(item: string): string {
   if (item.startsWith('source:')) return `资料缺失：${item.slice('source:'.length)}`
   if (item.startsWith('capability:')) return `缺少上游能力包：${item.slice('capability:'.length)}`
   if (item.startsWith('output:')) return `尚未生成能力包：${item.slice('output:'.length)}`
+  if (item === 'project_boundary:sa-draft-available') return '可从 SANRAL 绑定生成边界草稿（需人工确认）'
+  if (item === 'project_boundary:generic-draft-available') return '可生成通用边界草稿（需填写大纲并确认）'
+  if (item === 'project_boundary:missing') return '缺少项目边界条件包'
+  if (item === 'project_boundary:outline') return '组织策划大纲过短或为空'
+  if (item === 'project_boundary:measurement') return '未确认计量标准'
+  if (item === 'project_boundary:pricingStandard') return '未选定组价标准'
+  if (item === 'project_boundary:currency') return '未确认项目币种'
+  if (item === 'project_boundary:unconfirmed') return '项目边界尚未人工确认，不能作为组价围栏'
+  if (item === 'project_boundary:parse-incomplete') return '界限来源解析批次未完成'
+  if (item === 'project_boundary:no-sources') return '尚未登记知识库/自有文件/本标规范来源'
+  if (item.startsWith('project_boundary:merge:')) return `边界解析合并：${item.slice('project_boundary:merge:'.length)}`
   return item
 }

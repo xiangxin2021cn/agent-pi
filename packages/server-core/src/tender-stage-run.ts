@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { listBusinessProjects } from '@craft-agent/shared/business-projects';
+import { listBusinessProjects } from '@craft-agent/shared/business-projects/storage';
 import {
   applyManualTenderCloseoutEvidence,
   createNodeFileSystem,
@@ -19,6 +19,7 @@ import {
   type TenderCapabilityIndex,
   type TenderDocument,
   type TenderDocumentKind,
+  type TenderProjectBoundarySource,
   type TenderWorkspace,
 } from '@agent-pi/business-core/tender';
 import {
@@ -30,13 +31,30 @@ import {
   publishDocumentAnalysisArtifactsToOfficialOutputs,
   writeDocumentAnalysisSummaryMarkdown,
 } from './tender-document-analysis-md.ts';
+import { publishBoqPricingOfficialOutputs } from './tender-boq-pricing-md.ts';
 import {
   buildStageDeliverablesCatalog,
   organizeStageDeliverables,
   stageDeliverablesCatalogPath,
   type OrganizeStageDeliverablesResult,
 } from './tender-stage-deliverables.ts';
-import { ensureDefaultTenderBindings } from './tender-bindings.ts';
+import { ensureDefaultTenderBindings, applyTenderProfileBindings } from './tender-bindings.ts';
+import {
+  suggestProjectBoundaryDraftFromBindings,
+  publishProjectBoundaryMarkdown,
+  readProjectBoundaryPack,
+  applyBoundarySourcesToPack,
+} from './tender-project-boundary.ts';
+import {
+  readBoundarySourceRegistry,
+  writeBoundarySourceRegistry,
+  type TenderBoundarySourceInput,
+} from './tender-boundary-sources.ts';
+import {
+  createOrRefreshBoundaryBatchManifest,
+  mergeBoundaryParseReports,
+  type TenderBoundaryBatchManifest,
+} from './tender-boundary-batches.ts';
 import {
   assertDocumentParseGate,
   ensureDocumentReviewEntries,
@@ -68,6 +86,7 @@ import {
 import {
   updateTenderStageTaskBoard,
   type TenderStageBatchTaskSpec,
+  type TenderStageBoardAction,
   type TenderStageExecutionRuntime,
   type TenderStageTaskBoard,
   type TenderStageTaskRecord,
@@ -82,7 +101,11 @@ export type TenderStageRunAction =
   | 'complete'
   | 'reset_orchestration'
   | 'set_dispatch'
-  | 'organize_deliverables';
+  | 'organize_deliverables'
+  | 'suggest_project_boundary'
+  | 'save_project_boundary'
+  | 'register_boundary_sources'
+  | 'force_pass';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -107,6 +130,10 @@ export interface TenderStageRunRequest {
   forceRebindParent?: boolean;
   /** Selective retry of failed/blocked batches (quarantine + re-queue). */
   retryBatchIds?: string[];
+  /** Pack data for `save_project_boundary`. */
+  projectBoundaryData?: Record<string, unknown>;
+  /** Full replace of boundary fence sources. */
+  boundarySources?: TenderBoundarySourceInput[];
 }
 
 export interface TenderStageRunOptions {
@@ -150,8 +177,10 @@ export interface TenderStageRunResult {
   producedCapabilities: TenderCapabilityId[];
   generatedPacks: TenderCapabilityId[];
   missingItems: string[];
+  /** User-waived missing-item gates; status ignores these items. */
+  userForcePass?: { at: string; waivedItems: string[] };
   batchProgress?: {
-    batchType: 'document_analysis' | 'boq_five_step_pricing';
+    batchType: 'document_analysis' | 'boq_five_step_pricing' | 'project_boundary';
     itemCount: number;
     batchCount: number;
     completedBatches: number;
@@ -170,6 +199,20 @@ export interface TenderStageRunResult {
     validationWarningCount?: number;
     /** Reconciliation rows excluded from pricing (summary rows, composites). */
     skippedItems?: Array<{ itemId: string; code: string; reason: string }>;
+  };
+  boundaryDesk?: {
+    sources: Array<{
+      id: string;
+      kind: string;
+      role: string;
+      title: string;
+      path?: string;
+      knowledgeSlug?: string;
+      documentId?: string;
+      markdownPath?: string;
+      parseStatus: string;
+    }>;
+    suggestedSpecs: Array<{ documentId: string; title: string; path: string; kind: string }>;
   };
   /** Visible 4-A / 4-B / 4-C checklist for planning-and-submission. */
   substeps?: PlanningSubstepState[];
@@ -201,6 +244,7 @@ export interface TenderStageRunResult {
     boqBatchManifestPath?: string;
     taskBoardPath?: string;
     stageDeliverablesCatalogPath?: string;
+    boundaryBatchManifestPath?: string;
   };
 }
 
@@ -228,8 +272,13 @@ const STAGES: TenderStageDefinition[] = [
     producedCapabilities: ['document_analysis', 'boq_reconciliation'],
   },
   {
-    id: 'boq-five-step-pricing',
+    id: 'project-boundary-conditions',
     requiredCapabilities: ['document_analysis'],
+    producedCapabilities: ['project_boundary'],
+  },
+  {
+    id: 'boq-five-step-pricing',
+    requiredCapabilities: ['document_analysis', 'project_boundary'],
     producedCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
   },
   {
@@ -438,11 +487,43 @@ async function runTenderStageUnlocked(
   const boqBatchManifest = stage.id === 'boq-five-step-pricing'
     ? loadBoqBatchManifest(paths, project.projectId, generatedPacks, sourceBoundary, project.rootPath)
     : undefined;
-  const batchTaskSpecs = buildBatchTaskSpecs(documentBatchManifest, boqBatchManifest, sourceBoundary);
+
+  if (request.action === 'register_boundary_sources' && Array.isArray(request.boundarySources)) {
+    const registry = writeBoundarySourceRegistry(
+      paths.projectDirectory,
+      project.projectId,
+      request.boundarySources,
+    );
+    const existingPack = readProjectBoundaryPack(paths.projectDirectory);
+    if (existingPack) {
+      const patched = applyBoundarySourcesToPack(existingPack.data, registry.sources);
+      const result = await handleTenderCapability(context, {
+        action: 'replace',
+        projectId: project.projectId,
+        capability: 'project_boundary',
+        data: patched,
+      });
+      if (result.isError) {
+        throw new Error(result.content.map((block) => block.text).join('\n'));
+      }
+    }
+  }
+
+  const boundaryRegistry = readBoundarySourceRegistry(paths.projectDirectory, project.projectId);
+  const boundaryBatchManifest = stage.id === 'project-boundary-conditions'
+    ? createOrRefreshBoundaryBatchManifest(
+        paths.projectDirectory,
+        project.projectId,
+        boundaryRegistry.sources,
+        { projectRoot: project.rootPath },
+      )
+    : undefined;
+
+  const batchTaskSpecs = buildBatchTaskSpecs(documentBatchManifest, boqBatchManifest, sourceBoundary, boundaryBatchManifest);
   const defaultConcurrency = defaultStageConcurrency(stage.id);
   const taskBoard = batchTaskSpecs
     ? await updateTenderStageTaskBoard({
-        action: request.action,
+        action: toTaskBoardAction(request.action),
         projectDirectory: paths.projectDirectory,
         projectId: project.projectId,
         stageId: stage.id,
@@ -455,6 +536,105 @@ async function runTenderStageUnlocked(
         ...(request.retryBatchIds?.length ? { retryBatchIds: request.retryBatchIds } : {}),
       })
     : undefined;
+
+  const deliverablesParentId = taskBoard?.parentSessionId ?? boardParentSessionId ?? projectParentSessionId;
+  if (request.action === 'suggest_project_boundary' || request.action === 'save_project_boundary') {
+    context.businessContext = {
+      module: 'tender',
+      projectId: project.projectId,
+      workflowId: 'tender-main',
+      stageId: 'project-boundary-conditions',
+    };
+
+    let data: Record<string, unknown> | undefined = request.projectBoundaryData;
+    if (request.action === 'suggest_project_boundary') {
+      const suggestion = suggestProjectBoundaryDraftFromBindings({
+        projectDirectory: paths.projectDirectory,
+        projectId: project.projectId,
+      });
+      if (!suggestion) {
+        const existing = readProjectBoundaryPack(paths.projectDirectory);
+        if (existing && deliverablesParentId) {
+          publishProjectBoundaryMarkdown({
+            projectRoot: project.rootPath,
+            parentSessionId: deliverablesParentId,
+            pack: existing.data,
+          });
+        }
+      } else {
+        data = suggestion.draft as unknown as Record<string, unknown>;
+      }
+    }
+
+    if (data) {
+      const incomingSources = Array.isArray((data as { boundarySources?: unknown }).boundarySources)
+        ? (data as { boundarySources: TenderBoundarySourceInput[] }).boundarySources
+        : [];
+      const registrySources = incomingSources.length > 0
+        ? writeBoundarySourceRegistry(paths.projectDirectory, project.projectId, incomingSources).sources
+        : readBoundarySourceRegistry(paths.projectDirectory, project.projectId).sources;
+      const existingPack = readProjectBoundaryPack(paths.projectDirectory);
+      const incomingStandards = (data as { standards?: Record<string, unknown> }).standards;
+      const incomingSpecs = incomingStandards && Array.isArray(incomingStandards.technicalSpecs)
+        ? incomingStandards.technicalSpecs
+        : undefined;
+      const confirmed = typeof (data as { humanConfirmedAt?: unknown }).humanConfirmedAt === 'string';
+      if (existingPack) {
+        const merged: Record<string, unknown> = {
+          ...existingPack.data,
+          ...data,
+          standards: {
+            ...existingPack.data.standards,
+            ...(incomingStandards ?? {}),
+            technicalSpecs: incomingSpecs && incomingSpecs.length > 0
+              ? incomingSpecs
+              : existingPack.data.standards.technicalSpecs,
+          },
+          boundarySources: registrySources,
+        };
+        const inventory = (data as { extractedInventory?: unknown }).extractedInventory
+          ?? existingPack.data.extractedInventory;
+        if (inventory) merged.extractedInventory = inventory;
+        if (!confirmed) delete merged.humanConfirmedAt;
+        data = merged;
+      } else if (registrySources.length > 0) {
+        data = { ...data, boundarySources: registrySources };
+      }
+      const packPath = join(paths.projectDirectory, 'packs', 'project-boundary.json');
+      const action = existsSync(packPath) ? 'replace' : 'init';
+      const result = await handleTenderCapability(context, {
+        action,
+        projectId: project.projectId,
+        capability: 'project_boundary',
+        data,
+      });
+      if (result.isError) {
+        throw new Error(result.content.map((block) => block.text).join('\n'));
+      }
+      const profileId = typeof data.profileId === 'string' ? data.profileId.trim() : '';
+      if (profileId) {
+        try {
+          applyTenderProfileBindings(paths.projectDirectory, profileId);
+        } catch {
+          // Soft: pack save already succeeded; bindings rewrite is best-effort.
+        }
+      }
+      if (deliverablesParentId) {
+        const saved = readProjectBoundaryPack(paths.projectDirectory);
+        if (saved) {
+          publishProjectBoundaryMarkdown({
+            projectRoot: project.rootPath,
+            parentSessionId: deliverablesParentId,
+            pack: saved.data,
+          });
+        }
+      }
+      if (existsSync(paths.capabilityIndexPath)) {
+        capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
+        generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
+      }
+    }
+  }
 
   // When every document-analysis batch is complete, deterministically merge into
   // packs/document-analysis.json and write a readable summary under formal outputs.
@@ -485,6 +665,32 @@ async function runTenderStageUnlocked(
     generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
   }
 
+  const boundaryMergeRuntimeErrors: string[] = [];
+  if (
+    stage.id === 'project-boundary-conditions'
+    && boundaryBatchManifest
+    && boundaryBatchManifest.batchCount > 0
+    && boundaryBatchManifest.completedBatches === boundaryBatchManifest.batchCount
+    && boundaryBatchManifest.batches.every((batch) => batch.status === 'complete')
+  ) {
+    const mergeResult = await ensureBoundaryPackMerged({
+      context,
+      paths,
+      projectId: project.projectId,
+      workingDirectory: project.rootPath,
+      parentSessionId: taskBoard?.parentSessionId ?? request.parentSessionId,
+      manifest: boundaryBatchManifest,
+      sources: readBoundarySourceRegistry(paths.projectDirectory, project.projectId).sources,
+    });
+    boundaryMergeRuntimeErrors.push(...mergeResult.errors);
+    if (existsSync(paths.capabilityIndexPath)) {
+      capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
+      generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
+    }
+  } else {
+    generatedPacks = listSatisfiedPacks(capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest);
+  }
+
   // Same deterministic ownership for BOQ pricing: once every pricing batch is
   // complete, merge child reports into packs/boq-five-step-pricing.json instead
   // of letting the parent hand-assemble (and compress) the pack.
@@ -506,7 +712,8 @@ async function runTenderStageUnlocked(
       workspace,
     });
     boqMergeRuntimeErrors.push(...mergeResult.errors);
-    if (mergeResult.errors.length === 0) {
+    const pricingPackPath = join(paths.projectDirectory, 'packs', 'boq-five-step-pricing.json');
+    if (existsSync(pricingPackPath) && packHasUsableContent(pricingPackPath, 'boq_five_step_pricing')) {
       const scheduleResult = await ensureResourceSchedulePack({
         context,
         paths,
@@ -514,6 +721,19 @@ async function runTenderStageUnlocked(
         projectRoot: project.rootPath,
       });
       resourceScheduleRuntimeErrors.push(...scheduleResult.errors);
+    }
+    if (deliverablesParentId) {
+      publishBoqPricingOfficialOutputs({
+        workingDirectory: project.rootPath,
+        projectId: project.projectId,
+        projectDirectory: paths.projectDirectory,
+        parentSessionId: deliverablesParentId,
+        manifest: boqBatchManifest,
+        reviewItems: [
+          ...mergeResult.errors,
+          ...validateFinalBoqMerge(paths, boqBatchManifest),
+        ].filter((item) => isBoqMergeReviewItem(item) || isBoqMergeReviewItem(`boq-merge:${item}`)),
+      });
     }
     if (existsSync(paths.capabilityIndexPath)) {
       capabilityIndexLive = parseTenderCapabilityIndex(readJson(paths.capabilityIndexPath));
@@ -540,6 +760,20 @@ async function runTenderStageUnlocked(
     else if (boqBatchManifest.itemCount === 0) baseMissingItems.push('boq-batches:no-items');
   }
   if (
+    (stage.id === 'project-boundary-conditions' || stage.id === 'boq-five-step-pricing')
+    && !isCapabilitySatisfied('project_boundary', capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest)
+  ) {
+    const suggestion = suggestProjectBoundaryDraftFromBindings({
+      projectDirectory: paths.projectDirectory,
+      projectId: project.projectId,
+    });
+    if (suggestion?.source === 'sa-sanral-bindings') {
+      baseMissingItems.push('project_boundary:sa-draft-available');
+    } else if (suggestion?.source === 'generic') {
+      baseMissingItems.push('project_boundary:generic-draft-available');
+    }
+  }
+  if (
     taskBoard
     && options.execution
     && (request.action === 'start' || request.action === 'resume' || request.action === 'advance')
@@ -547,26 +781,12 @@ async function runTenderStageUnlocked(
   ) {
     baseMissingItems.push('task-board:parent-session-required');
   }
-  if (taskBoard) {
-    // Soft: failed/blocked children surface in the monitor for retry, but must not
-    // paint the whole stage "阻塞" when other batches already delivered results.
-    const failedTasks = taskBoard.tasks.filter((task) => task.status === 'failed').length;
-    const blockedTasks = taskBoard.tasks.filter((task) => task.status === 'blocked').length;
-    if (
-      (request.action === 'start' || request.action === 'resume' || request.action === 'advance')
-      && (failedTasks > 0 || blockedTasks > 0)
-      && !(
-        (documentBatchManifest && documentBatchManifest.completedBatches === documentBatchManifest.batchCount)
-        || (boqBatchManifest && boqBatchManifest.completedBatches === boqBatchManifest.batchCount)
-      )
-    ) {
-      if (failedTasks > 0) baseMissingItems.push(`task-board:failed:${failedTasks}`);
-      if (blockedTasks > 0) baseMissingItems.push(`task-board:blocked:${blockedTasks}`);
-    }
-  }
+  // Soft: failed/blocked children stay visible via batchProgress. They must
+  // not hard-block start/resume/advance — that is exactly when the user
+  // retries remaining batches.
   const shouldEvaluateCompletion = request.action === 'complete'
     || (
-      (request.action === 'status' || request.action === 'resume')
+      (request.action === 'status' || request.action === 'resume' || request.action === 'force_pass')
       && (previous?.status === 'running' || previous?.status === 'complete')
     );
   const completionMissingItems: string[] = [];
@@ -575,11 +795,13 @@ async function runTenderStageUnlocked(
     // Secondary packs remain best-effort and should not stall handoff.
     const primaryOutputs: TenderCapabilityId[] = stage.id === 'tender-document-analysis'
       ? ['document_analysis']
-      : stage.id === 'boq-five-step-pricing'
-        ? ['boq_five_step_pricing']
-        : stage.id === 'planning-and-submission'
-          ? ['execution_plan']
-          : stage.producedCapabilities;
+      : stage.id === 'project-boundary-conditions'
+        ? ['project_boundary']
+        : stage.id === 'boq-five-step-pricing'
+          ? ['boq_five_step_pricing']
+          : stage.id === 'planning-and-submission'
+            ? ['execution_plan']
+            : stage.producedCapabilities;
     completionMissingItems.push(...primaryOutputs
       .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest))
       .map((capability) => `output:${capability}`));
@@ -624,11 +846,29 @@ async function runTenderStageUnlocked(
       && boqBatchManifest.missingItemIds.length === 0
     ) {
       completionMissingItems.push(
-        ...boqMergeRuntimeErrors.map((error) => `boq-merge:${error}`),
-        ...validateFinalBoqMerge(paths, boqBatchManifest).map((error) => `boq-merge:${error}`),
+        ...boqMergeRuntimeErrors.filter((error) => !isBoqMergeReviewItem(error)).map((error) => `boq-merge:${error}`),
+        ...validateFinalBoqMerge(paths, boqBatchManifest)
+          .filter((error) => !isBoqMergeReviewItem(error))
+          .map((error) => `boq-merge:${error}`),
         ...resourceScheduleRuntimeErrors.map((error) => `resource-schedule:${error}`),
         // Soft: resource-schedule MD/pack are best-effort after pricing merge.
+        // Cross-batch unit/rate conflicts are review items in the stage summary.
       );
+    }
+    if (
+      stage.id === 'project-boundary-conditions'
+      && boundaryBatchManifest
+      && boundaryBatchManifest.batchCount > 0
+      && boundaryBatchManifest.completedBatches !== boundaryBatchManifest.batchCount
+    ) {
+      completionMissingItems.push('project_boundary:parse-incomplete');
+    }
+    if (stage.id === 'project-boundary-conditions') {
+      completionMissingItems.push(...boundaryMergeRuntimeErrors.map((error) => `project_boundary:merge:${error}`));
+      const boundaryPack = readProjectBoundaryPack(paths.projectDirectory);
+      if (boundaryPack && !boundaryPack.data.humanConfirmedAt) {
+        completionMissingItems.push('project_boundary:unconfirmed');
+      }
     }
     if (stage.id === 'planning-and-submission') {
       completionMissingItems.push(
@@ -641,8 +881,8 @@ async function runTenderStageUnlocked(
     ? evaluatePlanningSubsteps(project.rootPath, paths.projectDirectory, project.projectId)
     : undefined;
 
-  const deliverablesParentId = taskBoard?.parentSessionId ?? boardParentSessionId ?? projectParentSessionId;
   let organizeResult: OrganizeStageDeliverablesResult | undefined;
+
   if (request.action === 'organize_deliverables') {
     organizeResult = organizeStageDeliverables({
       projectRoot: project.rootPath,
@@ -652,6 +892,7 @@ async function runTenderStageUnlocked(
       parentSessionId: deliverablesParentId,
       documentManifest: documentBatchManifest,
       boqManifest: boqBatchManifest,
+      boundaryManifest: boundaryBatchManifest,
     });
   }
   const deliverablesCatalog = organizeResult?.catalog ?? buildStageDeliverablesCatalog({
@@ -662,15 +903,13 @@ async function runTenderStageUnlocked(
     parentSessionId: deliverablesParentId,
     documentManifest: documentBatchManifest,
     boqManifest: boqBatchManifest,
+    boundaryManifest: boundaryBatchManifest,
   });
   // Persist catalog on status polls so handoff always has a path to cite.
   if (request.action === 'status' || request.action === 'organize_deliverables' || request.action === 'complete') {
     try {
       const catalogPath = stageDeliverablesCatalogPath(paths.projectDirectory, stage.id);
-      mkdirSync(dirname(catalogPath), { recursive: true });
-      const temporary = `${catalogPath}.${process.pid}.${Date.now()}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify(deliverablesCatalog, null, 2)}\n`, 'utf8');
-      renameSync(temporary, catalogPath);
+      writeJsonIfFingerprintUnchanged(catalogPath, deliverablesCatalog);
     } catch {
       // best-effort catalog persistence
     }
@@ -680,12 +919,40 @@ async function runTenderStageUnlocked(
     ? [...baseMissingItems, ...completionMissingItems]
     : baseMissingItems;
   const now = new Date().toISOString();
-  const status = determineStatus(
-    request.action,
-    baseMissingItems,
+  const previousForcePass = previous?.userForcePass;
+  const userForcePass = request.action === 'force_pass'
+    ? {
+        at: now,
+        waivedItems: uniqueUnion(previousForcePass?.waivedItems, baseMissingItems),
+      }
+    : previousForcePass;
+  const waivedSet = new Set(userForcePass?.waivedItems ?? []);
+  const autoRelaxBoundary = shouldAutoRelaxProjectBoundaryGate({
+    requiredCapabilities: stage.requiredCapabilities,
+    completedBatches: boqBatchManifest?.completedBatches ?? 0,
+    previousStatus: previous?.status,
+    hasUsableBoqPack: packHasUsableContent(
+      capabilityPackPath(paths.projectDirectory, 'boq_five_step_pricing'),
+      'boq_five_step_pricing',
+    ),
+  });
+  const relaxedBoundaryItems = autoRelaxBoundary
+    ? baseMissingItems.filter(isProjectBoundaryGateItem)
+    : [];
+  const blockingMissingItems = baseMissingItems.filter((item) => (
+    !waivedSet.has(item) && !relaxedBoundaryItems.includes(item)
+  ));
+  const statusAction: TenderStageRunAction = request.action === 'force_pass' ? 'status' : request.action;
+  let status = determineStatus(
+    statusAction,
+    blockingMissingItems,
     completionMissingItems,
     previous?.status,
   );
+  const hasRunningWork = Boolean(taskBoard?.tasks.some((task) => task.status === 'running'));
+  if (status !== 'blocked' && hasRunningWork) {
+    status = 'running';
+  }
   const stageResult: Omit<TenderStageRunResult, 'sourceBoundary' | 'paths'> = {
     schemaVersion: 1,
     projectId: project.projectId,
@@ -697,11 +964,27 @@ async function runTenderStageUnlocked(
     producedCapabilities: stage.producedCapabilities,
     generatedPacks,
     missingItems: [...new Set(missingItems)],
+    ...(userForcePass && userForcePass.waivedItems.length > 0 ? { userForcePass } : {}),
     batchProgress: documentBatchManifest
       ? documentBatchProgress(documentBatchManifest, taskBoard)
       : boqBatchManifest
         ? boqBatchProgress(boqBatchManifest, taskBoard)
-        : undefined,
+        : boundaryBatchManifest
+          ? boundaryBatchProgress(boundaryBatchManifest, taskBoard)
+          : undefined,
+    ...(stage.id === 'project-boundary-conditions' ? {
+      boundaryDesk: {
+        sources: readBoundarySourceRegistry(paths.projectDirectory, project.projectId).sources,
+        suggestedSpecs: sourceBoundary.files
+          .filter((file) => file.status === 'registered' && (file.kind === 'specification' || file.kind === 'contract_data'))
+          .map((file) => ({
+            documentId: file.documentId,
+            title: file.name,
+            path: file.path,
+            kind: file.kind,
+          })),
+      },
+    } : {}),
     ...(planningSubsteps ? { substeps: planningSubsteps } : {}),
     ...(persisted.migratedFromLegacy || electedMultiParent ? { migratedFromLegacy: true } : {}),
     ...(projectParentSessionId ? { projectParentSessionId } : {}),
@@ -726,7 +1009,7 @@ async function runTenderStageUnlocked(
     updatedAt: now,
     stages: { ...persisted.stages, [stage.id]: stageResult },
   };
-  atomicWriteJson(paths.stageStatePath, nextState);
+  writeJsonIfFingerprintUnchanged(paths.stageStatePath, nextState);
 
   return { ...stageResult, sourceBoundary, paths: publicPaths(paths, taskBoard, stage.id) };
 }
@@ -755,9 +1038,60 @@ function determineStatus(
   return 'ready';
 }
 
+function toTaskBoardAction(action: TenderStageRunAction): TenderStageBoardAction {
+  if (
+    action === 'force_pass'
+    || action === 'suggest_project_boundary'
+    || action === 'save_project_boundary'
+    || action === 'register_boundary_sources'
+    || action === 'organize_deliverables'
+  ) {
+    return 'status';
+  }
+  return action as TenderStageBoardAction;
+}
+
+function uniqueUnion(existing: string[] | undefined, incoming: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [...(existing ?? []), ...incoming]) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+}
+
+function isProjectBoundaryGateItem(item: string): boolean {
+  return item === 'capability:project_boundary' || item.startsWith('project_boundary:');
+}
+
+function isBoqMergeReviewItem(item: string): boolean {
+  const text = item.startsWith('boq-merge:') ? item.slice('boq-merge:'.length) : item;
+  return text.startsWith('resource unit conflict')
+    || text.startsWith('resource rate conflict')
+    || text.startsWith('production basis conflict')
+    || text.startsWith('calendar conflict')
+    || text.startsWith('final BOQ item differs');
+}
+
+function shouldAutoRelaxProjectBoundaryGate(input: {
+  requiredCapabilities: TenderCapabilityId[];
+  completedBatches: number;
+  previousStatus?: TenderStageRunStatus;
+  hasUsableBoqPack: boolean;
+}): boolean {
+  if (!input.requiredCapabilities.includes('project_boundary')) return false;
+  return input.completedBatches > 0
+    || input.hasUsableBoqPack
+    || input.previousStatus === 'running'
+    || input.previousStatus === 'complete';
+}
+
 function defaultStageConcurrency(stageId: string): number {
   if (stageId === 'tender-document-analysis') return 4;
   if (stageId === 'boq-five-step-pricing') return 4;
+  if (stageId === 'project-boundary-conditions') return 4;
   return 1;
 }
 
@@ -838,7 +1172,10 @@ function isCapabilitySatisfied(
     // Index lag: a non-empty pack on disk is still a usable upstream result.
     return packUsable;
   }
-  if (entry.readiness === 'ready') return true;
+  if (entry.readiness === 'ready') {
+    if (capability === 'project_boundary') return packUsable;
+    return true;
+  }
   // Soft: needs_review AND not_ready both advance when the pack has substance.
   // Audit errors stay visible in the quality panel — they must not trap the pipeline.
   if (entry.readiness === 'needs_review' || entry.readiness === 'not_ready') {
@@ -860,6 +1197,7 @@ function capabilityPackPath(projectDirectory: string, capability: TenderCapabili
   const fileName = ({
     document_analysis: 'document-analysis.json',
     boq_reconciliation: 'boq-reconciliation.json',
+    project_boundary: 'project-boundary.json',
     boq_five_step_pricing: 'boq-five-step-pricing.json',
     construction_resource_schedule: 'construction-resource-schedule.json',
     bidder_commitments: 'bidder-commitments.json',
@@ -890,6 +1228,28 @@ function packHasUsableContent(packPath: string, capability: TenderCapabilityId):
     }
     if (capability === 'construction_resource_schedule') {
       return Array.isArray(data.rows) && data.rows.length > 0;
+    }
+    if (capability === 'project_boundary') {
+      const outline = (data.organizationOutline as { text?: unknown } | undefined)?.text;
+      const measurement = data.standards as { measurementStandard?: { id?: string; title?: string } } | undefined;
+      const pricingStandard = (data.pricing as { pricingStandard?: unknown } | undefined)?.pricingStandard;
+      const currency = (data.jurisdiction as { currency?: unknown } | undefined)?.currency;
+      const outlineText = typeof outline === 'string' ? outline.trim() : '';
+      const measurementOk = Boolean(
+        measurement?.measurementStandard?.id?.trim()
+        || measurement?.measurementStandard?.title?.trim(),
+      );
+      const confirmed = typeof data.humanConfirmedAt === 'string' && data.humanConfirmedAt.includes('T');
+      const sources = Array.isArray(data.boundarySources) ? data.boundarySources as Array<{ path?: string; parseStatus?: string }> : [];
+      const parsePending = sources.some((source) => Boolean(source.path) && source.parseStatus === 'registered');
+      return outlineText.length >= 80
+        && measurementOk
+        && typeof pricingStandard === 'string'
+        && pricingStandard.trim().length > 0
+        && typeof currency === 'string'
+        && currency.trim().length > 0
+        && confirmed
+        && !parsePending;
     }
     return true;
   } catch {
@@ -1008,6 +1368,63 @@ async function ensureDocumentAnalysisPackMerged(input: {
   return { errors: [] };
 }
 
+async function ensureBoundaryPackMerged(input: {
+  context: SessionToolContext;
+  paths: ReturnType<typeof resolvePaths>;
+  projectId: string;
+  workingDirectory: string;
+  parentSessionId?: string;
+  manifest: TenderBoundaryBatchManifest;
+  sources: TenderProjectBoundarySource[];
+}): Promise<{ errors: string[] }> {
+  const existing = readProjectBoundaryPack(input.paths.projectDirectory);
+  const suggestion = existing
+    ? null
+    : suggestProjectBoundaryDraftFromBindings({
+        projectDirectory: input.paths.projectDirectory,
+        projectId: input.projectId,
+      });
+  const base = existing?.data ?? suggestion?.draft;
+  if (!base) {
+    return { errors: ['project_boundary pack missing; generate a draft before merging parse reports'] };
+  }
+  const merged = mergeBoundaryParseReports({
+    pack: base,
+    sources: input.sources,
+    manifest: input.manifest,
+  });
+  const packPath = join(input.paths.projectDirectory, 'packs', 'project-boundary.json');
+  const action = existsSync(packPath) ? 'replace' : 'init';
+  const result = await handleTenderCapability(input.context, {
+    action,
+    projectId: input.projectId,
+    capability: 'project_boundary',
+    data: merged,
+  });
+  if (result.isError) {
+    return {
+      errors: [result.content.map((block) => block.text).join('\n') || 'project_boundary merge write failed'],
+    };
+  }
+  const saved = readProjectBoundaryPack(input.paths.projectDirectory);
+  if (saved && input.parentSessionId) {
+    publishProjectBoundaryMarkdown({
+      projectRoot: input.workingDirectory,
+      parentSessionId: input.parentSessionId,
+      pack: saved.data,
+    });
+    organizeStageDeliverables({
+      projectRoot: input.workingDirectory,
+      projectId: input.projectId,
+      projectDirectory: input.paths.projectDirectory,
+      stageId: 'project-boundary-conditions',
+      parentSessionId: input.parentSessionId,
+      boundaryManifest: input.manifest,
+    });
+  }
+  return { errors: [] };
+}
+
 function validateFinalDocumentAnalysisMerge(
   paths: ReturnType<typeof resolvePaths>,
   manifest: TenderDocumentAnalysisBatchManifest,
@@ -1114,6 +1531,7 @@ function documentBatchProgress(
         return true;
       })
       .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
+    validationWarningCount: manifest.batches.reduce((sum, batch) => sum + (batch.validationWarnings?.length ?? 0), 0),
   };
 }
 
@@ -1149,6 +1567,37 @@ function boqBatchProgress(
   };
 }
 
+function boundaryBatchProgress(
+  manifest: TenderBoundaryBatchManifest,
+  taskBoard?: TenderStageTaskBoard,
+): NonNullable<TenderStageRunResult['batchProgress']> {
+  const tasks = taskBoard?.tasks ?? [];
+  const taskByBatchId = new Map(tasks.map((task) => [task.batchId, task]));
+  return {
+    batchType: 'project_boundary',
+    itemCount: manifest.sourceCount,
+    batchCount: manifest.batchCount,
+    completedBatches: Math.max(
+      manifest.completedBatches,
+      tasks.filter((task) => task.status === 'complete').length,
+    ),
+    missingItemCount: manifest.missingSourceIds.length,
+    manifestPath: manifest.manifestPath,
+    ...taskBoardProgress(taskBoard),
+    invalidBatches: manifest.batches
+      .filter((batch) => batch.status === 'invalid')
+      .filter((batch) => {
+        const task = taskByBatchId.get(batch.batchId);
+        if (!task) return true;
+        if (task.status === 'running' || task.status === 'pending' || task.status === 'complete') return false;
+        if (task.linkedIsProcessing) return false;
+        return true;
+      })
+      .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
+    validationWarningCount: manifest.batches.reduce((sum, batch) => sum + (batch.validationWarnings?.length ?? 0), 0),
+  };
+}
+
 function taskBoardProgress(taskBoard?: TenderStageTaskBoard) {
   const tasks = taskBoard?.tasks ?? [];
   // A "failed" row that is still linked to a live processing session is mid-rewrite —
@@ -1176,6 +1625,7 @@ function buildBatchTaskSpecs(
   documentManifest: TenderDocumentAnalysisBatchManifest | undefined,
   boqManifest: TenderBoqBatchManifest | undefined,
   sourceBoundary: TenderSourceBoundary,
+  boundaryManifest?: TenderBoundaryBatchManifest,
 ): TenderStageBatchTaskSpec[] | undefined {
   if (documentManifest) {
     return documentManifest.batches.map((batch) => ({
@@ -1187,6 +1637,19 @@ function buildBatchTaskSpecs(
       validationStatus: batch.status,
       validationErrors: batch.validationErrors,
       name: `Tender document analysis · ${basename(batch.sourcePath)}`,
+    }));
+  }
+  if (boundaryManifest) {
+    if (boundaryManifest.batches.length === 0) return undefined;
+    return boundaryManifest.batches.map((batch) => ({
+      batchId: batch.batchId,
+      briefPath: batch.briefPath,
+      reportPath: batch.reportPath,
+      markdownPath: batch.markdownPath,
+      allowedSourcePaths: batch.sourcePath ? [batch.sourcePath] : [],
+      validationStatus: batch.status,
+      validationErrors: batch.validationErrors,
+      name: `Project boundary parse · ${batch.sourceId}`,
     }));
   }
   if (!boqManifest) return undefined;
@@ -1351,6 +1814,7 @@ function resolvePaths(rootPath: string, projectId: string) {
     stageStatePath: join(projectDirectory, 'stage-state.json'),
     documentAnalysisBatchManifestPath: join(projectDirectory, 'document-analysis-batch-manifest.json'),
     boqBatchManifestPath: join(projectDirectory, 'boq-batch-manifest.json'),
+    boundaryBatchManifestPath: join(projectDirectory, 'boundary-batch-manifest.json'),
   };
 }
 
@@ -1369,6 +1833,7 @@ function publicPaths(
     stageStatePath: paths.stageStatePath,
     documentAnalysisBatchManifestPath: existsSync(paths.documentAnalysisBatchManifestPath) ? paths.documentAnalysisBatchManifestPath : undefined,
     boqBatchManifestPath: existsSync(paths.boqBatchManifestPath) ? paths.boqBatchManifestPath : undefined,
+    boundaryBatchManifestPath: existsSync(paths.boundaryBatchManifestPath) ? paths.boundaryBatchManifestPath : undefined,
     taskBoardPath: taskBoard?.taskBoardPath,
     ...(catalogPath && existsSync(catalogPath) ? { stageDeliverablesCatalogPath: catalogPath } : {}),
   };
@@ -1399,6 +1864,34 @@ function readJson(filePath: string): Record<string, unknown> {
 
 function assertToolSuccess(result: { isError?: boolean; content: Array<{ text?: string }> }): void {
   if (result.isError) throw new Error(result.content.map((block) => block.text).join('\n'));
+}
+
+function omitVolatileTimestamps(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitVolatileTimestamps);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'updatedAt' || key === 'generatedAt') continue;
+      out[key] = omitVolatileTimestamps(nested);
+    }
+    return out;
+  }
+  return value;
+}
+
+function writeJsonIfFingerprintUnchanged(filePath: string, value: unknown): boolean {
+  if (existsSync(filePath)) {
+    try {
+      const previous = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
+      if (JSON.stringify(omitVolatileTimestamps(previous)) === JSON.stringify(omitVolatileTimestamps(value))) {
+        return false;
+      }
+    } catch {
+      // fall through to write
+    }
+  }
+  atomicWriteJson(filePath, value);
+  return true;
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {

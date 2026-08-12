@@ -106,6 +106,14 @@ describe('business tender stage helpers', () => {
     expect(summary.missingLabel).toContain('缺少可读解析 MD：book2')
   })
 
+  test('summarize formats project boundary confirmation and parse gates', () => {
+    const summary = summarizeTenderStage(stubRun({
+      missingItems: ['project_boundary:unconfirmed', 'project_boundary:parse-incomplete'],
+    }))
+    expect(summary.missingLabel).toContain('尚未人工确认')
+    expect(summary.missingLabel).toContain('界限来源解析批次未完成')
+  })
+
   test('summarize formats planning-substep missing items', () => {
     const summary = summarizeTenderStage(stubRun({
       stageId: 'planning-and-submission',

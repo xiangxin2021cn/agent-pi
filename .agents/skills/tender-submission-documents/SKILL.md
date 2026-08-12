@@ -18,6 +18,7 @@ Use `tender_capability` as the submission-documents system of record. This skill
 - Other specialist formats remain optional unless the tender or user requires them.
 - Keep internal evidence matrices, audit ledgers, and review notes out of formal deliverables unless explicitly requested.
 - Match the tender template, language, headings, layout intent, and evaluation criteria when a template or instruction is provided.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Formal returnables are the employer's document in the employer's terms, with AI filler stripped — not an AI report about the bid.
 
 ## Workflow
 

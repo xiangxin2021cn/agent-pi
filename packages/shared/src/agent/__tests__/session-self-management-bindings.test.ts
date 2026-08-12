@@ -217,6 +217,25 @@ describe('attachSessionSelfManagementBindings', () => {
     expect(ctx.workingDirectory).toBe('/tmp/tender-pack-v2');
   });
 
+  it('accepts workingDirectory assignment after bindings (model-switch remount safe)', () => {
+    const ctx = createBaseContext(sessionId);
+    ctx.workingDirectory = '/tmp/from-config';
+    attachSessionSelfManagementBindings(ctx, sessionId);
+
+    expect(() => {
+      ctx.workingDirectory = '/tmp/after-remount';
+    }).not.toThrow();
+    expect(ctx.workingDirectory).toBe('/tmp/after-remount');
+
+    registerSessionScopedToolCallbacks(sessionId, {
+      getSessionInfoFn: () => makeSessionInfo({
+        id: sessionId,
+        workingDirectory: '/tmp/live-metadata',
+      }),
+    });
+    expect(ctx.workingDirectory).toBe('/tmp/live-metadata');
+  });
+
   it('getSpawnStatus defaults to current session ID and exposes report readiness', async () => {
     const ctx = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(ctx, sessionId);

@@ -22,7 +22,7 @@ import type { StoredAttachment } from '@craft-agent/core/types'
 import { CONFIG_DIR, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath, type ProjectMemoryScope } from '@craft-agent/shared/sessions'
+import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath, projectSessionForChatUi, type ProjectMemoryScope } from '@craft-agent/shared/sessions'
 import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
 import {
   handleFileMemorySourceCreate,
@@ -597,8 +597,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (_ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
     const session = await sessionManager.getSession(sessionId)
+    // Display projection only — SessionManager retains the full transcript for the agent.
+    const projected = session ? projectSessionForChatUi(session) : session
     end()
-    return session
+    return projected
   })
 
   // Create a new session

@@ -51,15 +51,45 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.5.0.**
+**Current release: V2.6.0.**
 
-**当前发布版：V2.5.0。**
+**当前发布版：V2.6.0。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.0 Project Boundary Desk + Workbench UX / V2.6.0 项目边界登记台与工作台体验
+
+V2.6.0 makes tender jurisdiction and **project boundary** an explicit registration/confirmation desk before BOQ pricing, hard-fences pricing briefs to that pack, and ships workbench UX that stays usable while long jobs run. New projects default to `generic-international`; SANRAL/C5.1 remains a selectable `sa-sanral-highway` profile. Packaged runtime: Claude Agent SDK **0.3.228**; Pi **0.84.1**.
+
+V2.6.0 把辖区与项目边界做成组价前可确认的登记台，组价 brief 以该包为硬围栏；同时补齐长任务下的工作台体验。新项目默认 `generic-international`；SANRAL/C5.1 仍可选。打包运行时：Claude Agent SDK **0.3.228**；Pi **0.84.1**。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Boundary desk + BOQ fence | Users pick enterprise knowledge, bind this-tender specs, and attach bidder-owned files. The parent session parses them into `project_boundary`; that pack is injected into BOQ briefs as a hard fence. Unconfirmed or still-parsing packs cannot unlock pricing. | 用户选择企业知识库、绑定本标规范、附上投标人自有文件；主会话解析写入 `project_boundary`，该包作为组价硬围栏。未确认或仍在解析时不能解锁组价。 |
+| Jurisdiction profiles | Registry `knowledge/profiles.json`. Default `generic-international` (`knowledge/tender-generic/`); SANRAL/C5.1 is `sa-sanral-highway`. | 新项目默认通用国际包；SANRAL/C5.1 为可选辖区。 |
+| DeepSeek vision bridge | Settings → AI → Edit DeepSeek connection → **Vision support**. A VLM key (default Zhipu GLM-4.6V Flash) reads attached images in the same turn. | DeepSeek V4 不能直接看图；开启视觉支持后由 VLM 同轮读图转文字。 |
+| Force-pass | Monitor toolbar **强制放行** next to 检查 when a stage is blocked or missing items (including planning substeps). Completed batches are not deleted. | 流程监控顶栏「检查」旁可强制放行；已完成批次不会被删。 |
+| Live HTML artifacts | Session-file `.html` / `.htm` runs as a full webpage (scripts, relative CSS/JS, `/assets/`). **Open in browser** uses the in-app browser. Chat `html-preview` blocks stay sandboxed. | 右侧文件树打开 HTML 按完整网页运行；对话里的 `html-preview` 仍沙箱禁脚本。 |
+| Session Files on demand | File tree no longer auto-reloads on every disk write. Reloads on session change, folder expand, or the refresh button. | 右侧文件树不再整树自动刷新；展开文件夹或点刷新才更新。 |
+| Writing contract | Parse memos, BOQ workpapers, methodology, programme/cash-flow narratives, and returnables must be tender-grounded with AI filler stripped. | 解析纪要、组价底稿和正式回标须紧扣招标资料、去掉 AI 套话。 |
+| Official Outputs BOQ MD | Chapter workpapers, `施工资源消耗总表.md`, and a stage summary publish into `Agent Pi Outputs/<parentSessionId>/`. | 组价完成后章节底稿与资源总表出现在主会话正式输出。 |
+| Parallel resume | Idle children continue in parallel up to `maxConcurrency` (default 4). Standby/wake `EPIPE` from dead Pi subprocesses no longer exits the app. | 恢复补位并行吃满并发；待机唤醒僵死子进程不再冲垮主进程。 |
+
+### V2.5.3 Stream Cap + Monitor Continue / V2.5.3 大工具输出上限与监控接续
+
+V2.5.3 caps streamed tool output at 4 MiB per call so huge PDF/OCR/Excel streams no longer crash the main process, and the tender monitor continues idle child sessions instead of spawning duplicates.
+
+V2.5.3 将单次工具流式输出上限设为 4 MiB，避免大 PDF/OCR/Excel 撑崩主进程；投标监控接续已有空闲子会话，不再重复派发。
+
+### V2.5.2 Soft Gates + Official Outputs MD / V2.5.2 软门禁与正式输出 MD
+
+V2.5.2 softens tender stage gates so usable results advance the pipeline, publishes analysis Markdown into Official Outputs, adds a panel deliverables quality check, and keeps the Working Folder collapsed by default on tender main sessions.
+
+V2.5.2 放宽投标阶段门禁（有可用结果即可推进），把解析 MD 发布到正式输出，增加监控面板「成果质检并整理」，并默认收起主会话工作文件夹。
 
 ### V2.5.0 Tender Control Plane + Runtime Uplift / V2.5.0 投标控制面与运行时升级
 
@@ -158,7 +188,7 @@ Older release details are available on GitHub Releases.
 | Enterprise Knowledge Base | Promotes local files into stable file-memory MCP knowledge sources with category/folder metadata and explicit user activation. | 将本地文件提升为稳定 file-memory MCP 知识源，带分类/文件夹元数据，并要求用户显式启用。 |
 | Working-directory isolation | Locks sessions to a physical working directory so project memory and outputs do not leak across projects. | 会话锁定物理工作目录，项目记忆和正式成果按项目隔离。 |
 | Formal outputs | Promotes deliverables into `Agent Pi Outputs` and labels files as formal output, attachment, data file, or process artifact. | 将成果提升到 `Agent Pi Outputs`，并区分正式成果、附件、数据文件和过程文件。 |
-| File preview | Opens Markdown, text, code, JSON, PDF, Office, Excel, image, and sidecar Markdown previews inside the app where possible. | 在应用内预览 Markdown、文本、代码、JSON、PDF、Office、Excel、图片及 Markdown 伴随文件。 |
+| File preview | Opens Markdown, text, code, JSON, PDF, Office, Excel, image, sidecar Markdown, and live HTML artifacts (scripts + relative assets) inside the app where possible. | 在应用内预览 Markdown、文本、代码、JSON、PDF、Office、Excel、图片、Markdown 伴随文件，以及可运行脚本与相对资源的 HTML 产物。 |
 | Multi-agent sessions | Spawns sub-agents for parallel work while keeping them folded under the parent task and project directory. | 支持分智能体并行处理，并折叠到主会话和项目目录下。 |
 
 ## Download / 下载

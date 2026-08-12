@@ -663,6 +663,10 @@ export default function AiSettingsPage() {
     activePreset?: string
     models?: ApiKeySubmitData['models']
     customApi?: CustomEndpointApi
+    visionEnabled?: boolean
+    visionApiKey?: string
+    visionBaseUrl?: string
+    visionModel?: string
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
@@ -843,10 +847,16 @@ export default function AiSettingsPage() {
   const handleEditConnection = useCallback(async (connection: LlmConnectionWithStatus) => {
     // Fetch stored API key (best-effort — if IPC not available yet, skip pre-fill)
     let apiKey: string | undefined
+    let visionApiKey: string | undefined
     try {
       apiKey = (await window.electronAPI.getLlmConnectionApiKey(connection.slug)) ?? undefined
     } catch {
       // IPC method may not exist if app wasn't restarted after code change
+    }
+    try {
+      visionApiKey = (await window.electronAPI.getLlmConnectionVisionApiKey(connection.slug)) ?? undefined
+    } catch {
+      // Older builds without the vision-key IPC
     }
 
     // Build model string from connection's models array
@@ -868,6 +878,10 @@ export default function AiSettingsPage() {
       activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
       models: modelEntries,
       customApi: connection.customEndpoint?.api,
+      visionEnabled: connection.visionBridge?.enabled === true,
+      visionApiKey,
+      visionBaseUrl: connection.visionBridge?.baseUrl,
+      visionModel: connection.visionBridge?.model,
     })
 
     // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)

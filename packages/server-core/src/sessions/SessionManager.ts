@@ -21,7 +21,7 @@ import {
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
 import { LLM_QUERY_TIMEOUT_MS, withTimeout, type LLMQueryRequest, type LLMQueryResult } from '@craft-agent/shared/agent/llm-tool'
-import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
+import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName, connectionUsesVisionBridge, resolveVisionBridgeConfig } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -45,6 +45,7 @@ import {
   // Session persistence functions
   listSessions as listStoredSessions,
   loadSession as loadStoredSession,
+  loadSessionAsync as loadStoredSessionAsync,
   saveSession as saveStoredSession,
   createSession as createStoredSession,
   deleteSession as deleteStoredSession,
@@ -91,6 +92,7 @@ import {
   markSubAgentHandoffReady,
   mergeSessionOrchestrationState,
   resumeSessionOrchestrationForFollowUp,
+  syncOrchestrationSelectedSources,
   transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
   pickSessionFields,
@@ -122,6 +124,7 @@ import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, resolveAutomationsConfigPath, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
+import { applyVisionBridgeToMessage } from './vision-bridge'
 import type { SessionSpawnStatus } from '@craft-agent/session-tools-core'
 import { GOAL_FULL_TEXT_AUDIT_MAX_BYTES, GoalController, type GoalEvidencePackageWriter, type GoalFileVerifier, type GoalReviewInput, type GoalReviewResult, type GoalSpawnedSessionSummary } from './goal-controller'
 import { enforceGoalCompletionGates } from './goal-completion-gates'
@@ -2326,6 +2329,32 @@ export class SessionManager implements ISessionManager {
     }, managed.workspace.id)
   }
 
+  /**
+   * Keep the hard source-boundary snapshot aligned with live enabled sources.
+   * Model-switch MCP remounts used to leave policy.selectedSourceSlugs frozen
+   * (e.g. anysearch) while new tools were already mounted, so image/other MCP
+   * calls stayed blocked even after activate_source succeeded.
+   */
+  private syncLiveSourceBoundary(managed: ManagedSession): void {
+    const orchestration = managed.goalState?.orchestration
+    if (!orchestration) return
+    const now = Date.now()
+    const next = syncOrchestrationSelectedSources(orchestration, managed.enabledSourceSlugs, now)
+    if (next === orchestration) return
+    managed.goalState = {
+      ...managed.goalState!,
+      updatedAt: now,
+      orchestration: next,
+    }
+    managed.agent?.updateSessionGoalState?.(managed.goalState)
+    this.persistSession(managed)
+    this.sendEvent({
+      type: 'goal_state_changed',
+      sessionId: managed.id,
+      goalState: managed.goalState,
+    }, managed.workspace.id)
+  }
+
   private captureUserQualityFeedback(managed: ManagedSession, message: string): void {
     if (!/(?:没(?:有)?|未|不符合|跑偏|漏|遗漏|错误|失败|质量差|没做到|不对|重新|修正|纠正|did not|didn't|failed|wrong|missing|omitted|off[- ]scope)/i.test(message)) {
       return
@@ -3103,6 +3132,7 @@ export class SessionManager implements ISessionManager {
     await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source reload', managed.poolServer?.url)
 
     await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+    this.syncLiveSourceBoundary(managed)
 
     sessionLog.info(`Sources reloaded for session ${managed.id}: ${Object.keys(mcpServers).length} MCP, ${Object.keys(apiServers).length} API`)
   }
@@ -3540,6 +3570,7 @@ export class SessionManager implements ISessionManager {
 
       // Clear any refresh cooldown so the source is immediately usable
       managed.tokenRefreshManager.clearCooldown(result.sourceSlug)
+      this.syncLiveSourceBoundary(managed)
     }
 
     // Persist session with updated auth message and enabled sources
@@ -3816,6 +3847,31 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
+   * Tender task-board reconcile only needs processing/status/goal — never the
+   * transcript. `getSession()` lazy-loads JSONL and is what starved the main
+   * process on every Overview/monitor tick.
+   */
+  getSessionRuntimeState(sessionId: string): {
+    id: string
+    isProcessing: boolean
+    sessionStatus?: string
+    goalState?: { status: string }
+  } | null {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return null
+    return {
+      id: managed.id,
+      isProcessing: managed.isProcessing,
+      sessionStatus: managed.sessionStatus,
+      ...(managed.goalState ? { goalState: { status: managed.goalState.status } } : {}),
+    }
+  }
+
+  hasLiveAgentRuntime(sessionId: string): boolean {
+    return Boolean(this.sessions.get(sessionId)?.agent)
+  }
+
+  /**
    * Ensure messages are loaded for a managed session.
    * Uses promise deduplication to prevent race conditions when multiple
    * concurrent calls (e.g., rapid session switches + message send) try
@@ -3844,7 +3900,9 @@ export class SessionManager implements ISessionManager {
    * Internal: Load messages from disk storage into the managed session.
    */
   private async loadMessagesFromDisk(managed: ManagedSession): Promise<void> {
-    const storedSession = loadStoredSession(managed.workspace.rootPath, managed.id)
+    const storedSession = await loadStoredSessionAsync(managed.workspace.rootPath, managed.id)
+    // persistSession may have sync-hydrated while we awaited disk I/O.
+    if (managed.messagesLoaded) return
     if (storedSession) {
       managed.messages = (storedSession.messages || []).map(storedToMessage)
       managed.tokenUsage = storedSession.tokenUsage
@@ -4528,6 +4586,7 @@ export class SessionManager implements ISessionManager {
       managed.backendRuntimeSignature = runtimeSignature
       managed.backendRestartSignature = restartSignature
       sessionLog.info(`Refreshed runtime config for session ${managed.id} (${reason})`)
+      this.syncLiveSourceBoundary(managed)
     } else {
       sessionLog.info(`Recreating backend runtime for session ${managed.id} after config change (${reason})`)
       await this.disposeManagedAgentRuntime(managed, 'runtime config refresh')
@@ -5926,6 +5985,7 @@ export class SessionManager implements ISessionManager {
         await applyBridgeUpdates(managed.agent!, sessionPath, allEnabledSources, mcpServers, managed.id, workspaceRootPath, 'source enable', managed.poolServer?.url)
 
         await managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
+        this.syncLiveSourceBoundary(managed)
 
         sessionLog.info(`Auto-enabled source ${sourceSlug} for session ${managed.id}`)
 
@@ -6380,6 +6440,7 @@ export class SessionManager implements ISessionManager {
 
     // Store the selection
     managed.enabledSourceSlugs = sourceSlugs
+    this.syncLiveSourceBoundary(managed)
 
     // If agent exists, build and apply servers immediately
     if (managed.agent) {
@@ -6584,11 +6645,36 @@ export class SessionManager implements ISessionManager {
     })
   }
 
-  private assertSpawnMemoryAvailable(): void {
+  /** Soft memory gate shared by spawn_session and tender continueSession. */
+  assertSpawnMemoryAvailable(): void {
     const decision = this.evaluateSpawnMemoryGuard()
     if (!decision.blocked) return
     sessionLog.warn(`Blocking spawn_session due to memory pressure: ${decision.reason}`)
     throw new Error(decision.message ?? `spawn_session blocked by memory guard (${decision.reason})`)
+  }
+
+  /**
+   * Dispose idle agent backends (e.g. after OS sleep/wake). Processing sessions
+   * are left alone; the next sendMessage will respawn a fresh subprocess.
+   */
+  async disposeIdleAgentRuntimes(reason = 'host resume'): Promise<number> {
+    let disposed = 0
+    for (const managed of this.sessions.values()) {
+      if (managed.isProcessing || managed.messageQueue.length > 0) continue
+      if (!managed.agent) continue
+      try {
+        await this.disposeManagedAgentRuntime(managed, reason)
+        disposed += 1
+      } catch (error) {
+        sessionLog.warn(
+          `Failed to dispose idle runtime for ${managed.id} (${reason}): ${error instanceof Error ? error.message : error}`,
+        )
+      }
+    }
+    if (disposed > 0) {
+      sessionLog.info(`Disposed ${disposed} idle agent runtime(s) after ${reason}`)
+    }
+    return disposed
   }
 
   private getParentSpawnHandoffBarrierDecision(parent: ManagedSession): ParentSpawnHandoffBarrierContext {
@@ -8367,6 +8453,7 @@ export class SessionManager implements ISessionManager {
           if (toEnable.length > 0) {
             managed.enabledSourceSlugs = [...(managed.enabledSourceSlugs || []), ...toEnable]
             sessionLog.info(`Pre-enabled sources for skill invocation: ${toEnable.join(', ')}`)
+            this.syncLiveSourceBoundary(managed)
             this.persistSession(managed)
             this.sendEvent({
               type: 'sources_changed',
@@ -8386,6 +8473,9 @@ export class SessionManager implements ISessionManager {
     const workspaceRootPath = managed.workspace.rootPath
     const enabledSlugs = managed.enabledSourceSlugs ?? []
     const hasSources = enabledSlugs.length > 0
+    // Align the frozen source-boundary snapshot before getOrCreateAgent so a
+    // model-switch recreate does not inherit an anysearch-only fence.
+    this.syncLiveSourceBoundary(managed)
 
     // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
     // runs its internal cold-session build. Otherwise that build sees stale tokens
@@ -8432,6 +8522,7 @@ export class SessionManager implements ISessionManager {
         const intendedSlugs = usableSources.map(s => s.config.slug)
         await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
         await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
+        this.syncLiveSourceBoundary(managed)
         sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
       }
       sendSpan.mark('servers.applied')
@@ -8497,7 +8588,28 @@ export class SessionManager implements ISessionManager {
         messageBackendContext.connection,
         messageBackendContext.resolvedModel,
       )
-      if (modelInputAttachments.omittedImages.length > 0) {
+      if (
+        connectionUsesVisionBridge(messageBackendContext.connection)
+        && modelInputAttachments.omittedImages.length > 0
+      ) {
+        const omitted = modelInputAttachments.omittedImages
+        sessionLog.info(`Vision bridge: reading ${omitted.length} image attachment(s) for ${messageBackendContext.resolvedModel}`)
+        this.sendEvent({
+          type: 'info',
+          sessionId,
+          message: omitted.length === 1
+            ? `Reading attached image (${omitted[0]!.name}) for ${messageBackendContext.resolvedModel}…`
+            : `Reading ${omitted.length} attached images for ${messageBackendContext.resolvedModel}…`,
+          level: 'info',
+        }, managed.workspace.id)
+        const visionKey = await getCredentialManager().getLlmVisionApiKey(messageBackendContext.connection!.slug) ?? ''
+        effectiveMessage = await applyVisionBridgeToMessage({
+          message: effectiveMessage,
+          images: omitted,
+          config: resolveVisionBridgeConfig(messageBackendContext.connection!.visionBridge),
+          apiKey: visionKey,
+        })
+      } else if (modelInputAttachments.omittedImages.length > 0) {
         const omittedNames = modelInputAttachments.omittedImages.map(a => a.name).join(', ')
         sessionLog.info(`Omitting ${modelInputAttachments.omittedImages.length} image attachment(s) from model input for ${messageBackendContext.resolvedModel}: ${omittedNames}`)
         this.sendEvent({

@@ -2,13 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { getBusinessWorkflow } from './business-workflows.ts'
 
 describe('business workflows', () => {
-  test('tender workflow is the V2.5 four-stage controllable pipeline', () => {
+  test('tender workflow is the controllable pipeline with a writing contract on every stage', () => {
     const workflow = getBusinessWorkflow('tender')
     const stageIds = workflow.stages.map((stage) => stage.id)
 
     expect(stageIds).toEqual([
       'project-setup',
       'tender-document-analysis',
+      'project-boundary-conditions',
       'boq-five-step-pricing',
       'planning-and-submission',
     ])
@@ -20,12 +21,16 @@ describe('business workflows', () => {
       .not.toContain('evaluation_strategy')
     expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.skillSlug)
       .toBe('tender-document-parsing')
+    expect(workflow.stages.find((stage) => stage.id === 'project-boundary-conditions')?.producesCapabilities)
+      .toEqual(['project_boundary'])
+    expect(workflow.stages.find((stage) => stage.id === 'project-boundary-conditions')?.dispatchPolicy)
+      .toBe('controlled-subagents')
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.requiredCapabilities)
-      .toEqual(['document_analysis', 'boq_reconciliation'])
+      .toEqual(['document_analysis', 'project_boundary'])
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.producesCapabilities)
       .toEqual(['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'])
     expect(workflow.stages.find((stage) => stage.id === 'planning-and-submission')?.requiredCapabilities)
-      .toEqual(['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'])
+      .toEqual(['boq_five_step_pricing'])
     expect(workflow.stages.find((stage) => stage.id === 'planning-and-submission')?.producesCapabilities)
       .toEqual([
         'execution_plan',
@@ -38,6 +43,8 @@ describe('business workflows', () => {
       .toContain('MS Project')
     expect(workflow.stages.find((stage) => stage.id === 'planning-and-submission')?.prompt)
       .toContain('P6')
+    expect(workflow.stages.every((stage) => /专业化写作|去 AI|原术语|本标/.test(stage.prompt)))
+      .toBe(true)
   })
 
   test.each(['tender', 'delivery', 'investment'] as const)('%s has a stable first stage', (moduleId) => {

@@ -3,7 +3,8 @@
  *
  * Features:
  * - Recursive tree view with expandable folders (matches sidebar styling)
- * - File watcher for auto-refresh when files change
+ * - Manual refresh (and refresh on folder expand) — no live watcher, so the
+ *   tree does not collapse while the user is clicking
  * - Click to preview in-app, double-click to open
  * - Right-click context menu with "Open" / "Show in {file manager}" actions
  * - Persisted expanded folder state per session
@@ -18,7 +19,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
-import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight, Database, Paperclip } from 'lucide-react'
+import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight, ExternalLink, ArrowUpRight, Database, Paperclip, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   ContextMenu,
@@ -38,12 +39,13 @@ import {
   dispatchSessionAttachmentsLoading,
 } from '@/components/app-shell/input/attachment-events'
 import { routes } from '../../../shared/routes'
-import { restoreSessionFileWatch } from './session-files-watch'
 import {
   KNOWLEDGE_BASE_METADATA_CATEGORY,
   isSupportedKnowledgeBaseFile,
   suggestKnowledgeBaseCategory,
 } from '@craft-agent/shared/sources/knowledge-base'
+import { useAtomValue } from 'jotai'
+import { loadedSessionsAtom } from '@/atoms/sessions'
 import { KnowledgeBaseCategoryDialog } from './KnowledgeBaseCategoryDialog'
 
 function isKnowledgeBaseCandidate(file: SessionFile): boolean {
@@ -325,11 +327,10 @@ function FileTreeItem({
   const { t } = useTranslation()
   const isDirectory = file.type === 'directory'
   const isExpanded = expandedPaths.has(file.path)
-  const hasChildren = isDirectory && (((file.children?.length ?? 0) > 0) || file.hasMoreChildren)
   const isLoadingChildren = loadingDirectoryPaths.has(file.path)
 
   const handleClick = () => {
-    if (isDirectory && hasChildren) {
+    if (isDirectory) {
       onToggleExpand(file)
     } else {
       onFileClick(file)
@@ -343,7 +344,7 @@ function FileTreeItem({
   // Handle chevron click separately to toggle expand
   const handleChevronClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (hasChildren) {
+    if (isDirectory) {
       onToggleExpand(file)
     }
   }
@@ -363,11 +364,11 @@ function FileTreeItem({
         // Same padding for all items - nested indentation handled by container
         "px-2"
       )}
-      title={`${file.path}\n${file.type === 'file' ? formatFileSize(file.size) : 'Directory'}${sourceLabel ? `\n${sourceLabel}` : ''}\n\nClick to ${hasChildren ? 'expand' : 'reveal'}, double-click to open`}
+      title={`${file.path}\n${file.type === 'file' ? formatFileSize(file.size) : 'Directory'}${sourceLabel ? `\n${sourceLabel}` : ''}\n\nClick to ${isDirectory ? 'expand' : 'reveal'}, double-click to open`}
     >
       {/* Icon container with hover-revealed chevron for expandable items */}
       <span className="relative h-3.5 w-3.5 shrink-0 flex items-center justify-center">
-        {hasChildren ? (
+        {isDirectory ? (
           <>
             {/* Main icon - hidden on hover */}
             <span className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity duration-150">
@@ -449,7 +450,7 @@ function FileTreeItem({
         </StyledContextMenuContent>
       </ContextMenu>
       {/* Expandable children with framer-motion animation - matches LeftSidebar exactly */}
-      {hasChildren && (
+      {isDirectory && (
         <AnimatePresence initial={false}>
           {isExpanded && (
             <motion.div
@@ -525,12 +526,33 @@ function replaceDirectoryChildren(files: SessionFile[], directoryPath: string, c
   })
 }
 
+async function hydrateExpandedDirectories(
+  sessionId: string,
+  roots: SessionFile[],
+  expanded: Set<string>,
+  applyChildren: (directoryPath: string, children: SessionFile[]) => void,
+): Promise<void> {
+  const visit = async (nodes: SessionFile[]) => {
+    for (const node of nodes) {
+      if (node.type !== 'directory' || !expanded.has(node.path)) continue
+      const children = await window.electronAPI.getSessionFiles(sessionId, {
+        parentPath: node.path,
+        maxDepth: 1,
+      })
+      applyChildren(node.path, children)
+      await visit(children)
+    }
+  }
+  await visit(roots)
+}
+
 /**
  * Section displaying session files as a tree
  */
 export function SessionFilesSection({ sessionId, className, sessionFolderPath, hideHeader = false }: SessionFilesSectionProps) {
   const { t } = useTranslation()
   const session = useSession(sessionId ?? '')
+  const messagesLoaded = useAtomValue(loadedSessionsAtom).has(sessionId ?? '')
   const workingDirectoryKey = session?.workingDirectory ?? ''
   const [files, setFiles] = useState<SessionFile[]>([])
   const [outputDirectory, setOutputDirectory] = useState<SessionOutputDirectory | null>(null)
@@ -541,6 +563,8 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [knowledgeBaseAiSuggestion, setKnowledgeBaseAiSuggestion] = useState<{ category: string; reason?: string; fallback?: boolean } | null>(null)
   const [isSuggestingKnowledgeBaseCategory, setIsSuggestingKnowledgeBaseCategory] = useState(false)
   const mountedRef = useRef(true)
+  const expandedPathsRef = useRef(expandedPaths)
+  expandedPathsRef.current = expandedPaths
 
   // Load expanded paths from storage when session changes.
   // If no value exists yet, keep the tree collapsed except for the formal output root.
@@ -566,7 +590,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   }, [sessionId])
 
   // Load files
-  const loadFiles = useCallback(async () => {
+  const loadFiles = useCallback(async (options?: { hydrateExpanded?: boolean }) => {
     if (!sessionId) {
       setFiles([])
       setOutputDirectory(null)
@@ -619,6 +643,14 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
           saveExpandedPaths(next)
           return next
         })
+        if (options?.hydrateExpanded) {
+          const expanded = new Set(expandedPathsRef.current)
+          if (outputInfo?.exists) expanded.add(outputInfo.path)
+          await hydrateExpandedDirectories(sessionId, sessionFiles, expanded, (directoryPath, children) => {
+            if (!mountedRef.current) return
+            setFiles((prev) => replaceDirectoryChildren(prev, directoryPath, children))
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to load session files:', error)
@@ -665,39 +697,40 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [loadingDirectoryPaths, sessionId, t])
 
-  // Initial load and file watcher setup
+  // Wait for chat messages before scanning the file tree. Tender working
+  // directories and GET_MESSAGES used to race on the main process, so switching
+  // into 投标工作台 left the transcript spinner frozen.
   useEffect(() => {
     mountedRef.current = true
-    loadFiles()
-
-    if (sessionId) {
-      // Start watching for file changes
-      void window.electronAPI.watchSessionFiles(sessionId)
-
-      // Listen for file change events
-      const unsubscribe = window.electronAPI.onSessionFilesChanged((changedSessionId) => {
-        if (changedSessionId === sessionId && mountedRef.current) {
-          void loadFiles()
-        }
-      })
-
-      const unsubscribeReconnect = window.electronAPI.onReconnected(() => {
-        if (!mountedRef.current) return
-        void restoreSessionFileWatch(sessionId, loadFiles)
-      })
-
+    if (!sessionId) {
+      setFiles([])
+      setOutputDirectory(null)
+      setIsLoading(false)
       return () => {
         mountedRef.current = false
-        unsubscribe()
-        unsubscribeReconnect()
-        void window.electronAPI.unwatchSessionFiles()
       }
     }
 
+    if (messagesLoaded) {
+      void loadFiles()
+      return () => {
+        mountedRef.current = false
+      }
+    }
+
+    setFiles([])
+    setOutputDirectory(null)
+    setIsLoading(true)
+
+    const fallback = window.setTimeout(() => {
+      void loadFiles()
+    }, 8_000)
+
     return () => {
       mountedRef.current = false
+      window.clearTimeout(fallback)
     }
-  }, [sessionId, workingDirectoryKey, loadFiles])
+  }, [sessionId, workingDirectoryKey, messagesLoaded, loadFiles])
 
   // Use the link interceptor (via context) so file clicks show in-app previews
   // instead of always opening in the file manager / default app.
@@ -749,10 +782,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   // Toggle folder expanded state
   const handleToggleExpand = useCallback((file: SessionFile) => {
     const path = file.path
-    const shouldLoadChildren = file.type === 'directory'
-      && !expandedPaths.has(path)
-      && (file.childrenLoaded === false || file.hasMoreChildren)
-      && ((file.children?.length ?? 0) === 0)
+    const expanding = !expandedPaths.has(path)
 
     setExpandedPaths((prev) => {
       const next = new Set(prev)
@@ -765,7 +795,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       return next
     })
 
-    if (shouldLoadChildren) {
+    if (file.type === 'directory' && expanding) {
       void loadDirectoryChildren(file)
     }
   }, [expandedPaths, loadDirectoryChildren, saveExpandedPaths])
@@ -930,6 +960,15 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 select-none">
           <span className="text-xs font-medium text-muted-foreground">{t("chat.sessionFiles")}</span>
           <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              title={t('chat.sessionFilesRefresh')}
+              disabled={isLoading}
+              onClick={() => void loadFiles({ hydrateExpanded: true })}
+              className="text-foreground/50 hover:text-foreground/80 disabled:opacity-40"
+            >
+              <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
+            </button>
             {outputDirectory && (
               <button
                 type="button"

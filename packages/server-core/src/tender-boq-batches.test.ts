@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TenderBoqReconciliationData } from '@agent-pi/business-core/tender';
@@ -45,8 +45,12 @@ describe('tender BOQ batch manifest', () => {
     expect(brief.spawnPolicy).toBe('forbidden');
     expect(brief.finalArtifactPolicy).toBe('report-and-markdown');
     expect(brief.markdownPath).toContain('boq-pricing');
-    expect(brief.qualityStandard.id).toBe('c51_pure_direct_cost_v1');
-    expect(brief.objective).toContain('methodStandard');
+    expect(brief.qualityStandard.id).toBe('generic_direct_cost_v1');
+    expect(brief.objective).toContain('pricingStandard');
+    expect(brief.objective).toContain('projectBoundary');
+    expect(brief.objective).toContain('Honor writingContract');
+    expect(brief.writingContract).toContain('THIS tender');
+    expect(brief.writingContract).toContain('综上所述');
     if (brief.methodStandard) {
       expect(brief.methodStandard.role).toBe('method_and_depth_standard');
       expect(brief.methodStandard.path.length).toBeGreaterThan(0);
@@ -60,6 +64,78 @@ describe('tender BOQ batch manifest', () => {
     expect(itemSchema.required).toContain('productivityBasis');
     expect(itemSchema.required).toContain('directCostSummary');
     expect(itemSchema.required).not.toContain('initialCashFlow');
+
+    const briefBefore = readFileSync(manifest.batches[0]!.briefPath, 'utf8');
+    const manifestBefore = readFileSync(manifest.manifestPath, 'utf8');
+    const refreshed = createOrRefreshBoqBatchManifest(root, 'n3', boqData(45), new Map([
+      ['boq', 'C:/inputs/BOQ.xlsx'],
+      ['spec', 'C:/inputs/Specification.pdf'],
+    ]));
+    expect(refreshed.generatedAt).toBe(manifest.generatedAt);
+    expect(readFileSync(manifest.batches[0]!.briefPath, 'utf8')).toBe(briefBefore);
+    expect(readFileSync(manifest.manifestPath, 'utf8')).toBe(manifestBefore);
+  });
+
+  test('injects projectBoundary fence from registered sources and extracted inventory', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-boq-fence-'));
+    mkdirSync(join(root, 'packs'), { recursive: true });
+    writeFileSync(join(root, 'packs', 'project-boundary.json'), JSON.stringify({
+      schemaVersion: 1,
+      capability: 'project_boundary',
+      projectId: 'n3',
+      revision: 1,
+      coreRevision: 1,
+      upstream: [],
+      updatedAt: '2026-08-12T00:00:00.000Z',
+      data: {
+        schemaVersion: 1,
+        projectId: 'n3',
+        profileId: 'generic-international',
+        jurisdiction: { currency: 'USD' },
+        standards: {
+          technicalSpecs: [],
+          measurementStandard: { id: 'employer-spec', title: 'Employer measurement' },
+        },
+        pricing: {
+          pricingStandard: 'generic_direct_cost_v1',
+          indirectCostPolicy: 'exclude_from_item_direct_cost',
+          taxRegime: { vatTreatment: 'exclusive' },
+          ratePolicy: { location: 'Site', mustVerifyOnline: [], allowUnverifiedLabel: true },
+        },
+        productivity: { basis: 'user_provided', sources: [] },
+        bidderResources: { outline: 'Own plant limited to listed fleet.' },
+        organizationOutline: {
+          text: 'Establish camps at km 12 and km 40; sequence earthworks ahead of pavement; protect school frontage traffic.',
+        },
+        boundarySources: [{
+          id: 'bnd-fleet',
+          kind: 'bidder_resource',
+          role: 'plant',
+          title: 'fleet.xlsx',
+          path: 'C:/bidder/fleet.xlsx',
+          parseStatus: 'parsed',
+        }],
+        extractedInventory: {
+          plant: ['14H grader'],
+          labour: ['grader operator'],
+          materialSources: ['borrow pit A'],
+          constraints: ['no night shift'],
+        },
+        humanConfirmedAt: '2026-08-12T10:00:00.000Z',
+        readiness: 'ready',
+      },
+    }));
+    const manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2), new Map([
+      ['boq', 'C:/inputs/BOQ.xlsx'],
+    ]));
+    const brief = JSON.parse(readFileSync(manifest.batches[0]!.briefPath, 'utf8')) as TenderBoqBatchBrief;
+    expect(brief.projectBoundary?.allowedSourceIds).toEqual(['bnd-fleet']);
+    expect(brief.projectBoundary?.allowedSourcePaths).toEqual(['C:/bidder/fleet.xlsx']);
+    expect(brief.projectBoundary?.extractedInventory?.plant).toEqual(['14H grader']);
+    expect(brief.projectBoundary?.fence).toContain('14H grader');
+    expect(brief.projectBoundary?.fence).toContain('Do not invent');
+    expect(brief.qualityStandard.rules.some((rule) => rule.includes('projectBoundary fence'))).toBe(true);
+    expect(brief.objective).toContain('projectBoundary fence');
   });
 
   test('marks a batch complete only when its report covers every assigned item and no extras', () => {
@@ -73,8 +149,9 @@ describe('tender BOQ batch manifest', () => {
     }));
 
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
-    expect(manifest.batches[0]?.status).toBe('invalid');
-    expect(manifest.completedBatches).toBe(0);
+    // Soft: partial item coverage warns but does not hard-fail the batch when ≥1 item priced.
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(manifest.batches[0]?.validationWarnings.some((warning) => warning.includes('missing BOQ item'))).toBe(true);
 
     writeFileSync(batch.reportPath, JSON.stringify({
       schemaVersion: 1,
@@ -83,7 +160,7 @@ describe('tender BOQ batch manifest', () => {
     }));
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
 
-    expect(manifest.batches[0]?.status).toBe('invalid');
+    expect(manifest.batches[0]?.status).toBe('complete');
 
     writeFileSync(batch.reportPath, JSON.stringify({
       schemaVersion: 1,
@@ -91,8 +168,9 @@ describe('tender BOQ batch manifest', () => {
       itemBuildUps: batch.itemIds.map((itemId) => ({ ...completeBuildUp(itemId), status: 'draft' })),
     }));
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
-    expect(manifest.batches[0]?.status).toBe('invalid');
-    expect(manifest.batches[0]?.validationErrors.some((error) => error.includes('Markdown'))).toBe(true);
+    // Soft: missing MD is advisory when JSON build-ups exist.
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(manifest.batches[0]?.validationWarnings.some((error) => error.includes('Markdown'))).toBe(true);
 
     writeAcceptableMarkdown(batch.markdownPath);
     manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(2));
@@ -184,6 +262,42 @@ describe('tender BOQ batch manifest', () => {
 
     expect(manifest.batches[0]?.status).toBe('complete');
     expect(manifest.batches[0]?.validationWarnings.some((warning) => warning.includes('effectiveFactor'))).toBe(true);
+  });
+
+  test('accepts scrap-credit negative quantities and heals quarantined BOQ reports', () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-boq-batches-'));
+    let manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
+    const batch = manifest.batches[0]!;
+    const buildUp = completeBuildUp(batch.itemIds[0]!) as Record<string, any>;
+    buildUp.resourceConsumptions.push({
+      id: `${batch.itemIds[0]}-waste-credit`,
+      kind: 'waste',
+      description: 'scrap credit',
+      quantity: -200,
+      unit: 'ZAR',
+      assumptionStatus: 'scenario',
+      quantityBasis: 'per_boq_unit',
+    });
+    buildUp.costComponents.push({
+      id: `${batch.itemIds[0]}-waste-component`,
+      kind: 'waste',
+      description: 'Scrap credit',
+      quantity: -1,
+      unit: 'km',
+      rate: 200,
+      amount: -200,
+      assumptionStatus: 'scenario',
+    });
+    const quarantined = `${batch.reportPath}.invalid.${Date.now()}`;
+    writeFileSync(quarantined, JSON.stringify({
+      schemaVersion: 1,
+      batchId: batch.batchId,
+      itemBuildUps: [buildUp],
+    }));
+    writeAcceptableMarkdown(batch.markdownPath);
+    manifest = createOrRefreshBoqBatchManifest(root, 'n3', boqData(1));
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(existsSync(batch.reportPath)).toBe(true);
   });
 
   test('cannot pass from a completion claim when zero child batches have validated coverage', () => {

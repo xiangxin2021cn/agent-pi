@@ -10,6 +10,9 @@ import {
   fromBedrockNativeId,
   normalizeBedrockModelId,
   deriveBedrockRegionPrefix,
+  resolveVisionBridgeConfig,
+  connectionUsesVisionBridge,
+  DEFAULT_VISION_BRIDGE_MODEL,
 } from '../llm-connections'
 import { ANTHROPIC_MODELS, getModelDisplayName, getModelContextWindow, getModelShortName, isClaudeModel } from '../models'
 
@@ -366,5 +369,28 @@ describe('Claude Sonnet 5', () => {
     expect(fromBedrockNativeId('us.anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
     expect(fromBedrockNativeId('global.anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
     expect(getModelDisplayName('us.anthropic.claude-sonnet-5')).toBe('Sonnet 5')
+  })
+})
+
+describe('vision bridge config', () => {
+  it('defaults to Zhipu glm-4.6v-flash with free-tier fallbacks', () => {
+    const resolved = resolveVisionBridgeConfig({ enabled: true })
+    expect(resolved.model).toBe(DEFAULT_VISION_BRIDGE_MODEL)
+    expect(resolved.fallbackModels).toEqual(['glm-4.1v-thinking-flash', 'glm-4v-flash'])
+  })
+
+  it('does not apply Zhipu fallbacks to a custom endpoint', () => {
+    const resolved = resolveVisionBridgeConfig({
+      enabled: true,
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen3-vl-flash',
+    })
+    expect(resolved.fallbackModels).toEqual([])
+  })
+
+  it('connectionUsesVisionBridge is true only when enabled', () => {
+    expect(connectionUsesVisionBridge({ visionBridge: { enabled: true } } as never)).toBe(true)
+    expect(connectionUsesVisionBridge({ visionBridge: { enabled: false } } as never)).toBe(false)
+    expect(connectionUsesVisionBridge({} as never)).toBe(false)
   })
 })

@@ -1,6 +1,9 @@
 # Tender SA / SANRAL knowledge pack
 
-Bundled method and depth standards for Agent Pi tender workbench (V2.5+).
+Bundled method and depth standards for Agent Pi tender workbench.
+
+**Profile id:** `sa-sanral-highway` (see `../profiles.json`).  
+New projects default to `generic-international` (`../tender-generic/`); select this profile when the bid is SANRAL / COTO / C5.1 highway work.
 
 | File | Role |
 | --- | --- |

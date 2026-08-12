@@ -20,6 +20,7 @@ package; it does not author new scope or silently repair commercial decisions.
 - Do not claim submission-ready until the submission audit returns `ready` and Goal Audit passes.
 - Keep red-team findings in the audit record, with evidence and resolution status.
 - Do not spawn nested agents.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Audit notes stay internal; any user-facing finding must cite the returnable in the employer's terms, with AI filler stripped.
 
 ## Workflow
 

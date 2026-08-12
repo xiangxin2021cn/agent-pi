@@ -25,6 +25,7 @@ commercial narratives. Use `tender_capability` as the cost-cash-flow system of r
 - Do not create or overwrite a Project Delivery Controls budget baseline.
 - A stale capability pack is not ready.
 - Do not spawn nested agents.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. Cash-flow notes and commercial narratives must use this tender's currency, items, and periods, with AI filler stripped.
 
 ## Five-Step BOQ Item Build-Up
 

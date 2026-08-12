@@ -159,3 +159,26 @@ describe('updateLlmConnection – Anthropic OAuth identity (issue #838)', () => 
     expect(conn.oauthProfileVerifiedAt).toBe(identity.oauthProfileVerifiedAt)
   })
 })
+
+describe('updateLlmConnection – visionBridge', () => {
+  it('persists visionBridge when provided in updates', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ slug: 'deepseek', providerType: 'pi', piAuthProvider: 'deepseek' }),
+    ])
+    const visionBridge = { enabled: true, baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6v-flash' }
+    const ok = runUpdate('deepseek', { visionBridge })
+    expect(ok).toBe(true)
+    expect(readConnection('deepseek').visionBridge).toEqual(visionBridge)
+  })
+
+  it('preserves visionBridge across an unrelated update', () => {
+    const visionBridge = { enabled: true, model: 'qwen3-vl-flash' }
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ slug: 'deepseek', providerType: 'pi', piAuthProvider: 'deepseek', visionBridge }),
+    ])
+    const ok = runUpdate('deepseek', { name: 'DeepSeek renamed' })
+    expect(ok).toBe(true)
+    expect(readConnection('deepseek').name).toBe('DeepSeek renamed')
+    expect(readConnection('deepseek').visionBridge).toEqual(visionBridge)
+  })
+})

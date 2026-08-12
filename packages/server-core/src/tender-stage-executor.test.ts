@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnSessionRequest } from '@craft-agent/shared/agent';
 import {
+  bindTenderStageTaskToSpawnedSession,
   isTenderStageCapacityError,
   updateTenderStageTaskBoard,
   type TenderStageBatchTaskSpec,
@@ -255,6 +256,66 @@ describe('tender stage task-board executor', () => {
     expect(continueCalls.sort()).toEqual(['child-1', 'child-2']);
   });
 
+  test('resume kicks continueSession in parallel up to maxConcurrency', async () => {
+    const fixture = createTasks(4);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const continueStarted: string[] = [];
+    let releaseContinues!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseContinues = resolve;
+    });
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        const sessionId = `child-${sessions.size + 1}`;
+        sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+      continueSession: async (sessionId: string) => {
+        continueStarted.push(sessionId);
+        const session = sessions.get(sessionId);
+        if (session) session.isProcessing = true;
+        await gate;
+      },
+    };
+
+    await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+    await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+    for (const session of sessions.values()) {
+      session.isProcessing = false;
+      session.sessionStatus = 'todo';
+    }
+    await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+
+    const resumePromise = updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+
+    // Continues are chunked (2) to avoid cold-start OOM after sleep/wake.
+    for (let i = 0; i < 50 && continueStarted.length < 2; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(continueStarted).toHaveLength(2);
+    releaseContinues();
+    const resumed = await resumePromise;
+    expect(continueStarted).toHaveLength(4);
+    expect(resumed.tasks.every((task) => task.status === 'running')).toBe(true);
+  });
+
   test('does not clobber an in-flight retry with a stale invalid report', async () => {
     const fixture = createTasks(1);
     const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
@@ -386,6 +447,54 @@ describe('tender stage task-board executor', () => {
     expect(calls[0]?.reportPath).toBe(fixture.tasks[0]!.reportPath);
   });
 
+  test('user retry resets attemptCount so max-auto-dispatch batches can spawn again', async () => {
+    const fixture = createTasks(1);
+    const calls: SpawnSessionRequest[] = [];
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        calls.push(request);
+        const sessionId = `child-${calls.length}`;
+        sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+    };
+
+    const seeded = await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, maxConcurrency: 1,
+    });
+    writeFileSync(join(fixture.projectDirectory, 'orchestration', 'task-boards', 'document-analysis.json'), JSON.stringify({
+      ...seeded,
+      tasks: seeded.tasks.map((task) => ({
+        ...task,
+        status: 'failed',
+        attemptCount: 6,
+        error: '已自动派发 6 次仍未验收通过。',
+      })),
+    }));
+
+    const withoutRetry = await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    expect(withoutRetry.tasks[0]?.status).toBe('failed');
+    expect(calls).toHaveLength(0);
+
+    const retried = await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+      retryBatchIds: [fixture.tasks[0]!.batchId],
+    });
+    expect(retried.tasks[0]?.status).toBe('running');
+    expect(retried.tasks[0]?.attemptCount).toBe(1);
+    expect(calls).toHaveLength(1);
+  });
+
   test('parent barrier returns markdown and process artifacts for completed batches', async () => {
     const { resolveTenderStageParentBarrier } = await import('./tender-stage-executor.ts');
     const fixture = createTasks(1);
@@ -411,6 +520,166 @@ describe('tender stage task-board executor', () => {
       markdownPath,
       fixture.tasks[0]!.briefPath,
     ]));
+  });
+
+  test('status poll does not rewrite an unchanged task board', async () => {
+    const fixture = createTasks(1);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        const sessionId = 'child-1';
+        sessions.set(sessionId, { id: sessionId, isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId, name: request.name ?? sessionId, status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+    };
+
+    await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    const first = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    const before = readFileSync(first.taskBoardPath, 'utf8');
+    const second = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    expect(readFileSync(first.taskBoardPath, 'utf8')).toBe(before);
+    expect(second.updatedAt).toBe(first.updatedAt);
+  });
+
+  test('does not demote a complete batch when the report is temporarily unseen', async () => {
+    const fixture = createTasks(1);
+    const completeSpec = { ...fixture.tasks[0]!, validationStatus: 'complete' as const };
+    const completed = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: [completeSpec],
+    });
+    expect(completed.tasks[0]?.status).toBe('complete');
+
+    const demoted = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: [{ ...fixture.tasks[0]!, validationStatus: 'pending' }],
+    });
+    expect(demoted.tasks[0]?.status).toBe('complete');
+  });
+
+  test('session done with a report on disk is complete, not failed-and-retried', async () => {
+    const fixture = createTasks(1);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string; goalState?: { status: string } }>();
+    const continueCalls: string[] = [];
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        sessions.set('child-1', { id: 'child-1', isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId: 'child-1', name: request.name ?? 'child-1', status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+      continueSession: async (sessionId: string) => {
+        continueCalls.push(sessionId);
+      },
+    };
+    await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    writeFileSync(fixture.tasks[0]!.reportPath, JSON.stringify({ schemaVersion: 1, ok: true }));
+    sessions.set('child-1', {
+      id: 'child-1', isProcessing: false, sessionStatus: 'done', goalState: { status: 'passed' },
+    });
+    const settled = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    expect(settled.tasks[0]?.status).toBe('complete');
+
+    const resumed = await updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    expect(resumed.tasks[0]?.status).toBe('complete');
+    expect(continueCalls).toEqual([]);
+  });
+
+  test('idle todo child with a report on disk is complete, not continued', async () => {
+    const fixture = createTasks(1);
+    const sessions = new Map<string, { id: string; isProcessing: boolean; sessionStatus: string }>();
+    const continueCalls: string[] = [];
+    const execution = {
+      spawnSession: async (_parentSessionId: string, request: SpawnSessionRequest) => {
+        sessions.set('child-1', { id: 'child-1', isProcessing: true, sessionStatus: 'todo' });
+        return { sessionId: 'child-1', name: request.name ?? 'child-1', status: 'started' as const };
+      },
+      getSession: async (sessionId: string) => sessions.get(sessionId) ?? null,
+      continueSession: async (sessionId: string) => {
+        continueCalls.push(sessionId);
+      },
+    };
+    await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    writeFileSync(fixture.tasks[0]!.reportPath, JSON.stringify({ schemaVersion: 1, itemBuildUps: [{ boqItemId: 'item-1' }] }));
+    sessions.set('child-1', { id: 'child-1', isProcessing: false, sessionStatus: 'todo' });
+    const settled = await updateTenderStageTaskBoard({
+      action: 'resume', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 1,
+    });
+    expect(settled.tasks[0]?.status).toBe('complete');
+    expect(continueCalls).toEqual([]);
+  });
+
+  test('bindTenderStageTaskToSpawnedSession does not clobber a complete batch', async () => {
+    const fixture = createTasks(1);
+    const completed = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: [{ ...fixture.tasks[0]!, validationStatus: 'complete' }],
+    });
+    expect(completed.tasks[0]?.status).toBe('complete');
+    const bound = bindTenderStageTaskToSpawnedSession({
+      workingDirectory: root,
+      projectId: 'n3',
+      stageId: 'document-analysis',
+      parentSessionId: 'parent-1',
+      childSessionId: 'child-new',
+      reportPath: fixture.tasks[0]!.reportPath,
+    });
+    expect(bound).toBe(false);
+    const reread = await updateTenderStageTaskBoard({
+      action: 'status', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root,
+      tasks: [{ ...fixture.tasks[0]!, validationStatus: 'complete' }],
+    });
+    expect(reread.tasks[0]?.status).toBe('complete');
+    expect(reread.tasks[0]?.sessionId).not.toBe('child-new');
   });
 
   function createTasks(count: number): { projectDirectory: string; tasks: TenderStageBatchTaskSpec[] } {

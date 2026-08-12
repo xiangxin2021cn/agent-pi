@@ -2,6 +2,7 @@ import {
   auditTenderDocumentAnalysis,
   auditTenderEvaluationStrategy,
   auditTenderBoqReconciliation,
+  auditTenderProjectBoundary,
   auditTenderBoqFiveStepPricing,
   auditTenderConstructionResourceSchedule,
   auditTenderBidderCommitments,
@@ -17,6 +18,7 @@ import {
   parseTenderDocumentAnalysisData,
   parseTenderEvaluationStrategyData,
   parseTenderBoqReconciliationData,
+  parseTenderProjectBoundaryPack,
   parseTenderBoqFiveStepPricingData,
   parseTenderConstructionResourceScheduleData,
   parseTenderBidderCommitmentsData,
@@ -35,6 +37,7 @@ import {
   type TenderDocumentAnalysisAudit,
   type TenderEvaluationStrategyAudit,
   type TenderBoqReconciliationAudit,
+  type TenderProjectBoundaryAudit,
   type TenderBoqFiveStepPricingAudit,
   type TenderConstructionResourceScheduleAudit,
   type TenderBidderCommitmentsAudit,
@@ -82,6 +85,7 @@ type ImplementedAudit =
   | TenderDocumentAnalysisAudit
   | TenderEvaluationStrategyAudit
   | TenderBoqReconciliationAudit
+  | TenderProjectBoundaryAudit
   | TenderBoqFiveStepPricingAudit
   | TenderConstructionResourceScheduleAudit
   | TenderBidderCommitmentsAudit
@@ -96,6 +100,7 @@ const CAPABILITY_FILE_NAMES: Record<TenderCapabilityId, string> = {
   document_analysis: 'document-analysis',
   evaluation_strategy: 'evaluation-strategy',
   boq_reconciliation: 'boq-reconciliation',
+  project_boundary: 'project-boundary',
   boq_five_step_pricing: 'boq-five-step-pricing',
   construction_resource_schedule: 'construction-resource-schedule',
   bidder_commitments: 'bidder-commitments',
@@ -252,6 +257,7 @@ function isImplementedCapability(
   | 'document_analysis'
   | 'evaluation_strategy'
   | 'boq_reconciliation'
+  | 'project_boundary'
   | 'boq_five_step_pricing'
   | 'construction_resource_schedule'
   | 'bidder_commitments'
@@ -263,6 +269,7 @@ function isImplementedCapability(
   return capability === 'document_analysis'
     || capability === 'evaluation_strategy'
     || capability === 'boq_reconciliation'
+    || capability === 'project_boundary'
     || capability === 'boq_five_step_pricing'
     || capability === 'construction_resource_schedule'
     || capability === 'bidder_commitments'
@@ -281,6 +288,7 @@ async function parseCapabilityData(
   if (capability === 'document_analysis') return parseTenderDocumentAnalysisData(data);
   if (capability === 'evaluation_strategy') return parseTenderEvaluationStrategyData(data);
   if (capability === 'boq_reconciliation') return parseTenderBoqReconciliationData(data);
+  if (capability === 'project_boundary') return parseTenderProjectBoundaryPack(data);
   if (capability === 'boq_five_step_pricing') {
     // Lenient: LLM-authored packs carry numbers as numbers, percent weights,
     // etc. Format coercions are recorded as warnings; identity/completeness
@@ -353,6 +361,9 @@ function auditCapability(
   if (capability === 'boq_reconciliation') {
     return auditTenderBoqReconciliation(workspace, data, generatedAt);
   }
+  if (capability === 'project_boundary') {
+    return auditTenderProjectBoundary(workspace, data, generatedAt);
+  }
   if (capability === 'boq_five_step_pricing') {
     return auditTenderBoqFiveStepPricing(workspace, upstreamData.boq_reconciliation, data, generatedAt);
   }
@@ -405,11 +416,10 @@ function findUpstreamReadinessError(
       continue;
     }
     const entry = index.capabilities.find((candidate) => candidate.capability === dependency);
-    // needs_review = machine checks passed with warnings pending human review.
-    // Downstream work may proceed; the stage surface keeps warnings visible and
-    // submission_audit remains the final hard gate. Only not_ready/stale block.
-    if (!entry || entry.revision === 0 || entry.stale
-      || (entry.readiness !== 'ready' && entry.readiness !== 'needs_review')) {
+    // A persisted upstream pack (ready / needs_review / not_ready) unblocks
+    // same-stage derived writes such as construction_resource_schedule.
+    // Stale or missing packs still block. Audit errors stay on the quality panel.
+    if (!entry || entry.revision === 0 || entry.stale) {
       return `Tender capability ${capability} requires ready upstream capability ${dependency}.`;
     }
   }

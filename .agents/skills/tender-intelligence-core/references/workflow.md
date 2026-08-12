@@ -33,3 +33,7 @@ Narrative mention alone does not cover a mandatory requirement. Coverage must be
 Call `validate` after mutations and before any completion claim. Use `status` when a current workspace summary is needed without mutation. Report readiness, material audit issues, unresolved ambiguities, and the returned model and audit paths.
 
 Do not claim that `ready` predicts award or substitutes for professional approval. Do not hand downstream capabilities facts that lack stable workspace IDs and source locators.
+
+## 6. Write For This Tender
+
+Every customer-facing Markdown, DOCX, programme narrative, and stage summary must follow [writing-contract.md](writing-contract.md): use the employer's terms and returnable shape; strip AI filler; do not substitute a generic construction essay for this bid's constraints.

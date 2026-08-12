@@ -13,10 +13,12 @@ describe('tender capability registry', () => {
     expect(dependencies('document_analysis')).toEqual(['core']);
     expect(dependencies('evaluation_strategy')).toEqual(['core', 'document_analysis']);
     expect(dependencies('boq_reconciliation')).toEqual(['core', 'document_analysis']);
+    expect(dependencies('project_boundary')).toEqual(['core', 'document_analysis']);
     expect(dependencies('boq_five_step_pricing')).toEqual([
       'core',
       'document_analysis',
       'boq_reconciliation',
+      'project_boundary',
     ]);
     expect(dependencies('bidder_commitments')).toEqual([
       'core',

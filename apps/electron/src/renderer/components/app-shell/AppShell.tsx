@@ -1553,12 +1553,20 @@ function AppShellContent({
     }
   }, [sessionFilter])
 
-  // Ensure session messages are loaded when selected
+  // Load transcript only for the chat that is actually on screen.
+  // Opening 投标工作台 overview used to lazy-load the last selected parent
+  // session in the background and starve the UI.
   React.useEffect(() => {
-    if (session.selected) {
-      ensureMessagesLoaded(session.selected)
+    const visibleSessionId = isSessionsNavigation(navState)
+      || isTenderNavigation(navState)
+      || isDeliveryNavigation(navState)
+      || isInvestmentNavigation(navState)
+      ? navState.details?.sessionId ?? null
+      : null
+    if (visibleSessionId) {
+      ensureMessagesLoaded(visibleSessionId)
     }
-  }, [session.selected, ensureMessagesLoaded])
+  }, [ensureMessagesLoaded, navState])
 
   // Wrap delete handler to clear selection when deleting the currently selected session
   // This prevents stale state during re-renders that could cause crashes

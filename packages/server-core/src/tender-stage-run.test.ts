@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createBusinessProject } from '@craft-agent/shared/business-projects';
+import { createBusinessProject } from '@craft-agent/shared/business-projects/storage';
 import type { SpawnSessionRequest } from '@craft-agent/shared/agent';
 import { documentArtifactPath } from './tender-document-artifacts.ts';
 import { runTenderStage } from './tender-stage-run.ts';
@@ -74,7 +74,7 @@ describe('tender stage runner', () => {
 
     expect(result.status).toBe('blocked');
     expect(result.missingItems).toContain('capability:document_analysis');
-    expect(result.missingItems).toContain('capability:boq_reconciliation');
+    expect(result.missingItems).toContain('capability:project_boundary');
   });
 
   test('requires user-confirmed bidder commitments before planning (legacy stage ids resolve)', async () => {
@@ -107,9 +107,8 @@ describe('tender stage runner', () => {
     });
 
     expect(planning.stageId).toBe('planning-and-submission');
-    expect(planning.status).toBe('blocked');
-    expect(planning.missingItems).toContain('capability:bidder_commitments');
-    expect(planning.missingItems).toContain('capability:construction_resource_schedule');
+    expect(planning.status).toBe('running');
+    expect(planning.requiredCapabilities).toEqual(['boq_five_step_pricing']);
 
     writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
       schemaVersion: 1,
@@ -172,6 +171,7 @@ describe('tender stage runner', () => {
         measurementRuleRefs: [], inclusions: [], exclusions: [], assumptions: [], gapStatus: 'needs_review',
       }],
     });
+    writeUsableProjectBoundary(projectDirectory);
 
     const result = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
@@ -236,9 +236,6 @@ describe('tender stage runner', () => {
     expect(aliased.stageId).toBe('planning-and-submission');
     expect(completionBlocked.status).toBe('blocked');
     expect(completionBlocked.missingItems).toContain('output:execution_plan');
-    expect(completionBlocked.missingItems).toContain('output:schedule_resources');
-    expect(completionBlocked.missingItems).toContain('output:cost_cashflow');
-    expect(completionBlocked.missingItems).toContain('output:submission_documents');
   });
 
   test('creates one document-analysis batch per registered source and gates the stage merge', async () => {
@@ -325,7 +322,7 @@ describe('tender stage runner', () => {
       'document-analysis-summary.md',
     );
     expect(existsSync(summaryPath)).toBe(true);
-    expect(readFileSync(summaryPath, 'utf8')).toContain('# Document Analysis Summary');
+    expect(readFileSync(summaryPath, 'utf8')).toContain('# 招标文件解析纪要');
     expect(completed.status).toBe('complete');
     expect(completed.batchProgress?.completedBatches).toBe(2);
     expect(completed.generatedPacks).toContain('document_analysis');
@@ -454,10 +451,16 @@ describe('tender stage runner', () => {
         }],
       },
     }));
+    writeUsableProjectBoundary(projectDirectory, {
+      profileId: 'sa-sanral-highway',
+      pricingStandard: 'c51_pure_direct_cost_v1',
+      currency: 'ZAR',
+    });
 
     const started = await runTenderStage({
       action: 'start', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+      parentSessionId: 'parent-boq-pricing',
     });
     expect(started.status).toBe('running');
     expect(started.batchProgress?.batchCount).toBe(1);
@@ -477,13 +480,29 @@ describe('tender stage runner', () => {
       batchId: manifest.batches[0].batchId,
       itemBuildUps: [buildUp],
     }));
-    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(true)));
+    mkdirSync(dirname(manifest.batches[0].markdownPath), { recursive: true });
+    writeFileSync(
+      manifest.batches[0].markdownPath,
+      '# SCH A\n\nFive-step workpaper for the priced chapter.\n',
+      'utf8',
+    );
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      ...capabilityIndex(true),
+      capabilities: [
+        ...capabilityIndex(true).capabilities,
+        {
+          capability: 'project_boundary', enabled: true, required: true, revision: 1, readiness: 'ready',
+          issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+        },
+      ],
+    }));
     // A stale hand-written pack that disagrees with the child report gets
     // deterministically replaced by the runtime merge — no boq-merge deadlock.
     writeCapabilityPack(projectDirectory, 'boq_five_step_pricing', pricingData([{ ...buildUp, directCost: '11' }]));
     const merged = await runTenderStage({
       action: 'complete', workspaceRootPath: fixture.workspaceRoot,
       projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+      parentSessionId: 'parent-boq-pricing',
     });
     expect(merged.missingItems.some((item) => item.startsWith('boq-merge:'))).toBe(false);
     expect(merged.missingItems.filter((item) => item.startsWith('resource-schedule:'))).toEqual([]);
@@ -495,9 +514,22 @@ describe('tender stage runner', () => {
       'boq-pricing',
       '施工资源消耗总表.md',
     ))).toBe(true);
-    // V2.4.0: the pricing stage also gates on user-confirmed bidder commitments.
-    expect(merged.status).toBe('blocked');
-    expect(merged.missingItems).toContain('output:bidder_commitments');
+    expect(existsSync(join(
+      fixture.projectRoot,
+      'Agent Pi Outputs',
+      'parent-boq-pricing',
+      'boq-pricing-summary.md',
+    ))).toBe(true);
+    expect(existsSync(join(
+      fixture.projectRoot,
+      'Agent Pi Outputs',
+      'parent-boq-pricing',
+      'boq-pricing',
+      '施工资源消耗总表.md',
+    ))).toBe(true);
+    // Primary output is boq_five_step_pricing; secondary packs are best-effort.
+    expect(merged.status).toBe('complete');
+    expect(merged.missingItems).not.toContain('boq-batches:incomplete');
     const packAfterMerge = JSON.parse(readFileSync(join(projectDirectory, 'packs', 'boq-five-step-pricing.json'), 'utf8'));
     expect(packAfterMerge.data.itemBuildUps[0].directCost).toBe('10');
 
@@ -505,6 +537,10 @@ describe('tender stage runner', () => {
       ...capabilityIndex(true),
       capabilities: [
         ...capabilityIndex(true).capabilities,
+        {
+          capability: 'project_boundary', enabled: true, required: true, revision: 1, readiness: 'ready',
+          issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+        },
         {
           capability: 'construction_resource_schedule', enabled: true, required: true, revision: 1, readiness: 'ready',
           issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
@@ -521,6 +557,202 @@ describe('tender stage runner', () => {
     });
     expect(completed.status).toBe('complete');
     expect(completed.batchProgress?.completedBatches).toBe(1);
+  });
+
+  test('force_pass waives project_boundary and unblocks without resetting complete batches', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
+    mkdirSync(join(projectDirectory, 'packs'), { recursive: true });
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(false)));
+    writeFileSync(join(projectDirectory, 'packs', 'boq-reconciliation.json'), JSON.stringify({
+      schemaVersion: 1,
+      capability: 'boq_reconciliation',
+      projectId: 'n3-tender',
+      revision: 1,
+      coreRevision: 2,
+      upstream: [],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      data: {
+        items: [{
+          id: 'item-1', source: { documentId: sourceId(fixture.boqPath), sheet: 'C5.1', cell: 'A1:F1' },
+          code: '5.1.1', description: 'BOQ item', unit: 'm', quantity: '1', quantityBasis: 'boq',
+          quantityStatus: 'sourced', quantityRefs: [],
+        }],
+        scopeLinks: [{
+          boqItemId: 'item-1', requirementIds: [], specificationRefs: [], drawingRefs: [],
+          measurementRuleRefs: [], inclusions: [], exclusions: [], assumptions: [], gapStatus: 'needs_review',
+        }],
+      },
+    }));
+
+    const blocked = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.missingItems).toContain('capability:project_boundary');
+    expect(blocked.missingItems).not.toContain('capability:document_analysis');
+
+    const passed = await runTenderStage({
+      action: 'force_pass', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(passed.status).not.toBe('blocked');
+    expect(passed.userForcePass?.waivedItems).toContain('capability:project_boundary');
+    expect(passed.missingItems).toContain('capability:project_boundary');
+    const completeBefore = passed.batchProgress?.tasks.filter((task) => task.status === 'complete').map((task) => task.batchId) ?? [];
+
+    const persisted = JSON.parse(readFileSync(passed.paths.stageStatePath, 'utf8'));
+    expect(persisted.stages['boq-five-step-pricing'].userForcePass.waivedItems).toContain('capability:project_boundary');
+    expect(passed.batchProgress?.tasks.filter((task) => task.status === 'complete').map((task) => task.batchId))
+      .toEqual(completeBefore);
+  });
+
+  test('legacy BOQ with completed batches does not hard-block on missing project_boundary', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
+    mkdirSync(join(projectDirectory, 'packs'), { recursive: true });
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify(capabilityIndex(false)));
+    writeFileSync(join(projectDirectory, 'packs', 'boq-reconciliation.json'), JSON.stringify({
+      schemaVersion: 1,
+      capability: 'boq_reconciliation',
+      projectId: 'n3-tender',
+      revision: 1,
+      coreRevision: 2,
+      upstream: [],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      data: {
+        items: [{
+          id: 'item-1', source: { documentId: sourceId(fixture.boqPath), sheet: 'C5.1', cell: 'A1:F1' },
+          code: '5.1.1', description: 'BOQ item', unit: 'm', quantity: '1', quantityBasis: 'boq',
+          quantityStatus: 'sourced', quantityRefs: [],
+        }],
+        scopeLinks: [{
+          boqItemId: 'item-1', requirementIds: [], specificationRefs: [], drawingRefs: [],
+          measurementRuleRefs: [], inclusions: [], exclusions: [], assumptions: [], gapStatus: 'needs_review',
+        }],
+      },
+    }));
+
+    const started = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(started.status).toBe('blocked');
+    expect(started.batchProgress?.batchCount).toBe(1);
+
+    const manifest = JSON.parse(readFileSync(started.paths.boqBatchManifestPath!, 'utf8'));
+    const buildUp = completeBuildUp('item-1', sourceId(fixture.boqPath));
+    writeFileSync(manifest.batches[0].reportPath, JSON.stringify({
+      schemaVersion: 1,
+      batchId: manifest.batches[0].batchId,
+      itemBuildUps: [buildUp],
+    }));
+
+    const polled = await runTenderStage({
+      action: 'status', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(polled.batchProgress?.completedBatches).toBeGreaterThan(0);
+    expect(polled.status).not.toBe('blocked');
+    expect(polled.missingItems).toContain('capability:project_boundary');
+  });
+
+  test('missing document_analysis still blocks BOQ even when project_boundary is auto-relaxed', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const projectDirectory = join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender');
+    mkdirSync(join(projectDirectory, 'packs'), { recursive: true });
+    const entry = (capability: string) => ({
+      capability, enabled: true, required: true, revision: 1, readiness: 'ready',
+      issueCount: 0, stale: false, updatedAt: '2026-07-16T00:00:00.000Z',
+    });
+    writeFileSync(join(projectDirectory, 'capability-index.json'), JSON.stringify({
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      coreRevision: 2,
+      capabilities: [entry('boq_reconciliation')],
+    }));
+    writeFileSync(join(projectDirectory, 'packs', 'boq-reconciliation.json'), JSON.stringify({
+      schemaVersion: 1,
+      capability: 'boq_reconciliation',
+      projectId: 'n3-tender',
+      revision: 1,
+      coreRevision: 2,
+      upstream: [],
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      data: {
+        items: [{
+          id: 'item-1', source: { documentId: sourceId(fixture.boqPath), sheet: 'C5.1', cell: 'A1:F1' },
+          code: '5.1.1', description: 'BOQ item', unit: 'm', quantity: '1', quantityBasis: 'boq',
+          quantityStatus: 'sourced', quantityRefs: [],
+        }],
+        scopeLinks: [{
+          boqItemId: 'item-1', requirementIds: [], specificationRefs: [], drawingRefs: [],
+          measurementRuleRefs: [], inclusions: [], exclusions: [], assumptions: [], gapStatus: 'needs_review',
+        }],
+      },
+    }));
+
+    const started = await runTenderStage({
+      action: 'start', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(started.missingItems).toContain('capability:document_analysis');
+    const manifest = JSON.parse(readFileSync(started.paths.boqBatchManifestPath!, 'utf8'));
+    const buildUp = completeBuildUp('item-1', sourceId(fixture.boqPath));
+    writeFileSync(manifest.batches[0].reportPath, JSON.stringify({
+      schemaVersion: 1,
+      batchId: manifest.batches[0].batchId,
+      itemBuildUps: [buildUp],
+    }));
+
+    const polled = await runTenderStage({
+      action: 'status', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'boq-five-step-pricing',
+    });
+    expect(polled.batchProgress?.completedBatches).toBeGreaterThan(0);
+    expect(polled.status).toBe('blocked');
+    expect(polled.missingItems).toContain('capability:document_analysis');
+  });
+
+  test('register_boundary_sources writes the desk and parse batches without adding tender inputs', async () => {
+    const fixture = createFixture();
+    await runTenderStage({
+      action: 'preflight', workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender', stageId: 'project-setup',
+    });
+    const fleetPath = join(root, 'bidder-fleet.xlsx');
+    writeFileSync(fleetPath, 'fleet');
+    const result = await runTenderStage({
+      action: 'register_boundary_sources',
+      workspaceRootPath: fixture.workspaceRoot,
+      projectId: 'n3-tender',
+      stageId: 'project-boundary-conditions',
+      boundarySources: [{
+        kind: 'bidder_resource',
+        title: 'bidder-fleet.xlsx',
+        path: fleetPath,
+      }],
+    });
+    expect(result.boundaryDesk?.sources).toHaveLength(1);
+    expect(result.boundaryDesk?.sources[0]?.kind).toBe('bidder_resource');
+    expect(result.boundaryDesk?.sources[0]?.path).toBe(fleetPath);
+    expect(result.batchProgress?.batchType).toBe('project_boundary');
+    expect(result.batchProgress?.batchCount).toBe(1);
+    expect(result.paths.boundaryBatchManifestPath).toBeTruthy();
+    expect(existsSync(join(fixture.projectRoot, '.agent-pi', 'business', 'tender', 'n3-tender', 'boundary-sources.json'))).toBe(true);
   });
 
   function createFixture() {
@@ -575,6 +807,36 @@ describe('tender stage runner', () => {
       updatedAt: '2026-07-16T00:00:00.000Z',
       data,
     }));
+  }
+
+  function writeUsableProjectBoundary(projectDirectory: string, options?: {
+    profileId?: string;
+    pricingStandard?: string;
+    currency?: string;
+  }) {
+    writeCapabilityPack(projectDirectory, 'project_boundary', {
+      schemaVersion: 1,
+      projectId: 'n3-tender',
+      profileId: options?.profileId ?? 'generic-international',
+      jurisdiction: { currency: options?.currency ?? 'USD' },
+      standards: {
+        technicalSpecs: [],
+        measurementStandard: { id: 'employer-spec', title: 'Employer measurement rules' },
+      },
+      pricing: {
+        pricingStandard: options?.pricingStandard ?? 'generic_direct_cost_v1',
+        indirectCostPolicy: 'exclude_from_item_direct_cost',
+        taxRegime: { vatTreatment: 'exclusive' },
+        ratePolicy: { location: 'Test site', mustVerifyOnline: [], allowUnverifiedLabel: true },
+      },
+      productivity: { basis: 'user_provided', sources: [] },
+      bidderResources: { outline: 'Own plant limited; major earthworks to be subcontracted.' },
+      organizationOutline: {
+        text: 'Establish site camps at km 12 and km 40; sequence earthworks ahead of pavement; protect school frontage traffic; use local borrow where EMP allows.',
+      },
+      readiness: 'ready',
+      humanConfirmedAt: '2026-07-16T00:00:00.000Z',
+    });
   }
 
   function pricingData(itemBuildUps: unknown[]) {

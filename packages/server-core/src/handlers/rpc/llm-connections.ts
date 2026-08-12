@@ -22,7 +22,8 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.LIST,
   RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
   RPC_CHANNELS.llmConnections.GET,
-  RPC_CHANNELS.llmConnections.GET_API_KEY,
+    RPC_CHANNELS.llmConnections.GET_API_KEY,
+    RPC_CHANNELS.llmConnections.GET_VISION_API_KEY,
   RPC_CHANNELS.llmConnections.SAVE,
   RPC_CHANNELS.llmConnections.DELETE,
   RPC_CHANNELS.llmConnections.TEST,
@@ -156,6 +157,10 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         updates.authType = setup.bedrockAuthMethod
       }
 
+      if (setup.visionBridge !== undefined) {
+        updates.visionBridge = setup.visionBridge
+      }
+
       // Resolved Anthropic OAuth identity (issue #838). Threaded through SETUP so
       // it persists on both the new-connection path (addLlmConnection) and the
       // re-auth path (updateLlmConnection) via the shared pendingConnection/updates
@@ -262,6 +267,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           await manager.setLlmApiKey(setup.slug, setup.credential)
           deps.platform.logger?.info('Saved API key to LLM connection')
         }
+      }
+
+      const visionMasked = setup.visionCredential?.includes('••')
+      if (setup.visionCredential && !visionMasked) {
+        await manager.setLlmVisionApiKey(setup.slug, setup.visionCredential)
+        deps.platform.logger?.info('Saved vision API key to LLM connection')
       }
 
       // Pi+Bedrock IAM credentials — stored separately from API keys
@@ -433,6 +444,16 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     const key = await manager.getLlmApiKey(slug)
     if (!key) return null
     // Show provider prefix (first 7 chars) + last 4 chars, mask the middle
+    if (key.length > 15) {
+      return key.slice(0, 7) + '••••••••' + key.slice(-4)
+    }
+    return '••••••••'
+  })
+
+  server.handle(RPC_CHANNELS.llmConnections.GET_VISION_API_KEY, async (_ctx, slug: string): Promise<string | null> => {
+    const manager = getCredentialManager()
+    const key = await manager.getLlmVisionApiKey(slug)
+    if (!key) return null
     if (key.length > 15) {
       return key.slice(0, 7) + '••••••••' + key.slice(-4)
     }

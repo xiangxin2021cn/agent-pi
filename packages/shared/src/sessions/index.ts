@@ -84,6 +84,7 @@ export {
   markSubAgentHandoffReady,
   mergeSessionOrchestrationState,
   resumeSessionOrchestrationForFollowUp,
+  syncOrchestrationSelectedSources,
   refreshOrchestrationLedger,
   transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
@@ -123,6 +124,7 @@ export {
   getOrCreateSessionById,
   saveSession,
   loadSession,
+  loadSessionAsync,
   listSessions,
   deleteSession,
   clearSessionMessages,
@@ -170,9 +172,16 @@ export {
 export {
   readSessionHeader,
   readSessionJsonl,
+  readSessionJsonlAsync,
   writeSessionJsonl,
   createSessionHeader,
 } from './jsonl.ts';
+
+export {
+  CHAT_UI_MAX_TEXT_CHARS,
+  projectSessionForChatUi,
+  projectMessageForChatUi,
+} from './chat-ui-projection.ts';
 
 // Field utilities
 export { pickSessionFields } from './utils.ts';

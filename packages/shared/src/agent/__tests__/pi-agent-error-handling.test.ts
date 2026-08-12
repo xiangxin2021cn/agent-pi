@@ -121,4 +121,45 @@ describe('PiAgent subprocess error handling', () => {
 
     agent.destroy()
   })
+
+  it('treats exitCode/killed/unwritable stdin as unhealthy and clears on send failure', () => {
+    const agent = new PiAgent(createConfig())
+    const writes: string[] = []
+    let writeErrorListener: ((error: Error) => void) | undefined
+    const stdin = {
+      destroyed: false,
+      writable: true,
+      write: (_chunk: string, cb?: (error?: Error | null) => void) => {
+        writes.push(_chunk)
+        cb?.(new Error('write EPIPE'))
+        return true
+      },
+      on: (event: string, listener: (error: Error) => void) => {
+        if (event === 'error') writeErrorListener = listener
+      },
+    }
+    ;(agent as any).subprocess = {
+      killed: false,
+      exitCode: null,
+      signalCode: null,
+      stdin,
+      kill: () => {},
+    }
+    ;(agent as any).subprocessReady = Promise.resolve()
+
+    expect((agent as any).isSubprocessHealthy()).toBe(true)
+    ;(agent as any).send({ type: 'ping' })
+    expect(writes).toHaveLength(1)
+    expect((agent as any).subprocess).toBeNull()
+
+    ;(agent as any).subprocess = {
+      killed: false,
+      exitCode: 1,
+      signalCode: null,
+      stdin: { destroyed: false, writable: true },
+    }
+    expect((agent as any).isSubprocessHealthy()).toBe(false)
+
+    agent.destroy()
+  })
 })

@@ -83,6 +83,11 @@ export interface FullscreenOverlayBaseProps {
 
   /** Optional error banner — rendered between header and children */
   error?: OverlayErrorBannerProps
+  /**
+   * `document` (default) — masked scrollable overlay for files/images.
+   * `browser` — header + full-bleed pane for live HTML pages (no clip/measure).
+   */
+  layout?: 'document' | 'browser'
 }
 
 export function handleFullscreenEscapeWithStack(): boolean {
@@ -105,6 +110,7 @@ export function FullscreenOverlayBase({
   headerActions,
   copyContent,
   error,
+  layout = 'document',
 }: FullscreenOverlayBaseProps) {
   const { onSetTrafficLightsVisible } = usePlatform()
 
@@ -162,46 +168,75 @@ export function FullscreenOverlayBase({
           {/* Visually hidden title for accessibility - required by Radix Dialog */}
           <Dialog.Title className="sr-only">{accessibleTitle}</Dialog.Title>
 
-          {/* Full-viewport masked scroll area — covers the entire dialog including behind the header.
-              The CSS mask gradient fades content at both edges (starting from y=0).
-              Content padding clears the header at rest. */}
-          <div
-            className="absolute inset-0"
-            style={{ maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK }}
-          >
-            <div
-              className="h-full overflow-y-auto"
-              style={{ paddingTop: contentPaddingTop, paddingBottom: FADE_SIZE, scrollPaddingTop: contentPaddingTop }}
-            >
-              {/* Centering wrapper — error + content move together as a unit.
-                  min-h-full ensures centering when content is small; content can grow beyond. */}
-              <div className="min-h-full flex flex-col justify-center">
-                {/* Error banner — inside centering flow, above content */}
+          {layout === 'browser' ? (
+            <div className="absolute inset-0 flex flex-col">
+              {hasHeader && (
+                <div className="shrink-0 z-10">
+                  <FullscreenOverlayBaseHeader
+                    onClose={onClose}
+                    typeBadge={typeBadge}
+                    filePath={filePath}
+                    title={title}
+                    onTitleClick={onTitleClick}
+                    subtitle={subtitle}
+                    headerActions={headerActions}
+                    copyContent={copyContent}
+                  />
+                </div>
+              )}
+              <div className="relative min-h-0 flex-1 bg-white">
                 {error && (
-                  <div className="px-6 pb-4">
+                  <div className="absolute top-0 left-0 right-0 z-10 px-6 pt-3">
                     <OverlayErrorBanner label={error.label} message={error.message} />
                   </div>
                 )}
                 {children}
               </div>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* Full-viewport masked scroll area — covers the entire dialog including behind the header.
+                  The CSS mask gradient fades content at both edges (starting from y=0).
+                  Content padding clears the header at rest. */}
+              <div
+                className="absolute inset-0"
+                style={{ maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK }}
+              >
+                <div
+                  className="h-full overflow-y-auto"
+                  style={{ paddingTop: contentPaddingTop, paddingBottom: FADE_SIZE, scrollPaddingTop: contentPaddingTop }}
+                >
+                  {/* Centering wrapper — error + content move together as a unit.
+                      min-h-full ensures centering when content is small; content can grow beyond. */}
+                  <div className="min-h-full flex flex-col justify-center">
+                    {/* Error banner — inside centering flow, above content */}
+                    {error && (
+                      <div className="px-6 pb-4">
+                        <OverlayErrorBanner label={error.label} message={error.message} />
+                      </div>
+                    )}
+                    {children}
+                  </div>
+                </div>
+              </div>
 
-          {/* Floating header — rendered after scroll area so it's visually on top (DOM order).
-              Positioned absolutely at the top of the viewport, above the scroll content. */}
-          {hasHeader && (
-            <div className="absolute top-0 left-0 right-0 z-10">
-              <FullscreenOverlayBaseHeader
-                onClose={onClose}
-                typeBadge={typeBadge}
-                filePath={filePath}
-                title={title}
-                onTitleClick={onTitleClick}
-                subtitle={subtitle}
-                headerActions={headerActions}
-                copyContent={copyContent}
-              />
-            </div>
+              {/* Floating header — rendered after scroll area so it's visually on top (DOM order).
+                  Positioned absolutely at the top of the viewport, above the scroll content. */}
+              {hasHeader && (
+                <div className="absolute top-0 left-0 right-0 z-10">
+                  <FullscreenOverlayBaseHeader
+                    onClose={onClose}
+                    typeBadge={typeBadge}
+                    filePath={filePath}
+                    title={title}
+                    onTitleClick={onTitleClick}
+                    subtitle={subtitle}
+                    headerActions={headerActions}
+                    copyContent={copyContent}
+                  />
+                </div>
+              )}
+            </>
           )}
         </Dialog.Content>
       </Dialog.Portal>

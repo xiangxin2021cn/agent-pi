@@ -67,6 +67,8 @@ import {
   resolveEffectiveConnectionSlug,
   isCompatProvider,
   modelSupportsImages,
+  connectionUsesVisionBridge,
+  isTextOnlyPiAuthProvider,
   type LlmConnectionModelEntry,
 } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
@@ -1675,11 +1677,17 @@ export function FreeFormInput({
 
     return null
   }, [currentModel, effectiveConnectionDetails])
-  const showVisionWarning =
+  const showCompatVisionWarning =
     hasStagedImages
     && !!effectiveConnectionDetails
     && isCompatProvider(effectiveConnectionDetails.providerType)
     && !modelSupportsImages(effectiveConnectionDetails, currentModel)
+  const showDeepSeekVisionWarning =
+    hasStagedImages
+    && !!effectiveConnectionDetails
+    && isTextOnlyPiAuthProvider(effectiveConnectionDetails.piAuthProvider)
+    && !connectionUsesVisionBridge(effectiveConnectionDetails)
+  const showVisionWarning = showCompatVisionWarning || showDeepSeekVisionWarning
 
   const handleOptimizePrompt = React.useCallback(async () => {
     const rawInput = input.trim()
@@ -1891,16 +1899,23 @@ export function FreeFormInput({
         {showVisionWarning && effectiveConnectionDetails && (
           <ImageSupportWarningBanner
             modelName={currentModelDisplayName}
-            actionLabel={visionFallbackModel
-              ? t('chat.imageWarning.switchAction', { modelName: visionFallbackModel.name })
+            title={showDeepSeekVisionWarning
+              ? t('chat.imageWarning.deepseekTitle', { modelName: currentModelDisplayName })
               : undefined}
-            onEnable={() => {
-              if (visionFallbackModel) {
-                onModelChange(visionFallbackModel.id, effectiveConnectionDetails.slug)
-                return
-              }
-              handleToggleModelVision(effectiveConnectionDetails.slug, currentModel, true)
-            }}
+            actionLabel={showDeepSeekVisionWarning
+              ? undefined
+              : (visionFallbackModel
+                ? t('chat.imageWarning.switchAction', { modelName: visionFallbackModel.name })
+                : undefined)}
+            onEnable={showDeepSeekVisionWarning
+              ? undefined
+              : () => {
+                if (visionFallbackModel) {
+                  onModelChange(visionFallbackModel.id, effectiveConnectionDetails.slug)
+                  return
+                }
+                handleToggleModelVision(effectiveConnectionDetails.slug, currentModel, true)
+              }}
           />
         )}
 

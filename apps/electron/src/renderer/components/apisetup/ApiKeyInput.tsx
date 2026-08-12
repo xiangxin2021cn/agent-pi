@@ -31,7 +31,15 @@ import {
   type PresetKey,
 } from "./submit-helpers"
 
-import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
+import {
+  DEFAULT_VISION_BRIDGE_BASE_URL,
+  DEFAULT_VISION_BRIDGE_MODEL,
+  isLocalVisionEndpoint,
+  type CustomEndpointApi,
+  type CustomEndpointConfig,
+  type VisionBridgeConfig,
+} from '@config/llm-connections'
+import { Switch } from '@/components/ui/switch'
 
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
@@ -65,6 +73,9 @@ export interface ApiKeySubmitData {
   awsRegion?: string
   /** Bedrock authentication method — determines auth type for Pi+Bedrock connections */
   bedrockAuthMethod?: 'iam_credentials' | 'environment'
+  /** Vision bridge for DeepSeek V4 (text-only) connections */
+  visionBridge?: VisionBridgeConfig
+  visionApiKey?: string
 }
 
 export interface ApiKeyInputProps {
@@ -89,6 +100,10 @@ export interface ApiKeyInputProps {
     models?: ApiKeyModelEntry[]
     /** Pre-fill the protocol toggle for custom endpoints */
     customApi?: CustomEndpointApi
+    visionEnabled?: boolean
+    visionApiKey?: string
+    visionBaseUrl?: string
+    visionModel?: string
   }
 }
 
@@ -158,6 +173,27 @@ const COMPAT_ANTHROPIC_DEFAULTS = 'claude-opus-4-8, claude-opus-4-7, claude-sonn
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
 const COMPAT_MINIMAX_DEFAULTS = 'MiniMax-M2.5, MiniMax-M2.5-highspeed'
 const COMPAT_KIMI_DEFAULTS = 'k3@ctx=1048576@max=131072, k3-256k@ctx=262144@max=131072, kimi-for-coding'
+
+const VISION_PRESETS = [
+  { key: 'zhipu', baseUrl: DEFAULT_VISION_BRIDGE_BASE_URL, model: DEFAULT_VISION_BRIDGE_MODEL },
+  { key: 'dashscope', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3-vl-flash' },
+  { key: 'ollama', baseUrl: 'http://localhost:11434/v1', model: 'qwen3-vl:4b' },
+  { key: 'custom', baseUrl: '', model: '' },
+] as const
+
+type VisionPresetKey = typeof VISION_PRESETS[number]['key']
+
+function matchVisionPreset(baseUrl?: string, model?: string): VisionPresetKey {
+  const url = (baseUrl ?? DEFAULT_VISION_BRIDGE_BASE_URL).replace(/\/$/, '')
+  for (const preset of VISION_PRESETS) {
+    if (preset.key === 'custom') continue
+    if (preset.baseUrl.replace(/\/$/, '') === url && (!model || model === preset.model)) {
+      return preset.key
+    }
+  }
+  if (!baseUrl && !model) return 'zhipu'
+  return 'custom'
+}
 
 function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
   if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
@@ -267,6 +303,19 @@ export function ApiKeyInput({
   const [awsSessionToken, setAwsSessionToken] = useState('')
   const [awsRegion, setAwsRegion] = useState('us-east-1')
 
+  const [visionEnabled, setVisionEnabled] = useState(initialValues?.visionEnabled ?? false)
+  const [visionApiKey, setVisionApiKey] = useState(initialValues?.visionApiKey ?? '')
+  const [showVisionKey, setShowVisionKey] = useState(false)
+  const [visionPreset, setVisionPreset] = useState<VisionPresetKey>(
+    matchVisionPreset(initialValues?.visionBaseUrl, initialValues?.visionModel),
+  )
+  const [visionBaseUrl, setVisionBaseUrl] = useState(
+    initialValues?.visionBaseUrl ?? DEFAULT_VISION_BRIDGE_BASE_URL,
+  )
+  const [visionModel, setVisionModel] = useState(
+    initialValues?.visionModel ?? DEFAULT_VISION_BRIDGE_MODEL,
+  )
+
   // Pi model tier state (for providers with many models like OpenRouter, Vercel)
   const [piModels, setPiModels] = useState<PiModelInfo[]>([])
   const [piModelsLoading, setPiModelsLoading] = useState(false)
@@ -283,6 +332,7 @@ export function ApiKeyInput({
 
   const isPiApiKeyFlow = providerType === 'pi_api_key'
   const isBedrock = activePreset === 'amazon-bedrock'
+  const isDeepSeekPreset = isPiApiKeyFlow && activePreset === 'deepseek'
   // Hide endpoint/model fields for providers with well-known endpoints handled by the SDK
   const DEFAULT_ENDPOINT_PROVIDERS = new Set(['anthropic', 'openai', 'pi', 'google'])
   const isDefaultProviderPreset = DEFAULT_ENDPOINT_PROVIDERS.has(activePreset)
@@ -387,8 +437,32 @@ export function ApiKeyInput({
     }
   }
 
+  const collectVisionFields = (): { visionBridge?: VisionBridgeConfig; visionApiKey?: string } | { error: string } => {
+    if (!isDeepSeekPreset) return {}
+    if (!visionEnabled) return { visionBridge: { enabled: false } }
+    const base = visionBaseUrl.trim()
+    const resolvedBase = base || DEFAULT_VISION_BRIDGE_BASE_URL
+    if (!isLocalVisionEndpoint(resolvedBase) && !visionApiKey.trim()) {
+      return { error: t('apiSetup.vision.apiKeyRequired') }
+    }
+    return {
+      visionBridge: {
+        enabled: true,
+        ...(base ? { baseUrl: base } : {}),
+        ...(visionModel.trim() ? { model: visionModel.trim() } : {}),
+      },
+      visionApiKey: visionApiKey.trim() || undefined,
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    const vision = collectVisionFields()
+    if ('error' in vision) {
+      setModelError(vision.error)
+      return
+    }
 
     const effectivePiAuthProvider = isPiApiKeyFlow
       ? resolvePiAuthProviderForSubmit(activePreset, lastNonCustomPreset)
@@ -408,6 +482,7 @@ export function ApiKeyInput({
         models,
         piAuthProvider: effectivePiAuthProvider,
         modelSelectionMode: 'userDefined3Tier',
+        ...vision,
       })
       return
     }
@@ -438,6 +513,7 @@ export function ApiKeyInput({
         } : {}),
         connectionDefaultModel: modelEntryId(parsedModels[0]),
         models: parsedModels.length > 0 ? parsedModels : undefined,
+        ...vision,
       })
       return
     }
@@ -474,6 +550,7 @@ export function ApiKeyInput({
         ? (parsedModels.length > 0 ? 'userDefined3Tier' : 'automaticallySyncedFromProvider')
         : undefined,
       customEndpoint,
+      ...vision,
     })
   }
 
@@ -874,6 +951,113 @@ export function ApiKeyInput({
             <p className="text-xs text-foreground/30">
               Required for custom endpoints. Use the provider-specific model ID.
             </p>
+          )}
+        </div>
+      )}
+
+      {isDeepSeekPreset && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <Label htmlFor="vision-enabled">{t('apiSetup.vision.enable')}</Label>
+              <p className="text-xs text-foreground/40 mt-1">{t('apiSetup.vision.description')}</p>
+            </div>
+            <Switch
+              id="vision-enabled"
+              checked={visionEnabled}
+              onCheckedChange={setVisionEnabled}
+              disabled={isDisabled}
+            />
+          </div>
+          {visionEnabled && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>{t('apiSetup.vision.backend')}</Label>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={isDisabled}
+                      className="flex h-6 items-center gap-1 rounded-[6px] bg-background shadow-minimal pl-2.5 pr-2 text-[12px] font-medium text-foreground/50 hover:bg-foreground/5 hover:text-foreground focus:outline-none"
+                    >
+                      {t(`apiSetup.vision.preset.${visionPreset}`)}
+                      <ChevronDown className="size-2.5 opacity-50" />
+                    </DropdownMenuTrigger>
+                    <StyledDropdownMenuContent align="end" className="z-floating-menu">
+                      {VISION_PRESETS.map((preset) => (
+                        <StyledDropdownMenuItem
+                          key={preset.key}
+                          onClick={() => {
+                            setVisionPreset(preset.key)
+                            if (preset.key !== 'custom') {
+                              setVisionBaseUrl(preset.baseUrl)
+                              setVisionModel(preset.model)
+                            }
+                          }}
+                          className="justify-between"
+                        >
+                          {t(`apiSetup.vision.preset.${preset.key}`)}
+                          <Check className={cn('size-3', visionPreset === preset.key ? 'opacity-100' : 'opacity-0')} />
+                        </StyledDropdownMenuItem>
+                      ))}
+                    </StyledDropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                {(visionPreset === 'custom' || visionPreset === 'ollama') && (
+                  <div className={cn('rounded-md shadow-minimal transition-colors', 'bg-foreground-2 focus-within:bg-background')}>
+                    <Input
+                      id="vision-base-url"
+                      type="text"
+                      value={visionBaseUrl}
+                      onChange={(e) => {
+                        setVisionBaseUrl(e.target.value)
+                        setVisionPreset('custom')
+                      }}
+                      placeholder={t('apiSetup.vision.baseUrl')}
+                      className="border-0 bg-transparent shadow-none"
+                      disabled={isDisabled}
+                    />
+                  </div>
+                )}
+              </div>
+              {!isLocalVisionEndpoint(visionBaseUrl || DEFAULT_VISION_BRIDGE_BASE_URL) && (
+                <div className="space-y-2">
+                  <Label htmlFor="vision-api-key">{t('apiSetup.vision.apiKey')}</Label>
+                  <div className={cn('relative rounded-md shadow-minimal transition-colors', 'bg-foreground-2 focus-within:bg-background')}>
+                    <Input
+                      id="vision-api-key"
+                      type={showVisionKey ? 'text' : 'password'}
+                      value={visionApiKey}
+                      onChange={(e) => setVisionApiKey(e.target.value)}
+                      placeholder={t('apiSetup.vision.apiKeyPlaceholder')}
+                      className="pr-10 border-0 bg-transparent shadow-none"
+                      disabled={isDisabled}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowVisionKey(!showVisionKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
+                    >
+                      {showVisionKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="vision-model">{t('apiSetup.vision.model')}</Label>
+                <div className={cn('rounded-md shadow-minimal transition-colors', 'bg-foreground-2 focus-within:bg-background')}>
+                  <Input
+                    id="vision-model"
+                    type="text"
+                    value={visionModel}
+                    onChange={(e) => setVisionModel(e.target.value)}
+                    placeholder={DEFAULT_VISION_BRIDGE_MODEL}
+                    className="border-0 bg-transparent shadow-none"
+                    disabled={isDisabled}
+                  />
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

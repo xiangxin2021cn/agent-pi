@@ -42,7 +42,7 @@ import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
 import { debug } from '../utils/debug.ts';
 import { getStatusCategory } from '../statuses/storage.ts';
-import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
+import { readSessionHeader, readSessionJsonl, readSessionJsonlAsync } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
 
 // Re-export types for convenience
@@ -536,6 +536,23 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
 
   end();
   return null;
+}
+
+/**
+ * Async counterpart of loadSession for UI-facing lazy loads.
+ * Persist/hydrate paths must keep the sync loadSession() to avoid a microtask
+ * window between disk read and enqueue.
+ */
+export async function loadSessionAsync(workspaceRootPath: string, sessionId: string): Promise<StoredSession | null> {
+  const end = perf.start('session.loadSessionAsync', { sessionId });
+  const jsonlPath = getSessionFilePath(workspaceRootPath, sessionId);
+  if (!existsSync(jsonlPath)) {
+    end();
+    return null;
+  }
+  const session = await readSessionJsonlAsync(jsonlPath);
+  end();
+  return session;
 }
 
 /**

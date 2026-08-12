@@ -19,6 +19,7 @@
  */
 
 import { protocol, nativeImage } from 'electron'
+import { LOCAL_PREVIEW_SCHEME_REGISTRATION } from './local-preview-protocol'
 import { stat } from 'fs/promises'
 import { isAbsolute } from 'path'
 import { mainLog } from './logger'
@@ -104,6 +105,7 @@ async function generateThumbnail(filePath: string, ext: string): Promise<Buffer 
  * registration during the earliest phase of app initialization.
  */
 export function registerThumbnailScheme(): void {
+  // Electron allows registerSchemesAsPrivileged only once, before ready.
   protocol.registerSchemesAsPrivileged([
     {
       scheme: 'thumbnail',
@@ -118,6 +120,7 @@ export function registerThumbnailScheme(): void {
         stream: true,
       },
     },
+    LOCAL_PREVIEW_SCHEME_REGISTRATION,
   ])
 }
 

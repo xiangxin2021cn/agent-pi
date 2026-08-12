@@ -233,3 +233,68 @@ describe('resolveInterceptorBundlePath dev-mode source preference', () => {
     expect(paths.interceptorBundlePath).toBe(overridePath);
   });
 });
+
+describe('Pi Bun runtime resolution (never Electron)', () => {
+  const tmpBase = join(tmpdir(), `bun-runtime-resolver-test-${Date.now()}`);
+  const previousCraftBun = process.env.CRAFT_BUN;
+
+  afterEach(() => {
+    if (previousCraftBun === undefined) delete process.env.CRAFT_BUN;
+    else process.env.CRAFT_BUN = previousCraftBun;
+    try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
+  });
+
+  it('finds monorepo apps/electron/vendor/bun even when resourcesPath has no bun', () => {
+    delete process.env.CRAFT_BUN;
+    const appRoot = join(tmpBase, 'monorepo');
+    const bunDir = join(appRoot, 'apps', 'electron', 'vendor', 'bun');
+    mkdirSync(bunDir, { recursive: true });
+    const bunPath = join(bunDir, process.platform === 'win32' ? 'bun.exe' : 'bun');
+    writeFileSync(bunPath, '#!/bin/sh\n');
+    chmodSync(bunPath, 0o755);
+
+    const paths = resolveBackendRuntimePaths({
+      appRootPath: appRoot,
+      resourcesPath: join(tmpBase, 'electron-resources'),
+      isPackaged: false,
+    });
+    expect(paths.nodeRuntimePath).toBe(bunPath);
+    expect(/[\\/]electron(?:\.exe)?$/i.test(paths.nodeRuntimePath ?? '')).toBe(false);
+  });
+
+  it('skips electron.exe even when it is passed as nodeRuntimePath', () => {
+    delete process.env.CRAFT_BUN;
+    const appRoot = join(tmpBase, 'skip-electron');
+    const bunDir = join(appRoot, 'vendor', 'bun');
+    mkdirSync(bunDir, { recursive: true });
+    const bunPath = join(bunDir, process.platform === 'win32' ? 'bun.exe' : 'bun');
+    writeFileSync(bunPath, '#!/bin/sh\n');
+    chmodSync(bunPath, 0o755);
+    const electronPath = join(appRoot, 'electron.exe');
+    writeFileSync(electronPath, '#!/bin/sh\n');
+
+    const paths = resolveBackendRuntimePaths({
+      appRootPath: appRoot,
+      resourcesPath: join(tmpBase, 'empty-resources-2'),
+      isPackaged: true,
+      nodeRuntimePath: electronPath,
+    });
+    expect(paths.nodeRuntimePath).toBe(bunPath);
+  });
+
+  it('honors CRAFT_BUN over a missing vendor path', () => {
+    const bunDir = join(tmpBase, 'craft-bun');
+    mkdirSync(bunDir, { recursive: true });
+    const bunPath = join(bunDir, process.platform === 'win32' ? 'bun.exe' : 'bun');
+    writeFileSync(bunPath, '#!/bin/sh\n');
+    chmodSync(bunPath, 0o755);
+    process.env.CRAFT_BUN = bunPath;
+
+    const paths = resolveBackendRuntimePaths({
+      appRootPath: join(tmpBase, 'empty-app'),
+      resourcesPath: join(tmpBase, 'empty-resources'),
+      isPackaged: true,
+    });
+    expect(paths.nodeRuntimePath).toBe(bunPath);
+  });
+});

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol';
-import { createBusinessProject } from '@craft-agent/shared/business-projects';
+import { createBusinessProject } from '@craft-agent/shared/business-projects/storage';
 import type { HandlerFn, RpcServer } from '../../transport/types.ts';
 import { registerTenderWorkspaceHandlers } from './tender-workspace.ts';
 

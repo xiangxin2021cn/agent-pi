@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
   inspectTenderBoqItemC51Quality,
@@ -13,19 +13,43 @@ import {
   type TenderBoqFiveStepPricingData,
   type TenderSourceLocator,
 } from '@agent-pi/business-core/tender';
-import { resolveTenderMethodStandardPath } from './tender-bindings.ts';
+import { resolveTenderMethodStandardPath, readTenderBindings } from './tender-bindings.ts';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 import { readStageDeliverablesCatalog } from './tender-stage-deliverables.ts';
+import { looksLikeSanralBoundProject, readProjectBoundaryPack } from './tender-project-boundary.ts';
+import { TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 
 export interface TenderBoqBatchBrief {
   schemaVersion: 1;
   projectId: string;
   batchId: string;
   objective: string;
+  /** Chain-wide tender-grounded writing contract for customer-facing MD. */
+  writingContract: string;
   methodStandard?: {
     title?: string;
     path: string;
     role: string;
+  };
+  /** Injected project boundary summary for child pricing sessions. */
+  projectBoundary?: {
+    packPath: string;
+    profileId?: string;
+    pricingStandard: string;
+    currency: string;
+    measurementStandard: string;
+    organizationOutlineExcerpt: string;
+    readiness: string;
+    allowedSourceIds: string[];
+    allowedSourcePaths: string[];
+    knowledgeSlugs: string[];
+    extractedInventory?: {
+      plant: string[];
+      labour: string[];
+      materialSources: string[];
+      constraints: string[];
+    };
+    fence: string;
   };
   scope: {
     documentId: string;
@@ -40,7 +64,7 @@ export interface TenderBoqBatchBrief {
   }>;
   allowedSources: Array<{ documentId: string; path?: string }>;
   qualityStandard: {
-    id: 'c51_pure_direct_cost_v1';
+    id: string;
     rules: string[];
   };
   outputSchema: Record<string, unknown>;
@@ -86,10 +110,83 @@ export interface TenderBoqBatchManifest {
   manifestPath: string;
 }
 
-// Business-boundary batching: one batch per BOQ sheet chapter (each BOQ page is
-// roughly one COTO chapter). Oversized chapters split by row order; small
-// chapters merge up to the cap so a subagent always sees a whole chapter.
+// Business-boundary batching: one batch per BOQ sheet/chapter. Oversized chapters
+// split by row order; small chapters merge up to the cap so a subagent always sees a whole chapter.
 const MAX_ITEMS_PER_BATCH = 25;
+
+const C51_QUALITY_RULES = [
+  'One complete workpaper per BOQ item; preserve code, description, unit, quantity, and row source exactly.',
+  'Step 1 must cite specification and measurement/payment clauses and state inclusions, exclusions, testing, and method constraints.',
+  'Step 2 must state method sequence, labour/plant crew, bottleneck formula, working hours, and optimistic/base/pessimistic productivity.',
+  'Step 3 must calculate every included resource consumption per BOQ unit and link it to a cost component.',
+  'Step 4 must use dated, located, VAT-exclusive rates with acquisition mode and source type; item rate is pure direct cost only. Verify key rates online and attach webEvidence (url + accessedAt); rates that cannot be verified stay assumptionStatus "unverified".',
+  'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
+  'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
+  'Every numeric fact is sourced, an explicit scenario, or unverified. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions (0.85, not 85). Mark an item "reviewed" only when its core records carry no unverified values; otherwise keep it "draft".',
+  'Do not invent plant, labour, materials, camp, or methods outside the projectBoundary fence (allowedSourceIds / extractedInventory / registered knowledge slugs).',
+  'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff — customers review the MD first.',
+];
+
+const GENERIC_QUALITY_RULES = [
+  'One complete workpaper per BOQ item; preserve code, description, unit, quantity, and row source exactly.',
+  'Follow the five-step direct-cost structure; cite tender measurement/specification clauses when available (no COTO ritual required).',
+  'State method, productivity scenarios, and resource consumption for priced measured items.',
+  'Verify key market rates online with webEvidence when required by the project boundary; otherwise mark unverified — never invent rates.',
+  'Honour projectBoundary.pricingStandard, currency, tax stance, and organization outline assumptions.',
+  'Do not invent plant, labour, materials, camp, or methods outside the projectBoundary fence (allowedSourceIds / extractedInventory / registered knowledge slugs).',
+  'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff.',
+];
+
+function resolveBoqQualityStandard(projectDirectory: string): {
+  id: string;
+  rules: string[];
+  projectBoundary?: TenderBoqBatchBrief['projectBoundary'];
+} {
+  const envelope = readProjectBoundaryPack(projectDirectory);
+  if (!envelope) {
+    const bindings = readTenderBindings(projectDirectory);
+    if (looksLikeSanralBoundProject(bindings)) {
+      return { id: 'c51_pure_direct_cost_v1', rules: C51_QUALITY_RULES };
+    }
+    return { id: 'generic_direct_cost_v1', rules: GENERIC_QUALITY_RULES };
+  }
+  const pack = envelope.data;
+  const id = pack.pricing.pricingStandard.trim() || 'generic_direct_cost_v1';
+  const outline = pack.organizationOutline.text.trim();
+  const sources = pack.boundarySources ?? [];
+  const inventory = pack.extractedInventory;
+  const allowedSourceIds = sources.map((source) => source.id);
+  const allowedSourcePaths = sources.map((source) => source.path).filter((path): path is string => Boolean(path));
+  const knowledgeSlugs = sources.map((source) => source.knowledgeSlug).filter((slug): slug is string => Boolean(slug));
+  const fenceParts = [
+    `Use only registered fence sources (${allowedSourceIds.length} ids).`,
+    allowedSourcePaths.length > 0 ? `File paths: ${allowedSourcePaths.join('; ')}.` : '',
+    knowledgeSlugs.length > 0 ? `Knowledge slugs: ${knowledgeSlugs.join(', ')}.` : '',
+    inventory?.plant.length ? `Owned plant: ${inventory.plant.join('; ')}.` : '',
+    inventory?.labour.length ? `Owned labour: ${inventory.labour.join('; ')}.` : '',
+    inventory?.materialSources.length ? `Material sources: ${inventory.materialSources.join('; ')}.` : '',
+    inventory?.constraints.length ? `Constraints: ${inventory.constraints.join('; ')}.` : '',
+    'Do not invent fleet, crews, materials, or methods outside this fence.',
+  ].filter(Boolean);
+  return {
+    id,
+    rules: id === 'c51_pure_direct_cost_v1' ? C51_QUALITY_RULES : GENERIC_QUALITY_RULES,
+    projectBoundary: {
+      packPath: join(projectDirectory, 'packs', 'project-boundary.json'),
+      ...(pack.profileId ? { profileId: String(pack.profileId) } : {}),
+      pricingStandard: id,
+      currency: pack.jurisdiction.currency,
+      measurementStandard: pack.standards.measurementStandard.title || pack.standards.measurementStandard.id,
+      organizationOutlineExcerpt: outline.slice(0, 600),
+      readiness: pack.readiness,
+      allowedSourceIds,
+      allowedSourcePaths,
+      knowledgeSlugs,
+      ...(inventory ? { extractedInventory: inventory } : {}),
+      fence: fenceParts.join(' '),
+    },
+  };
+}
 
 export function createOrRefreshBoqBatchManifest(
   projectDirectory: string,
@@ -123,7 +220,11 @@ export function createOrRefreshBoqBatchManifest(
   }
 
   const batches: TenderBoqBatchRecord[] = [];
-  const upstreamDeliverables = loadUpstreamDocumentAnalysisDeliverables(projectDirectory);
+  const upstreamDeliverables = [
+    ...loadUpstreamDocumentAnalysisDeliverables(projectDirectory),
+    ...loadUpstreamProjectBoundaryDeliverables(projectDirectory),
+  ];
+  const quality = resolveBoqQualityStandard(projectDirectory);
   for (const items of grouped.values()) {
     const chunks = segmentIntoChapterBatches(items);
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
@@ -160,11 +261,15 @@ export function createOrRefreshBoqBatchManifest(
         projectId,
         batchId,
         objective:
-          'Price the assigned BOQ items with useful C5.1 direct-cost workpapers. '
+          `Price the assigned BOQ items under pricingStandard ${quality.id}. `
           + 'Write JSON to reportPath and readable Markdown to markdownPath when practical. '
-          + 'Prefer substance over format ritual. Cite upstreamDeliverables (document-analysis MD/pack) when helpful. '
-          + 'Verify market rates via web when possible; otherwise mark unverified — never invent rates.',
+          + 'Prefer substance over format ritual. Cite upstreamDeliverables and projectBoundary when helpful. '
+          + 'Stay inside the projectBoundary fence — do not invent plant, labour, materials, or methods outside registered sources. '
+          + 'Verify market rates via web when possible; otherwise mark unverified — never invent rates. '
+          + 'Honor writingContract.',
+        writingContract: TENDER_WRITING_CONTRACT_BRIEF,
         ...(methodStandard ? { methodStandard } : {}),
+        ...(quality.projectBoundary ? { projectBoundary: quality.projectBoundary } : {}),
         scope,
         itemIds,
         items: chunk.map((item) => ({
@@ -177,18 +282,8 @@ export function createOrRefreshBoqBatchManifest(
         })),
         ...(upstreamDeliverables.length > 0 ? { upstreamDeliverables } : {}),
         qualityStandard: {
-          id: 'c51_pure_direct_cost_v1',
-          rules: [
-            'One complete workpaper per BOQ item; preserve code, description, unit, quantity, and row source exactly.',
-            'Step 1 must cite specification and measurement/payment clauses and state inclusions, exclusions, testing, and method constraints.',
-            'Step 2 must state method sequence, labour/plant crew, bottleneck formula, working hours, and optimistic/base/pessimistic productivity.',
-            'Step 3 must calculate every included resource consumption per BOQ unit and link it to a cost component.',
-            'Step 4 must use dated, located, VAT-exclusive rates with acquisition mode and source type; item rate is pure direct cost only. Verify key rates online and attach webEvidence (url + accessedAt); rates that cannot be verified stay assumptionStatus "unverified".',
-            'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
-            'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
-            'Every numeric fact is sourced, an explicit scenario, or unverified. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions (0.85, not 85). Mark an item "reviewed" only when its core records carry no unverified values; otherwise keep it "draft".',
-            'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff — customers review the MD first.',
-          ],
+          id: quality.id,
+          rules: quality.rules,
         },
         outputSchema: batchReportSchema(batchId, itemIds),
         reportPath,
@@ -196,7 +291,7 @@ export function createOrRefreshBoqBatchManifest(
         spawnPolicy: 'forbidden',
         finalArtifactPolicy: 'report-and-markdown',
       };
-      atomicWriteJson(briefPath, brief);
+      writeJsonIfChanged(briefPath, brief);
       const validation = validateBatchReport(reportPath, markdownPath, batchId, itemIds, chunk, scopeLinkByItemId);
       batches.push({
         batchId,
@@ -216,10 +311,25 @@ export function createOrRefreshBoqBatchManifest(
   const completeItemIds = new Set(
     batches.filter((batch) => batch.status === 'complete').flatMap((batch) => batch.itemIds),
   );
+  const previousManifest = existsSync(manifestPath)
+    ? (() => {
+      try {
+        return JSON.parse(readFileSync(manifestPath, 'utf8')) as TenderBoqBatchManifest;
+      } catch {
+        return undefined;
+      }
+    })()
+    : undefined;
   const manifest: TenderBoqBatchManifest = {
     schemaVersion: 1,
     projectId,
-    generatedAt: new Date().toISOString(),
+    generatedAt: previousManifest
+      && previousManifest.projectId === projectId
+      && previousManifest.batchCount === batches.length
+      && JSON.stringify(previousManifest.batches) === JSON.stringify(batches)
+      && JSON.stringify(previousManifest.skippedItems) === JSON.stringify(skippedItems)
+      ? previousManifest.generatedAt
+      : new Date().toISOString(),
     itemCount: eligibleItems.length,
     batchCount: batches.length,
     completedBatches: batches.filter((batch) => batch.status === 'complete').length,
@@ -228,7 +338,7 @@ export function createOrRefreshBoqBatchManifest(
     batches,
     manifestPath,
   };
-  atomicWriteJson(manifestPath, manifest);
+  writeJsonIfChanged(manifestPath, manifest);
   return manifest;
 }
 
@@ -354,6 +464,41 @@ function collectAllowedDocumentIds(
   return [...documentIds].sort();
 }
 
+function latestQuarantinedReportPath(reportPath: string): string | undefined {
+  const directory = dirname(reportPath);
+  const base = basename(reportPath);
+  if (!existsSync(directory)) return undefined;
+  const prefix = `${base}.invalid.`;
+  const candidates = readdirSync(directory)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => {
+      const fullPath = join(directory, name);
+      try {
+        return { fullPath, mtimeMs: statSync(fullPath).mtimeMs };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry): entry is { fullPath: string; mtimeMs: number } => Boolean(entry))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+  return candidates[0]?.fullPath;
+}
+
+function resolveReportPathForValidation(reportPath: string): { path: string; quarantined: boolean } | undefined {
+  if (existsSync(reportPath)) return { path: reportPath, quarantined: false };
+  const quarantined = latestQuarantinedReportPath(reportPath);
+  return quarantined ? { path: quarantined, quarantined: true } : undefined;
+}
+
+function looksLikeBoqPricingReport(reportPath: string): boolean {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { itemBuildUps?: unknown };
+    return Array.isArray(report.itemBuildUps) && report.itemBuildUps.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function validateBatchReport(
   reportPath: string,
   markdownPath: string,
@@ -362,15 +507,33 @@ function validateBatchReport(
   items: TenderBoqReconciliationData['items'],
   scopeLinkByItemId: Map<string, TenderBoqReconciliationData['scopeLinks'][number]>,
 ): { status: TenderBoqBatchRecord['status']; errors: string[]; warnings: string[] } {
-  if (!existsSync(reportPath)) return { status: 'pending', errors: [], warnings: [] };
+  const resolved = resolveReportPathForValidation(reportPath);
+  if (!resolved) return { status: 'pending', errors: [], warnings: [] };
+  if (resolved.quarantined && !looksLikeBoqPricingReport(resolved.path)) {
+    return { status: 'pending', errors: [], warnings: [] };
+  }
   try {
-    const { errors, warnings } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
+    const { errors, warnings } = readBatchReport(resolved.path, batchId, itemIds, items, scopeLinkByItemId);
     if (!artifactLooksAcceptable(markdownPath)) {
       warnings.push(
         `Customer-facing chapter Markdown thin or missing at ${markdownPath} (soft — JSON build-ups remain authoritative).`,
       );
     }
-    return { status: errors.length === 0 ? 'complete' : 'invalid', errors, warnings };
+    if (errors.length === 0) {
+      if (resolved.quarantined && resolved.path !== reportPath) {
+        try {
+          renameSync(resolved.path, reportPath);
+        } catch {
+          try {
+            writeFileSync(reportPath, readFileSync(resolved.path));
+          } catch {
+            // Best-effort — validation still reports complete for this tick.
+          }
+        }
+      }
+      return { status: 'complete', errors: [], warnings };
+    }
+    return { status: 'invalid', errors, warnings };
   } catch (error) {
     return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)], warnings: [] };
   }
@@ -437,7 +600,11 @@ function readBatchReport(
     assumptions: [],
   });
   const itemBuildUps = normalized.itemBuildUps;
-  errors.push(...normalized.errors.map((error) => `itemBuildUp rejected: ${error}`));
+  if (normalized.errors.length > 0 && itemBuildUps.length === 0) {
+    errors.push(...normalized.errors.map((error) => `itemBuildUp rejected: ${error}`));
+  } else {
+    warnings.push(...normalized.errors.map((error) => `itemBuildUp rejected (soft): ${error}`));
+  }
   warnings.push(...normalized.warnings);
 
   if (expectedItems) {
@@ -917,8 +1084,46 @@ function loadUpstreamDocumentAnalysisDeliverables(
     }));
 }
 
+function loadUpstreamProjectBoundaryDeliverables(
+  projectDirectory: string,
+): Array<{ id: string; kind: string; path: string; label: string }> {
+  const catalog = readStageDeliverablesCatalog(projectDirectory, 'project-boundary-conditions');
+  if (!catalog) {
+    const packPath = join(projectDirectory, 'packs', 'project-boundary.json');
+    if (!existsSync(packPath)) return [];
+    return [{
+      id: 'pack:project_boundary',
+      kind: 'pack',
+      path: packPath,
+      label: 'project_boundary pack',
+    }];
+  }
+  return catalog.items
+    .filter((item) => item.citable)
+    .slice(0, 10)
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      path: item.path,
+      label: item.label,
+    }));
+}
+
 function normalizeUnit(value: string): string {
   return normalizeSemanticText(value).replace(/\s+/g, '').replace(/³/g, '3').replace(/²/g, '2');
+}
+
+function writeJsonIfChanged(filePath: string, value: unknown): boolean {
+  const next = `${JSON.stringify(value, null, 2)}\n`;
+  if (existsSync(filePath)) {
+    try {
+      if (readFileSync(filePath, 'utf8') === next) return false;
+    } catch {
+      // fall through to write
+    }
+  }
+  atomicWriteJson(filePath, value);
+  return true;
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {

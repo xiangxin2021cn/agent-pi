@@ -5,6 +5,7 @@ export * from './document-analysis/index.ts';
 export * from './evaluation/index.ts';
 export * from './boq/index.ts';
 export * from './boq-pricing/index.ts';
+export * from './project-boundary/index.ts';
 export * from './resource-schedule/index.ts';
 export * from './bidder-commitments/index.ts';
 export * from './execution/index.ts';

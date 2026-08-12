@@ -3,12 +3,14 @@ import { canonicalTenderStageId } from '@craft-agent/session-tools-core'
 /** Stages where parent spawn_session must respect stage concurrency (not flood). */
 const CONTROLLED_DISPATCH_STAGES = new Set([
   'tender-document-analysis',
+  'project-boundary-conditions',
   'boq-five-step-pricing',
 ])
 
 /** Default max in-flight children for agent-initiated spawns (matches stage board / global handoff cap). */
 const STAGE_AGENT_SPAWN_LIMIT: Record<string, number> = {
   'tender-document-analysis': 4,
+  'project-boundary-conditions': 4,
   'boq-five-step-pricing': 4,
 }
 
@@ -38,8 +40,8 @@ export interface TenderParentSpawnGateDecision {
  * Tender parent chat is the command surface for spawn_session.
  * Stage controller UI (下一步/恢复) is complementary fill-up + stop/resume control.
  *
- * Gate only blocks flood: agent spawns during document-analysis / BOQ must stay
- * within stage concurrency (default 4). Stage-controller dispatches are
+ * Gate only blocks flood: agent spawns during document-analysis / boundary parse / BOQ
+ * must stay within stage concurrency (default 4). Stage-controller dispatches are
  * already concurrency-capped by the task board and always allowed here.
  */
 export function decideTenderParentSpawnGate(

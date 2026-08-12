@@ -10,6 +10,7 @@ import {
   markSubAgentHandoffNeedsReview,
   mergeSessionOrchestrationState,
   resumeSessionOrchestrationForFollowUp,
+  syncOrchestrationSelectedSources,
   transitionOrchestrationPhase,
   updateOrchestrationTaskStatus,
 } from './orchestration.ts';
@@ -400,6 +401,50 @@ describe('session orchestration state', () => {
       status: 'pending',
     }));
     expect(resumed?.ledger?.needsUserConfirmation).toBe(false);
+  });
+
+  it('syncs the selected-source snapshot to live enabled sources after remount', () => {
+    const frozen = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['anysearch-mcp'],
+      now: 100,
+    });
+
+    const synced = syncOrchestrationSelectedSources(
+      frozen,
+      ['anysearch-mcp', 'qwen-image-mcp'],
+      200,
+    );
+
+    expect(synced).not.toBe(frozen);
+    expect(synced?.policy.selectedSourceSlugs).toEqual(['anysearch-mcp', 'qwen-image-mcp']);
+    expect(synced?.policy.forbidWorkingDirectoryDiscovery).toBe(true);
+    expect(synced?.updatedAt).toBe(200);
+  });
+
+  it('returns the same orchestration object when the live source set is unchanged', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['file-memory-chapter-1'],
+      now: 100,
+    });
+
+    expect(syncOrchestrationSelectedSources(orchestration, ['file-memory-chapter-1'], 200)).toBe(orchestration);
+    expect(syncOrchestrationSelectedSources(orchestration, ['file-memory-chapter-1', 'file-memory-chapter-1'], 200)).toBe(orchestration);
+  });
+
+  it('does not wipe the snapshot when live enabled sources are still unknown', () => {
+    const orchestration = buildSessionOrchestrationState({
+      objective: contract.originalRequest,
+      taskContract: contract,
+      enabledSourceSlugs: ['anysearch-mcp'],
+      now: 100,
+    });
+
+    expect(syncOrchestrationSelectedSources(orchestration, undefined, 200)).toBe(orchestration);
+    expect(orchestration?.policy.selectedSourceSlugs).toEqual(['anysearch-mcp']);
   });
 
   describe('IWG-style regression checkpoints', () => {

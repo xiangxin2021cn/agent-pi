@@ -33,6 +33,7 @@ tender sources.
 - Do not expand tender scope or create downstream schedule and cost records in this skill.
 - A stale capability pack is not ready.
 - Do not spawn nested agents.
+- **Writing:** Follow tender-intelligence-core `references/writing-contract.md`. The 施工策划报告 and any methodology narrative must be this job's method in the tender's terms, with AI filler stripped — not a generic construction textbook.
 
 ## Workflow
 

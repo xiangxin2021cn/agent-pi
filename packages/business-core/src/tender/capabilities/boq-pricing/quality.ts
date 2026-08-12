@@ -269,3 +269,57 @@ function formatLocator(source: TenderSourceLocator): string {
     .filter(Boolean)
     .join(':');
 }
+
+/**
+ * Generic direct-cost inspector: keep five-step structure + webEvidence discipline,
+ * but do not require COTO-style clause numbers when the project boundary is not C5.1.
+ */
+export function inspectTenderBoqItemGenericQuality(
+  item: TenderBoqItem,
+  _scopeLink: TenderScopeLink | undefined,
+  buildUp: TenderBoqFiveStepItemBuildUp,
+): TenderBoqItemQualityIssue[] {
+  const issues: TenderBoqItemQualityIssue[] = [];
+  const error = (code: string, message: string) => issues.push({ code, severity: remapBoqPricingIssueSeverity(code, 'error'), message });
+  const warn = (code: string, message: string) => issues.push({ code, severity: 'warning', message });
+
+  if (!buildUp.itemIdentity) {
+    error('boq_pricing_item_identity_missing', `BOQ item ${item.id} has no immutable BOQ identity snapshot.`);
+  }
+  if (!buildUp.scopeBasis) {
+    warn('boq_pricing_scope_basis_missing', `BOQ item ${item.id} has no structured specification/measurement basis.`);
+  } else if (
+    buildUp.scopeBasis.specificationRefs.length === 0
+    && buildUp.scopeBasis.measurementRuleRefs.length === 0
+  ) {
+    warn('boq_pricing_scope_refs_sparse', `BOQ item ${item.id} lacks specification or measurement refs — cite tender clauses when known.`);
+  }
+  if (!buildUp.productivityBasis) {
+    warn('boq_pricing_productivity_basis_missing', `BOQ item ${item.id} has no productivity basis.`);
+  }
+  if (!buildUp.steps) {
+    error('boq_pricing_five_step_missing', `BOQ item ${item.id} is missing the five-step workpaper.`);
+  }
+  const components = buildUp.costComponents ?? [];
+  if (components.length === 0 && buildUp.status !== 'blocked') {
+    warn('boq_pricing_direct_cost_empty', `BOQ item ${item.id} has no direct-cost components.`);
+  }
+  for (const component of components) {
+    if (component.assumptionStatus === 'unverified') {
+      warn('boq_pricing_rate_unverified', `BOQ item ${item.id} component ${component.id} is unverified.`);
+    }
+  }
+  return issues;
+}
+
+export function inspectTenderBoqItemQualityByStandard(
+  pricingStandard: string | undefined,
+  item: TenderBoqItem,
+  scopeLink: TenderScopeLink | undefined,
+  buildUp: TenderBoqFiveStepItemBuildUp,
+): TenderBoqItemQualityIssue[] {
+  if (!pricingStandard || pricingStandard === 'c51_pure_direct_cost_v1') {
+    return inspectTenderBoqItemC51Quality(item, scopeLink, buildUp);
+  }
+  return inspectTenderBoqItemGenericQuality(item, scopeLink, buildUp);
+}

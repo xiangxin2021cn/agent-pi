@@ -426,6 +426,31 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
   )
 }
 
+function ConversationLoadingState({ compactMode }: { compactMode: boolean }) {
+  const { t } = useTranslation()
+  const [slow, setSlow] = React.useState(false)
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  return (
+    <motion.div
+      initial={{ opacity: compactMode ? 1 : 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={compactMode ? { duration: 0 } : { duration: 0.1 }}
+      className="flex h-64 flex-col items-center justify-center gap-2 px-4"
+    >
+      <Spinner className="text-foreground/30" />
+      <p className="max-w-sm text-center text-xs text-muted-foreground">
+        {slow ? t('chat.loadingConversationSlow') : t('chat.loadingConversation')}
+      </p>
+    </motion.div>
+  )
+}
+
 /**
  * Scrolls to target element on mount, before browser paint.
  * Uses useLayoutEffect to ensure scroll happens before content is visible.
@@ -1593,29 +1618,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 "mx-auto min-w-0",
                 compactMode ? "px-3 py-4 space-y-2" : [CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing]
               )}>
-                {/* Session-level AnimatePresence: Prevents layout jump when switching sessions */}
-                <AnimatePresence mode={compactMode ? "sync" : "wait"} initial={false}>
-                  <motion.div
-                    key={compactMode ? 'compact-session' : session?.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={compactMode ? { duration: 0 } : { duration: 0.1, ease: 'easeOut' }}
-                  >
-                    {/* Loading/Content AnimatePresence: sync mode avoids stale loading exits masking ready content */}
-                    <AnimatePresence mode="sync" initial={false}>
+                {/* sync: never wait for the previous transcript to unmount — wait mode
+                    froze the renderer on large tender sessions (spinner looked dead). */}
+                <AnimatePresence mode="sync" initial={false}>
                     {messagesLoading ? (
-                      /* Loading State: Show spinner while messages are being lazy loaded */
-                      <motion.div
-                        key="loading"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={compactMode ? { duration: 0 } : { duration: 0.1 }}
-                        className="flex items-center justify-center h-64"
-                      >
-                        <Spinner className="text-foreground/30" />
-                      </motion.div>
+                      <ConversationLoadingState key="loading" compactMode={compactMode} />
                     ) : messagesLoadError ? (
                       <motion.div
                         key="load-error"
@@ -1633,7 +1640,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           } as React.CSSProperties}
                         >
                           <AlertTriangle className="mx-auto mb-2 h-4 w-4 text-destructive/70" />
-                          <div className="text-sm font-medium text-destructive">Failed to load conversation</div>
+                          <div className="text-sm font-medium text-destructive">{t('chat.failedToLoadConversation')}</div>
                           <p className="mt-1 break-words text-xs text-destructive/70">{messagesLoadError}</p>
                           {onRetryMessagesLoad && (
                             <button
@@ -1642,7 +1649,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               disabled={messagesRetrying}
                               className="mt-3 rounded border border-destructive/20 px-2 py-0.5 text-xs text-destructive/70 transition-colors hover:border-destructive/40 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              {messagesRetrying ? 'Retrying…' : 'Retry'}
+                              {messagesRetrying ? t('chat.retrying') : t('chat.retry')}
                             </button>
                           )}
                         </div>
@@ -1975,8 +1982,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   })}
                     </motion.div>
                     )}
-                    </AnimatePresence>
-                  </motion.div>
                 </AnimatePresence>
                 {/* Processing Indicator - always visible while processing */}
                 {session.isProcessing && (() => {

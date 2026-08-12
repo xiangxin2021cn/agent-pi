@@ -14,6 +14,7 @@ const STAGE_ALIASES: Record<string, string> = {
 const STAGE_WRITE_ALLOWLIST: Record<string, readonly TenderCapabilityId[]> = {
   'project-setup': [],
   'tender-document-analysis': ['document_analysis', 'boq_reconciliation', 'evaluation_strategy'],
+  'project-boundary-conditions': ['project_boundary'],
   'boq-five-step-pricing': [
     'boq_five_step_pricing',
     'construction_resource_schedule',

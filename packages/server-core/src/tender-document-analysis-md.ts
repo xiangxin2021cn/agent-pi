@@ -18,8 +18,8 @@ export interface PublishDocumentAnalysisArtifactsResult {
 }
 
 /**
- * Build a human-readable Markdown summary of merged document analysis.
- * Written under Agent Pi Outputs/<parentSessionId>/.
+ * Build a project-level professional synopsis of merged document analysis.
+ * Avoid pack-path tutorials and meta dumps — body is bid-facing.
  */
 export function formatDocumentAnalysisMarkdown(
   data: TenderDocumentAnalysisData,
@@ -35,27 +35,17 @@ export function formatDocumentAnalysisMarkdown(
 
   const documentNameById = new Map(
     meta.manifest.batches.map((batch) => {
-      // Prefer brief scope name when available via source path basename
       const name = batch.sourcePath.replace(/\\/g, '/').split('/').pop() || batch.documentId;
       return [batch.documentId, name] as const;
     }),
   );
 
   const lines: string[] = [
-    '# Document Analysis Summary',
+    '# 招标文件解析纪要',
     '',
-    `- Project: \`${meta.projectId}\``,
-    `- Parent session: \`${meta.parentSessionId}\``,
-    `- Generated: ${generatedAt}`,
-    `- Documents: ${byDocument.size}`,
-    `- Sections: ${data.sections.length}`,
-    `- Batches complete: ${meta.manifest.completedBatches}/${meta.manifest.batchCount}`,
+    `项目 \`${meta.projectId}\` · 已覆盖 ${byDocument.size} 份资料 · ${data.sections.length} 个要点 · ${generatedAt.slice(0, 10)}`,
     '',
-    'This file is a readable projection of the authoritative pack at',
-    '`.agent-pi/business/tender/<projectId>/packs/document-analysis.json`.',
-    '',
-    'Per-document customer Markdown deliverables are published under',
-    '`Agent Pi Outputs/<parentSessionId>/document-analysis/`.',
+    '本稿供估价 / 技术 / 商务阅读：硬约束、组价与施工含义、风险与待澄清项。逐文件正文见同期发布的分册 Markdown。',
     '',
   ];
 
@@ -63,29 +53,38 @@ export function formatDocumentAnalysisMarkdown(
     const title = documentNameById.get(documentId) ?? documentId;
     lines.push(`## ${title}`);
     lines.push('');
-    lines.push(`- documentId: \`${documentId}\``);
-    lines.push(`- sections: ${sections.length}`);
-    lines.push('');
+
+    const reviewed = sections.filter((section) => section.status === 'reviewed' || section.status === 'accepted');
+    const blocked = sections.filter((section) => section.status === 'blocked' || section.status === 'rejected');
+    if (blocked.length > 0) {
+      lines.push(`- 待处理 / 受阻要点：${blocked.length}`);
+    }
+    if (reviewed.length > 0 && reviewed.length !== sections.length) {
+      lines.push(`- 已整理要点：${reviewed.length}/${sections.length}`);
+    }
+    if (blocked.length > 0 || (reviewed.length > 0 && reviewed.length !== sections.length)) {
+      lines.push('');
+    }
+
     for (const section of sections) {
       lines.push(`### ${section.title}`);
       lines.push('');
-      lines.push(`- id: \`${section.id}\``);
-      lines.push(`- kind: \`${section.kind}\``);
-      lines.push(`- status: \`${section.status}\``);
+      lines.push(section.summary.trim() || '_（无摘要）_');
       lines.push('');
-      lines.push(section.summary.trim() || '_(empty summary)_');
-      lines.push('');
-      if (section.sourceRefs.length > 0) {
-        lines.push('Source refs:');
-        for (const ref of section.sourceRefs) {
+
+      const usefulRefs = section.sourceRefs.filter((ref) =>
+        ref.page != null || Boolean(ref.sheet) || Boolean(ref.clause) || Boolean(ref.section),
+      );
+      if (usefulRefs.length > 0) {
+        lines.push('定位：');
+        for (const ref of usefulRefs) {
           const parts = [
-            `documentId=${ref.documentId}`,
-            ref.page != null ? `page=${ref.page}` : null,
-            ref.sheet ? `sheet=${ref.sheet}` : null,
-            ref.clause ? `clause=${ref.clause}` : null,
-            ref.section ? `section=${ref.section}` : null,
+            ref.page != null ? `p.${ref.page}` : null,
+            ref.sheet ? `sheet ${ref.sheet}` : null,
+            ref.clause ? `clause ${ref.clause}` : null,
+            ref.section ? `§ ${ref.section}` : null,
           ].filter(Boolean);
-          lines.push(`- ${parts.join(', ')}`);
+          lines.push(`- ${parts.join(' · ')}`);
         }
         lines.push('');
       }

@@ -314,6 +314,13 @@ function getElectronEnv(): Record<string, string> {
   // It checks: CODEX_PATH env var > bundled binary > local dev fork > system PATH.
   // You can override with CODEX_PATH env var if needed for debugging.
 
+  // electron:dev is launched by Bun; vendor/bun.exe is only downloaded during
+  // packaging. Pass this Bun through so Pi subprocesses never fall back to
+  // electron.exe (which cannot run the Bun ESM pi-agent-server bundle).
+  const bunFromLauncher = /[\\/]bun(?:\.exe)?$/i.test(process.execPath)
+    ? process.execPath
+    : undefined;
+
   return {
     ...process.env as Record<string, string>,
     VITE_DEV_SERVER_URL: `http://localhost:${vitePort}`,
@@ -322,6 +329,7 @@ function getElectronEnv(): Record<string, string> {
     CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || APP_DISPLAY_NAME,
     CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || APP_DEEPLINK_SCHEME,
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
+    ...(bunFromLauncher && !process.env.CRAFT_BUN ? { CRAFT_BUN: bunFromLauncher } : {}),
   };
 }
 

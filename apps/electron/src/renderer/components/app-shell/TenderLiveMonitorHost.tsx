@@ -9,6 +9,8 @@ import { getBusinessWorkflow } from '@/pages/business-workflows'
 
 /** Slower than before — status/resume on every stage was starving the main process. */
 const LIVE_POLL_MS = 45_000
+/** Let GET_MESSAGES finish first when opening a tender chat from 投标工作台. */
+const SESSION_CHAT_FIRST_TICK_DELAY_MS = 2_500
 
 function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
   if (!run?.batchProgress) return false
@@ -19,12 +21,12 @@ function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
     ))
 }
 
-/** Fill-up work only — failed batches wait for explicit 重试, not endless resume polls. */
+/** Fill-up work only — running children are reconciled by status; do not resume-poll them. */
 function stageNeedsFillUp(run?: TenderStageRunResultDto): boolean {
   if (!run?.batchProgress) return false
+  if (run.status === 'blocked') return false
   if (run.batchProgress.dispatchEnabled === false) return false
   return run.batchProgress.pendingBatches > 0
-    || run.batchProgress.runningBatches > 0
 }
 
 function stageNeedsStatus(run?: TenderStageRunResultDto): boolean {
@@ -39,7 +41,7 @@ function stageNeedsStatus(run?: TenderStageRunResultDto): boolean {
  *
  * Tick strategy (cheap → expensive):
  * 1. status only stages that still need attention (first tick: all)
- * 2. resume only stages that still have pending/running slots
+ * 2. resume only stages that still have pending fill-up slots
  */
 export function TenderLiveMonitorHost() {
   const navState = useNavigationState()
@@ -50,6 +52,8 @@ export function TenderLiveMonitorHost() {
   const inFlight = React.useRef(false)
   const lastRunsRef = React.useRef<Record<string, TenderStageRunResultDto>>({})
   const coldStartRef = React.useRef(true)
+  const monitorRef = React.useRef(monitor)
+  monitorRef.current = monitor
 
   // Stay alive across Overview ↔ Chat as long as the user remains in 投标工作台.
   const active = Boolean(
@@ -59,6 +63,7 @@ export function TenderLiveMonitorHost() {
     && monitor.workspaceRootPath === workspaceRootPath
     && isTenderNavigation(navState),
   )
+  const viewingSession = isTenderNavigation(navState) && Boolean(navState.details?.sessionId)
 
   React.useEffect(() => {
     if (!active || !monitor || !workspaceRootPath) return
@@ -89,15 +94,19 @@ export function TenderLiveMonitorHost() {
         }
 
         for (const stage of workflow.stages) {
-          if (monitor.dispatchPaused) break
+          const live = monitorRef.current
+          if (live?.dispatchPaused) break
+          if (byStage[stage.id]?.status === 'blocked') {
+            continue
+          }
           if (!stageNeedsFillUp(byStage[stage.id])) continue
           try {
             const parentSessionId = byStage[stage.id]?.projectParentSessionId
               ?? byStage[stage.id]?.batchProgress?.parentSessionId
             const run = await window.electronAPI.runTenderStage({
               action: 'resume',
-              workspaceRootPath: monitor.workspaceRootPath,
-              projectId: monitor.projectId,
+              workspaceRootPath: live?.workspaceRootPath ?? monitor.workspaceRootPath,
+              projectId: live?.projectId ?? monitor.projectId,
               stageId: stage.id,
               ...(parentSessionId ? { parentSessionId } : {}),
             })
@@ -127,10 +136,17 @@ export function TenderLiveMonitorHost() {
       }
     }
 
-    void tick()
-    const timer = window.setInterval(() => void tick(), LIVE_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [active, monitor?.projectId, monitor?.workspaceRootPath, setMonitor, workflow.stages, workspaceRootPath])
+    const startDelay = viewingSession ? SESSION_CHAT_FIRST_TICK_DELAY_MS : 0
+    let interval: number | undefined
+    const startTimer = window.setTimeout(() => {
+      void tick()
+      interval = window.setInterval(() => void tick(), LIVE_POLL_MS)
+    }, startDelay)
+    return () => {
+      window.clearTimeout(startTimer)
+      if (interval != null) window.clearInterval(interval)
+    }
+  }, [active, monitor?.projectId, monitor?.workspaceRootPath, setMonitor, viewingSession, workflow.stages, workspaceRootPath])
 
   // Soft notice once when monitor auto-stops after work drains while user is in chat.
   const wasActive = React.useRef(false)

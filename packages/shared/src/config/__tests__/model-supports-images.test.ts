@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { modelSupportsImages, type LlmConnection } from '../llm-connections.ts'
+import { modelSupportsImages, modelAcceptsNativeImageInput, type LlmConnection } from '../llm-connections.ts'
 
 const BASE_COMPAT: LlmConnection = {
   slug: 'custom',
@@ -76,5 +76,23 @@ describe('modelSupportsImages — non-pi_compat fallthrough', () => {
       createdAt: 1,
     }
     expect(modelSupportsImages(conn, 'gpt-x')).toBe(true)
+  })
+})
+
+describe('modelAcceptsNativeImageInput', () => {
+  it('returns false for Pi DeepSeek', () => {
+    const conn: LlmConnection = {
+      slug: 'ds', name: 'DeepSeek', providerType: 'pi', authType: 'api_key',
+      piAuthProvider: 'deepseek', createdAt: 1,
+    }
+    expect(modelAcceptsNativeImageInput(conn, 'pi/deepseek-v4-flash')).toBe(false)
+  })
+
+  it('returns true for Pi OpenAI', () => {
+    const conn: LlmConnection = {
+      slug: 'oai', name: 'OpenAI', providerType: 'pi', authType: 'api_key',
+      piAuthProvider: 'openai', createdAt: 1,
+    }
+    expect(modelAcceptsNativeImageInput(conn, 'pi/gpt-5.5')).toBe(true)
   })
 })
