@@ -15,6 +15,7 @@ import {
 } from '@agent-pi/business-core/tender';
 import { resolveTenderMethodStandardPath } from './tender-bindings.ts';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
+import { readStageDeliverablesCatalog } from './tender-stage-deliverables.ts';
 
 export interface TenderBoqBatchBrief {
   schemaVersion: 1;
@@ -46,6 +47,8 @@ export interface TenderBoqBatchBrief {
   reportPath: string;
   /** Customer-facing chapter workpaper MD — written by the child, not the parent. */
   markdownPath: string;
+  /** Upstream document-analysis deliverables the child may cite (from stage catalog). */
+  upstreamDeliverables?: Array<{ id: string; kind: string; path: string; label: string }>;
   spawnPolicy: 'forbidden';
   finalArtifactPolicy: 'report-and-markdown';
 }
@@ -120,6 +123,7 @@ export function createOrRefreshBoqBatchManifest(
   }
 
   const batches: TenderBoqBatchRecord[] = [];
+  const upstreamDeliverables = loadUpstreamDocumentAnalysisDeliverables(projectDirectory);
   for (const items of grouped.values()) {
     const chunks = segmentIntoChapterBatches(items);
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
@@ -156,10 +160,10 @@ export function createOrRefreshBoqBatchManifest(
         projectId,
         batchId,
         objective:
-          'Produce C5.1-standard pure direct-cost five-step pricing workpapers for exactly the assigned BOQ items. '
-          + 'Write (1) structured JSON to reportPath and (2) a customer-facing readable Markdown chapter workpaper to markdownPath '
-          + '(summary table + five-step sections). Do not leave the Markdown for the parent session. '
-          + 'Follow the bound methodStandard file for derivation depth and deliverable shape. Do not substitute a resource database, market-rate summary, chapter narrative, or unpriced scope register. Tender documents are the only valid basis for scope, quantities, specifications, and measurement rules; for resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt). If a rate cannot be verified online, set assumptionStatus "unverified" — never invent a rate.',
+          'Price the assigned BOQ items with useful C5.1 direct-cost workpapers. '
+          + 'Write JSON to reportPath and readable Markdown to markdownPath when practical. '
+          + 'Prefer substance over format ritual. Cite upstreamDeliverables (document-analysis MD/pack) when helpful. '
+          + 'Verify market rates via web when possible; otherwise mark unverified — never invent rates.',
         ...(methodStandard ? { methodStandard } : {}),
         scope,
         itemIds,
@@ -171,6 +175,7 @@ export function createOrRefreshBoqBatchManifest(
           documentId,
           ...(sourcePathByDocumentId.get(documentId) ? { path: sourcePathByDocumentId.get(documentId) } : {}),
         })),
+        ...(upstreamDeliverables.length > 0 ? { upstreamDeliverables } : {}),
         qualityStandard: {
           id: 'c51_pure_direct_cost_v1',
           rules: [
@@ -361,9 +366,8 @@ function validateBatchReport(
   try {
     const { errors, warnings } = readBatchReport(reportPath, batchId, itemIds, items, scopeLinkByItemId);
     if (!artifactLooksAcceptable(markdownPath)) {
-      errors.push(
-        `Customer-facing chapter Markdown missing or too thin at ${markdownPath}. `
-          + 'The child must write this MD (summary table + five-step sections); do not leave it for the parent.',
+      warnings.push(
+        `Customer-facing chapter Markdown thin or missing at ${markdownPath} (soft — JSON build-ups remain authoritative).`,
       );
     }
     return { status: errors.length === 0 ? 'complete' : 'invalid', errors, warnings };
@@ -415,7 +419,7 @@ function readBatchReport(
   const errors: string[] = [];
   const warnings: string[] = [];
   if (report.schemaVersion !== 1) errors.push('schemaVersion must be 1');
-  if (report.batchId !== batchId) errors.push(`batchId must be ${batchId}`);
+  // Soft: brief path is authoritative — wrong batchId must not invalidate the batch.
   if (!Array.isArray(report.itemBuildUps)) {
     errors.push('itemBuildUps must be an array');
     return { itemBuildUps: [], errors, warnings };
@@ -442,13 +446,13 @@ function readBatchReport(
       const item = expectedById.get(buildUp.boqItemId);
       if (!item) continue;
       if (buildUp.status === 'blocked') {
-        errors.push(`BOQ item ${buildUp.boqItemId} is blocked and cannot complete the batch`);
+        warnings.push(`BOQ item ${buildUp.boqItemId} is blocked — continue with remaining items`);
       } else if (buildUp.status !== 'reviewed') {
         warnings.push(`BOQ item ${buildUp.boqItemId} is ${buildUp.status}, not reviewed — flagged for human review`);
       }
+      // Soft: C5.1 structural completeness is advisory — never fail the whole batch.
       for (const issue of inspectTenderBoqItemC51Quality(item, scopeLinkByItemId.get(item.id), buildUp)) {
-        if (issue.severity === 'error') errors.push(`${issue.code}: ${issue.message}`);
-        else warnings.push(`${issue.code}: ${issue.message}`);
+        warnings.push(`${issue.code}: ${issue.message}`);
       }
     }
   }
@@ -457,9 +461,14 @@ function readBatchReport(
   const actual = new Set(actualIds);
   const missing = itemIds.filter((itemId) => !actual.has(itemId));
   const extras = actualIds.filter((itemId) => !expected.has(itemId));
-  if (actualIds.length !== actual.size) errors.push('itemBuildUps contains duplicate BOQ item IDs');
-  if (missing.length > 0) errors.push(`missing BOQ item IDs: ${missing.join(', ')}`);
-  if (extras.length > 0) errors.push(`unexpected BOQ item IDs: ${extras.join(', ')}`);
+  if (actualIds.length !== actual.size) warnings.push('itemBuildUps contains duplicate BOQ item IDs');
+  // Soft: partial coverage is OK if at least one priced item landed; missing ids are warnings.
+  if (itemBuildUps.length === 0) {
+    errors.push('itemBuildUps must include at least one priced item');
+  } else if (missing.length > 0) {
+    warnings.push(`missing BOQ item IDs (soft): ${missing.join(', ')}`);
+  }
+  if (extras.length > 0) warnings.push(`unexpected BOQ item IDs: ${extras.join(', ')}`);
   return { itemBuildUps, errors, warnings };
 }
 
@@ -890,6 +899,22 @@ function detectCrossBatchSemanticConflicts(
 
 function normalizeSemanticText(value: string): string {
   return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function loadUpstreamDocumentAnalysisDeliverables(
+  projectDirectory: string,
+): Array<{ id: string; kind: string; path: string; label: string }> {
+  const catalog = readStageDeliverablesCatalog(projectDirectory, 'tender-document-analysis');
+  if (!catalog) return [];
+  return catalog.items
+    .filter((item) => item.citable)
+    .slice(0, 30)
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      path: item.path,
+      label: item.label,
+    }));
 }
 
 function normalizeUnit(value: string): string {

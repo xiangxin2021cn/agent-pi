@@ -465,6 +465,9 @@ async function reconcileRuntime(
   return { ...board, tasks, updatedAt: new Date().toISOString() };
 }
 
+/** Stop auto-flooding a single batch after many failed acceptance loops. */
+const MAX_AUTO_DISPATCH_ATTEMPTS = 6;
+
 async function dispatchPendingTasks(
   board: TenderStageTaskBoard,
   options: UpdateTenderStageTaskBoardOptions,
@@ -480,10 +483,23 @@ async function dispatchPendingTasks(
     const spec = specs.get(task.batchId);
     if (!spec) continue;
     const now = new Date().toISOString();
+    if (task.attemptCount >= MAX_AUTO_DISPATCH_ATTEMPTS) {
+      tasks[index] = {
+        ...task,
+        status: 'failed',
+        updatedAt: now,
+        error: `已自动派发 ${task.attemptCount} 次仍未验收通过。请打开子会话确认 JSON+MD 已写入后点「重试」，或检查报告是否被误封存为 .invalid。`,
+      };
+      continue;
+    }
     try {
       const result = await execution.spawnSession(parentSessionId, {
         name: spec.name,
-        prompt: `Read and execute only the structured task brief at ${spec.briefPath}. Follow its qualityStandard and outputSchema exactly. The tender documents attached to this task are the only valid basis for scope, quantities, specifications, and measurement rules. For document analysis: write BOTH the structured JSON handoff AND the human-readable Markdown at brief.markdownPath (customer-facing; do not leave MD for the parent). For BOQ pricing: complete one C5.1 pure-direct-cost workpaper per assigned item and write BOTH the JSON handoff and the readable chapter Markdown at brief.markdownPath; a resource database or summary report is not a valid substitute. For resource RATES you MUST verify current market levels via web search/fetch (fuel, wages, plant hire, cement, aggregates, asphalt, subcontract rates) and record each verified rate in rateBasis.webEvidence (url + accessedAt); rates that cannot be verified online stay assumptionStatus "unverified" — never invent a rate. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions. Write the complete structured handoff to ${spec.reportPath}. Do not create child sessions and do not write the final merged tender artifact.`,
+        prompt: `Read the task brief at ${spec.briefPath} and produce useful analysis/pricing for the attached tender sources only. `
+          + `Write a structured JSON handoff to ${spec.reportPath} and a readable Markdown deliverable to brief.markdownPath when provided. `
+          + `Prefer substance over format ritual: wrong batchId is auto-corrected; empty sourceRefs are accepted; do not burn tokens inventing IDs or chasing filenames. `
+          + `For BOQ pricing: price the assigned items with plain decimal rates (verify market rates via web when possible; otherwise mark unverified — never invent). `
+          + `Do not spawn further child sessions and do not write the final merged project pack.`,
         workingDirectory: options.workingDirectory,
         briefPath: spec.briefPath,
         reportPath: spec.reportPath,

@@ -28,7 +28,10 @@ export const TenderDocumentAnalysisDataSchema = z.object({
   sections: z.array(TenderDocumentAnalysisSectionSchema),
 }).strict();
 
-export function parseTenderDocumentAnalysisData(value: unknown): TenderDocumentAnalysisData {
-  const { data } = normalizeDocumentAnalysis(value);
+export function parseTenderDocumentAnalysisData(
+  value: unknown,
+  options: { defaultDocumentId?: string } = {},
+): TenderDocumentAnalysisData {
+  const { data } = normalizeDocumentAnalysis(value, options);
   return TenderDocumentAnalysisDataSchema.parse(data) as TenderDocumentAnalysisData;
 }

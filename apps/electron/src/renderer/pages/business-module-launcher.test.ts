@@ -94,7 +94,7 @@ describe('business module launcher', () => {
     expect(draft).toContain('rewrite child briefs')
     expect(draft).toContain('boq_five_step_pricing')
     expect(draft).toContain('document_analysis')
-    expect(draft).toContain('boq_reconciliation')
+    expect(draft).not.toContain('Required capabilities: document_analysis, boq_reconciliation')
   })
 
   test('document analysis stage dispatches exact per-source manifest briefs', () => {

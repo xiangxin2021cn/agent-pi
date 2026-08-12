@@ -26,7 +26,16 @@ import {
   validateBoqBatchMerge,
   type TenderBoqBatchManifest,
 } from './tender-boq-batches.ts';
-import { writeDocumentAnalysisSummaryMarkdown } from './tender-document-analysis-md.ts';
+import {
+  publishDocumentAnalysisArtifactsToOfficialOutputs,
+  writeDocumentAnalysisSummaryMarkdown,
+} from './tender-document-analysis-md.ts';
+import {
+  buildStageDeliverablesCatalog,
+  organizeStageDeliverables,
+  stageDeliverablesCatalogPath,
+  type OrganizeStageDeliverablesResult,
+} from './tender-stage-deliverables.ts';
 import { ensureDefaultTenderBindings } from './tender-bindings.ts';
 import {
   assertDocumentParseGate,
@@ -54,7 +63,6 @@ import {
 } from './tender-planning-gates.ts';
 import { setSessionBusinessStage } from '@craft-agent/shared/sessions';
 import {
-  assertResourceScheduleArtifacts,
   writeConstructionResourceScheduleArtifacts,
 } from './tender-resource-schedule.ts';
 import {
@@ -73,7 +81,8 @@ export type TenderStageRunAction =
   | 'advance'
   | 'complete'
   | 'reset_orchestration'
-  | 'set_dispatch';
+  | 'set_dispatch'
+  | 'organize_deliverables';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -168,6 +177,17 @@ export interface TenderStageRunResult {
   migratedFromLegacy?: boolean;
   /** Single project-lifetime parent session shared across stages. */
   projectParentSessionId?: string;
+  deliverables?: {
+    catalogPath: string;
+    presentCount: number;
+    missingCount: number;
+    thinCount: number;
+    publishedToOfficial: boolean;
+    summaryPath?: string;
+    indexLines: string[];
+    healed?: number;
+    published?: number;
+  };
   sourceBoundary: TenderSourceBoundary;
   updatedAt: string;
   startedAt?: string;
@@ -180,6 +200,7 @@ export interface TenderStageRunResult {
     documentAnalysisBatchManifestPath?: string;
     boqBatchManifestPath?: string;
     taskBoardPath?: string;
+    stageDeliverablesCatalogPath?: string;
   };
 }
 
@@ -197,9 +218,8 @@ interface PersistedTenderStageState {
   migratedFromLegacy?: boolean;
 }
 
-// V2.5: 4 business stages. evaluation_strategy is optional (not in producedCapabilities).
-// planning + submission collapse into planning-and-submission with UI substeps.
-// Legacy stage ids resolve through STAGE_ALIASES so existing projects keep loading.
+// Soft stage gates: enter next stage when the prior stage has usable primary results.
+// Secondary packs stay best-effort and must not hard-block handoff.
 const STAGES: TenderStageDefinition[] = [
   { id: 'project-setup', requiredCapabilities: [], producedCapabilities: [] },
   {
@@ -209,12 +229,12 @@ const STAGES: TenderStageDefinition[] = [
   },
   {
     id: 'boq-five-step-pricing',
-    requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
+    requiredCapabilities: ['document_analysis'],
     producedCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
   },
   {
     id: 'planning-and-submission',
-    requiredCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
+    requiredCapabilities: ['boq_five_step_pricing'],
     producedCapabilities: [
       'execution_plan',
       'schedule_resources',
@@ -528,10 +548,21 @@ async function runTenderStageUnlocked(
     baseMissingItems.push('task-board:parent-session-required');
   }
   if (taskBoard) {
+    // Soft: failed/blocked children surface in the monitor for retry, but must not
+    // paint the whole stage "阻塞" when other batches already delivered results.
     const failedTasks = taskBoard.tasks.filter((task) => task.status === 'failed').length;
     const blockedTasks = taskBoard.tasks.filter((task) => task.status === 'blocked').length;
-    if (failedTasks > 0) baseMissingItems.push(`task-board:failed:${failedTasks}`);
-    if (blockedTasks > 0) baseMissingItems.push(`task-board:blocked:${blockedTasks}`);
+    if (
+      (request.action === 'start' || request.action === 'resume' || request.action === 'advance')
+      && (failedTasks > 0 || blockedTasks > 0)
+      && !(
+        (documentBatchManifest && documentBatchManifest.completedBatches === documentBatchManifest.batchCount)
+        || (boqBatchManifest && boqBatchManifest.completedBatches === boqBatchManifest.batchCount)
+      )
+    ) {
+      if (failedTasks > 0) baseMissingItems.push(`task-board:failed:${failedTasks}`);
+      if (blockedTasks > 0) baseMissingItems.push(`task-board:blocked:${blockedTasks}`);
+    }
   }
   const shouldEvaluateCompletion = request.action === 'complete'
     || (
@@ -540,7 +571,16 @@ async function runTenderStageUnlocked(
     );
   const completionMissingItems: string[] = [];
   if (shouldEvaluateCompletion) {
-    completionMissingItems.push(...stage.producedCapabilities
+    // Soft: only the primary produced capability must be present to complete.
+    // Secondary packs remain best-effort and should not stall handoff.
+    const primaryOutputs: TenderCapabilityId[] = stage.id === 'tender-document-analysis'
+      ? ['document_analysis']
+      : stage.id === 'boq-five-step-pricing'
+        ? ['boq_five_step_pricing']
+        : stage.id === 'planning-and-submission'
+          ? ['execution_plan']
+          : stage.producedCapabilities;
+    completionMissingItems.push(...primaryOutputs
       .filter((capability) => !isCapabilitySatisfied(capability, capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest))
       .map((capability) => `output:${capability}`));
     if (
@@ -562,6 +602,7 @@ async function runTenderStageUnlocked(
           .map((error) => `document-merge:${error}`),
       );
       const reviewLedger = readDocumentReviewLedger(paths.projectDirectory, project.projectId);
+      // Soft: only missing MD artifacts — human review no longer blocks complete.
       completionMissingItems.push(
         ...assertDocumentParseGate(
           reviewLedger,
@@ -586,7 +627,7 @@ async function runTenderStageUnlocked(
         ...boqMergeRuntimeErrors.map((error) => `boq-merge:${error}`),
         ...validateFinalBoqMerge(paths, boqBatchManifest).map((error) => `boq-merge:${error}`),
         ...resourceScheduleRuntimeErrors.map((error) => `resource-schedule:${error}`),
-        ...assertResourceScheduleArtifacts(project.rootPath, project.projectId, paths.projectDirectory),
+        // Soft: resource-schedule MD/pack are best-effort after pricing merge.
       );
     }
     if (stage.id === 'planning-and-submission') {
@@ -599,6 +640,41 @@ async function runTenderStageUnlocked(
   const planningSubsteps = stage.id === 'planning-and-submission'
     ? evaluatePlanningSubsteps(project.rootPath, paths.projectDirectory, project.projectId)
     : undefined;
+
+  const deliverablesParentId = taskBoard?.parentSessionId ?? boardParentSessionId ?? projectParentSessionId;
+  let organizeResult: OrganizeStageDeliverablesResult | undefined;
+  if (request.action === 'organize_deliverables') {
+    organizeResult = organizeStageDeliverables({
+      projectRoot: project.rootPath,
+      projectId: project.projectId,
+      projectDirectory: paths.projectDirectory,
+      stageId: stage.id,
+      parentSessionId: deliverablesParentId,
+      documentManifest: documentBatchManifest,
+      boqManifest: boqBatchManifest,
+    });
+  }
+  const deliverablesCatalog = organizeResult?.catalog ?? buildStageDeliverablesCatalog({
+    projectRoot: project.rootPath,
+    projectId: project.projectId,
+    projectDirectory: paths.projectDirectory,
+    stageId: stage.id,
+    parentSessionId: deliverablesParentId,
+    documentManifest: documentBatchManifest,
+    boqManifest: boqBatchManifest,
+  });
+  // Persist catalog on status polls so handoff always has a path to cite.
+  if (request.action === 'status' || request.action === 'organize_deliverables' || request.action === 'complete') {
+    try {
+      const catalogPath = stageDeliverablesCatalogPath(paths.projectDirectory, stage.id);
+      mkdirSync(dirname(catalogPath), { recursive: true });
+      const temporary = `${catalogPath}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(temporary, `${JSON.stringify(deliverablesCatalog, null, 2)}\n`, 'utf8');
+      renameSync(temporary, catalogPath);
+    } catch {
+      // best-effort catalog persistence
+    }
+  }
 
   const missingItems = shouldEvaluateCompletion
     ? [...baseMissingItems, ...completionMissingItems]
@@ -614,7 +690,9 @@ async function runTenderStageUnlocked(
     schemaVersion: 1,
     projectId: project.projectId,
     stageId: stage.id,
-    status,
+    status: request.action === 'organize_deliverables'
+      ? (previous?.status === 'complete' ? 'complete' : status === 'blocked' ? 'blocked' : (previous?.status ?? status))
+      : status,
     requiredCapabilities: stage.requiredCapabilities,
     producedCapabilities: stage.producedCapabilities,
     generatedPacks,
@@ -627,6 +705,16 @@ async function runTenderStageUnlocked(
     ...(planningSubsteps ? { substeps: planningSubsteps } : {}),
     ...(persisted.migratedFromLegacy || electedMultiParent ? { migratedFromLegacy: true } : {}),
     ...(projectParentSessionId ? { projectParentSessionId } : {}),
+    deliverables: {
+      catalogPath: deliverablesCatalog.catalogPath,
+      presentCount: deliverablesCatalog.presentCount,
+      missingCount: deliverablesCatalog.missingCount,
+      thinCount: deliverablesCatalog.thinCount,
+      publishedToOfficial: deliverablesCatalog.publishedToOfficial,
+      ...(deliverablesCatalog.summaryPath ? { summaryPath: deliverablesCatalog.summaryPath } : {}),
+      indexLines: deliverablesCatalog.indexLines,
+      ...(organizeResult ? { healed: organizeResult.healed, published: organizeResult.published } : {}),
+    },
     updatedAt: now,
     startedAt: (request.action === 'start' || request.action === 'resume' || request.action === 'advance') && status === 'running'
       ? (previous?.startedAt ?? now)
@@ -640,7 +728,7 @@ async function runTenderStageUnlocked(
   };
   atomicWriteJson(paths.stageStatePath, nextState);
 
-  return { ...stageResult, sourceBoundary, paths: publicPaths(paths, taskBoard) };
+  return { ...stageResult, sourceBoundary, paths: publicPaths(paths, taskBoard, stage.id) };
 }
 
 function determineStatus(
@@ -651,7 +739,14 @@ function determineStatus(
 ): TenderStageRunStatus {
   if (baseMissingItems.length > 0) return 'blocked';
   if (action === 'preflight') return 'ready';
-  if (action === 'start' || action === 'resume' || action === 'advance' || action === 'reset_orchestration' || action === 'set_dispatch') {
+  if (
+    action === 'start'
+    || action === 'resume'
+    || action === 'advance'
+    || action === 'reset_orchestration'
+    || action === 'set_dispatch'
+    || action === 'organize_deliverables'
+  ) {
     return 'running';
   }
   if (action === 'complete') return completionMissingItems.length > 0 ? 'blocked' : 'complete';
@@ -736,37 +831,70 @@ function isCapabilitySatisfied(
   documentManifest?: TenderDocumentAnalysisBatchManifest,
   boqManifest?: TenderBoqBatchManifest,
 ): boolean {
+  const packPath = capabilityPackPath(paths.projectDirectory, capability);
+  const packUsable = packHasUsableContent(packPath, capability);
   const entry = index.capabilities.find((candidate) => candidate.capability === capability);
-  if (!entry || entry.revision <= 0 || entry.stale) return false;
+  if (!entry || entry.revision <= 0 || entry.stale) {
+    // Index lag: a non-empty pack on disk is still a usable upstream result.
+    return packUsable;
+  }
   if (entry.readiness === 'ready') return true;
-  // Deterministic merges may land as needs_review when some child records are
-  // still draft; accept them once the pack exists and matches the merge.
-  if (entry.readiness === 'needs_review') {
-    if (
-      capability === 'document_analysis'
-      && documentManifest
-      && validateFinalDocumentAnalysisMerge(paths, documentManifest).length === 0
-    ) {
-      return true;
+  // Soft: needs_review AND not_ready both advance when the pack has substance.
+  // Audit errors stay visible in the quality panel — they must not trap the pipeline.
+  if (entry.readiness === 'needs_review' || entry.readiness === 'not_ready') {
+    if (packUsable) return true;
+    if (capability === 'document_analysis' && documentManifest) {
+      return validateFinalDocumentAnalysisMerge(paths, documentManifest).length === 0;
     }
-    if (
-      capability === 'boq_five_step_pricing'
-      && boqManifest
-      && boqManifest.batchCount > 0
-      && boqManifest.completedBatches === boqManifest.batchCount
-      && boqManifest.missingItemIds.length === 0
-      && validateFinalBoqMerge(paths, boqManifest).length === 0
-    ) {
-      return true;
+    if (capability === 'boq_five_step_pricing' && boqManifest) {
+      return boqManifest.batchCount > 0
+        && boqManifest.completedBatches === boqManifest.batchCount
+        && boqManifest.missingItemIds.length === 0;
     }
-    if (
-      capability === 'construction_resource_schedule'
-      && existsSync(join(paths.projectDirectory, 'packs', 'construction-resource-schedule.json'))
-    ) {
-      return true;
-    }
+    return false;
   }
   return false;
+}
+
+function capabilityPackPath(projectDirectory: string, capability: TenderCapabilityId): string {
+  const fileName = ({
+    document_analysis: 'document-analysis.json',
+    boq_reconciliation: 'boq-reconciliation.json',
+    boq_five_step_pricing: 'boq-five-step-pricing.json',
+    construction_resource_schedule: 'construction-resource-schedule.json',
+    bidder_commitments: 'bidder-commitments.json',
+    execution_plan: 'execution-plan.json',
+    schedule_resources: 'schedule-resources.json',
+    cost_cashflow: 'cost-cashflow.json',
+    submission_documents: 'submission-documents.json',
+    submission_audit: 'submission-audit.json',
+    evaluation_strategy: 'evaluation-strategy.json',
+  } as Partial<Record<TenderCapabilityId, string>>)[capability] ?? `${capability.replace(/_/g, '-')}.json`;
+  return join(projectDirectory, 'packs', fileName);
+}
+
+function packHasUsableContent(packPath: string, capability: TenderCapabilityId): boolean {
+  if (!existsSync(packPath)) return false;
+  try {
+    const envelope = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(packPath, 'utf8')));
+    const data = envelope.data as Record<string, unknown> | undefined;
+    if (!data || typeof data !== 'object') return false;
+    if (capability === 'document_analysis') {
+      return Array.isArray(data.sections) && data.sections.length > 0;
+    }
+    if (capability === 'boq_five_step_pricing') {
+      return Array.isArray(data.itemBuildUps) && data.itemBuildUps.length > 0;
+    }
+    if (capability === 'boq_reconciliation') {
+      return Array.isArray(data.items) && data.items.length > 0;
+    }
+    if (capability === 'construction_resource_schedule') {
+      return Array.isArray(data.rows) && data.rows.length > 0;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureResourceSchedulePack(input: {
@@ -818,13 +946,26 @@ async function ensureDocumentAnalysisPackMerged(input: {
   if (merged.errors.length > 0) return { errors: merged.errors };
 
   if (existingMergeErrors.length === 0) {
-    // Pack already matches child reports — still refresh the formal MD summary.
+    // Pack already matches child reports — still refresh formal outputs.
     if (input.parentSessionId) {
       writeDocumentAnalysisSummaryMarkdown(merged.data, {
         projectId: input.projectId,
         parentSessionId: input.parentSessionId,
         workingDirectory: input.workingDirectory,
         manifest: input.manifest,
+      });
+      publishDocumentAnalysisArtifactsToOfficialOutputs(
+        input.workingDirectory,
+        input.parentSessionId,
+        input.manifest,
+      );
+      organizeStageDeliverables({
+        projectRoot: input.workingDirectory,
+        projectId: input.projectId,
+        projectDirectory: input.paths.projectDirectory,
+        stageId: 'tender-document-analysis',
+        parentSessionId: input.parentSessionId,
+        documentManifest: input.manifest,
       });
     }
     return { errors: [] };
@@ -849,6 +990,19 @@ async function ensureDocumentAnalysisPackMerged(input: {
       parentSessionId: input.parentSessionId,
       workingDirectory: input.workingDirectory,
       manifest: input.manifest,
+    });
+    publishDocumentAnalysisArtifactsToOfficialOutputs(
+      input.workingDirectory,
+      input.parentSessionId,
+      input.manifest,
+    );
+    organizeStageDeliverables({
+      projectRoot: input.workingDirectory,
+      projectId: input.projectId,
+      projectDirectory: input.paths.projectDirectory,
+      stageId: 'tender-document-analysis',
+      parentSessionId: input.parentSessionId,
+      documentManifest: input.manifest,
     });
   }
   return { errors: [] };
@@ -935,16 +1089,30 @@ function documentBatchProgress(
   manifest: TenderDocumentAnalysisBatchManifest,
   taskBoard?: TenderStageTaskBoard,
 ): NonNullable<TenderStageRunResult['batchProgress']> {
+  const tasks = taskBoard?.tasks ?? [];
+  const taskByBatchId = new Map(tasks.map((task) => [task.batchId, task]));
   return {
     batchType: 'document_analysis',
     itemCount: manifest.documentCount,
     batchCount: manifest.batchCount,
-    completedBatches: manifest.completedBatches,
+    completedBatches: Math.max(
+      manifest.completedBatches,
+      tasks.filter((task) => task.status === 'complete').length,
+    ),
     missingItemCount: manifest.missingDocumentIds.length,
     manifestPath: manifest.manifestPath,
     ...taskBoardProgress(taskBoard),
+    // Hide "failed acceptance" while a child is still writing / being retried —
+    // otherwise the red banner invites a second retry that re-quarantines the report.
     invalidBatches: manifest.batches
       .filter((batch) => batch.status === 'invalid')
+      .filter((batch) => {
+        const task = taskByBatchId.get(batch.batchId);
+        if (!task) return true;
+        if (task.status === 'running' || task.status === 'pending' || task.status === 'complete') return false;
+        if (task.linkedIsProcessing) return false;
+        return true;
+      })
       .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
   };
 }
@@ -953,16 +1121,28 @@ function boqBatchProgress(
   manifest: TenderBoqBatchManifest,
   taskBoard?: TenderStageTaskBoard,
 ): NonNullable<TenderStageRunResult['batchProgress']> {
+  const tasks = taskBoard?.tasks ?? [];
+  const taskByBatchId = new Map(tasks.map((task) => [task.batchId, task]));
   return {
     batchType: 'boq_five_step_pricing',
     itemCount: manifest.itemCount,
     batchCount: manifest.batchCount,
-    completedBatches: manifest.completedBatches,
+    completedBatches: Math.max(
+      manifest.completedBatches,
+      tasks.filter((task) => task.status === 'complete').length,
+    ),
     missingItemCount: manifest.missingItemIds.length,
     manifestPath: manifest.manifestPath,
     ...taskBoardProgress(taskBoard),
     invalidBatches: manifest.batches
       .filter((batch) => batch.status === 'invalid')
+      .filter((batch) => {
+        const task = taskByBatchId.get(batch.batchId);
+        if (!task) return true;
+        if (task.status === 'running' || task.status === 'pending' || task.status === 'complete') return false;
+        if (task.linkedIsProcessing) return false;
+        return true;
+      })
       .map((batch) => ({ batchId: batch.batchId, errors: batch.validationErrors.slice(0, 3) })),
     validationWarningCount: manifest.batches.reduce((sum, batch) => sum + (batch.validationWarnings?.length ?? 0), 0),
     skippedItems: manifest.skippedItems ?? [],
@@ -971,12 +1151,21 @@ function boqBatchProgress(
 
 function taskBoardProgress(taskBoard?: TenderStageTaskBoard) {
   const tasks = taskBoard?.tasks ?? [];
+  // A "failed" row that is still linked to a live processing session is mid-rewrite —
+  // count it as running for the control panel so users don't click 重试 again.
+  const visiblyFailed = tasks.filter((task) => (
+    task.status === 'failed' && task.linkedIsProcessing !== true
+  ));
+  const visiblyRunning = tasks.filter((task) => (
+    task.status === 'running'
+    || (task.status === 'failed' && task.linkedIsProcessing === true)
+  ));
   return {
     taskBoardPath: taskBoard?.taskBoardPath,
     parentSessionId: taskBoard?.parentSessionId,
     pendingBatches: tasks.filter((task) => task.status === 'pending').length,
-    runningBatches: tasks.filter((task) => task.status === 'running').length,
-    failedBatches: tasks.filter((task) => task.status === 'failed').length,
+    runningBatches: visiblyRunning.length,
+    failedBatches: visiblyFailed.length,
     blockedBatches: tasks.filter((task) => task.status === 'blocked').length,
     tasks,
   };
@@ -1167,7 +1356,11 @@ function resolvePaths(rootPath: string, projectId: string) {
 function publicPaths(
   paths: ReturnType<typeof resolvePaths>,
   taskBoard?: TenderStageTaskBoard,
+  stageId?: string,
 ): TenderStageRunResult['paths'] {
+  const catalogPath = stageId
+    ? stageDeliverablesCatalogPath(paths.projectDirectory, stageId)
+    : undefined;
   return {
     projectDirectory: paths.projectDirectory,
     workspacePath: paths.workspacePath,
@@ -1176,6 +1369,7 @@ function publicPaths(
     documentAnalysisBatchManifestPath: existsSync(paths.documentAnalysisBatchManifestPath) ? paths.documentAnalysisBatchManifestPath : undefined,
     boqBatchManifestPath: existsSync(paths.boqBatchManifestPath) ? paths.boqBatchManifestPath : undefined,
     taskBoardPath: taskBoard?.taskBoardPath,
+    ...(catalogPath && existsSync(catalogPath) ? { stageDeliverablesCatalogPath: catalogPath } : {}),
   };
 }
 

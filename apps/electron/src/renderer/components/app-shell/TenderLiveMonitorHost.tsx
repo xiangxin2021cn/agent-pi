@@ -7,12 +7,16 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import { isTenderNavigation, useNavigationState } from '@/contexts/NavigationContext'
 import { getBusinessWorkflow } from '@/pages/business-workflows'
 
-const LIVE_POLL_MS = 20_000
+/** Slower than before — status/resume on every stage was starving the main process. */
+const LIVE_POLL_MS = 45_000
 
 function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
   if (!run?.batchProgress) return false
   return run.batchProgress.runningBatches > 0
-    || run.batchProgress.tasks.some((task) => task.status === 'running' && task.linkedIsProcessing !== false)
+    || run.batchProgress.tasks.some((task) => (
+      task.status === 'running'
+      || (task.linkedIsProcessing === true && task.status !== 'complete')
+    ))
 }
 
 /** Fill-up work only — failed batches wait for explicit 重试, not endless resume polls. */
@@ -22,12 +26,18 @@ function stageNeedsFillUp(run?: TenderStageRunResultDto): boolean {
     || run.batchProgress.runningBatches > 0
 }
 
+function stageNeedsStatus(run?: TenderStageRunResultDto): boolean {
+  if (!run) return true
+  if (stageNeedsFillUp(run) || stageHasLiveWork(run)) return true
+  return run.status === 'blocked' || run.status === 'running'
+}
+
 /**
  * Keeps tender stage fill-up alive even when BusinessProjectOverview is
  * unmounted (user switched to the project main / child chat).
  *
  * Tick strategy (cheap → expensive):
- * 1. status all stages (reconcile only)
+ * 1. status only stages that still need attention (first tick: all)
  * 2. resume only stages that still have pending/running slots
  */
 export function TenderLiveMonitorHost() {
@@ -38,6 +48,7 @@ export function TenderLiveMonitorHost() {
   const workflow = React.useMemo(() => getBusinessWorkflow('tender'), [])
   const inFlight = React.useRef(false)
   const lastRunsRef = React.useRef<Record<string, TenderStageRunResultDto>>({})
+  const coldStartRef = React.useRef(true)
 
   // Stay alive across Overview ↔ Chat as long as the user remains in 投标工作台.
   const active = Boolean(
@@ -50,14 +61,19 @@ export function TenderLiveMonitorHost() {
 
   React.useEffect(() => {
     if (!active || !monitor || !workspaceRootPath) return
+    coldStartRef.current = true
 
     const tick = async () => {
       if (inFlight.current) return
       inFlight.current = true
       try {
-        // Sequential status/resume — parallel stageRuns starved businessProjects:list.
         const byStage: Record<string, TenderStageRunResultDto> = { ...lastRunsRef.current }
-        for (const stage of workflow.stages) {
+        const stagesToStatus = coldStartRef.current
+          ? workflow.stages
+          : workflow.stages.filter((stage) => stageNeedsStatus(byStage[stage.id]))
+        coldStartRef.current = false
+
+        for (const stage of stagesToStatus) {
           try {
             const run = await window.electronAPI.runTenderStage({
               action: 'status',

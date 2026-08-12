@@ -1,5 +1,5 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import type { TenderDocumentAnalysisData, TenderDocumentAnalysisSection } from '@agent-pi/business-core/tender';
 import type { TenderDocumentAnalysisBatchManifest } from './tender-document-batches.ts';
 
@@ -9,6 +9,12 @@ export interface DocumentAnalysisMarkdownMeta {
   workingDirectory: string;
   manifest: TenderDocumentAnalysisBatchManifest;
   generatedAt?: string;
+}
+
+export interface PublishDocumentAnalysisArtifactsResult {
+  directory: string;
+  published: number;
+  skipped: number;
 }
 
 /**
@@ -47,6 +53,9 @@ export function formatDocumentAnalysisMarkdown(
     '',
     'This file is a readable projection of the authoritative pack at',
     '`.agent-pi/business/tender/<projectId>/packs/document-analysis.json`.',
+    '',
+    'Per-document customer Markdown deliverables are published under',
+    '`Agent Pi Outputs/<parentSessionId>/document-analysis/`.',
     '',
   ];
 
@@ -98,4 +107,48 @@ export function writeDocumentAnalysisSummaryMarkdown(
   writeFileSync(temporary, markdown, 'utf8');
   renameSync(temporary, outputPath);
   return outputPath;
+}
+
+/**
+ * Mirror completed per-document analysis Markdown into the parent session's
+ * Official Outputs tree (`Agent Pi Outputs/<parentSessionId>/document-analysis/`).
+ * Project-scoped paths remain the child-agent write targets; this publish step
+ * is what the Session Files 「正式输出」 panel lists.
+ */
+export function publishDocumentAnalysisArtifactsToOfficialOutputs(
+  workingDirectory: string,
+  parentSessionId: string,
+  manifest: TenderDocumentAnalysisBatchManifest,
+): PublishDocumentAnalysisArtifactsResult {
+  const directory = join(workingDirectory, 'Agent Pi Outputs', parentSessionId, 'document-analysis');
+  mkdirSync(directory, { recursive: true });
+  let published = 0;
+  let skipped = 0;
+  for (const batch of manifest.batches) {
+    if (batch.status !== 'complete') {
+      skipped += 1;
+      continue;
+    }
+    const sourcePath = batch.markdownPath;
+    if (!sourcePath || !existsSync(sourcePath)) {
+      skipped += 1;
+      continue;
+    }
+    const destinationPath = join(directory, basename(sourcePath));
+    try {
+      if (existsSync(destinationPath)) {
+        const sourceStat = statSync(sourcePath);
+        const destStat = statSync(destinationPath);
+        if (destStat.mtimeMs >= sourceStat.mtimeMs && destStat.size === sourceStat.size) {
+          skipped += 1;
+          continue;
+        }
+      }
+      copyFileSync(sourcePath, destinationPath);
+      published += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { directory, published, skipped };
 }

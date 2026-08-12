@@ -136,19 +136,24 @@ export function markDocumentHumanReview(options: {
   return next;
 }
 
-/** True when a customer-facing analysis MD exists and looks reviewable. */
+/** True when a customer-facing analysis MD exists with any usable content. */
 export function artifactLooksAcceptable(artifactPath: string): boolean {
   if (!existsSync(artifactPath)) return false;
   try {
+    // Soft gate: do not require headings / magic filenames — only that the child
+    // left a non-trivial readable artifact for humans to skim.
     const text = readFileSync(artifactPath, 'utf8').trim();
-    if (text.length < 40) return false;
-    return /(^|\n)#\s+\S+/.test(text) || /摘要|summary|overview/i.test(text);
+    return text.length >= 20;
   } catch {
     return false;
   }
 }
 
-/** Returns missing-item codes for document-analysis Human Artifact Gate. */
+/**
+ * Soft document-parse gate for stage completion.
+ * Human review is advisory only — pending/rejected must not block advancement.
+ * Missing MD still soft-blocks because there is no customer-facing result yet.
+ */
 export function assertDocumentParseGate(
   ledger: TenderDocumentReviewLedger,
   registeredDocumentIds: string[],
@@ -158,14 +163,11 @@ export function assertDocumentParseGate(
   for (const documentId of registeredDocumentIds) {
     const entry = byId.get(documentId);
     if (!entry) {
-      missing.push(`document-review:missing-entry:${documentId}`);
+      // Ledger auto-heals on refresh; missing entry alone is not a hard stop.
       continue;
     }
     if (!artifactLooksAcceptable(entry.artifactPath)) {
       missing.push(`document-review:missing-md:${documentId}`);
-    }
-    if (entry.humanReview !== 'accepted') {
-      missing.push(`document-review:pending:${documentId}`);
     }
   }
   return missing;

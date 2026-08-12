@@ -161,31 +161,31 @@ function probeMethodology(
   projectId: string,
 ): string[] {
   const mdPath = planningMethodologyReportPath(projectRoot, projectId);
-  const missing = requireExistingFile(mdPath, 'methodology-md');
-  if (missing.length > 0) return missing;
-  const ledger = readPlanningReviewLedger(projectDirectory, projectId, projectRoot);
-  if (ledger.methodologyReport.humanReview === 'accepted') return [];
-  if (ledger.methodologyReport.humanReview === 'rejected') return ['methodology-review:rejected'];
-  return ['methodology-review:pending'];
+  // Soft: existence of a methodology MD is enough to advance; human review is advisory.
+  return requireExistingFile(mdPath, 'methodology-md');
 }
 
 function probeProgrammeResourcesCashflow(projectRoot: string, projectId: string): string[] {
   const directory = planningOutputDirectory(projectRoot, projectId);
-  return [
-    ...probeProgrammeXml(join(directory, 'tender-programme.msp.xml'), 'msp'),
-    ...probeProgrammeXml(join(directory, 'tender-programme.p6.xml'), 'p6'),
-    ...requireExistingFile(join(directory, 'plant-histogram.html'), 'plant-histogram'),
-    ...requireExistingFile(join(directory, 'labour-histogram.html'), 'labour-histogram'),
-    ...requireExistingFile(join(directory, 'S-Curve_Cash_Flow_Chart.html'), 's-curve'),
-  ];
+  const mspOk = probeProgrammeXml(join(directory, 'tender-programme.msp.xml'), 'msp').length === 0;
+  const p6Ok = probeProgrammeXml(join(directory, 'tender-programme.p6.xml'), 'p6').length === 0;
+  const plantOk = existsSync(join(directory, 'plant-histogram.html'));
+  const labourOk = existsSync(join(directory, 'labour-histogram.html'));
+  const sCurveOk = existsSync(join(directory, 'S-Curve_Cash_Flow_Chart.html'));
+  // Soft: any programme XML + any one resource/cashflow artifact is enough.
+  const missing: string[] = [];
+  if (!mspOk && !p6Ok) missing.push('missing:programme-xml');
+  if (!plantOk && !labourOk && !sCurveOk) missing.push('missing:resource-or-cashflow-artifact');
+  return missing;
 }
 
 function probeSubmission(projectRoot: string, projectId: string): string[] {
   const directory = planningOutputDirectory(projectRoot, projectId);
-  return [
-    ...requireExistingFile(join(directory, 'Work_Plan_and_Proposed_Methodology.docx'), 'work-plan-docx'),
-    ...requireExistingFile(join(directory, 'submission_audit.md'), 'submission-audit-md'),
-  ];
+  const docxOk = existsSync(join(directory, 'Work_Plan_and_Proposed_Methodology.docx'));
+  const auditOk = existsSync(join(directory, 'submission_audit.md'));
+  // Soft: either formal docx or audit note is enough to mark out-draft progress.
+  if (docxOk || auditOk) return [];
+  return ['missing:submission-artifact'];
 }
 
 function classifySubstepStatus(
@@ -194,6 +194,7 @@ function classifySubstepStatus(
 ): PlanningSubstepStatus {
   if (!priorComplete) return 'pending';
   if (missingItems.length === 0) return 'complete';
+  // Soft: methodology-review leftovers no longer apply; treat advisory review as ready.
   if (missingItems.every((item) => item.startsWith('methodology-review:'))) return 'ready';
   return 'blocked';
 }

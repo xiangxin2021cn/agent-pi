@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   assertPlanningSubstepGate,
   evaluatePlanningSubsteps,
-  markPlanningMethodologyReview,
   planningOutputDirectory,
   probeProgrammeXml,
 } from './tender-planning-gates.ts';
@@ -35,7 +34,7 @@ describe('tender planning gates', () => {
     expect(steps[2]?.status).toBe('pending');
   });
 
-  test('4-A becomes ready when MD exists and complete after human accept', () => {
+  test('4-A completes when methodology MD exists (human review is soft)', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-planning-gates-'));
     const projectRoot = join(root, 'project');
     const projectDirectory = join(root, 'business');
@@ -43,47 +42,28 @@ describe('tender planning gates', () => {
     mkdirSync(planningDir, { recursive: true });
     writeFileSync(join(planningDir, '施工策划报告.md'), '# plan\n', 'utf8');
 
-    let steps = evaluatePlanningSubsteps(projectRoot, projectDirectory, 'n3');
-    expect(steps[0]?.status).toBe('ready');
-    expect(steps[0]?.missingItems).toEqual(['methodology-review:pending']);
-
-    markPlanningMethodologyReview({
-      projectDirectory,
-      projectId: 'n3',
-      projectRoot,
-      humanReview: 'accepted',
-    });
-    steps = evaluatePlanningSubsteps(projectRoot, projectDirectory, 'n3');
+    const steps = evaluatePlanningSubsteps(projectRoot, projectDirectory, 'n3');
     expect(steps[0]?.status).toBe('complete');
+    expect(steps[0]?.missingItems).toEqual([]);
     expect(steps[1]?.status).toBe('blocked');
-    expect(steps[1]?.missingItems).toContain('missing:msp-xml');
-    expect(steps[1]?.missingItems).toContain('missing:p6-xml');
+    expect(steps[1]?.missingItems).toContain('missing:programme-xml');
   });
 
-  test('4-B requires both MSP and P6 XML roots plus histograms and S-curve', () => {
+  test('4-B accepts MSP OR P6 plus any resource/cashflow artifact', () => {
     root = mkdtempSync(join(tmpdir(), 'tender-planning-gates-'));
     const projectRoot = join(root, 'project');
     const projectDirectory = join(root, 'business');
     const planningDir = planningOutputDirectory(projectRoot, 'n3');
     mkdirSync(planningDir, { recursive: true });
     writeFileSync(join(planningDir, '施工策划报告.md'), '# plan\n', 'utf8');
-    markPlanningMethodologyReview({
-      projectDirectory,
-      projectId: 'n3',
-      projectRoot,
-      humanReview: 'accepted',
-    });
     writeFileSync(join(planningDir, 'tender-programme.msp.xml'), '<Project xmlns="http://schemas.microsoft.com/project"></Project>\n');
-    writeFileSync(join(planningDir, 'tender-programme.p6.xml'), '<APIBusinessObjects></APIBusinessObjects>\n');
     writeFileSync(join(planningDir, 'plant-histogram.html'), '<html></html>');
-    writeFileSync(join(planningDir, 'labour-histogram.html'), '<html></html>');
-    writeFileSync(join(planningDir, 'S-Curve_Cash_Flow_Chart.html'), '<html></html>');
 
     const steps = evaluatePlanningSubsteps(projectRoot, projectDirectory, 'n3');
     expect(steps[0]?.status).toBe('complete');
     expect(steps[1]?.status).toBe('complete');
     expect(steps[2]?.status).toBe('blocked');
-    expect(steps[2]?.missingItems).toContain('missing:work-plan-docx');
+    expect(steps[2]?.missingItems).toContain('missing:submission-artifact');
   });
 
   test('stage gate lists all incomplete planning probes', () => {

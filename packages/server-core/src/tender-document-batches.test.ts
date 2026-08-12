@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -168,5 +168,40 @@ describe('tender document analysis batch manifest', () => {
     expect(readFileSync(briefPath, 'utf8')).toBe(before);
     expect(second.batches[0]?.batchId).toBe(first.batches[0]?.batchId);
     expect(Bun.file(briefPath).lastModified).toBe(mtimeBefore);
+  });
+
+  test('accepts locator/excerpt sourceRefs and heals quarantined reports', async () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
+    const sources = [{
+      documentId: 'src-hse-doc',
+      path: 'C:/inputs/Health.pdf',
+      name: 'Health.pdf',
+      kind: 'other',
+      priority: 1,
+    }];
+    let manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
+    const batch = manifest.batches[0]!;
+    const report = {
+      schemaVersion: 1,
+      batchId: batch.batchId,
+      documentId: 'src-hse-doc',
+      sections: [{
+        id: 'pi-01',
+        kind: 'project_information',
+        title: 'Identity',
+        summary: 'Project-specific OH&S specification for package B',
+        sourceRefs: [{ locator: '封面页', excerpt: 'WORK PACKAGE B' }],
+        status: 'reviewed',
+      }],
+    };
+    // Simulate the old strict gate quarantining a usable report.
+    const quarantined = `${batch.reportPath}.invalid.${Date.now()}`;
+    writeFileSync(quarantined, JSON.stringify(report));
+    writeAcceptableMarkdown(batch.markdownPath, 'HSE');
+
+    manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', sources, { projectRoot: root });
+    expect(manifest.batches[0]?.status).toBe('complete');
+    expect(existsSync(batch.reportPath)).toBe(true);
+    expect(manifest.completedBatches).toBe(1);
   });
 });

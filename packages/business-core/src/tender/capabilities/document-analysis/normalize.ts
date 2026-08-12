@@ -28,10 +28,16 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+export interface NormalizeDocumentAnalysisOptions {
+  /** Assigned single-document id for child batch reports that omit documentId on sections/refs. */
+  defaultDocumentId?: string;
+}
+
 function normalizeSection(
   value: unknown,
   index: number,
   warnings: string[],
+  options: NormalizeDocumentAnalysisOptions,
 ): TenderDocumentAnalysisSection | undefined {
   const record = asRecord(value);
   if (!record) {
@@ -40,7 +46,11 @@ function normalizeSection(
   }
 
   const id = typeof record.id === 'string' ? record.id.trim() : '';
-  const documentId = typeof record.documentId === 'string' ? record.documentId.trim() : '';
+  const rawDocumentId = typeof record.documentId === 'string' ? record.documentId.trim() : '';
+  const documentId = rawDocumentId || (options.defaultDocumentId?.trim() ?? '');
+  if (!rawDocumentId && documentId) {
+    warnings.push(`sections[${index}].documentId filled from assigned document ${documentId}`);
+  }
   const title = typeof record.title === 'string' ? record.title.trim() : '';
   if (!id || !documentId || !title) {
     warnings.push(`sections[${index}]: missing id/documentId/title`);
@@ -63,13 +73,20 @@ function normalizeSection(
     warnings.push(`sections[${index}].sourceRefs: string/object coercion applied`);
   }
 
+  const sourceRefs = normalizeSourceRefs(record.sourceRefs, { fallbackDocumentId: documentId });
+  if (Array.isArray(record.sourceRefs) && record.sourceRefs.length > 0 && sourceRefs.length === 0) {
+    warnings.push(`sections[${index}].sourceRefs: all entries dropped after normalize`);
+  } else if (Array.isArray(record.sourceRefs) && sourceRefs.length < record.sourceRefs.length) {
+    warnings.push(`sections[${index}].sourceRefs: bound locator/excerpt citations to ${documentId}`);
+  }
+
   return {
     id,
     documentId,
     title,
     kind,
     summary: typeof record.summary === 'string' ? record.summary : '',
-    sourceRefs: normalizeSourceRefs(record.sourceRefs),
+    sourceRefs,
     status,
   };
 }
@@ -77,17 +94,24 @@ function normalizeSection(
 /**
  * Lenient normalization for LLM-produced document-analysis payloads.
  * Coerces string sourceRefs to locator objects before Zod parse.
+ * Single-doc child reports may omit documentId and use locator/excerpt only.
  */
-export function normalizeDocumentAnalysis(input: unknown): DocumentAnalysisNormalizationResult {
+export function normalizeDocumentAnalysis(
+  input: unknown,
+  options: NormalizeDocumentAnalysisOptions = {},
+): DocumentAnalysisNormalizationResult {
   const warnings: string[] = [];
   const root = asRecord(input);
+  const defaultDocumentId = typeof root?.documentId === 'string' && root.documentId.trim()
+    ? root.documentId.trim()
+    : options.defaultDocumentId?.trim();
   const rawSections = Array.isArray(root?.sections) ? root.sections : [];
   if (!Array.isArray(root?.sections)) {
     warnings.push('sections missing or not an array');
   }
 
   const sections = rawSections.flatMap((entry, index) => {
-    const section = normalizeSection(entry, index, warnings);
+    const section = normalizeSection(entry, index, warnings, { defaultDocumentId });
     return section ? [section] : [];
   });
 

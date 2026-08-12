@@ -20,21 +20,50 @@ export function coerceDocumentId(value: string): string | undefined {
   return slug;
 }
 
-export function normalizeSourceRef(value: unknown): TenderSourceLocator | undefined {
+export interface NormalizeSourceRefOptions {
+  /**
+   * When a locator/excerpt/page citation omits documentId (common for single-doc
+   * child agents), bind the citation to this assigned document instead of dropping it.
+   */
+  fallbackDocumentId?: string;
+}
+
+function citationHasLocation(record: Record<string, unknown>): boolean {
+  if (normalizeText(record.locator) || normalizeText(record.excerpt) || normalizeText(record.clause)
+    || normalizeText(record.section) || normalizeText(record.sheet) || normalizeText(record.cell)
+    || normalizeText(record.blockId)) {
+    return true;
+  }
+  const page = Number(record.page);
+  return Number.isInteger(page) && page > 0;
+}
+
+export function normalizeSourceRef(
+  value: unknown,
+  options: NormalizeSourceRefOptions = {},
+): TenderSourceLocator | undefined {
   if (typeof value === 'string') {
-    const documentId = coerceDocumentId(value);
+    const documentId = coerceDocumentId(value) ?? coerceDocumentId(options.fallbackDocumentId ?? '');
     return documentId ? { documentId } : undefined;
   }
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
   const rawId = typeof record.documentId === 'string' ? record.documentId : '';
-  const documentId = coerceDocumentId(rawId);
+  const documentId = coerceDocumentId(rawId)
+    ?? (citationHasLocation(record) ? coerceDocumentId(options.fallbackDocumentId ?? '') : undefined);
   if (!documentId) return undefined;
 
   const ref: TenderSourceLocator = { documentId };
   for (const key of ['sheet', 'clause', 'section', 'cell', 'blockId', 'excerpt'] as const) {
     const text = normalizeText(record[key]);
     if (text) ref[key] = text;
+  }
+  // OCR/LLM agents often emit `locator` instead of clause/section — keep the cue.
+  const locator = normalizeText(record.locator);
+  if (locator) {
+    if (!ref.clause) ref.clause = locator;
+    else if (!ref.excerpt) ref.excerpt = locator;
+    else if (!ref.section) ref.section = locator;
   }
   const page = Number(record.page);
   if (Number.isInteger(page) && page > 0) ref.page = page;
@@ -47,10 +76,13 @@ export function normalizeSourceRef(value: unknown): TenderSourceLocator | undefi
   return ref;
 }
 
-export function normalizeSourceRefs(value: unknown): TenderSourceLocator[] {
+export function normalizeSourceRefs(
+  value: unknown,
+  options: NormalizeSourceRefOptions = {},
+): TenderSourceLocator[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
-    const ref = normalizeSourceRef(entry);
+    const ref = normalizeSourceRef(entry, options);
     return ref ? [ref] : [];
   });
 }

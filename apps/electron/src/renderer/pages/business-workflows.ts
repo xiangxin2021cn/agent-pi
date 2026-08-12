@@ -53,7 +53,7 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
         label: 'BOQ 逐页组价与资源汇总',
         prompt: '按 C5.1 纯直接费标准，以 BOQ 页（每个 COTO 章节）为单位逐项组价：原样锁定清单编码/描述/单位/工程量；引用规范与计量支付条款；给出施工顺序、劳机班组、瓶颈公式及乐观/基准/悲观生产率；逐项计算每 BOQ 单位的人材机、分包、运输和损耗消耗；费率必须注明日期、地点、来源类型、取得方式且不含 VAT，关键费率必须联网询价核证并留 webEvidence。默认串行按页；汇总行与人造组合项不属于定价对象。结束后汇总施工资源消耗总表，并由用户确认投入条件。',
         skillSlugs: ['tender-boq-five-step-pricing', 'tender-bidder-commitments'],
-        requiredCapabilities: ['document_analysis', 'boq_reconciliation'],
+        requiredCapabilities: ['document_analysis'],
         producesCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
         dispatchPolicy: 'controlled-subagents',
       },
@@ -69,7 +69,7 @@ const WORKFLOWS: Record<BusinessModuleId, BusinessWorkflowDefinition> = {
           'tender-submission-documents',
           'tender-submission-audit',
         ],
-        requiredCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
+        requiredCapabilities: ['boq_five_step_pricing'],
         producesCapabilities: [
           'execution_plan',
           'schedule_resources',

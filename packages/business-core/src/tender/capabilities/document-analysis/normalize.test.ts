@@ -34,4 +34,21 @@ describe('normalizeDocumentAnalysis', () => {
     });
     expect(parsed.sections[0]?.sourceRefs).toEqual([{ documentId: 'book1' }]);
   });
+
+  test('single-doc child reports may omit documentId and use locator/excerpt only', () => {
+    const parsed = parseTenderDocumentAnalysisData({
+      documentId: 'src-hse-doc',
+      sections: [{
+        id: 'pi-01',
+        title: 'Project identity',
+        kind: 'project_information',
+        summary: 'Health and safety specification for package B',
+        sourceRefs: [{ locator: '封面页', excerpt: 'WORK PACKAGE B' }],
+        status: 'reviewed',
+      }],
+    }, { defaultDocumentId: 'src-hse-doc' });
+    expect(parsed.sections[0]?.documentId).toBe('src-hse-doc');
+    expect(parsed.sections[0]?.sourceRefs[0]?.documentId).toBe('src-hse-doc');
+    expect(parsed.sections[0]?.sourceRefs[0]?.clause).toBe('封面页');
+  });
 });

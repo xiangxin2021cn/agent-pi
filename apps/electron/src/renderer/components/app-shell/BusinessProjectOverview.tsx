@@ -40,7 +40,7 @@ interface BusinessProjectOverviewProps {
   projectId: string
 }
 
-const LIVE_POLL_MS = 20_000
+const LIVE_POLL_MS = 45_000
 const TICK_MS = 1_000
 
 type StageTask = NonNullable<TenderStageRunResultDto['batchProgress']>['tasks'][number]
@@ -49,9 +49,12 @@ function stageHasLiveWork(run?: TenderStageRunResultDto): boolean {
   if (!run) return false
   const progress = run.batchProgress
   if (!progress) return false
-  // Only truly active children — pending alone must not auto-enable live monitor.
+  // Active children, or a "failed" row still rewriting in a linked session.
   return progress.runningBatches > 0
-    || progress.tasks.some((task) => task.status === 'running' && task.linkedIsProcessing !== false)
+    || progress.tasks.some((task) => (
+      task.status === 'running'
+      || (task.linkedIsProcessing === true && task.status !== 'complete')
+    ))
 }
 
 function stageHasResumableWork(run?: TenderStageRunResultDto): boolean {
@@ -59,6 +62,27 @@ function stageHasResumableWork(run?: TenderStageRunResultDto): boolean {
   return run.batchProgress.pendingBatches > 0
     || run.batchProgress.failedBatches > 0
     || run.batchProgress.runningBatches > 0
+}
+
+/** Invalid-report banner must not invite a second retry while that batch is mid-flight. */
+function actionableInvalidBatches(
+  progress: NonNullable<TenderStageRunResultDto['batchProgress']>,
+): NonNullable<TenderStageRunResultDto['batchProgress']>['invalidBatches'] {
+  const invalid = progress.invalidBatches ?? []
+  if (invalid.length === 0) return []
+  const taskByBatchId = new Map(progress.tasks.map((task) => [task.batchId, task]))
+  return invalid.filter((batch) => {
+    const task = taskByBatchId.get(batch.batchId)
+    if (!task) return true
+    if (task.status === 'running' || task.status === 'pending' || task.status === 'complete') return false
+    if (task.linkedIsProcessing) return false
+    return true
+  })
+}
+
+function taskIsMidFlight(task: StageTask): boolean {
+  return task.status === 'running'
+    || (task.linkedIsProcessing === true && task.status !== 'complete')
 }
 
 function formatElapsed(fromIso: string | undefined, nowMs: number): string | null {
@@ -141,6 +165,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     /** status = inspect/reconcile only; resume = reconcile + dispatch pending. */
     action?: 'status' | 'resume'
     stages?: BusinessWorkflowStage[]
+    /** Skip businessProjects:list when we already have a warm project (monitor/event ticks). */
+    skipProjectList?: boolean
   }): Promise<Record<string, TenderStageRunResultDto>> => {
     const requestedAction = options?.action ?? 'status'
     // Coalesce overlapping refreshes — force must NOT pile concurrent stageRuns
@@ -157,17 +183,22 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     let action = requestedAction
     let stageFilter = options?.stages
     let forceAll = Boolean(options?.force)
+    let skipProjectList = Boolean(options?.skipProjectList)
     try {
       // eslint-disable-next-line no-constant-condition -- drain one coalesced follow-up
       while (true) {
-        const projects = await window.electronAPI.listBusinessProjects({ workspaceRootPath, module: moduleId })
-        setProjectsCache((current) => ({
-          ...current,
-          [businessProjectsCacheKey(moduleId, workspaceRootPath)]: projects,
-        }))
-        const selected = projects.find((entry) => entry.projectId === projectId)
-          ?? projects.find((entry) => entry.name === projectId)
-          ?? null
+        let selected = projectRef.current
+          ?? findCachedBusinessProject(projectsCacheRef.current, moduleId, workspaceRootPath, projectId)
+        if (!skipProjectList || !selected) {
+          const projects = await window.electronAPI.listBusinessProjects({ workspaceRootPath, module: moduleId })
+          setProjectsCache((current) => ({
+            ...current,
+            [businessProjectsCacheKey(moduleId, workspaceRootPath)]: projects,
+          }))
+          selected = projects.find((entry) => entry.projectId === projectId)
+            ?? projects.find((entry) => entry.name === projectId)
+            ?? null
+        }
         setProject(selected)
         setProjectLoadState(selected ? 'ready' : 'missing')
         if (moduleId === 'tender' && selected) {
@@ -229,6 +260,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         action = queued.action
         stageFilter = queued.stages
         forceAll = false
+        skipProjectList = true
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
@@ -291,8 +323,11 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     return () => window.clearInterval(timer)
   }, [monitoringActive])
 
+  // While live monitor is on, TenderLiveMonitorHost owns status/resume ticks
+  // (and pushes craft:tender-monitor-tick). Extra session-event status IPC
+  // previously stacked with the host and starved the main process.
   React.useEffect(() => {
-    if (moduleId !== 'tender' || !monitoringActive) return
+    if (moduleId !== 'tender' || monitoringActive) return
     let debounceTimer: number | null = null
     const cleanup = window.electronAPI.onSessionEvent((event) => {
       if (
@@ -302,24 +337,25 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         && event.type !== 'goal_state_changed'
       ) return
       if (!('sessionId' in event)) return
-      const related = Object.values(stageRunsRef.current).some((run) => {
+      const relatedStages = workflow.stages.filter((stage) => {
+        const run = stageRunsRef.current[stage.id]
+        if (!run) return false
         if (run.projectParentSessionId === event.sessionId) return true
         if (run.batchProgress?.parentSessionId === event.sessionId) return true
         return run.batchProgress?.tasks.some((task) => linkedSessionId(task) === event.sessionId) ?? false
       })
-      // Host owns resume fill-up; overview only refreshes the status snapshot (debounced).
-      if (!related) return
+      if (relatedStages.length === 0) return
       if (debounceTimer != null) window.clearTimeout(debounceTimer)
       debounceTimer = window.setTimeout(() => {
         debounceTimer = null
-        void refresh({ action: 'status' })
-      }, 1500)
+        void refresh({ action: 'status', stages: relatedStages, skipProjectList: true })
+      }, 3_000)
     })
     return () => {
       if (debounceTimer != null) window.clearTimeout(debounceTimer)
       cleanup()
     }
-  }, [moduleId, monitoringActive, refresh])
+  }, [moduleId, monitoringActive, refresh, workflow.stages])
 
   const handleInspect = async () => {
     await refresh({ force: true, action: 'status' })
@@ -715,9 +751,45 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     }
   }
 
+  const handleOrganizeDeliverables = async (stage: BusinessWorkflowStage) => {
+    if (!project || moduleId !== 'tender') return
+    setStartingStageId(`${stage.id}::organize`)
+    try {
+      const parentSessionId = resolveProjectParentSessionId(stageRuns)
+        ?? resolveStageParentSessionId(stageRuns[stage.id])
+      const result = await window.electronAPI.runTenderStage({
+        action: 'organize_deliverables',
+        workspaceRootPath,
+        projectId: project.projectId,
+        stageId: stage.id,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      })
+      setStageRuns((current) => ({ ...current, [stage.id]: result }))
+      const d = result.deliverables
+      if (!d) {
+        toast.message('已完成成果质检')
+        return
+      }
+      toast.success(
+        `成果质检：齐套 ${d.presentCount} · 缺失 ${d.missingCount} · 偏薄 ${d.thinCount}`
+        + (d.published != null || d.healed != null
+          ? `（整理发布 ${d.published ?? 0} · 补齐 ${d.healed ?? 0}）`
+          : ''),
+      )
+    } catch (cause) {
+      toast.error(`成果质检失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setStartingStageId(null)
+    }
+  }
+
   const openLinkedSession = (sessionId: string) => {
     navigate(routes.view.tenderWorkspaces(projectId, sessionId))
   }
+
+  const monitoringBusy = monitoringActive && workflow.stages.some((stage) => (
+    stageHasLiveWork(stageRuns[stage.id]) || stageHasResumableWork(stageRuns[stage.id])
+  ))
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>
   if (projectLoadState === 'loading' || (refreshing && !project)) {
@@ -786,11 +858,15 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
             <Button
               type="button"
               size="sm"
-              disabled={refreshing || startingStageId !== null}
+              disabled={refreshing || startingStageId !== null || monitoringBusy}
               onClick={() => void handleResumeUnfinished()}
             >
               <PlayCircle className="size-3.5" />
-              {startingStageId === '__resume__' ? '恢复中…' : '恢复未完任务'}
+              {startingStageId === '__resume__'
+                ? '恢复中…'
+                : monitoringBusy
+                  ? '未完成任务正在进行中…'
+                  : '恢复未完任务'}
             </Button>
             {monitoringActive ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => setMonitoringActive(false)}>
@@ -811,13 +887,16 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
             const run = stageRuns[stage.id]
             const summary = run ? summarizeTenderStage(run) : null
             const progress = run?.batchProgress
-            const live = monitoringActive && stageHasLiveWork(run)
+            const live = stageHasLiveWork(run)
+            const monitoredLive = monitoringActive && live
             const resumable = stageHasResumableWork(run)
             const completed = progress?.completedBatches ?? 0
             const total = progress?.batchCount ?? 0
             const percent = total > 0 ? Math.round((completed / total) * 100) : 0
             const expanded = expandedStageIds[stage.id] ?? (live || resumable)
             const failed = progress?.failedBatches ?? 0
+            const invalidActionable = progress ? actionableInvalidBatches(progress) : []
+            const deliverables = run?.deliverables
             return (
               <div key={stage.id} className="py-3">
                 <div className="flex items-start gap-4">
@@ -825,7 +904,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm font-medium">{stage.label}</p>
-                      {live && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">监控中</span>}
+                      {monitoredLive && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">监控中</span>}
                       {!live && resumable && (
                         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">有未完任务</span>
                       )}
@@ -903,19 +982,33 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         </div>
                       </div>
                     )}
-                    {progress?.invalidBatches?.length ? (
+                    {deliverables && (
+                      <div className="mt-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                        <p className="font-medium text-foreground">阶段成果目录</p>
+                        <p className="mt-0.5">
+                          齐套 {deliverables.presentCount}
+                          {deliverables.missingCount > 0 ? ` · 缺失 ${deliverables.missingCount}` : ''}
+                          {deliverables.thinCount > 0 ? ` · 偏薄 ${deliverables.thinCount}` : ''}
+                          {deliverables.publishedToOfficial ? ' · 已镜像正式输出' : ' · 正式输出未齐'}
+                        </p>
+                        {deliverables.summaryPath && (
+                          <p className="mt-0.5 truncate" title={deliverables.summaryPath}>摘要 {deliverables.summaryPath}</p>
+                        )}
+                      </div>
+                    )}
+                    {invalidActionable.length > 0 ? (
                       <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
                         <div className="flex items-start justify-between gap-3">
-                          <p className="font-medium text-destructive">报告未通过验收（{progress.invalidBatches.length} 批）</p>
+                          <p className="font-medium text-destructive">报告未通过验收（{invalidActionable.length} 批）</p>
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
                             className="h-7 shrink-0"
-                            disabled={startingStageId !== null}
+                            disabled={startingStageId !== null || live}
                             onClick={() => void handleRetryBatches(
                               stage,
-                              progress.invalidBatches!.map((batch) => batch.batchId),
+                              invalidActionable.map((batch) => batch.batchId),
                             )}
                           >
                             {startingStageId === stage.id && retryingBatchId === '__multi__'
@@ -924,7 +1017,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                           </Button>
                         </div>
                         <ul className="mt-1 space-y-1 text-muted-foreground">
-                          {progress.invalidBatches.slice(0, 4).map((batch) => (
+                          {invalidActionable.slice(0, 4).map((batch) => (
                             <li key={batch.batchId} className="flex items-start justify-between gap-2 min-w-0">
                               <div className="min-w-0">
                                 <span className="font-mono text-[11px]">{batch.batchId}</span>
@@ -937,7 +1030,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                 size="sm"
                                 variant="ghost"
                                 className="h-6 shrink-0 px-2"
-                                disabled={startingStageId !== null}
+                                disabled={startingStageId !== null || live}
                                 onClick={() => void handleRetryBatches(stage, [batch.batchId])}
                               >
                                 {retryingBatchId === batch.batchId ? '…' : '重试'}
@@ -969,23 +1062,24 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         {expanded && (
                           <div className="mt-2 max-h-80 overflow-auto divide-y border-y">
                             {progress.tasks.map((task) => {
-                              const duration = task.status === 'running'
+                              const midFlight = taskIsMidFlight(task)
+                              const duration = midFlight || task.status === 'running'
                                 ? formatElapsed(task.startedAt, nowMs)
                                 : task.status === 'complete' && task.startedAt && task.completedAt
                                   ? formatElapsed(task.startedAt, Date.parse(task.completedAt))
                                   : null
                               const sessionId = linkedSessionId(task)
                               const idleLinked = Boolean(sessionId) && task.linkedIsProcessing === false
-                              const canRetryTask = task.status === 'failed' || task.status === 'blocked'
+                              const canRetryTask = (task.status === 'failed' || task.status === 'blocked') && !midFlight
                               return (
                                 <div key={task.batchId} className="flex items-start gap-3 py-2">
                                   <span className={cn(
                                     'w-12 shrink-0 font-medium',
                                     task.status === 'complete' && 'text-success',
-                                    task.status === 'running' && 'text-accent',
-                                    task.status === 'pending' && 'text-muted-foreground',
-                                    (task.status === 'failed' || task.status === 'blocked') && 'text-destructive',
-                                  )}>{taskStatusLabel(task.status)}</span>
+                                    (midFlight || task.status === 'running') && 'text-accent',
+                                    task.status === 'pending' && !midFlight && 'text-muted-foreground',
+                                    (task.status === 'failed' || task.status === 'blocked') && !midFlight && 'text-destructive',
+                                  )}>{taskStatusLabel(task.status, midFlight)}</span>
                                   <div className="min-w-0 flex-1">
                                     {sessionId ? (
                                       <button
@@ -999,13 +1093,13 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                     ) : (
                                       <p className="truncate text-foreground" title={task.name}>{task.name}</p>
                                     )}
-                                    <p className="truncate text-muted-foreground" title={task.error ?? task.reportPath}>
-                                      {task.error
+                                    <p className="truncate text-muted-foreground" title={midFlight ? undefined : (task.error ?? task.reportPath)}>
+                                      {(midFlight ? null : task.error)
                                         ?? [
                                           sessionId ? (idleLinked ? `左侧空闲 · ${sessionId}` : `会话 ${sessionId}`) : null,
                                           task.linkedSessionStatus ? `状态 ${task.linkedSessionStatus}` : null,
                                           `尝试 ${task.attemptCount}`,
-                                          duration ? (task.status === 'running' ? `已运行 ${duration}` : `耗时 ${duration}`) : null,
+                                          duration ? (midFlight ? `已运行 ${duration}` : `耗时 ${duration}`) : null,
                                           task.updatedAt ? `更新 ${formatClock(task.updatedAt)}` : null,
                                         ].filter(Boolean).join(' · ')}
                                     </p>
@@ -1032,23 +1126,45 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                   </div>
                   <div className="flex shrink-0 flex-col gap-1">
                     {stage.id === 'project-setup' ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={startingStageId !== null || run?.status === 'complete'}
-                        onClick={() => void handleCompleteSetupStage()}
-                      >{startingStageId === stage.id ? '确认中…' : run?.status === 'complete' ? '已齐套' : '资料齐套，进入解析'}</Button>
+                      run?.status === 'complete' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const parentId = resolveProjectParentSessionId(stageRuns)
+                              ?? resolveStageParentSessionId(run)
+                            if (parentId) {
+                              openLinkedSession(parentId)
+                              toast.success('资料登记完成，已打开项目主会话')
+                              return
+                            }
+                            toast.message(`资料登记完成（已登记 ${project?.inputPaths.length ?? 0} 份），可在下方「项目资料」查看`)
+                          }}
+                        >资料登记完成，点击可查看结果</Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={startingStageId !== null}
+                          onClick={() => void handleCompleteSetupStage()}
+                        >{startingStageId === stage.id ? '确认中…' : '资料齐套，进入解析'}</Button>
+                      )
                     ) : (
                       <>
                         {resumable && (
                           <Button
                             type="button"
                             size="sm"
-                            disabled={startingStageId !== null}
+                            disabled={startingStageId !== null || live}
                             onClick={() => void handleAdvanceStage(stage)}
-                          >{startingStageId === stage.id ? '派发中…' : '下一步'}</Button>
+                          >{startingStageId === stage.id
+                              ? '派发中…'
+                              : live
+                                ? '正在进行，请稍后…'
+                                : '下一步'}</Button>
                         )}
-                        {resumable && !failed && (
+                        {resumable && !failed && !live && (
                           <Button
                             type="button"
                             variant="outline"
@@ -1066,13 +1182,23 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             onClick={() => void handleStopDispatch(stage)}
                           >停止派发</Button>
                         )}
+                        {(stage.id === 'tender-document-analysis' || stage.id === 'boq-five-step-pricing') && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={startingStageId !== null}
+                            title="检查主会话/子会话成果路径，缺的补到正式输出并刷新成果目录"
+                            onClick={() => void handleOrganizeDeliverables(stage)}
+                          >{startingStageId === `${stage.id}::organize` ? '质检中…' : '成果质检并整理'}</Button>
+                        )}
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           disabled={startingStageId !== null || (live && !failed)}
                           title={live && !failed
-                            ? '阶段有运行中任务 — 用「下一步」或「停止派发」'
+                            ? '阶段有运行中任务 — 请稍候或点「停止派发」'
                             : run?.status === 'blocked' && !resumable ? summary?.missingLabel : undefined}
                           onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
                         >{startingStageId === stage.id
@@ -1127,7 +1253,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   )
 }
 
-function taskStatusLabel(status: StageTask['status']): string {
+function taskStatusLabel(status: StageTask['status'], midFlight = false): string {
+  if (midFlight && status !== 'running' && status !== 'complete') return '重试中'
   return {
     pending: '排队',
     running: '运行',

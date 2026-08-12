@@ -546,7 +546,9 @@ export type TenderStageRunAction =
   | 'advance'
   | 'complete'
   | 'reset_orchestration'
-  | 'set_dispatch';
+  | 'set_dispatch'
+  /** Quality-check stage deliverables and heal Official Outputs from the control panel. */
+  | 'organize_deliverables';
 export type TenderStageRunStatus = 'blocked' | 'ready' | 'running' | 'complete';
 
 export interface TenderStageRunRequest {
@@ -657,6 +659,19 @@ export interface TenderStageRunResultDto {
     documentAnalysisBatchManifestPath?: string;
     boqBatchManifestPath?: string;
     taskBoardPath?: string;
+    stageDeliverablesCatalogPath?: string;
+  };
+  /** Stage deliverables quality catalog (present/missing/thin + Official Outputs). */
+  deliverables?: {
+    catalogPath: string;
+    presentCount: number;
+    missingCount: number;
+    thinCount: number;
+    publishedToOfficial: boolean;
+    summaryPath?: string;
+    indexLines: string[];
+    healed?: number;
+    published?: number;
   };
 }
 

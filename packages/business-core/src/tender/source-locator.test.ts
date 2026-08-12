@@ -18,6 +18,21 @@ describe('normalizeSourceRef', () => {
     expect(normalizeSourceRef('')).toBeUndefined();
     expect(normalizeSourceRef(null)).toBeUndefined();
   });
+
+  test('binds locator/excerpt citations to fallbackDocumentId', () => {
+    expect(normalizeSourceRef(
+      { locator: 'PDF page 1', excerpt: 'WORK PACKAGE B' },
+      { fallbackDocumentId: 'src-hse-doc' },
+    )).toEqual({
+      documentId: 'src-hse-doc',
+      clause: 'PDF page 1',
+      excerpt: 'WORK PACKAGE B',
+    });
+  });
+
+  test('still drops empty objects without fallback evidence', () => {
+    expect(normalizeSourceRef({}, { fallbackDocumentId: 'src-hse-doc' })).toBeUndefined();
+  });
 });
 
 describe('normalizeSourceRefs', () => {
@@ -26,6 +41,17 @@ describe('normalizeSourceRefs', () => {
       { documentId: 'doc-a' },
       { documentId: 'doc-b', clause: '4.1' },
     ]);
+  });
+
+  test('keeps locator-only refs when fallbackDocumentId is set', () => {
+    expect(normalizeSourceRefs(
+      [{ locator: '封面页', excerpt: 'CONTRACT NR: R573' }],
+      { fallbackDocumentId: 'src-hse-doc' },
+    )).toEqual([{
+      documentId: 'src-hse-doc',
+      clause: '封面页',
+      excerpt: 'CONTRACT NR: R573',
+    }]);
   });
 });
 

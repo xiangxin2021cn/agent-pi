@@ -586,14 +586,34 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         setExpandedPaths((prev) => {
           let changed = false
           const next = new Set(prev)
+          // Default: expand Official Outputs (+ document-analysis deliverables).
+          // Never force-open Working Folder — browse sources on demand.
           if (outputInfo?.exists && !next.has(outputInfo.path)) {
             next.add(outputInfo.path)
             changed = true
           }
-          const workingRoot = sessionFiles.find((file) => file.source === 'working-directory' && file.type === 'directory')
-          if (workingRoot && !next.has(workingRoot.path)) {
-            next.add(workingRoot.path)
+          const officialRoot = sessionFiles.find((file) => (
+            file.source === 'official-output' && file.type === 'directory'
+          ))
+          const analysisFolder = officialRoot?.children?.find((child) => (
+            child.type === 'directory' && child.name === 'document-analysis'
+          ))
+          if (analysisFolder && !next.has(analysisFolder.path)) {
+            next.add(analysisFolder.path)
             changed = true
+          }
+          const isTenderSession = session?.businessContext?.module === 'tender'
+          if (isTenderSession && sessionId) {
+            const migrated = storage.getRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, sessionId)
+            if (migrated === null) {
+              for (const file of sessionFiles) {
+                if (file.source === 'working-directory' && file.type === 'directory') {
+                  if (next.delete(file.path)) changed = true
+                }
+              }
+              storage.setRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, '1', sessionId)
+              changed = true
+            }
           }
           if (!changed) return prev
           saveExpandedPaths(next)
@@ -611,7 +631,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         setIsLoading(false)
       }
     }
-  }, [sessionId, workingDirectoryKey, saveExpandedPaths])
+  }, [session?.businessContext?.module, sessionId, workingDirectoryKey, saveExpandedPaths])
 
   const loadDirectoryChildren = useCallback(async (file: SessionFile) => {
     if (!sessionId || file.type !== 'directory') return

@@ -61,6 +61,7 @@ export function buildBusinessTaskDraft(
   const capabilityBlock = buildCapabilityBlock(stage)
   const dispatchBlock = buildDispatchBlock(stage)
   const stageControlBlock = buildStageControlBlock(stageRun)
+  const deliverablesBlock = buildDeliverablesBlock(stageRun)
   const registeredInputs = project.inputPaths.length > 0
     ? project.inputPaths.map((path) => `- ${path}`).join('\n')
     : '- 暂无；开始分析前请由用户明确添加资料。'
@@ -70,7 +71,7 @@ export function buildBusinessTaskDraft(
 项目 / Project: ${project.name}
 当前阶段 / Stage: ${stage.label}
 阶段要求: ${stage.prompt}
-${capabilityBlock}${stageControlBlock}${dispatchBlock}
+${capabilityBlock}${stageControlBlock}${deliverablesBlock}${dispatchBlock}
 
 用户明确登记的输入资料:
 ${registeredInputs}
@@ -96,13 +97,13 @@ export function buildStageHandoffDraft(
 新阶段: ${stage.label} (\`${stage.id}\`)
 阶段要求: ${stage.prompt}
 
-${buildCapabilityBlock(stage)}${buildStageControlBlock(stageRun)}${buildDispatchBlock(stage)}
+${buildCapabilityBlock(stage)}${buildStageControlBlock(stageRun)}${buildDeliverablesBlock(stageRun)}${buildDispatchBlock(stage)}
 
 规则:
 - 这是同一条主对话的阶段推进，不是新会话；项目记忆与上文继续有效。
 - 大 PDF 解析 / BOQ 章节组价由**主会话**按 task board brief/report 调用 spawn_session 派发（默认并发最多 4）；工作台「下一步 / 恢复」是补位与停启控制，不要一次打满队列。
-- 子会话必须同时写出 JSON handoff 与客户可读 MD（brief.markdownPath）；禁止把写 MD 推回主会话。
-- 子会话禁止再 spawn；正式成果以项目目录下的 packs / Agent Pi Outputs / orchestration 为准。
+- 子会话写出 JSON handoff 与客户可读 MD；正式成果以 packs / Agent Pi Outputs / orchestration 为准。
+- 优先阅读 tender_stage_deliverables 索引与 catalog_path，不要扫工作目录找上游成果。
 - 完成门禁所需制品后再请求进入下一阶段。
 
 请确认当前阶段目标，并按阶段要求推进。
@@ -121,8 +122,26 @@ missing_items: ${stageRun.missingItems.join(', ') || '(none)'}
 ${stageRun.paths.boqBatchManifestPath ? `boq_batch_manifest_path: ${stageRun.paths.boqBatchManifestPath}` : ''}
 ${stageRun.paths.documentAnalysisBatchManifestPath ? `document_analysis_batch_manifest_path: ${stageRun.paths.documentAnalysisBatchManifestPath}` : ''}
 ${stageRun.paths.taskBoardPath ? `task_board_path: ${stageRun.paths.taskBoardPath}` : ''}
+${stageRun.paths.stageDeliverablesCatalogPath ? `stage_deliverables_catalog_path: ${stageRun.paths.stageDeliverablesCatalogPath}` : ''}
 Use these exact controller paths. Do not discover or replace them by scanning the project working directory.
 </tender_stage_control>
+`
+}
+
+function buildDeliverablesBlock(stageRun?: TenderStageRunResultDto): string {
+  const deliverables = stageRun?.deliverables
+  if (!deliverables) return ''
+  const lines = deliverables.indexLines.length > 0 ? deliverables.indexLines : ['- (none yet)']
+  return `
+<tender_stage_deliverables>
+catalog_path: ${deliverables.catalogPath}
+present: ${deliverables.presentCount} · missing: ${deliverables.missingCount} · thin: ${deliverables.thinCount}
+published_to_official: ${deliverables.publishedToOfficial}
+${deliverables.summaryPath ? `summary_path: ${deliverables.summaryPath}` : ''}
+citable_index:
+${lines.join('\n')}
+Read catalog_path / listed paths for upstream evidence. Do not rescan the working tree for discovery.
+</tender_stage_deliverables>
 `
 }
 

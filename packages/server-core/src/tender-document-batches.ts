@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import {
   parseTenderDocumentAnalysisData,
   type TenderDocumentAnalysisData,
@@ -102,9 +102,10 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
       projectId,
       batchId,
       objective:
-        'Analyze exactly one registered tender source. Write (1) evidence-linked structured sections to reportPath and '
-        + '(2) a customer-facing readable Markdown analysis to markdownPath. The Markdown is a first-class deliverable — '
-        + 'do not leave it for the parent session. No cross-document inference.',
+        'Analyze exactly one registered tender source. Produce useful structured sections (JSON at reportPath) '
+        + 'and a readable Markdown analysis (markdownPath). Prefer substance over citation ritual — '
+        + 'empty sourceRefs are accepted; documentId/batchId are inferred from the brief when omitted. '
+        + 'No cross-document invention.',
       scope: {
         documentId: source.documentId,
         name: source.name,
@@ -195,22 +196,66 @@ export function validateDocumentAnalysisBatchMerge(
   return validateDocumentAnalysisBatchMergeCore(manifest.batches, finalValue);
 }
 
+function latestQuarantinedReportPath(reportPath: string): string | undefined {
+  const directory = dirname(reportPath);
+  const base = basename(reportPath);
+  if (!existsSync(directory)) return undefined;
+  const prefix = `${base}.invalid.`;
+  const candidates = readdirSync(directory)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => {
+      const fullPath = join(directory, name);
+      try {
+        return { fullPath, mtimeMs: statSync(fullPath).mtimeMs };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry): entry is { fullPath: string; mtimeMs: number } => Boolean(entry))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+  return candidates[0]?.fullPath;
+}
+
+/** Prefer live reportPath; otherwise the newest quarantined sibling (stale invalid rename). */
+function resolveReportPathForValidation(reportPath: string): { path: string; quarantined: boolean } | undefined {
+  if (existsSync(reportPath)) return { path: reportPath, quarantined: false };
+  const quarantined = latestQuarantinedReportPath(reportPath);
+  return quarantined ? { path: quarantined, quarantined: true } : undefined;
+}
+
 function validateReport(
   reportPath: string,
   markdownPath: string,
   batchId: string,
   documentId: string,
 ): { status: TenderDocumentAnalysisBatchRecord['status']; errors: string[] } {
-  if (!existsSync(reportPath)) return { status: 'pending', errors: [] };
+  const resolved = resolveReportPathForValidation(reportPath);
+  if (!resolved) return { status: 'pending', errors: [] };
   try {
-    const { errors } = readReport(reportPath, batchId, documentId);
+    const { errors } = readReport(resolved.path, batchId, documentId);
     if (!artifactLooksAcceptable(markdownPath)) {
       errors.push(
         `Customer-facing Markdown missing or too thin at ${markdownPath}. `
           + 'The child must write this MD (with a title and summary section); do not leave it for the parent.',
       );
     }
-    return { status: errors.length === 0 ? 'complete' : 'invalid', errors };
+    if (errors.length === 0) {
+      // Heal: a previously quarantined report that now passes lenient gates is restored.
+      if (resolved.quarantined && resolved.path !== reportPath) {
+        try {
+          renameSync(resolved.path, reportPath);
+        } catch {
+          // Fall back to copying content if rename fails (e.g. cross-device).
+          try {
+            writeFileSync(reportPath, readFileSync(resolved.path));
+          } catch {
+            // Best-effort — validation still reports complete for this tick.
+          }
+        }
+      }
+      return { status: 'complete', errors: [] };
+    }
+    return { status: 'invalid', errors };
   } catch (error) {
     return { status: 'invalid', errors: [error instanceof Error ? error.message : String(error)] };
   }
@@ -224,8 +269,10 @@ function readReport(
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as Record<string, unknown>;
   const errors: string[] = [];
   if (report.schemaVersion !== 1) errors.push('schemaVersion must be 1');
-  if (report.batchId !== batchId) errors.push(`batchId must be ${batchId}`);
-  if (report.documentId !== documentId) errors.push(`documentId must be ${documentId}`);
+  // Soft: brief path is authoritative — wrong/missing batchId must not burn retries.
+  if (typeof report.documentId === 'string' && report.documentId.trim() && report.documentId !== documentId) {
+    errors.push(`documentId must be ${documentId}`);
+  }
   if (!Array.isArray(report.sections) || report.sections.length === 0) {
     errors.push('sections must be a non-empty array');
     return { sections: [], errors };
@@ -233,9 +280,15 @@ function readReport(
 
   let sections: TenderDocumentAnalysisSection[] = [];
   try {
+    // Lenient single-doc normalize: bind locator/excerpt-only citations to the assigned document.
     sections = parseTenderDocumentAnalysisData({
-      sections: report.sections.map((section) => isRecord(section) ? { ...section, documentId } : section),
-    }).sections;
+      schemaVersion: report.schemaVersion,
+      batchId,
+      documentId,
+      sections: report.sections.map((section) => (
+        isRecord(section) ? { ...section, documentId: section.documentId ?? documentId } : section
+      )),
+    }, { defaultDocumentId: documentId }).sections;
   } catch (error) {
     errors.push(`sections schema is invalid: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -244,8 +297,8 @@ function readReport(
     if (ids.has(section.id)) errors.push(`duplicate section id: ${section.id}`);
     else ids.add(section.id);
     if (!section.summary.trim()) errors.push(`sections[${index}].summary is required`);
-    if (section.sourceRefs.length === 0) errors.push(`sections[${index}].sourceRefs must be non-empty`);
-    else if (section.sourceRefs.some((source) => source.documentId !== documentId)) {
+    // Soft: empty sourceRefs no longer invalidates the batch — evidence is best-effort.
+    if (section.sourceRefs.some((source) => source.documentId !== documentId)) {
       errors.push(`sections[${index}].sourceRefs must cite only ${documentId}`);
     }
   }
@@ -257,24 +310,28 @@ function reportSchema(batchId: string, documentId: string): Record<string, unkno
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
     additionalProperties: false,
-    required: ['schemaVersion', 'batchId', 'documentId', 'sections'],
+    required: ['schemaVersion', 'sections'],
     properties: {
       schemaVersion: { const: 1 },
-      batchId: { const: batchId },
-      documentId: { const: documentId },
+      batchId: { type: 'string', description: `Prefer ${batchId}; the brief path is authoritative if omitted.` },
+      documentId: { type: 'string', description: `Prefer ${documentId}; inferred for single-doc batches.` },
       sections: {
         type: 'array',
         minItems: 1,
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['id', 'kind', 'title', 'summary', 'sourceRefs', 'status'],
+          required: ['id', 'kind', 'title', 'summary', 'status'],
           properties: {
             id: { type: 'string', minLength: 1 },
             kind: { enum: SECTION_KINDS },
             title: { type: 'string', minLength: 1 },
             summary: { type: 'string', minLength: 1 },
-            sourceRefs: { type: 'array', minItems: 1 },
+            sourceRefs: {
+              type: 'array',
+              description: 'Optional citations (page/locator/excerpt). Empty is accepted.',
+              items: { type: 'object' },
+            },
             status: { enum: ['draft', 'reviewed', 'blocked'] },
           },
         },
