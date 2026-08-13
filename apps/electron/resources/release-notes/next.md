@@ -8,6 +8,7 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
+<!-- Folded into 2.6.2.md: session files loading pill + working-folder scan depth -->
 <!-- Folded into 2.6.1.md: formal report writing skills, Claude SDK 0.3.229 -->
 <!-- Folded into 2.6.0.md: project boundary desk + BOQ fence, jurisdiction profiles, DeepSeek vision, force-pass, live HTML, session-files on-demand refresh, writing contract, Official Outputs BOQ MD, parallel resume, standby wake, chat freeze, model-switch source fence, Claude SDK 0.3.228 -->
 <!-- Folded into 2.5.3.md: accumulateOutput cap, tender monitor continue idle children, pause/resume dispatch -->

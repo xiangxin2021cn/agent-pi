@@ -62,6 +62,10 @@ const SESSION_FILES_CHANGED_DEBOUNCE_MS = 750
 const SESSION_FILES_INITIAL_SCAN_DEPTH = 1
 const SESSION_FILES_CHILD_SCAN_DEPTH = 1
 const SESSION_FILES_MAX_SCAN_DEPTH = 3
+// Working folder / tender workspace roots can be huge (node_modules, CAD dumps).
+// Keep the first paint at depth 0 so expanding Official Outputs is not stuck
+// behind a full project walk on the main-process RPC thread.
+const SESSION_FILES_BROWSE_ROOT_SCAN_DEPTH = 0
 
 function summarizeIds(ids: Iterable<string>, limit = SESSION_GET_LOG_ID_LIMIT) {
   const all = Array.from(ids)
@@ -903,7 +907,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           tenderWorkspacePaths,
           workingDirectory,
         )
-        if (!target || !await pathExists(target.path)) {
+        if (!target) {
+          log.warn('GET_FILES rejected parentPath outside session roots:', requestedParentPath)
+          return []
+        }
+        if (!await pathExists(target.path)) {
           return []
         }
         return await scanSessionDirectory(target.path, target.rootPath, {
@@ -922,13 +930,19 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         }
       }
 
-      const tenderTrees = await scanTenderWorkspaceTrees(tenderWorkspacePaths, scanDepth)
+      const tenderTrees = await scanTenderWorkspaceTrees(
+        tenderWorkspacePaths,
+        SESSION_FILES_BROWSE_ROOT_SCAN_DEPTH,
+      )
       if (tenderTrees.length > 0) {
         files.unshift(...tenderTrees)
       }
 
       // Prefer browsing the bound project/working folder for tender (and any) sessions.
-      const workingTree = await scanWorkingDirectoryTree(workingDirectory, scanDepth)
+      const workingTree = await scanWorkingDirectoryTree(
+        workingDirectory,
+        SESSION_FILES_BROWSE_ROOT_SCAN_DEPTH,
+      )
       if (workingTree && !pathStartsWith(workingTree.path, sessionPath)) {
         files.unshift(workingTree)
       }

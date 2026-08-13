@@ -40,6 +40,16 @@ import {
 } from '@/components/app-shell/input/attachment-events'
 import { routes } from '../../../shared/routes'
 import {
+  SESSION_FILES_CHILD_LOAD_TIMEOUT_MS,
+  collectExpandedUnloadedDirectories,
+  hydrateExpandedDirectories,
+  replaceDirectoryChildren,
+  sessionFilePathsEqual,
+  setHasSessionFilePath,
+  treeHasDirectory,
+  withTimeout,
+} from './session-files-tree'
+import {
   KNOWLEDGE_BASE_METADATA_CATEGORY,
   isSupportedKnowledgeBaseFile,
   suggestKnowledgeBaseCategory,
@@ -326,8 +336,8 @@ function FileTreeItem({
 }: FileTreeItemProps) {
   const { t } = useTranslation()
   const isDirectory = file.type === 'directory'
-  const isExpanded = expandedPaths.has(file.path)
-  const isLoadingChildren = loadingDirectoryPaths.has(file.path)
+  const isExpanded = setHasSessionFilePath(expandedPaths, file.path)
+  const isLoadingChildren = setHasSessionFilePath(loadingDirectoryPaths, file.path)
 
   const handleClick = () => {
     if (isDirectory) {
@@ -397,7 +407,7 @@ function FileTreeItem({
       {/* File/folder name - min-w-0 required for truncate to work in flex container */}
       <span className="flex-1 min-w-0 truncate">{file.name}</span>
       {isLoadingChildren && (
-        <span className="shrink-0 text-[10px] text-muted-foreground">{t('common.loading', { defaultValue: 'Loading' })}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{t('chat.sessionFilesLoading')}</span>
       )}
       <SourcePill file={file} />
     </button>
@@ -506,46 +516,6 @@ function FileTreeItem({
   return <>{innerContent}</>
 }
 
-function replaceDirectoryChildren(files: SessionFile[], directoryPath: string, children: SessionFile[]): SessionFile[] {
-  return files.map((file) => {
-    if (file.path === directoryPath && file.type === 'directory') {
-      return {
-        ...file,
-        children,
-        childrenLoaded: true,
-        hasMoreChildren: false,
-      }
-    }
-    if (file.children?.length) {
-      return {
-        ...file,
-        children: replaceDirectoryChildren(file.children, directoryPath, children),
-      }
-    }
-    return file
-  })
-}
-
-async function hydrateExpandedDirectories(
-  sessionId: string,
-  roots: SessionFile[],
-  expanded: Set<string>,
-  applyChildren: (directoryPath: string, children: SessionFile[]) => void,
-): Promise<void> {
-  const visit = async (nodes: SessionFile[]) => {
-    for (const node of nodes) {
-      if (node.type !== 'directory' || !expanded.has(node.path)) continue
-      const children = await window.electronAPI.getSessionFiles(sessionId, {
-        parentPath: node.path,
-        maxDepth: 1,
-      })
-      applyChildren(node.path, children)
-      await visit(children)
-    }
-  }
-  await visit(roots)
-}
-
 /**
  * Section displaying session files as a tree
  */
@@ -562,9 +532,14 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [pendingKnowledgeBaseFile, setPendingKnowledgeBaseFile] = useState<SessionFile | null>(null)
   const [knowledgeBaseAiSuggestion, setKnowledgeBaseAiSuggestion] = useState<{ category: string; reason?: string; fallback?: boolean } | null>(null)
   const [isSuggestingKnowledgeBaseCategory, setIsSuggestingKnowledgeBaseCategory] = useState(false)
-  const mountedRef = useRef(true)
   const expandedPathsRef = useRef(expandedPaths)
   expandedPathsRef.current = expandedPaths
+  const sessionModuleRef = useRef(session?.businessContext?.module)
+  sessionModuleRef.current = session?.businessContext?.module
+  const loadGenerationRef = useRef(0)
+  const filesSessionIdRef = useRef<string | null>(null)
+  const loadingDirectoriesRef = useRef(new Set<string>())
+  const failedDirectoriesRef = useRef(new Set<string>())
 
   // Load expanded paths from storage when session changes.
   // If no value exists yet, keep the tree collapsed except for the formal output root.
@@ -589,135 +564,167 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [sessionId])
 
+  const fetchDirectoryChildren = useCallback(async (directoryPath: string) => {
+    if (!sessionId) return []
+    return withTimeout(
+      window.electronAPI.getSessionFiles(sessionId, {
+        parentPath: directoryPath,
+        maxDepth: 1,
+      }),
+      SESSION_FILES_CHILD_LOAD_TIMEOUT_MS,
+      'Timed out loading folder contents',
+    )
+  }, [sessionId])
+
   // Load files
   const loadFiles = useCallback(async (options?: { hydrateExpanded?: boolean }) => {
     if (!sessionId) {
       setFiles([])
       setOutputDirectory(null)
+      filesSessionIdRef.current = null
       return
     }
 
+    const generation = ++loadGenerationRef.current
+    failedDirectoriesRef.current.clear()
     setIsLoading(true)
     try {
       const [sessionFiles, outputInfo] = await Promise.all([
         window.electronAPI.getSessionFiles(sessionId, { maxDepth: 1 }),
         window.electronAPI.getSessionOutputDirectory(sessionId),
       ])
-      if (mountedRef.current) {
-        setFiles(sessionFiles)
-        setOutputDirectory(outputInfo)
-        setLoadingDirectoryPaths(new Set())
-        setExpandedPaths((prev) => {
-          let changed = false
-          const next = new Set(prev)
-          // Default: expand Official Outputs (+ document-analysis deliverables).
-          // Never force-open Working Folder — browse sources on demand.
-          if (outputInfo?.exists && !next.has(outputInfo.path)) {
-            next.add(outputInfo.path)
-            changed = true
-          }
-          const officialRoot = sessionFiles.find((file) => (
-            file.source === 'official-output' && file.type === 'directory'
-          ))
-          const analysisFolder = officialRoot?.children?.find((child) => (
-            child.type === 'directory' && child.name === 'document-analysis'
-          ))
-          if (analysisFolder && !next.has(analysisFolder.path)) {
-            next.add(analysisFolder.path)
-            changed = true
-          }
-          const isTenderSession = session?.businessContext?.module === 'tender'
-          if (isTenderSession && sessionId) {
-            const migrated = storage.getRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, sessionId)
-            if (migrated === null) {
-              for (const file of sessionFiles) {
-                if (file.source === 'working-directory' && file.type === 'directory') {
-                  if (next.delete(file.path)) changed = true
-                }
-              }
-              storage.setRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, '1', sessionId)
-              changed = true
-            }
-          }
-          if (!changed) return prev
-          saveExpandedPaths(next)
-          return next
-        })
-        if (options?.hydrateExpanded) {
-          const expanded = new Set(expandedPathsRef.current)
-          if (outputInfo?.exists) expanded.add(outputInfo.path)
-          await hydrateExpandedDirectories(sessionId, sessionFiles, expanded, (directoryPath, children) => {
-            if (!mountedRef.current) return
-            setFiles((prev) => replaceDirectoryChildren(prev, directoryPath, children))
-          })
+      if (generation !== loadGenerationRef.current) return
+
+      filesSessionIdRef.current = sessionId
+      setFiles(sessionFiles)
+      setOutputDirectory(outputInfo)
+      setLoadingDirectoryPaths(new Set())
+      loadingDirectoriesRef.current.clear()
+      setExpandedPaths((prev) => {
+        let changed = false
+        const next = new Set(prev)
+        // Default: expand Official Outputs (+ document-analysis deliverables).
+        // Never force-open Working Folder — browse sources on demand.
+        if (outputInfo?.exists && !next.has(outputInfo.path)) {
+          next.add(outputInfo.path)
+          changed = true
         }
+        const officialRoot = sessionFiles.find((file) => (
+          file.source === 'official-output' && file.type === 'directory'
+        ))
+        const analysisFolder = officialRoot?.children?.find((child) => (
+          child.type === 'directory' && child.name === 'document-analysis'
+        ))
+        if (analysisFolder && !next.has(analysisFolder.path)) {
+          next.add(analysisFolder.path)
+          changed = true
+        }
+        const isTenderSession = sessionModuleRef.current === 'tender'
+        if (isTenderSession && sessionId) {
+          const migrated = storage.getRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, sessionId)
+          if (migrated === null) {
+            for (const file of sessionFiles) {
+              if (file.source === 'working-directory' && file.type === 'directory') {
+                if (next.delete(file.path)) changed = true
+              }
+            }
+            storage.setRaw(storage.KEYS.sessionFilesTenderWorkingCollapsed, '1', sessionId)
+            changed = true
+          }
+        }
+        if (!changed) return prev
+        saveExpandedPaths(next)
+        return next
+      })
+      if (options?.hydrateExpanded !== false) {
+        const expanded = new Set(expandedPathsRef.current)
+        if (outputInfo?.exists) expanded.add(outputInfo.path)
+        await hydrateExpandedDirectories(
+          sessionFiles,
+          expanded,
+          fetchDirectoryChildren,
+          (directoryPath, children) => {
+            if (generation !== loadGenerationRef.current) return
+            setFiles((prev) => replaceDirectoryChildren(prev, directoryPath, children))
+          },
+        )
       }
     } catch (error) {
       console.error('Failed to load session files:', error)
-      if (mountedRef.current) {
+      if (generation === loadGenerationRef.current) {
         setFiles([])
         setOutputDirectory(null)
+        setLoadingDirectoryPaths(new Set())
+        loadingDirectoriesRef.current.clear()
+        filesSessionIdRef.current = sessionId
       }
     } finally {
-      if (mountedRef.current) {
+      if (generation === loadGenerationRef.current) {
         setIsLoading(false)
       }
     }
-  }, [session?.businessContext?.module, sessionId, workingDirectoryKey, saveExpandedPaths])
+  }, [fetchDirectoryChildren, sessionId, workingDirectoryKey, saveExpandedPaths])
 
   const loadDirectoryChildren = useCallback(async (file: SessionFile) => {
     if (!sessionId || file.type !== 'directory') return
-    if (loadingDirectoryPaths.has(file.path)) return
+    if (loadingDirectoriesRef.current.has(file.path)) return
 
+    loadingDirectoriesRef.current.add(file.path)
     setLoadingDirectoryPaths((prev) => {
+      if (prev.has(file.path)) return prev
       const next = new Set(prev)
       next.add(file.path)
       return next
     })
 
     try {
-      const children = await window.electronAPI.getSessionFiles(sessionId, {
-        parentPath: file.path,
-        maxDepth: 1,
+      const children = await fetchDirectoryChildren(file.path)
+      failedDirectoriesRef.current.delete(file.path)
+      setFiles((prev) => {
+        if (!treeHasDirectory(prev, file.path)) {
+          failedDirectoriesRef.current.add(file.path)
+          return prev
+        }
+        return replaceDirectoryChildren(prev, file.path, children)
       })
-      if (mountedRef.current) {
-        setFiles((prev) => replaceDirectoryChildren(prev, file.path, children))
-      }
     } catch (error) {
       console.error('Failed to load directory children:', error)
+      failedDirectoriesRef.current.add(file.path)
       toast.error(t('chat.sessionFilesLoadFailed', { defaultValue: 'Failed to load folder contents' }))
     } finally {
-      if (mountedRef.current) {
-        setLoadingDirectoryPaths((prev) => {
-          const next = new Set(prev)
-          next.delete(file.path)
-          return next
-        })
-      }
+      loadingDirectoriesRef.current.delete(file.path)
+      setLoadingDirectoryPaths((prev) => {
+        if (!prev.has(file.path)) return prev
+        const next = new Set(prev)
+        next.delete(file.path)
+        return next
+      })
     }
-  }, [loadingDirectoryPaths, sessionId, t])
+  }, [fetchDirectoryChildren, sessionId, t])
 
   // Wait for chat messages before scanning the file tree. Tender working
   // directories and GET_MESSAGES used to race on the main process, so switching
   // into 投标工作台 left the transcript spinner frozen.
   useEffect(() => {
-    mountedRef.current = true
     if (!sessionId) {
+      loadGenerationRef.current += 1
+      filesSessionIdRef.current = null
       setFiles([])
       setOutputDirectory(null)
       setIsLoading(false)
-      return () => {
-        mountedRef.current = false
-      }
+      setLoadingDirectoryPaths(new Set())
+      loadingDirectoriesRef.current.clear()
+      return
     }
 
     if (messagesLoaded) {
       void loadFiles()
       return () => {
-        mountedRef.current = false
+        loadGenerationRef.current += 1
       }
     }
 
+    filesSessionIdRef.current = null
     setFiles([])
     setOutputDirectory(null)
     setIsLoading(true)
@@ -727,10 +734,20 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }, 8_000)
 
     return () => {
-      mountedRef.current = false
+      loadGenerationRef.current += 1
       window.clearTimeout(fallback)
     }
   }, [sessionId, workingDirectoryKey, messagesLoaded, loadFiles])
+
+  useEffect(() => {
+    if (!sessionId || isLoading) return
+    if (filesSessionIdRef.current !== sessionId) return
+    const unloaded = collectExpandedUnloadedDirectories(files, expandedPaths)
+    for (const directory of unloaded) {
+      if (failedDirectoriesRef.current.has(directory.path)) continue
+      void loadDirectoryChildren(directory)
+    }
+  }, [sessionId, isLoading, files, expandedPaths, loadDirectoryChildren])
 
   // Use the link interceptor (via context) so file clicks show in-app previews
   // instead of always opening in the file manager / default app.
@@ -782,12 +799,14 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   // Toggle folder expanded state
   const handleToggleExpand = useCallback((file: SessionFile) => {
     const path = file.path
-    const expanding = !expandedPaths.has(path)
+    const expanding = !setHasSessionFilePath(expandedPaths, path)
 
     setExpandedPaths((prev) => {
       const next = new Set(prev)
-      if (next.has(path)) {
-        next.delete(path)
+      if (setHasSessionFilePath(next, path)) {
+        for (const item of Array.from(next)) {
+          if (sessionFilePathsEqual(item, path)) next.delete(item)
+        }
       } else {
         next.add(path)
       }
@@ -796,6 +815,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     })
 
     if (file.type === 'directory' && expanding) {
+      failedDirectoriesRef.current.delete(path)
       void loadDirectoryChildren(file)
     }
   }, [expandedPaths, loadDirectoryChildren, saveExpandedPaths])

@@ -20,10 +20,12 @@ describe('sessions file watchers', () => {
   let tempRoot = ''
   let sessionDirA = ''
   let sessionDirB = ''
+  let sessionWorkingDirectories: Record<string, string | undefined> = {}
 
   beforeEach(() => {
     handlers.clear()
     pushed.length = 0
+    sessionWorkingDirectories = {}
 
     tempRoot = mkdtempSync(join(tmpdir(), 'craft-session-watchers-'))
     sessionDirA = join(tempRoot, 'session-a')
@@ -52,7 +54,10 @@ describe('sessions file watchers', () => {
           if (sessionId === 'session-b') return sessionDirB
           return null
         },
-        getSessions: () => [],
+        getSessions: () => [
+          { id: 'session-a', workingDirectory: sessionWorkingDirectories['session-a'] },
+          { id: 'session-b', workingDirectory: sessionWorkingDirectories['session-b'] },
+        ],
       } as unknown as HandlerDeps['sessionManager'],
       platform: {
         appRootPath: '',
@@ -168,5 +173,40 @@ describe('sessions file watchers', () => {
       maxDepth: 1,
     })
     expect(nestedChildren.map((file: any) => file.name)).toEqual(['deep.md'])
+  })
+
+  it('loads official-output children from the working-directory Agent Pi Outputs folder', async () => {
+    const getFiles = handlers.get(RPC_CHANNELS.sessions.GET_FILES)
+    expect(getFiles).toBeTruthy()
+
+    const workingDirectory = join(tempRoot, 'lesotho-project')
+    const outputDir = join(workingDirectory, 'Agent Pi Outputs', 'session-a')
+    const briefsDir = join(outputDir, 'orchestration', 'briefs')
+    const vendorDir = join(workingDirectory, 'node_modules', 'left-pad')
+    mkdirSync(briefsDir, { recursive: true })
+    mkdirSync(vendorDir, { recursive: true })
+    writeFileSync(join(briefsDir, 'pricing-agent-1.md'), 'ok')
+    writeFileSync(join(vendorDir, 'index.js'), 'module.exports = {}')
+    sessionWorkingDirectories['session-a'] = workingDirectory
+
+    const initial = await getFiles!({ clientId: 'client-a' }, 'session-a', { maxDepth: 1 })
+    const official = initial.find((file: any) => file.source === 'official-output')
+    expect(official?.name).toBe('Official Outputs')
+    const orchestration = official?.children?.find((file: any) => file.name === 'orchestration')
+    const briefs = orchestration?.children?.find((file: any) => file.name === 'briefs')
+    expect(briefs?.childrenLoaded).toBe(false)
+    expect(JSON.stringify(initial)).not.toContain('pricing-agent-1.md')
+
+    const working = initial.find((file: any) => file.source === 'working-directory')
+    const nodeModules = working?.children?.find((file: any) => file.name === 'node_modules')
+    expect(nodeModules?.childrenLoaded).toBe(false)
+    expect(JSON.stringify(nodeModules ?? {})).not.toContain('left-pad')
+
+    const briefChildren = await getFiles!({ clientId: 'client-a' }, 'session-a', {
+      parentPath: briefsDir,
+      maxDepth: 1,
+    })
+    expect(briefChildren.map((file: any) => file.name)).toEqual(['pricing-agent-1.md'])
+    expect(briefChildren[0]?.source).toBe('official-output')
   })
 })

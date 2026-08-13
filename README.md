@@ -51,15 +51,26 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.1.**
+**Current release: V2.6.2.**
 
-**当前发布版：V2.6.1。**
+**当前发布版：V2.6.2。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.2 Session Files Loading Hotfix / V2.6.2 会话文件加载热修
+
+V2.6.2 unsticks the right-hand Session Files tree after the 2.6.0 on-demand refresh: Official Outputs folders no longer stay on **加载中…**, and expanding `orchestration/briefs` is not blocked behind a full working-folder walk.
+
+V2.6.2 热修右侧会话文件树：正式输出子目录不再停在「加载中…」，展开 `briefs` / `reports` 时不会被整个工作目录扫描堵住。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Loading pill | Expand/refresh always clears; 20s timeout; retry after collapse/expand; hydrate persisted expanded folders. | 加载态必清、超时、可重试；已展开占位目录会回填。 |
+| Working folder scan | Root listing is depth 0 (`node_modules` not pre-walked). Official Outputs still lists one extra level. | 工作目录根列表不再预扫第二层；正式输出仍先列出一层子目录。 |
 
 ### V2.6.1 Formal Writing Skills + Claude SDK 0.3.229 / V2.6.1 正式撰写 skill 与 Claude SDK 升级
 
