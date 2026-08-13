@@ -281,12 +281,17 @@ export function formatBytes(bytes: number): string {
 
 /** Sanitize filename by removing unsafe characters. */
 export function sanitizeFilename(filename: string): string {
-  return filename
+  const sanitized = filename
     .replace(/[/\\:*?"<>|]/g, '_')
     .replace(/\s+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 200);
+  // Windows reserved device names (nul, con, ...) must not be written as files.
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.[^.]+)?$/i.test(sanitized)) {
+    return `_${sanitized}`;
+  }
+  return sanitized;
 }
 
 /**

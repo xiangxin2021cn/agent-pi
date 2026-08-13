@@ -167,6 +167,13 @@ export {
   isBrowserToolNameOrAlias,
 } from './browser-tool-names.ts';
 
+export {
+  rewriteWindowsNullRedirects,
+  isDiscardRedirectTarget,
+  isWindowsReservedDevicePath,
+  avoidWindowsReservedFilename,
+} from './windows-null-redirect.ts';
+
 // Export PowerShell validator root setter (for Electron startup on Windows)
 export { setPowerShellValidatorRoot } from './powershell-validator.ts';
 

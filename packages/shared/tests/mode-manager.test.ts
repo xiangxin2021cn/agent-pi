@@ -936,6 +936,8 @@ describe('AST-based compound command validation', () => {
       'ls > /dev/null',
       'cat file 2>/dev/null',
       'git status >/dev/null 2>&1',
+      'ls 2>nul',
+      'cat file 2>NUL',
     ];
 
     for (const cmd of devNullRedirectCommands) {
@@ -1373,6 +1375,12 @@ describe('extractBashWriteTarget', () => {
     it('should return null for /dev/null redirects', () => {
       expect(extractBashWriteTarget('ls > /dev/null')).toBeNull();
     });
+
+    it('should return null for Windows NUL redirects that Git Bash would otherwise write as a file', () => {
+      expect(extractBashWriteTarget('ls 2>nul')).toBeNull();
+      expect(extractBashWriteTarget('del foo 2>nul')).toBeNull();
+      expect(extractBashWriteTarget('dir >NUL')).toBeNull();
+    });
   });
 
   describe('PowerShell Out-File pattern', () => {
@@ -1645,6 +1653,19 @@ describe('shouldAllowToolInMode - Bash plans folder exception', () => {
 
     it('should not claim >/dev/null is a write attempt', () => {
       const command = 'some-command >/dev/null 2>&1';
+      const result = shouldAllowToolInMode(
+        'Bash',
+        { command },
+        'safe',
+        { plansFolderPath }
+      );
+      if (!result.allowed) {
+        expect(result.reason).not.toContain('appears to write files');
+      }
+    });
+
+    it('should not claim 2>nul is a write attempt', () => {
+      const command = 'ls -la /some/path 2>nul || echo "not found"';
       const result = shouldAllowToolInMode(
         'Bash',
         { command },

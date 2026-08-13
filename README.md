@@ -51,15 +51,26 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.2.**
+**Current release: V2.6.3.**
 
-**当前发布版：V2.6.2。**
+**当前发布版：V2.6.3。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.3 Stray `nul` File Hotfix / V2.6.3 工作目录 `nul` 文件热修
+
+V2.6.3 stops Git Bash from creating a real file named `nul` in the project folder. Agent shell commands often use cmd.exe `2>nul`; Git Bash treats that as a filename, not the NUL device. Those redirects are rewritten to `/dev/null` before the command runs.
+
+V2.6.3 热修工作目录里莫名出现的 `nul` 文件。智能体 Bash 在 Windows 上走 Git Bash，模型常写 `del … 2>nul`；Git Bash 会把 `nul` 当成普通文件名写进项目目录。现已在执行前改成 `/dev/null`。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Bash redirect rewrite | `>nul` / `2>nul` / `&>nul` become `/dev/null` before Git Bash runs. | 执行前把 cmd 空设备重定向改成 Git Bash 的 `/dev/null`。 |
+| Reserved device writes | Write/Edit to `nul` / `con` / `prn` is blocked; `nul` is not treated as a file write for permissions. | 禁止向 Windows 保留设备名写入；权限检查不再把 `2>nul` 当成写文件。 |
 
 ### V2.6.2 Session Files Loading Hotfix / V2.6.2 会话文件加载热修
 

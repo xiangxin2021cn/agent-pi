@@ -19,7 +19,11 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import {
+  isWindowsReservedDevicePath,
+  rewriteWindowsNullRedirects,
+} from '../windows-null-redirect.ts';
 import { expandPath } from '../../utils/paths.ts';
 import {
   detectConfigFileType,
@@ -131,6 +135,37 @@ export const FILE_PATH_TOOLS = new Set([
 
 /** Tools that can write config files */
 export const CONFIG_WRITE_TOOLS = new Set(['Write', 'Edit']);
+
+/** Tools that persist a file path and must not target Windows device names. */
+const RESERVED_DEVICE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+const RESERVED_DEVICE_PATH_KEYS = ['file_path', 'path', 'notebook_path'] as const;
+
+function getReservedDeviceWritePath(input: Record<string, unknown>): string | null {
+  for (const key of RESERVED_DEVICE_PATH_KEYS) {
+    const value = input[key];
+    if (typeof value === 'string' && isWindowsReservedDevicePath(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function rewriteWindowsNulBashInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  onDebug?: (message: string) => void,
+): { modified: boolean; input: Record<string, unknown> } {
+  if (toolName !== 'Bash' && toolName !== 'bash') {
+    return { modified: false, input };
+  }
+  const command = typeof input.command === 'string' ? input.command : '';
+  if (!command) return { modified: false, input };
+  const rewritten = rewriteWindowsNullRedirects(command);
+  if (rewritten === command) return { modified: false, input };
+  onDebug?.(`[nul] Rewrote Windows NUL redirect: ${command} → ${rewritten}`);
+  return { modified: true, input: { ...input, command: rewritten } };
+}
 
 /** File tools blocked for labels domain. */
 export const LABELS_BLOCKED_FILE_TOOLS = new Set(['Read', 'Write', 'Edit']);
@@ -1006,6 +1041,19 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     wasModified = true;
   }
 
+  // 5a2. Block writes to Windows reserved device names (nul, con, prn, ...)
+  if (RESERVED_DEVICE_WRITE_TOOLS.has(toolName)) {
+    const reservedPath = getReservedDeviceWritePath(currentInput);
+    if (reservedPath) {
+      return {
+        type: 'block',
+        reason:
+          `Cannot write to Windows reserved device name "${basename(reservedPath.replace(/\\/g, '/'))}". ` +
+          'Use a normal filename instead of nul/con/prn/aux.',
+      };
+    }
+  }
+
   // 5b. Config-domain Bash guard (block direct labels/automations path operations unless using craft-agent)
   if (FEATURE_FLAGS.craftAgentsCli && toolName === 'Bash') {
     const configDomainBashRedirect = getConfigDomainBashRedirect(currentInput, workspaceRootPath, workingDirectory);
@@ -1050,7 +1098,14 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     wasModified = true;
   }
 
-  // 5g. RTK Bash rewrite (last input transform — flows into both 'modify' and 'prompt' results).
+  // 5g. Rewrite cmd.exe `>nul` / `2>nul` so Git Bash does not create a `nul` file.
+  const nulRewrite = rewriteWindowsNulBashInput(toolName, currentInput, onDebug);
+  if (nulRewrite.modified) {
+    currentInput = nulRewrite.input;
+    wasModified = true;
+  }
+
+  // 5h. RTK Bash rewrite (last input transform — flows into both 'modify' and 'prompt' results).
   // Permission decisions above and the ask-mode prompt below operate on the
   // ORIGINAL `input` parameter, so the LLM still believes it ran the original
   // command and our permission system gates the original command — only the

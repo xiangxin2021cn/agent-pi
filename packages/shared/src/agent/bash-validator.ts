@@ -18,6 +18,7 @@
 import bashParser from 'bash-parser';
 import { debug } from '../utils/debug.ts';
 import type { CompiledBashPattern } from './mode-types.ts';
+import { isDiscardRedirectTarget } from './windows-null-redirect.ts';
 
 // ============================================================
 // Types
@@ -563,7 +564,7 @@ const SAFE_INPUT_REDIRECTS = new Set([
  *
  * Safe redirects:
  * - Input redirects: <, <&
- * - Output redirects to /dev/null (e.g., >/dev/null, 2>/dev/null)
+ * - Output redirects to /dev/null or Windows NUL (e.g., >/dev/null, 2>nul)
  * - File descriptor duplication (e.g., 2>&1) - just duplicates, doesn't write to file
  */
 function isRedirectSafe(redirect: RedirectNode): boolean {
@@ -576,8 +577,8 @@ function isRedirectSafe(redirect: RedirectNode): boolean {
 
   const target = redirect.file?.text;
 
-  // Output redirects to /dev/null are safe
-  if (target === '/dev/null') {
+  // Output redirects to /dev/null or Windows NUL are discard, not file writes
+  if (isDiscardRedirectTarget(target)) {
     return true;
   }
 

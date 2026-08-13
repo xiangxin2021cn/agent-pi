@@ -18,6 +18,7 @@ import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { debug } from '../utils/debug.ts';
 import type { CompiledBashPattern } from './mode-types.ts';
+import { isDiscardRedirectTarget } from './windows-null-redirect.ts';
 
 // ============================================================
 // Module Root (set at Electron startup)
@@ -600,8 +601,8 @@ function validateCommand(
       const fileRedirect = redirect as FileRedirectionAst;
       const target = fileRedirect.Location?.Text || 'unknown';
 
-      // Allow redirection to $null (PowerShell's /dev/null)
-      if (target.toLowerCase() === '$null') {
+      // Allow redirection to $null / NUL / /dev/null (discard, not a file write)
+      if (isDiscardRedirectTarget(target)) {
         continue;
       }
 

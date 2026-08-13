@@ -34,6 +34,7 @@ import {
   type PowerShellValidationResult,
   type PowerShellValidationReason,
 } from './powershell-validator.ts';
+import { isDiscardRedirectTarget } from './windows-null-redirect.ts';
 import {
   type PermissionMode,
   type ModeConfig,
@@ -1610,7 +1611,7 @@ export function extractBashWriteTarget(command: string): string | null {
   // Pattern 1: Quoted path after redirect (handles Codex's escaped quotes)
   // Matches: > "/path/to/file" or > \"/path/to/file\"
   const quotedPathMatch = command.match(/>\s*\\?"([^"]+)"/);
-  if (quotedPathMatch?.[1] && quotedPathMatch[1] !== '/dev/null') {
+  if (quotedPathMatch?.[1] && !isDiscardRedirectTarget(quotedPathMatch[1])) {
     return quotedPathMatch[1];
   }
 
@@ -1619,21 +1620,21 @@ export function extractBashWriteTarget(command: string): string | null {
   const shellExecMatch = command.match(
     /(?:\/bin\/)?(?:zsh|bash|sh)\s+(?:-\w+\s+)*["'].*?>\s*([^\s'"]+)/
   );
-  if (shellExecMatch?.[1] && shellExecMatch[1] !== '/dev/null') {
+  if (shellExecMatch?.[1] && !isDiscardRedirectTarget(shellExecMatch[1])) {
     return shellExecMatch[1];
   }
 
   // Pattern 3: Direct redirect - extract path after > or >>
   // Guard against non-shell uses like JavaScript arrow functions (=>).
   const directRedirectMatch = command.match(/(?:^|[^=<>])>{1,2}\s*([^\s;|&"'>=][^\s;|&"'>]*)/);
-  if (directRedirectMatch?.[1] && directRedirectMatch[1] !== '/dev/null') {
+  if (directRedirectMatch?.[1] && !isDiscardRedirectTarget(directRedirectMatch[1])) {
     return directRedirectMatch[1];
   }
 
   // Pattern 4: PowerShell Out-File with -FilePath or -Path parameter
   // Matches: | Out-File -FilePath 'path' or | Out-File -Path "path"
   const outFileParamMatch = command.match(/Out-File\s+-(?:File)?Path\s+['"]([^'"]+)['"]/i);
-  if (outFileParamMatch?.[1]) {
+  if (outFileParamMatch?.[1] && !isDiscardRedirectTarget(outFileParamMatch[1])) {
     return outFileParamMatch[1];
   }
 
@@ -1641,14 +1642,14 @@ export function extractBashWriteTarget(command: string): string | null {
   // Matches: | Out-File 'path' or | Out-File "path"
   // Must not match -FilePath or -Encoding etc.
   const outFilePosMatch = command.match(/Out-File\s+['"]([^'"]+)['"]/i);
-  if (outFilePosMatch?.[1] && !command.match(/Out-File\s+-\w/i)) {
+  if (outFilePosMatch?.[1] && !command.match(/Out-File\s+-\w/i) && !isDiscardRedirectTarget(outFilePosMatch[1])) {
     return outFilePosMatch[1];
   }
 
   // Pattern 6: PowerShell Set-Content or Add-Content with -Path parameter
   // Matches: | Set-Content -Path 'path' or | Add-Content -Path "path"
   const setContentMatch = command.match(/(?:Set|Add)-Content\s+-Path\s+['"]([^'"]+)['"]/i);
-  if (setContentMatch?.[1]) {
+  if (setContentMatch?.[1] && !isDiscardRedirectTarget(setContentMatch[1])) {
     return setContentMatch[1];
   }
 

@@ -807,6 +807,42 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('allow');
     });
 
+    it('rewrites Git Bash 2>nul redirects to /dev/null', () => {
+      mockCraftAgentsCliFlag = false;
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Bash',
+        input: { command: 'del foo 2>nul' },
+      }));
+
+      expect(result.type).toBe('modify');
+      if (result.type === 'modify') {
+        expect(result.input.command).toBe('del foo 2>/dev/null');
+      }
+    });
+
+    it('does not rewrite bash commands that mention nul without a redirect', () => {
+      mockCraftAgentsCliFlag = false;
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Bash',
+        input: { command: 'echo nul' },
+      }));
+
+      expect(result.type).toBe('allow');
+    });
+
+    it('blocks Write to the Windows reserved device name nul', () => {
+      mockCraftAgentsCliFlag = false;
+      const result = runPreToolUseChecks(createInput({
+        toolName: 'Write',
+        input: { file_path: 'nul', content: 'x' },
+      }));
+
+      expect(result.type).toBe('block');
+      if (result.type === 'block') {
+        expect(result.reason).toContain('reserved device name');
+      }
+    });
+
     it('strips _intent and _displayName metadata', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'mcp__linear__createIssue',

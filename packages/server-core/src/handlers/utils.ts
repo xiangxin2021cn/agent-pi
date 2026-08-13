@@ -30,7 +30,7 @@ export function buildBackendHostRuntimeContext(platform: PlatformServices) {
  * Removes dangerous characters and limits length.
  */
 export function sanitizeFilename(name: string): string {
-  return name
+  const sanitized = name
     // Remove path separators and traversal patterns
     .replace(/[/\\]/g, '_')
     // Remove Windows-forbidden characters: < > : " | ? *
@@ -45,6 +45,10 @@ export function sanitizeFilename(name: string): string {
     .slice(0, 200)
     // Fallback if name is empty after sanitization
     || 'unnamed'
+  // Windows reserved device names (nul, con, ...) must not be written as files.
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.[^.]+)?$/i.test(sanitized)
+    ? `_${sanitized}`
+    : sanitized
 }
 
 /**
