@@ -51,15 +51,28 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.0.**
+**Current release: V2.6.1.**
 
-**当前发布版：V2.6.0。**
+**当前发布版：V2.6.1。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.1 Formal Writing Skills + Claude SDK 0.3.229 / V2.6.1 正式撰写 skill 与 Claude SDK 升级
+
+V2.6.1 auto-attaches first-party `professional-report` or `tender-formal-writing` on formal document turns, fails quality audit on AI-filler prose even when citations look complete, and uplifts Claude Agent SDK **0.3.228 → 0.3.229**. Pi stays on latest **0.84.1**. Marketplace skill auto-install is not used.
+
+V2.6.1 在专业/严格文档任务与投标阶段草稿上自动加载内置撰写 skill，文档质检会卡住套话稿，并将 Claude Agent SDK 升到 **0.3.229**。Pi 仍为最新 **0.84.1**。不会从市场自动安装 skill。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Writing skills | Formal turns load `professional-report` (research/analysis/diligence/briefs) or `tender-formal-writing` (tender artifacts). Correspondence and quick chat skip attach. | 正式轮次挂内置撰写 skill；函件与快速聊天不挂。 |
+| Craft gate | `analyzeDocumentQuality` fails 综上所述 / Furthermore / pack-path catalog tone even if evidence scores pass. | 证据看起来齐、但仍是套话稿 → 质检失败。 |
+| Short contract | Tender stage drafts keep a short hard-ban block that names `[skill:tender-formal-writing]`. | 投标写作契约缩短为硬禁令并点名撰写 skill。 |
+| Runtime | Claude Agent SDK **0.3.229**; Pi **0.84.1** (already latest). | 打包运行时：Claude 0.3.229；Pi 无新版。 |
 
 ### V2.6.0 Project Boundary Desk + Workbench UX / V2.6.0 项目边界登记台与工作台体验
 

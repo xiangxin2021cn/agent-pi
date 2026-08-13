@@ -6,11 +6,9 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Improvements
 
-- **Formal report writing skills** — Professional/strict document turns and tender stage drafts now load first-party `professional-report` or `tender-formal-writing` before drafting. Document quality audit fails AI-filler prose even when citations look complete. Marketplace skill auto-install is not used.
-- **正式报告撰写 skill** — 专业/严格文档任务与投标阶段草稿会先加载内置撰写 skill；文档质检会卡住套话稿。不会从市场自动安装 skill。
-
 ## Bug Fixes
 
+<!-- Folded into 2.6.1.md: formal report writing skills, Claude SDK 0.3.229 -->
 <!-- Folded into 2.6.0.md: project boundary desk + BOQ fence, jurisdiction profiles, DeepSeek vision, force-pass, live HTML, session-files on-demand refresh, writing contract, Official Outputs BOQ MD, parallel resume, standby wake, chat freeze, model-switch source fence, Claude SDK 0.3.228 -->
 <!-- Folded into 2.5.3.md: accumulateOutput cap, tender monitor continue idle children, pause/resume dispatch -->
 <!-- Folded into 2.5.2.md: soft gates, Official Outputs MD, deliverables catalog, working folder collapse -->
