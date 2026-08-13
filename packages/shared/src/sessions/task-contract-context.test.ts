@@ -399,6 +399,21 @@ describe('formatTaskContractContext', () => {
     expect(formatted).toContain('Write missing gate evidence into the artifact or report the gate as blocked.');
   });
 
+  it('prints the required first-party writing skill from the document plan', () => {
+    expect(formatTaskContractContext({
+      ...contract,
+      documentPlan: {
+        sections: ['摘要'],
+        tables: [],
+        charts: [],
+        enhancements: [],
+        citations: [],
+        deliveryFormats: ['MD'],
+        writingSkillSlug: 'professional-report',
+      },
+    })).toContain('[skill:professional-report]');
+  });
+
   it('returns undefined when no contract is available', () => {
     expect(formatTaskContractContext(undefined)).toBeUndefined();
   });

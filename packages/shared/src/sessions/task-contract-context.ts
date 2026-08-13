@@ -218,6 +218,9 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | und
         `Budgets: headings<=${plan.editorialProfile.maxHeadings}, tables<=${plan.editorialProfile.maxTables}, tableLineRatio<=${plan.editorialProfile.maxTableLineRatio}`,
       ].join('\n')
     : undefined;
+  const writingSkill = plan?.writingSkillSlug
+    ? `Required writing skill: read [skill:${plan.writingSkillSlug}] before drafting reader-facing artifacts. Do not install other writing skills.`
+    : undefined;
   const sectionPlan = formatList('Document section plan', plan?.sections);
   const tablePlan = formatList('Document table plan', plan?.tables);
   const chartPlan = formatList('Document chart plan', plan?.charts);
@@ -228,10 +231,11 @@ function formatDocumentPlan(plan: SessionDocumentPlan | undefined): string | und
   const evidenceMatrix = formatDocumentEvidenceMatrix(plan?.evidenceMatrix);
   const deliveryReviewPlan = formatDocumentDeliveryReviewPlan(plan?.deliveryReviewPlan);
   const artifactVisibility = formatDocumentArtifactVisibility(plan?.artifactVisibility);
-  if (!editorialProfile && !sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan && !artifactVisibility) return undefined;
+  if (!editorialProfile && !writingSkill && !sectionPlan && !tablePlan && !chartPlan && !enhancementPlan && !citationPlan && !deliveryFormats && !agentPlan && !evidenceMatrix && !deliveryReviewPlan && !artifactVisibility) return undefined;
 
   return [
     editorialProfile,
+    writingSkill,
     sectionPlan,
     tablePlan,
     chartPlan,

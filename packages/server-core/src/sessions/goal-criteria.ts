@@ -2,6 +2,7 @@ import type { ContentBadge, StoredAttachment } from '@craft-agent/core/types'
 import { deriveOutputFormats, getArtifactFormatCapability, normalizeArtifactFormat } from '@craft-agent/shared/artifacts'
 import { detectDocumentDomain, suggestVisuals } from '@craft-agent/shared/document-visuals'
 import type { VisualOpportunity, VisualPlan } from '@craft-agent/shared/document-visuals'
+import { resolveWritingSkillSlug } from '@craft-agent/shared/business-projects'
 import type { SessionArtifactDeliverable, SessionDocumentAgentPlan, SessionDocumentArtifactVisibilityPlan, SessionDocumentDeliveryGate, SessionDocumentDeliveryReviewPlan, SessionDocumentEditorialProfile, SessionDocumentEvidenceMatrixEntry, SessionDocumentInternalArtifactKind, SessionDocumentPlan, SessionDocumentQualityMode, SessionGoalCriterion, SessionGoalMode, SessionRequirementKind, SessionRequirementLedger, SessionRequirementLedgerEntry, SessionTaskContract, SessionTaskContractType } from '@craft-agent/shared/sessions'
 
 export type SessionGoalCriterionSpec = Omit<SessionGoalCriterion, 'id'>
@@ -590,6 +591,12 @@ function buildDocumentPlan(input: {
   const visualPlan = buildVisualPlan(input.message)
   const strictTemplate = requiresTemplateFidelityAudit(input.message)
   const enhancements = buildDocumentPlanEnhancements(input.message, tables, charts, visualPlan, strictTemplate, input.documentQualityMode, editorialProfile)
+  const writingSkillSlug = isQuickLikeDocumentQualityMode(input.documentQualityMode)
+    ? undefined
+    : resolveWritingSkillSlug({ genre: editorialProfile.genre })
+  if (writingSkillSlug) {
+    enhancements.unshift(`Read skill ${writingSkillSlug} before drafting reader-facing artifacts; do not install marketplace skills.`)
+  }
   const agentPlan = buildDocumentAgentPlan(input.documentQualityMode, sections, input.message, input.taskType)
   const evidenceMatrix = buildDocumentEvidenceMatrix({
     documentQualityMode: input.documentQualityMode,
@@ -626,6 +633,7 @@ function buildDocumentPlan(input: {
     artifactVisibility,
     templateProfileId: strictTemplate ? 'pending-template-profile' : undefined,
     strictTemplate: strictTemplate || undefined,
+    writingSkillSlug,
     sections,
     tables,
     charts,
@@ -1157,6 +1165,7 @@ function mergeDocumentPlans(current: SessionDocumentPlan | undefined, next: Sess
     templateProfileId: current.templateProfileId ?? next.templateProfileId,
     templateProfile: current.templateProfile ?? next.templateProfile,
     strictTemplate: current.strictTemplate || next.strictTemplate || undefined,
+    writingSkillSlug: current.writingSkillSlug ?? next.writingSkillSlug,
     sections: uniqueBounded([...current.sections, ...next.sections], 24),
     tables: uniqueBounded([...current.tables, ...next.tables], 12),
     charts: uniqueBounded([...current.charts, ...next.charts], 12),

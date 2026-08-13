@@ -544,6 +544,8 @@ describe('buildTaskContractFromMessage', () => {
     })
 
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('professional_document')
+    expect(contract.documentPlan?.writingSkillSlug).toBe('professional-report')
+    expect(contract.documentPlan?.enhancements).toContain('Read skill professional-report before drafting reader-facing artifacts; do not install marketplace skills.')
     expect(contract.evidenceRequirements).toContain('Build an evidence matrix that links key claims, tables, and visuals back to source files or explicit assumptions.')
     expect(contract.documentPlan?.enhancements).toContain('Use document workflow mode professional_document for internal evidence controls, then draft only the reader-facing document defined by the editorial profile.')
   })
@@ -557,6 +559,7 @@ describe('buildTaskContractFromMessage', () => {
     expect(contract.taskType).toBe('document')
     expect((contract as { documentQualityMode?: string }).documentQualityMode).toBe('quick')
     expect(contract.documentPlan?.editorialProfile?.genre).toBe('contractual_correspondence')
+    expect(contract.documentPlan?.writingSkillSlug).toBeUndefined()
     expect(contract.documentPlan?.agentPlan).toBeUndefined()
     expect(contract.documentPlan?.evidenceMatrix).toBeUndefined()
     expect(contract.documentPlan?.tables).toEqual([])

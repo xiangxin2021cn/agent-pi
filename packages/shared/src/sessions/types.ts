@@ -267,6 +267,7 @@ export interface SessionDocumentPlan {
   templateProfileId?: string;
   templateProfile?: SessionTemplateProfile;
   strictTemplate?: boolean;
+  writingSkillSlug?: string;
   sections: string[];
   tables: string[];
   charts: string[];
