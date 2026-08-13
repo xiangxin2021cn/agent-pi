@@ -13,10 +13,10 @@ describe('tender writing contract', () => {
     expect(TENDER_WRITING_CONTRACT_BRIEF).toContain('method-theatre');
   });
 
-  test('stage-draft block is chain-wide and bilingual', () => {
+  test('stage-draft block is a short ban and names the writing skill', () => {
     expect(TENDER_WRITING_CONTRACT_DRAFT).toContain('<tender_writing_contract>');
-    expect(TENDER_WRITING_CONTRACT_DRAFT).toContain('按本标书专业化写作');
+    expect(TENDER_WRITING_CONTRACT_DRAFT).toContain('[skill:tender-formal-writing]');
     expect(TENDER_WRITING_CONTRACT_DRAFT).toContain('去 AI 味道');
-    expect(TENDER_WRITING_CONTRACT_DRAFT).toContain('writing-contract.md');
+    expect(TENDER_WRITING_CONTRACT_DRAFT.split('\n').length).toBeLessThanOrEqual(16);
   });
 });
