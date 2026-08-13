@@ -125,4 +125,31 @@ describe('document quality report formatting', () => {
 
     expect(formatDocumentQualityReport(report)).toContain('visuals=88, template=82');
   });
+
+  test('fails document quality when evidence-looking prose is still AI filler', () => {
+    const report = analyzeDocumentQuality({
+      strict: true,
+      editorialProfile: {
+        genre: 'analysis_report',
+        readerDecision: 'Decide whether to proceed.',
+        narrativeFirst: true,
+        maxHeadings: 20,
+        maxTables: 6,
+        maxTableLineRatio: 0.4,
+      },
+      contents: [`# 分析报告
+
+## 背景
+本报告将全方位覆盖评标要点。Furthermore, it is important to note a robust approach.
+
+## 依据
+根据招标文件，项目范围明确。
+
+## 结论
+综上所述，建议继续推进，确保万无一失。`],
+    });
+    expect(report.passed).toBe(false);
+    expect(report.issues.some((issue) => issue.includes('套话') || issue.includes('撰写'))).toBe(true);
+    expect(report.metrics.fillerHitCount).toBeGreaterThan(0);
+  });
 });

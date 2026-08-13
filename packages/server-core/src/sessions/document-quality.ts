@@ -1,5 +1,6 @@
 import { basename, extname } from 'path'
 import type { SessionDocumentEditorialProfile, SessionDocumentInternalArtifactKind } from '@craft-agent/shared/sessions'
+import { analyzeWritingCraft } from '@craft-agent/shared/business-projects'
 
 export interface DocumentQualityReport {
   passed: boolean
@@ -15,6 +16,7 @@ export interface DocumentQualityReport {
     risk: number
     visuals?: number
     template?: number
+    craft?: number
   }
   metrics: {
     textLength: number
@@ -28,6 +30,8 @@ export interface DocumentQualityReport {
     placeholderCount: number
     internalControlMarkerCount: number
     tableLineRatio: number
+    fillerHitCount?: number
+    catalogHitCount?: number
   }
 }
 
@@ -158,6 +162,16 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     issues.push('章节层级超过当前文体预算，正文被切分得过碎。')
   }
 
+  const applyCraft = Boolean(input.strict || input.editorialProfile)
+  const craft = applyCraft
+    ? analyzeWritingCraft({ contents: input.contents, strict: Boolean(input.strict || input.editorialProfile) })
+    : undefined
+  if (craft) {
+    score -= Math.max(0, 100 - craft.score) * 0.4
+    issues.push(...craft.issues)
+    strengths.push(...craft.strengths)
+  }
+
   const threshold = input.strict ? 75 : 70
   const clampedScore = Math.max(0, Math.min(100, score))
   const dimensions = {
@@ -166,6 +180,7 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
     numbers: scoreNumbersDimension(numericClaimCount, groundingCount),
     specification: scoreKeywordDimension(specificationMarkerCount, sourceFilePaths.length > 0),
     risk: scoreKeywordDimension(riskMarkerCount, false),
+    ...(typeof craft?.score === 'number' ? { craft: craft.score } : {}),
   }
 
   return {
@@ -175,7 +190,8 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
       && !tableCountBudgetFailed
       && !tableBalanceFailed
       && !headingBudgetFailed
-      && !(sourceFilePaths.length > 0 && groundingCount === 0),
+      && !(sourceFilePaths.length > 0 && groundingCount === 0)
+      && (!craft || craft.passed),
     score: clampedScore,
     threshold,
     issues,
@@ -193,6 +209,8 @@ export function analyzeDocumentQuality(input: AnalyzeDocumentQualityInput): Docu
       placeholderCount,
       internalControlMarkerCount,
       tableLineRatio,
+      fillerHitCount: craft?.metrics.fillerHitCount ?? 0,
+      catalogHitCount: craft?.metrics.catalogHitCount ?? 0,
     },
   }
 }
@@ -201,6 +219,7 @@ export function formatDocumentQualityReport(report: DocumentQualityReport): stri
   const optionalDimensions = [
     typeof report.dimensions.visuals === 'number' ? `visuals=${report.dimensions.visuals}` : undefined,
     typeof report.dimensions.template === 'number' ? `template=${report.dimensions.template}` : undefined,
+    typeof report.dimensions.craft === 'number' ? `craft=${report.dimensions.craft}` : undefined,
   ].filter(Boolean)
   const dimensionsText = [
     `structure=${report.dimensions.structure}`,
@@ -215,7 +234,7 @@ export function formatDocumentQualityReport(report: DocumentQualityReport): stri
     `status: ${report.passed ? 'pass' : 'fail'}`,
     `score: ${report.score}/${report.threshold}`,
     `dimensions: ${dimensionsText}`,
-    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, tableRowsAndLists=${report.metrics.tableMarkerCount}, tables=${report.metrics.tableCount}, numericClaims=${report.metrics.numericClaimCount}, tableLineRatio=${report.metrics.tableLineRatio.toFixed(2)}, placeholders=${report.metrics.placeholderCount}, internalControlMarkers=${report.metrics.internalControlMarkerCount}`,
+    `metrics: textLength=${report.metrics.textLength}, headings=${report.metrics.headingCount}, paragraphs=${report.metrics.paragraphCount}, citations=${report.metrics.citationMarkerCount}, sourceRefs=${report.metrics.sourceReferenceCount}, tableRowsAndLists=${report.metrics.tableMarkerCount}, tables=${report.metrics.tableCount}, numericClaims=${report.metrics.numericClaimCount}, tableLineRatio=${report.metrics.tableLineRatio.toFixed(2)}, placeholders=${report.metrics.placeholderCount}, internalControlMarkers=${report.metrics.internalControlMarkerCount}, fillerHits=${report.metrics.fillerHitCount ?? 0}, catalogHits=${report.metrics.catalogHitCount ?? 0}`,
     report.issues.length > 0 ? `issues:\n${report.issues.map(issue => `- ${issue}`).join('\n')}` : 'issues: none',
     report.strengths.length > 0 ? `strengths:\n${report.strengths.map(strength => `- ${strength}`).join('\n')}` : 'strengths: none',
   ].join('\n')
