@@ -7,7 +7,7 @@ import type {
   TenderProjectBoundarySource,
   TenderProjectBoundaryStandardRef,
 } from '@agent-pi/business-core/tender';
-import { TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
+import { TENDER_FORMAL_WRITING_SKILL_SLUG, TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 import { parseableBoundarySources } from './tender-boundary-sources.ts';
 
@@ -17,6 +17,7 @@ export interface TenderBoundaryBatchBrief {
   batchId: string;
   objective: string;
   writingContract: string;
+  writingSkillSlug: string;
   source: TenderProjectBoundarySource;
   allowedSources: Array<{ path?: string; knowledgeSlug?: string; documentId?: string }>;
   outputSchema: Record<string, unknown>;
@@ -120,7 +121,7 @@ function buildObjective(source: TenderProjectBoundarySource): string {
       ? 'Extract owned plant, labour, materials, camp/establishment, rates, and organisation constraints. Do not invent fleet the file does not list.'
       : 'Extract governing specification / measurement / method names, versions, and bid consequences. Do not recatalog the whole standard.',
     'Write JSON to reportPath and a customer-facing Markdown memo to markdownPath.',
-    'Honor writingContract.',
+    'Read [skill:tender-formal-writing] then honor writingContract.',
   ].join(' ');
 }
 
@@ -182,6 +183,7 @@ export function createOrRefreshBoundaryBatchManifest(
       batchId,
       objective: buildObjective(source),
       writingContract: TENDER_WRITING_CONTRACT_BRIEF,
+      writingSkillSlug: TENDER_FORMAL_WRITING_SKILL_SLUG,
       source: { ...source, markdownPath },
       allowedSources: [
         {

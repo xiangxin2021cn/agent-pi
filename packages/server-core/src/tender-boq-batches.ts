@@ -17,7 +17,7 @@ import { resolveTenderMethodStandardPath, readTenderBindings } from './tender-bi
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 import { readStageDeliverablesCatalog } from './tender-stage-deliverables.ts';
 import { looksLikeSanralBoundProject, readProjectBoundaryPack } from './tender-project-boundary.ts';
-import { TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
+import { TENDER_FORMAL_WRITING_SKILL_SLUG, TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 
 export interface TenderBoqBatchBrief {
   schemaVersion: 1;
@@ -26,6 +26,7 @@ export interface TenderBoqBatchBrief {
   objective: string;
   /** Chain-wide tender-grounded writing contract for customer-facing MD. */
   writingContract: string;
+  writingSkillSlug: string;
   methodStandard?: {
     title?: string;
     path: string;
@@ -266,8 +267,9 @@ export function createOrRefreshBoqBatchManifest(
           + 'Prefer substance over format ritual. Cite upstreamDeliverables and projectBoundary when helpful. '
           + 'Stay inside the projectBoundary fence — do not invent plant, labour, materials, or methods outside registered sources. '
           + 'Verify market rates via web when possible; otherwise mark unverified — never invent rates. '
-          + 'Honor writingContract.',
+          + 'Read [skill:tender-formal-writing] then honor writingContract.',
         writingContract: TENDER_WRITING_CONTRACT_BRIEF,
+        writingSkillSlug: TENDER_FORMAL_WRITING_SKILL_SLUG,
         ...(methodStandard ? { methodStandard } : {}),
         ...(quality.projectBoundary ? { projectBoundary: quality.projectBoundary } : {}),
         scope,

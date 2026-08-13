@@ -339,6 +339,7 @@
   "chat.viewTurnDetails": "View turn details",
   "chat.workingDirectory": "Working directory",
   "chat.workingDirectoryLocked": "Working directory is locked for this session. Start a new session for another project folder.",
+  "chat.writingSkillUnavailable": "No bundled writing skill found. Continuing with the short writing contract only.",
   "chatInput.placeholder.focusMode": "Press {{key}} + . for focus mode",
   "chatInput.placeholder.labels": "Type # to apply labels to this conversation",
   "chatInput.placeholder.mention": "Type @ to mention files, folders, or skills",

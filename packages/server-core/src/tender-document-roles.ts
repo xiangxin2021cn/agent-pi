@@ -139,6 +139,6 @@ export function buildProfessionalDocumentAnalysisObjective(input: {
     'Do NOT center the report on filenames, documentId, absolute paths, Agent Pi Outputs, or “analysis scope” boilerplate.',
     'Put source filename at most once in a one-line header; body uses industry jargon and clause/page cites only where useful.',
     'Empty sourceRefs are accepted; documentId/batchId are inferred from the brief when omitted. No cross-document invention.',
-    'Honor writingContract: tender-grounded professional bid writing with AI filler stripped.',
+    'Read [skill:tender-formal-writing] then honor writingContract: tender-grounded professional bid writing with AI filler stripped.',
   ].join(' ');
 }

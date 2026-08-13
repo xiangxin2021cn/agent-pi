@@ -1,4 +1,5 @@
 import {
+  TENDER_FORMAL_WRITING_SKILL_SLUG,
   TENDER_WRITING_CONTRACT_DRAFT,
   type BusinessModuleId,
   type BusinessProjectRecord,
@@ -55,10 +56,7 @@ export function buildBusinessTaskDraft(
   stageRun?: TenderStageRunResultDto,
 ): string {
   const preset = getBusinessModuleLaunchPreset(moduleId)
-  const specialistSkills = [...new Set([
-    ...(stage.skillSlugs ?? []),
-    ...(stage.skillSlug ? [stage.skillSlug] : []),
-  ])]
+  const specialistSkills = collectSpecialistSkillSlugs(moduleId, stage)
   const specialistSkill = specialistSkills.length > 0
     ? `\n${specialistSkills.map((slug) => `[skill:${slug}]`).join('\n')}`
     : ''
@@ -102,7 +100,7 @@ export function buildStageHandoffDraft(
 阶段要求: ${stage.prompt}
 
 ${buildCapabilityBlock(stage)}${buildStageControlBlock(stageRun)}${buildDeliverablesBlock(stageRun)}${buildDispatchBlock(stage)}
-
+${formatSpecialistSkillBlock(moduleId, stage)}
 ${TENDER_WRITING_CONTRACT_DRAFT}
 
 规则:
@@ -189,4 +187,20 @@ Batches are segmented by BOQ sheet/chapter. Each child follows the qualityStanda
 Monitor the exact task_board_path and boq_batch_manifest_path. When every batch report is accepted, wait for runtime/UI merge into packs/boq-five-step-pricing.json (or call tender_capability init/replace with NO inline data as a fallback). Never hand-assemble, compress, or rewrite pricing content into the tool call. Review normalization warnings and unverified rates with the user, then confirm bidder commitments (bidder_commitments) before downstream planning.
 </controlled_subagent_dispatch>
 `
+}
+
+function collectSpecialistSkillSlugs(moduleId: BusinessModuleId, stage: BusinessWorkflowStage): string[] {
+  const slugs = [...new Set([
+    ...(stage.skillSlugs ?? []),
+    ...(stage.skillSlug ? [stage.skillSlug] : []),
+  ])]
+  if (moduleId === 'tender' && slugs.length > 0 && !slugs.includes(TENDER_FORMAL_WRITING_SKILL_SLUG)) {
+    slugs.push(TENDER_FORMAL_WRITING_SKILL_SLUG)
+  }
+  return slugs
+}
+
+function formatSpecialistSkillBlock(moduleId: BusinessModuleId, stage: BusinessWorkflowStage): string {
+  const slugs = collectSpecialistSkillSlugs(moduleId, stage)
+  return slugs.length > 0 ? `\n${slugs.map((slug) => `[skill:${slug}]`).join('\n')}\n` : ''
 }

@@ -339,6 +339,7 @@
   "chat.viewTurnDetails": "Forduló részleteinek megtekintése",
   "chat.workingDirectory": "Munkakönyvtár",
   "chat.workingDirectoryLocked": "Working directory is locked for this session. Start a new session for another project folder.",
+  "chat.writingSkillUnavailable": "No bundled writing skill found. Continuing with the short writing contract only.",
   "chatInput.placeholder.focusMode": "Nyomd meg: {{key}} + . a fókusz módhoz",
   "chatInput.placeholder.labels": "Írj # karaktert, hogy címkéket adj ehhez a beszélgetéshez",
   "chatInput.placeholder.mention": "Írj @ karaktert fájlok, mappák vagy skillek megemlítéséhez",

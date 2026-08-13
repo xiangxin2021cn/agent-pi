@@ -48,9 +48,10 @@ describe('tender BOQ batch manifest', () => {
     expect(brief.qualityStandard.id).toBe('generic_direct_cost_v1');
     expect(brief.objective).toContain('pricingStandard');
     expect(brief.objective).toContain('projectBoundary');
-    expect(brief.objective).toContain('Honor writingContract');
+    expect(brief.objective).toContain('Read [skill:tender-formal-writing] then honor writingContract');
     expect(brief.writingContract).toContain('THIS tender');
     expect(brief.writingContract).toContain('综上所述');
+    expect(brief.writingSkillSlug).toBe('tender-formal-writing');
     if (brief.methodStandard) {
       expect(brief.methodStandard.role).toBe('method_and_depth_standard');
       expect(brief.methodStandard.path.length).toBeGreaterThan(0);

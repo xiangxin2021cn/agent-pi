@@ -144,6 +144,7 @@ import {
 } from './spawn-lifecycle'
 import { verifyDocumentArtifactReadiness } from './document-artifact-readiness'
 import { buildGoalCriteriaFromMessage, buildGoalCriteriaUpdateFromMessage, buildGoalExecutionPolicyFromMessage, buildTaskContractFromMessage, formatTaskContractForPrompt, mergeTaskContracts } from './goal-criteria'
+import { attachWritingSkillToSend } from './writing-skill-attach'
 import { runGoalQualityCouncilReview } from './quality-orchestrator'
 import {
   extractDocxTemplateProfile,
@@ -8394,6 +8395,31 @@ export class SessionManager implements ISessionManager {
     // Note: authRetryInProgress is NOT reset here - it's managed by the retry logic
     if (!_isAuthRetry) {
       managed.authRetryAttempted = false
+    }
+
+    const qualityMode = normalizeSendDocumentQualityMode(options?.documentQualityMode)
+      ?? managed.goalState?.taskContract?.documentQualityMode
+    const genre = managed.goalState?.taskContract?.documentPlan?.editorialProfile?.genre
+    const attached = attachWritingSkillToSend({
+      message,
+      skillSlugs: options?.skillSlugs ?? [],
+      documentQualityMode: qualityMode,
+      genre,
+      module: managed.businessContext?.module,
+      loadSkill: (slug) => loadSkillBySlug(managed.workspace.rootPath, slug, managed.workingDirectory),
+    })
+    message = attached.message
+    options = { ...options, skillSlugs: attached.skillSlugs }
+    if (
+      attached.missing
+      && (qualityMode === 'professional_document' || qualityMode === 'strict_delivery' || qualityMode === 'multi_agent_deep')
+    ) {
+      this.sendEvent({
+        type: 'info',
+        sessionId,
+        message: i18n.t('chat.writingSkillUnavailable'),
+        level: 'info',
+      }, managed.workspace.id)
     }
 
     // Store message/attachments for potential retry after auth refresh

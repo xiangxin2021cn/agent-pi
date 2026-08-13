@@ -19,7 +19,7 @@ import {
   type TenderDocumentRole,
   type TenderProjectIndustry,
 } from './tender-document-roles.ts';
-import { TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
+import { TENDER_FORMAL_WRITING_SKILL_SLUG, TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 
 export interface TenderDocumentBatchSource {
   documentId: string;
@@ -36,6 +36,7 @@ export interface TenderDocumentAnalysisBatchBrief {
   objective: string;
   /** Chain-wide tender-grounded writing contract for customer-facing MD. */
   writingContract: string;
+  writingSkillSlug: string;
   scope: {
     documentId: string;
     name: string;
@@ -125,6 +126,7 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
       batchId,
       objective: buildProfessionalDocumentAnalysisObjective({ projectIndustry, documentRole }),
       writingContract: TENDER_WRITING_CONTRACT_BRIEF,
+      writingSkillSlug: TENDER_FORMAL_WRITING_SKILL_SLUG,
       scope: {
         documentId: source.documentId,
         name: source.name,

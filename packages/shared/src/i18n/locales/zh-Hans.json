@@ -339,6 +339,7 @@
   "chat.viewTurnDetails": "查看轮次详情",
   "chat.workingDirectory": "工作目录",
   "chat.workingDirectoryLocked": "当前会话已锁定工作目录。请新建会话来使用其他项目文件夹。",
+  "chat.writingSkillUnavailable": "未找到内置撰写 skill，本轮仅使用短写作禁令，不会从市场安装 skill。",
   "chatInput.placeholder.focusMode": "按 {{key}} + . 进入专注模式",
   "chatInput.placeholder.labels": "输入 # 为此对话添加标签",
   "chatInput.placeholder.mention": "输入 @ 提及文件、文件夹或技能",

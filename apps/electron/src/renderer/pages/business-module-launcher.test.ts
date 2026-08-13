@@ -32,7 +32,7 @@ describe('business module launcher', () => {
     expect(draft).toContain('单一主会话')
     expect(draft).toContain('子会话')
     expect(draft).toContain('<tender_writing_contract>')
-    expect(draft).toContain('按本标书专业化写作')
+    expect(draft).toContain('[skill:tender-formal-writing]')
     expect(draft).toContain('去 AI 味道')
   })
 
@@ -54,7 +54,7 @@ describe('business module launcher', () => {
     expect(draft).toContain('spawn_session')
     expect(draft).toContain('不要一次打满')
     expect(draft).toContain('<tender_writing_contract>')
-    expect(draft).toContain('按本标书专业化写作')
+    expect(draft).toContain('[skill:tender-formal-writing]')
   })
 
   test('stage draft activates the specialist skill and lists only registered inputs', () => {
@@ -73,6 +73,7 @@ describe('business module launcher', () => {
 
     expect(draft).toContain('[skill:tender-intelligence-core]')
     expect(draft).toContain('[skill:tender-boq-five-step-pricing]')
+    expect(draft).toContain('[skill:tender-formal-writing]')
     expect(draft).toContain('C:/inputs/boq.xlsx')
     expect(draft).not.toContain('C:/projects/n3/**')
   })

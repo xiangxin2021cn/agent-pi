@@ -27,7 +27,7 @@ describe('tender-document-roles', () => {
     expect(objective).toContain('HSE');
     expect(objective).toContain('Do NOT center the report on filenames');
     expect(objective).toContain('markdownPath');
-    expect(objective).toContain('Honor writingContract');
+    expect(objective).toContain('Read [skill:tender-formal-writing] then honor writingContract');
     expect(objective).toContain('AI filler');
   });
 });

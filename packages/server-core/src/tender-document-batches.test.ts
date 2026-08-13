@@ -45,6 +45,7 @@ describe('tender document analysis batch manifest', () => {
     expect(brief.objective).toContain('Do NOT center the report on filenames');
     expect(brief.writingContract).toContain('THIS tender');
     expect(brief.writingContract).toContain('综上所述');
+    expect(brief.writingSkillSlug).toBe('tender-formal-writing');
   });
 
   test('accepts only schema-valid reports that cite the assigned document and include MD', async () => {
