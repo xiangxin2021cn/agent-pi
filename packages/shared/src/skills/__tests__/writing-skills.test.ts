@@ -13,4 +13,13 @@ describe('first-party writing skills', () => {
     expect(skill!.content).toContain('综上所述')
     expect(skill!.content).toContain('Self-check')
   })
+
+  it('loads tender-formal-writing with bid-team recipe and marketplace ban', () => {
+    const skill = loadSkillBySlug(PROJECT_ROOT, 'tender-formal-writing', PROJECT_ROOT)
+    expect(skill).not.toBeNull()
+    expect(skill!.content).toContain('employer')
+    expect(skill!.content).toContain('Do not install marketplace skills')
+    expect(skill!.content).toContain('writing-contract.md')
+    expect(skill!.content).toContain('Self-check')
+  })
 })

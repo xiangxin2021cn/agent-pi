@@ -8,6 +8,7 @@ const SKILL_SLUG = 'tender-intelligence-core';
 const SKILLS_DIR = join(PROJECT_ROOT, '.agents', 'skills');
 const TENDER_STAGE_SKILLS = [
   'tender-intelligence-core',
+  'tender-formal-writing',
   'tender-document-parsing',
   'tender-project-boundary',
   'tender-boq-reconciliation',

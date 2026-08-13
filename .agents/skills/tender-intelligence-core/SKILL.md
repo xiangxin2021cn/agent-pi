@@ -21,6 +21,7 @@ Use this skill for bounded tender intake, compliance mapping, evaluation-criteri
 - Record unresolved assumptions as gaps; never promote them to unconditional conclusions.
 - Share an approved tender artifact with other plugins only through `business_knowledge_publish`; never expose the live Tender Workspace store.
 - Follow [references/writing-contract.md](references/writing-contract.md) for every customer-facing parse memo, workpaper, methodology, programme narrative, formal returnable, and stage summary: tender-grounded professional bid writing with AI filler stripped.
+- Also follow skill tender-formal-writing for every customer-facing artifact.
 
 ## Tool Contract
 
