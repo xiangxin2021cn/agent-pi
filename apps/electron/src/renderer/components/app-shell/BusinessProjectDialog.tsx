@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { FilePlus2, FolderOpen, Loader2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
@@ -14,13 +15,7 @@ import { slugify } from '@/lib/slugify'
 import { cn } from '@/lib/utils'
 import { buildBusinessTaskDraft } from '@/pages/business-module-launcher'
 import { preflightTenderStageLaunch, startTenderStageLaunch, summarizeTenderStage } from '@/pages/business-tender-stage'
-import { getBusinessWorkflow } from '@/pages/business-workflows'
-
-const MODULE_TITLE: Record<BusinessModuleId, string> = {
-  tender: '投标工作台',
-  delivery: '项目实施控制',
-  investment: '资源投资研究',
-}
+import { businessModuleLabel, businessStageLabel, businessWorkflowLabel, getBusinessWorkflow } from '@/pages/business-workflows'
 
 type FolderMode = 'create' | 'existing'
 
@@ -44,6 +39,7 @@ export function BusinessProjectDialog({
   workspaceRootPath,
   onCreated,
 }: BusinessProjectDialogProps) {
+  const { t } = useTranslation()
   const { openNewChat } = useAppShellContext()
   const workflow = getBusinessWorkflow(moduleId)
   const [step, setStep] = React.useState(0)
@@ -92,7 +88,7 @@ export function BusinessProjectDialog({
       result.attachments.forEach((item) => byPath.set(item.path, item))
       return [...byPath.values()]
     })
-    if (result.truncated) toast.warning(`仅载入前 ${result.maxFiles} 个文件`)
+    if (result.truncated) toast.warning(t('businessProjects.toastTruncatedFiles', { max: result.maxFiles }))
   }
 
   const normalizedProjectId = projectId.trim() || `${moduleId}-${Date.now().toString(36)}`
@@ -134,11 +130,13 @@ export function BusinessProjectDialog({
         : undefined
       if (launch && !launch.ok) {
         const summary = summarizeTenderStage(launch.result)
-        toast.warning(`项目已创建，阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+        toast.warning(t('businessProjects.toastCreatedNotReady', {
+          detail: summary.missingLabel ?? summary.statusLabel,
+        }))
         return
       }
       const parentSession = await openNewChat?.({
-        name: moduleId === 'tender' ? project.name : `${project.name} · ${firstStage.label}`,
+        name: moduleId === 'tender' ? project.name : `${project.name} · ${businessStageLabel(firstStage)}`,
         workingDirectory: project.rootPath,
         businessContext: {
           module: moduleId,
@@ -155,7 +153,9 @@ export function BusinessProjectDialog({
         }, parentSession.id)
         if (!started.ok) {
           const summary = summarizeTenderStage(started.result)
-          toast.warning(`项目已创建，阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+          toast.warning(t('businessProjects.toastCreatedStartFailed', {
+            detail: summary.missingLabel ?? summary.statusLabel,
+          }))
         }
       }
     } catch (cause) {
@@ -169,12 +169,17 @@ export function BusinessProjectDialog({
       <Dialog open={open} onOpenChange={(next) => !isSaving && onOpenChange(next)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>新建{MODULE_TITLE[moduleId]}项目</DialogTitle>
-            <DialogDescription>使用现有对话执行内核，建立独立项目目录、明确资料边界并按专业流程推进。</DialogDescription>
+            <DialogTitle>{t('businessProjects.createProjectTitle', { module: businessModuleLabel(moduleId) })}</DialogTitle>
+            <DialogDescription>{t('businessProjects.createProjectDescription')}</DialogDescription>
           </DialogHeader>
 
           <div className="flex gap-2 border-b pb-3 text-xs text-muted-foreground">
-            {['项目信息', '项目文件夹', '依据资料', '流程确认'].map((label, index) => (
+            {[
+              t('businessProjects.stepInfo'),
+              t('businessProjects.stepFolder'),
+              t('businessProjects.stepFiles'),
+              t('businessProjects.stepConfirm'),
+            ].map((label, index) => (
               <span key={label} className={cn('flex-1 border-b-2 pb-2 text-center', index === step ? 'border-primary text-foreground' : 'border-transparent')}>
                 {index + 1}. {label}
               </span>
@@ -184,11 +189,11 @@ export function BusinessProjectDialog({
           {step === 0 && (
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label htmlFor="business-project-name">项目名称</Label>
-                <Input id="business-project-name" value={name} onChange={(event) => handleNameChange(event.target.value)} placeholder="例如：N3 公路升级投标" autoFocus />
+                <Label htmlFor="business-project-name">{t('businessProjects.projectName')}</Label>
+                <Input id="business-project-name" value={name} onChange={(event) => handleNameChange(event.target.value)} placeholder={t('businessProjects.projectNamePlaceholder')} autoFocus />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="business-project-id">项目标识</Label>
+                <Label htmlFor="business-project-id">{t('businessProjects.projectId')}</Label>
                 <Input
                   id="business-project-id"
                   value={projectId}
@@ -198,7 +203,7 @@ export function BusinessProjectDialog({
                   }}
                   placeholder="n3-upgrade"
                 />
-                <p className="text-xs text-muted-foreground">用于项目状态目录和会话归类，不改变实际文件名。</p>
+                <p className="text-xs text-muted-foreground">{t('businessProjects.projectIdHint')}</p>
               </div>
             </div>
           )}
@@ -206,29 +211,29 @@ export function BusinessProjectDialog({
           {step === 1 && (
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant={folderMode === 'create' ? 'default' : 'outline'} onClick={() => setFolderMode('create')}>新建项目文件夹</Button>
-                <Button type="button" variant={folderMode === 'existing' ? 'default' : 'outline'} onClick={() => setFolderMode('existing')}>关联现有项目文件夹</Button>
+                <Button type="button" variant={folderMode === 'create' ? 'default' : 'outline'} onClick={() => setFolderMode('create')}>{t('businessProjects.createFolder')}</Button>
+                <Button type="button" variant={folderMode === 'existing' ? 'default' : 'outline'} onClick={() => setFolderMode('existing')}>{t('businessProjects.linkFolder')}</Button>
               </div>
               <Button type="button" variant="outline" onClick={pickDirectory} className="w-full justify-start">
                 <FolderOpen className="size-4" />
-                {selectedPath || (folderMode === 'create' ? '选择上级目录' : '选择现有项目目录')}
+                {selectedPath || (folderMode === 'create' ? t('businessProjects.pickParentDir') : t('businessProjects.pickExistingDir'))}
               </Button>
-              {rootPath && <p className="break-all text-xs text-muted-foreground">项目工作目录：{rootPath}</p>}
+              {rootPath && <p className="break-all text-xs text-muted-foreground">{t('businessProjects.projectRoot', { path: rootPath })}</p>}
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-4 py-2">
-              <p className="text-sm text-muted-foreground">只登记本次明确选择的文件。系统不会把项目工作目录自动当作资料库扫描。</p>
+              <p className="text-sm text-muted-foreground">{t('businessProjects.filesHint')}</p>
               <Button type="button" variant="outline" onClick={handleAttachFiles}>
-                <FilePlus2 className="size-4" />添加依据和待分析文件
+                <FilePlus2 className="size-4" />{t('businessProjects.addEvidenceFiles')}
               </Button>
               <div className="max-h-52 space-y-1 overflow-auto">
-                {attachments.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">可暂不添加，进入项目后继续上传。</p>}
+                {attachments.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{t('businessProjects.filesOptional')}</p>}
                 {attachments.map((attachment) => (
                   <div key={attachment.path} className="flex items-center justify-between gap-3 border-b py-2 text-sm">
                     <span className="min-w-0 flex-1 truncate" title={attachment.path}>{attachment.name}</span>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setAttachments((items) => items.filter((item) => item.path !== attachment.path))}>移除</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setAttachments((items) => items.filter((item) => item.path !== attachment.path))}>{t('common.remove')}</Button>
                   </div>
                 ))}
               </div>
@@ -238,33 +243,33 @@ export function BusinessProjectDialog({
           {step === 3 && (
             <div className="space-y-4 py-2">
               <div>
-                <p className="font-medium">{workflow.label}</p>
-                <p className="mt-1 text-sm text-muted-foreground">新项目从“{workflow.stages[0]?.label}”开始；后续阶段在对话顶部切换。</p>
+                <p className="font-medium">{businessWorkflowLabel(workflow)}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{t('businessProjects.startsAt', { stage: businessStageLabel(workflow.stages[0]!) })}</p>
               </div>
               <ol className="space-y-2 text-sm">
                 {workflow.stages.map((stage, index) => (
                   <li key={stage.id} className="flex gap-3 border-b pb-2">
                     <span className="text-muted-foreground">{index + 1}</span>
-                    <span>{stage.label}</span>
+                    <span>{businessStageLabel(stage)}</span>
                   </li>
                 ))}
               </ol>
               <div className="text-sm">
-                <p><span className="text-muted-foreground">项目：</span>{name}</p>
-                <p className="break-all"><span className="text-muted-foreground">目录：</span>{rootPath}</p>
-                <p><span className="text-muted-foreground">登记资料：</span>{attachments.length} 个</p>
+                <p><span className="text-muted-foreground">{t('businessProjects.confirmProject')}</span>{name}</p>
+                <p className="break-all"><span className="text-muted-foreground">{t('businessProjects.confirmFolder')}</span>{rootPath}</p>
+                <p><span className="text-muted-foreground">{t('businessProjects.registeredFilesLabel')}</span>{t('businessProjects.confirmFiles', { count: attachments.length })}</p>
               </div>
             </div>
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
-            {step > 0 && <Button type="button" variant="outline" disabled={isSaving} onClick={() => setStep((current) => current - 1)}>上一步</Button>}
+            {step > 0 && <Button type="button" variant="outline" disabled={isSaving} onClick={() => setStep((current) => current - 1)}>{t('businessProjects.wizardBack')}</Button>}
             {step < 3 ? (
-              <Button type="button" disabled={!canContinue} onClick={() => setStep((current) => current + 1)}>下一步</Button>
+              <Button type="button" disabled={!canContinue} onClick={() => setStep((current) => current + 1)}>{t('businessProjects.wizardNext')}</Button>
             ) : (
               <Button type="button" disabled={isSaving || !rootPath} onClick={handleCreate}>
-                {isSaving && <Loader2 className="size-4 animate-spin" />}创建项目并进入任务
+                {isSaving && <Loader2 className="size-4 animate-spin" />}{t('businessProjects.createAndEnter')}
               </Button>
             )}
           </DialogFooter>

@@ -59,6 +59,14 @@ export interface ISessionManager {
     sessionStatus?: string
     goalState?: { status: string }
   } | null
+  /**
+   * File-tree roots for a session. Must NOT load transcripts or enumerate
+   * every session in the workspace.
+   */
+  getSessionBrowseContext?(sessionId: string): {
+    workingDirectory?: string
+    businessContext?: Session['businessContext']
+  } | null
   hasLiveAgentRuntime?(sessionId: string): boolean
   assertSpawnMemoryAvailable?(): void
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>

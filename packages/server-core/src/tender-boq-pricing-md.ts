@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import {
   parseTenderBoqFiveStepPricingDataLenient,
@@ -6,6 +6,10 @@ import {
   type TenderBoqFiveStepPricingData,
 } from '@agent-pi/business-core/tender';
 import type { TenderBoqBatchManifest } from './tender-boq-batches.ts';
+import {
+  copyFileIfNewer,
+  tenderOfficialOutputsDir,
+} from './tender-official-outputs.ts';
 import { resourceScheduleArtifactPaths } from './tender-resource-schedule.ts';
 
 export interface BoqPricingMarkdownMeta {
@@ -27,25 +31,7 @@ export interface PublishBoqPricingArtifactsResult {
 }
 
 function officialBoqPricingDirectory(workingDirectory: string, parentSessionId: string): string {
-  return join(workingDirectory, 'Agent Pi Outputs', parentSessionId, 'boq-pricing');
-}
-
-function copyIfNeeded(sourcePath: string, destinationPath: string): boolean {
-  if (!existsSync(sourcePath)) return false;
-  mkdirSync(dirname(destinationPath), { recursive: true });
-  if (existsSync(destinationPath)) {
-    try {
-      const sourceStat = statSync(sourcePath);
-      const destStat = statSync(destinationPath);
-      if (destStat.mtimeMs >= sourceStat.mtimeMs && destStat.size === sourceStat.size) {
-        return false;
-      }
-    } catch {
-      // fall through
-    }
-  }
-  copyFileSync(sourcePath, destinationPath);
-  return true;
+  return tenderOfficialOutputsDir(workingDirectory, parentSessionId, 'boq-pricing');
 }
 
 export function readBoqPricingPackData(projectDirectory: string): TenderBoqFiveStepPricingData | undefined {
@@ -60,15 +46,14 @@ export function readBoqPricingPackData(projectDirectory: string): TenderBoqFiveS
 }
 
 /**
- * Mirror chapter workpapers + resource schedule into the parent session Official
- * Outputs tree (`Agent Pi Outputs/<parentSessionId>/boq-pricing/`).
- * Project-scoped paths remain the child-agent write targets.
+ * Copy chapter workpapers + resource schedule into the parent session Official
+ * Outputs tree when they were written elsewhere. Same-path copies are skipped.
  */
 export function publishBoqPricingArtifactsToOfficialOutputs(
   workingDirectory: string,
   parentSessionId: string,
   manifest: TenderBoqBatchManifest,
-  projectId = manifest.projectId,
+  _projectId?: string,
 ): PublishBoqPricingArtifactsResult {
   const directory = officialBoqPricingDirectory(workingDirectory, parentSessionId);
   mkdirSync(directory, { recursive: true });
@@ -85,18 +70,22 @@ export function publishBoqPricingArtifactsToOfficialOutputs(
       skipped += 1;
       continue;
     }
-    if (copyIfNeeded(sourcePath, join(directory, basename(sourcePath)))) published += 1;
+    if (copyFileIfNewer(sourcePath, join(directory, basename(sourcePath)))) published += 1;
     else skipped += 1;
   }
 
-  const schedule = resourceScheduleArtifactPaths(workingDirectory, projectId);
-  if (existsSync(schedule.markdownPath)) {
-    if (copyIfNeeded(schedule.markdownPath, join(directory, basename(schedule.markdownPath)))) published += 1;
-    else skipped += 1;
-  }
-  if (existsSync(schedule.jsonPath)) {
-    if (copyIfNeeded(schedule.jsonPath, join(directory, basename(schedule.jsonPath)))) published += 1;
-    else skipped += 1;
+  const scheduleNames = ['施工资源消耗总表.md', '施工资源消耗总表.json'];
+  const scheduleDirs = new Set<string>([
+    directory,
+    ...manifest.batches.map((batch) => dirname(batch.markdownPath)).filter(Boolean),
+  ]);
+  for (const dir of scheduleDirs) {
+    for (const name of scheduleNames) {
+      const sourcePath = join(dir, name);
+      if (!existsSync(sourcePath)) continue;
+      if (copyFileIfNewer(sourcePath, join(directory, name))) published += 1;
+      else skipped += 1;
+    }
   }
 
   return { directory, published, skipped };
@@ -174,9 +163,7 @@ export function writeBoqPricingSummaryMarkdown(
   meta: BoqPricingMarkdownMeta,
 ): string {
   const outputPath = join(
-    meta.workingDirectory,
-    'Agent Pi Outputs',
-    meta.parentSessionId,
+    tenderOfficialOutputsDir(meta.workingDirectory, meta.parentSessionId),
     'boq-pricing-summary.md',
   );
   const markdown = formatBoqPricingSummaryMarkdown(data, meta);
@@ -199,7 +186,6 @@ export function publishBoqPricingOfficialOutputs(input: {
     input.workingDirectory,
     input.parentSessionId,
     input.manifest,
-    input.projectId,
   );
   const data = readBoqPricingPackData(input.projectDirectory) ?? {
     currency: 'USD',
@@ -209,7 +195,7 @@ export function publishBoqPricingOfficialOutputs(input: {
     assumptions: [],
   };
 
-  const schedule = resourceScheduleArtifactPaths(input.workingDirectory, input.projectId);
+  const schedule = resourceScheduleArtifactPaths(input.workingDirectory, input.parentSessionId);
   const officialSchedule = join(published.directory, '施工资源消耗总表.md');
   const summaryPath = writeBoqPricingSummaryMarkdown(data, {
     projectId: input.projectId,

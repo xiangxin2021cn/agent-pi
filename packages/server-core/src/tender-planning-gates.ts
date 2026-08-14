@@ -1,5 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import {
+  tenderOfficialOutputOwnerId,
+  tenderOfficialOutputsDir,
+} from './tender-official-outputs.ts';
 
 export type PlanningSubstepId =
   | 'plan-methodology'
@@ -41,12 +45,15 @@ function atomicWriteJson(filePath: string, value: unknown): void {
   renameSync(temporary, filePath);
 }
 
-export function planningOutputDirectory(projectRoot: string, projectId: string): string {
-  return join(projectRoot, 'Agent Pi Outputs', projectId, 'planning');
+export function planningOutputDirectory(projectRoot: string, officialOwnerId: string): string {
+  return tenderOfficialOutputsDir(projectRoot, officialOwnerId, 'planning');
 }
 
-export function planningMethodologyReportPath(projectRoot: string, projectId: string): string {
-  return join(planningOutputDirectory(projectRoot, projectId), '施工策划报告.md');
+export function planningMethodologyReportPath(
+  projectRoot: string,
+  officialOwnerId: string,
+): string {
+  return join(planningOutputDirectory(projectRoot, officialOwnerId), '施工策划报告.md');
 }
 
 export function planningReviewLedgerPath(projectDirectory: string): string {
@@ -57,8 +64,12 @@ export function readPlanningReviewLedger(
   projectDirectory: string,
   projectId: string,
   projectRoot: string,
+  parentSessionId?: string,
 ): TenderPlanningReviewLedger {
-  const artifactPath = planningMethodologyReportPath(projectRoot, projectId);
+  const artifactPath = planningMethodologyReportPath(
+    projectRoot,
+    tenderOfficialOutputOwnerId(parentSessionId, projectId),
+  );
   const path = planningReviewLedgerPath(projectDirectory);
   if (!existsSync(path)) {
     return {
@@ -111,8 +122,12 @@ export function markPlanningMethodologyReview(options: {
   projectRoot: string;
   humanReview: 'accepted' | 'rejected';
   notes?: string;
+  parentSessionId?: string;
 }): TenderPlanningReviewLedger {
-  const artifactPath = planningMethodologyReportPath(options.projectRoot, options.projectId);
+  const artifactPath = planningMethodologyReportPath(
+    options.projectRoot,
+    tenderOfficialOutputOwnerId(options.parentSessionId, options.projectId),
+  );
   const ledger: TenderPlanningReviewLedger = {
     schemaVersion: 1,
     projectId: options.projectId,
@@ -151,39 +166,50 @@ export function probeProgrammeXml(filePath: string, kind: 'msp' | 'p6'): string[
   }
 }
 
-function requireExistingFile(filePath: string, code: string): string[] {
-  return existsSync(filePath) ? [] : [`missing:${code}`];
-}
-
 function probeMethodology(
   projectRoot: string,
-  projectDirectory: string,
+  _projectDirectory: string,
   projectId: string,
+  parentSessionId?: string,
 ): string[] {
-  const mdPath = planningMethodologyReportPath(projectRoot, projectId);
-  // Soft: existence of a methodology MD is enough to advance; human review is advisory.
-  return requireExistingFile(mdPath, 'methodology-md');
+  const mdPath = planningMethodologyReportPath(
+    projectRoot,
+    tenderOfficialOutputOwnerId(parentSessionId, projectId),
+  );
+  return existsSync(mdPath) ? [] : ['missing:methodology-md'];
 }
 
-function probeProgrammeResourcesCashflow(projectRoot: string, projectId: string): string[] {
-  const directory = planningOutputDirectory(projectRoot, projectId);
+function probeProgrammeResourcesCashflow(
+  projectRoot: string,
+  projectId: string,
+  parentSessionId?: string,
+): string[] {
+  const directory = planningOutputDirectory(
+    projectRoot,
+    tenderOfficialOutputOwnerId(parentSessionId, projectId),
+  );
   const mspOk = probeProgrammeXml(join(directory, 'tender-programme.msp.xml'), 'msp').length === 0;
   const p6Ok = probeProgrammeXml(join(directory, 'tender-programme.p6.xml'), 'p6').length === 0;
   const plantOk = existsSync(join(directory, 'plant-histogram.html'));
   const labourOk = existsSync(join(directory, 'labour-histogram.html'));
   const sCurveOk = existsSync(join(directory, 'S-Curve_Cash_Flow_Chart.html'));
-  // Soft: any programme XML + any one resource/cashflow artifact is enough.
   const missing: string[] = [];
   if (!mspOk && !p6Ok) missing.push('missing:programme-xml');
   if (!plantOk && !labourOk && !sCurveOk) missing.push('missing:resource-or-cashflow-artifact');
   return missing;
 }
 
-function probeSubmission(projectRoot: string, projectId: string): string[] {
-  const directory = planningOutputDirectory(projectRoot, projectId);
+function probeSubmission(
+  projectRoot: string,
+  projectId: string,
+  parentSessionId?: string,
+): string[] {
+  const directory = planningOutputDirectory(
+    projectRoot,
+    tenderOfficialOutputOwnerId(parentSessionId, projectId),
+  );
   const docxOk = existsSync(join(directory, 'Work_Plan_and_Proposed_Methodology.docx'));
   const auditOk = existsSync(join(directory, 'submission_audit.md'));
-  // Soft: either formal docx or audit note is enough to mark out-draft progress.
   if (docxOk || auditOk) return [];
   return ['missing:submission-artifact'];
 }
@@ -203,11 +229,12 @@ export function evaluatePlanningSubsteps(
   projectRoot: string,
   projectDirectory: string,
   projectId: string,
+  parentSessionId?: string,
 ): PlanningSubstepState[] {
   const probes: Record<PlanningSubstepId, string[]> = {
-    'plan-methodology': probeMethodology(projectRoot, projectDirectory, projectId),
-    'plan-programme-resources-cashflow': probeProgrammeResourcesCashflow(projectRoot, projectId),
-    'plan-submission': probeSubmission(projectRoot, projectId),
+    'plan-methodology': probeMethodology(projectRoot, projectDirectory, projectId, parentSessionId),
+    'plan-programme-resources-cashflow': probeProgrammeResourcesCashflow(projectRoot, projectId, parentSessionId),
+    'plan-submission': probeSubmission(projectRoot, projectId, parentSessionId),
   };
 
   let priorComplete = true;
@@ -229,7 +256,8 @@ export function assertPlanningSubstepGate(
   projectRoot: string,
   projectDirectory: string,
   projectId: string,
+  parentSessionId?: string,
 ): string[] {
-  return evaluatePlanningSubsteps(projectRoot, projectDirectory, projectId)
+  return evaluatePlanningSubsteps(projectRoot, projectDirectory, projectId, parentSessionId)
     .flatMap((substep) => substep.missingItems.map((item) => `planning-substep:${substep.id}:${item}`));
 }

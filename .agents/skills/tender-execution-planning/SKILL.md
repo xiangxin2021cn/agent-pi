@@ -18,7 +18,7 @@ tender sources.
 - Require ready, non-stale `document_analysis`, `boq_reconciliation`, `boq_five_step_pricing`,
   `construction_resource_schedule`, and `bidder_commitments` packs.
 - Write the human-readable methodology draft to
-  `Agent Pi Outputs/<projectId>/planning/施工策划报告.md` (stage 4-A gate). Match the depth of the
+  `Agent Pi Outputs/<parentSessionId>/planning/施工策划报告.md` (Official Outputs; stage 4-A gate). Match the depth of the
   bound N2 planning template from project `bindings.json` / bundled SANRAL knowledge pack.
 - Do not advance to programme XML or Work Plan DOCX until the user accepts the 4-A report.
 - Treat bidder-confirmed resource, procurement, camp, method, productivity, sequence, and
@@ -27,6 +27,7 @@ tender sources.
 - Assign every reconciled BOQ item to exactly one primary work package.
 - Trace every work package to registered BOQ items, requirements, and source locators.
 - Do not invent productivity, resource quantities, engineering controls, or temporary works.
+- If Official Outputs `项目特征.md` or the stage evidence ledger lists a gap (missing spec, geology, calendar, sequence), do not fill it from model memory. Ask the user to upload the source and re-parse, or to force-pass the stage so web diligence is authorized; then keep `url` + `accessedAt`. Market-rate checks are separate.
 - Keep HSE controls, environmental controls, interfaces, constraints, and hold points explicit.
 - Label unsupported resource needs `unverified`; never promote them to formal assumptions silently.
 - Do not create or overwrite a Project Delivery Controls baseline.

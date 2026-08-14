@@ -1,10 +1,13 @@
 /**
  * Project a session for the chat renderer.
  *
- * SessionManager keeps the full transcript in memory for the agent. GET_MESSAGES
- * must not ship that payload over IPC: tender parent sessions routinely store
- * multi-megabyte Read/Write/Bash tool results (capped at 4 MiB each). Serializing
- * those into the renderer blocks the UI on session switch — the spinner looks dead.
+ * Truncate tool payloads only. Assistant/user `content` must stay intact so
+ * in-chat markdown components (datatable, markdown-preview, html-preview)
+ * keep their fences and can `file:read` the referenced files — same as the
+ * original Craft Agents OSS GET_MESSAGES path.
+ *
+ * Tender sessions still store multi-megabyte Read/Write/Bash tool results.
+ * Those belong in `toolResult` / `toolInput`, not in visible markdown.
  *
  * This projection is display-only. It must never be written back to JSONL.
  */
@@ -28,11 +31,6 @@ export function projectSessionForChatUi(session: Session): Session {
 
 export function projectMessageForChatUi(message: Message): Message {
   let next: Message | undefined
-
-  const content = truncateText(message.content)
-  if (content !== message.content) {
-    next = { ...message, content }
-  }
 
   if (message.toolResult !== undefined) {
     const toolResult = truncateText(message.toolResult)

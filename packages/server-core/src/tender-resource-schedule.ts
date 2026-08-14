@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
+  tenderOfficialOutputOwnerId,
+  tenderOfficialOutputsDir,
+} from './tender-official-outputs.ts';
+import {
   parseTenderBoqFiveStepPricingDataLenient,
   parseTenderCapabilityEnvelope,
   type TenderBoqFiveStepPricingData,
@@ -70,14 +74,22 @@ export function aggregateConstructionResourceSchedule(
   };
 }
 
-export function resourceScheduleArtifactPaths(projectRoot: string, projectId: string): {
+export function resourceScheduleArtifactFileNames(): { markdown: string; json: string } {
+  return {
+    markdown: '施工资源消耗总表.md',
+    json: '施工资源消耗总表.json',
+  };
+}
+
+export function resourceScheduleArtifactPaths(projectRoot: string, officialOwnerId: string): {
   markdownPath: string;
   jsonPath: string;
 } {
-  const directory = join(projectRoot, 'Agent Pi Outputs', projectId, 'boq-pricing');
+  const names = resourceScheduleArtifactFileNames();
+  const directory = tenderOfficialOutputsDir(projectRoot, officialOwnerId, 'boq-pricing');
   return {
-    markdownPath: join(directory, '施工资源消耗总表.md'),
-    jsonPath: join(directory, '施工资源消耗总表.json'),
+    markdownPath: join(directory, names.markdown),
+    jsonPath: join(directory, names.json),
   };
 }
 
@@ -131,6 +143,7 @@ export function writeConstructionResourceScheduleArtifacts(options: {
   projectRoot: string;
   projectId: string;
   pricingPackPath: string;
+  parentSessionId?: string;
 }): { data: TenderConstructionResourceScheduleData; markdownPath: string; jsonPath: string } | { errors: string[] } {
   if (!existsSync(options.pricingPackPath)) {
     return { errors: ['boq_five_step_pricing pack missing'] };
@@ -142,7 +155,8 @@ export function writeConstructionResourceScheduleArtifacts(options: {
     if (data.rows.length === 0) {
       return { errors: ['no-rows'] };
     }
-    const artifacts = resourceScheduleArtifactPaths(options.projectRoot, options.projectId);
+    const ownerId = tenderOfficialOutputOwnerId(options.parentSessionId, options.projectId);
+    const artifacts = resourceScheduleArtifactPaths(options.projectRoot, ownerId);
     mkdirSync(dirname(artifacts.markdownPath), { recursive: true });
     writeFileSync(artifacts.jsonPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
     writeFileSync(artifacts.markdownPath, renderResourceScheduleMarkdown(data), 'utf8');
@@ -156,8 +170,12 @@ export function assertResourceScheduleArtifacts(
   projectRoot: string,
   projectId: string,
   projectDirectory: string,
+  parentSessionId?: string,
 ): string[] {
-  const artifacts = resourceScheduleArtifactPaths(projectRoot, projectId);
+  const artifacts = resourceScheduleArtifactPaths(
+    projectRoot,
+    tenderOfficialOutputOwnerId(parentSessionId, projectId),
+  );
   const missing: string[] = [];
   if (!existsSync(artifacts.markdownPath)) missing.push('resource-schedule:missing-md');
   if (!existsSync(join(projectDirectory, 'packs', 'construction-resource-schedule.json'))) {

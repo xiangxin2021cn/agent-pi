@@ -121,10 +121,11 @@ describe('business module launcher', () => {
     expect(draft).toContain('document_analysis_batch_manifest_path')
     expect(draft).toContain('at most 4 in flight')
     expect(draft).toContain('document_analysis')
+    expect(draft).toContain('项目特征.md')
   })
 
-  test('project boundary stage dispatches parse briefs and forbids recataloging tender files', () => {
-    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'project-boundary-conditions')!
+  test('BOQ stage cites 项目特征.md instead of a boundary desk', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'boq-five-step-pricing')!
     const draft = buildBusinessTaskDraft('tender', {
       schemaVersion: 1,
       module: 'tender',
@@ -138,10 +139,10 @@ describe('business module launcher', () => {
     }, stage)
 
     expect(draft).toContain('<controlled_subagent_dispatch>')
-    expect(draft).toContain('boundary_batch_manifest')
-    expect(draft).toContain('registration/confirmation desk')
-    expect(draft).toContain('project_boundary')
-    expect(draft).toContain('不要再扫一遍招标资料')
+    expect(draft).toContain('boq_batch_manifest')
+    expect(draft).toContain('项目特征.md')
+    expect(draft).not.toContain('registration/confirmation desk')
+    expect(draft).not.toContain('boundary_batch_manifest')
   })
 
   test('planning stage deterministically activates planning and export skills', () => {
@@ -205,5 +206,55 @@ describe('business module launcher', () => {
     expect(draft).toContain('C:/projects/n3/.agent-pi/business/tender/n3/boq-batch-manifest.json')
     expect(draft).toContain('C:/projects/n3/.agent-pi/business/tender/n3/orchestration/task-boards/boq-five-step-pricing.json')
     expect(draft).toContain('document_analysis, boq_reconciliation')
+  })
+
+  test('BOQ draft injects project characteristics evidence and forbids invention', () => {
+    const stage = getBusinessWorkflow('tender').stages.find((entry) => entry.id === 'boq-five-step-pricing')!
+    const draft = buildBusinessTaskDraft('tender', {
+      schemaVersion: 1,
+      module: 'tender',
+      projectId: 'n3',
+      name: 'N3',
+      rootPath: 'C:/projects/n3',
+      workflowId: 'tender-main',
+      inputPaths: ['C:/inputs/boq.xlsx'],
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+    }, stage, {
+      schemaVersion: 1,
+      projectId: 'n3',
+      stageId: stage.id,
+      status: 'blocked',
+      requiredCapabilities: ['document_analysis'],
+      producedCapabilities: ['boq_five_step_pricing'],
+      generatedPacks: ['document_analysis'],
+      missingItems: ['project-characteristics:evidence-gap'],
+      characteristicsEvidence: {
+        blocking: true,
+        webDiligenceAuthorized: false,
+        evidenceFileNames: [],
+        gaps: [{
+          chapterId: 'sources',
+          title: '规范 / 合同 / 知识库原文',
+          blocking: true,
+          detail: '已登记资料中没有可引用的招标文件',
+          suggestedUpload: '技术规范',
+        }],
+      },
+      sourceBoundary: { schemaVersion: 1, projectId: 'n3', generatedAt: '2026-07-16T00:00:00.000Z', registeredCount: 1, missingPaths: [], files: [] },
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      paths: {
+        projectDirectory: 'C:/projects/n3/.agent-pi/business/tender/n3',
+        workspacePath: 'C:/projects/n3/.agent-pi/business/tender/n3/tender-workspace.json',
+        sourceBoundaryPath: 'C:/projects/n3/.agent-pi/business/tender/n3/source-boundary.json',
+        stageStatePath: 'C:/projects/n3/.agent-pi/business/tender/n3/stage-state.json',
+      },
+    })
+
+    expect(draft).toContain('<project_characteristics_evidence>')
+    expect(draft).toContain('blocking: yes')
+    expect(draft).toContain('强制放行')
+    expect(draft).toContain('evidencePolicy')
+    expect(draft).toContain('项目特征缺口不得臆造')
   })
 })

@@ -1,16 +1,26 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import {
+  parseTenderCapabilityEnvelope,
+  parseTenderDocumentAnalysisData,
+} from '@agent-pi/business-core/tender';
 import type { TenderDocumentAnalysisBatchManifest } from './tender-document-batches.ts';
 import type { TenderBoqBatchManifest } from './tender-boq-batches.ts';
 import type { TenderBoundaryBatchManifest } from './tender-boundary-batches.ts';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
-import { publishDocumentAnalysisArtifactsToOfficialOutputs } from './tender-document-analysis-md.ts';
+import {
+  publishDocumentAnalysisArtifactsToOfficialOutputs,
+  projectCharacteristicsMarkdownPath,
+  writeDocumentAnalysisOfficialMarkdown,
+} from './tender-document-analysis-md.ts';
 import {
   publishProjectBoundaryMarkdown,
   readProjectBoundaryPack,
 } from './tender-project-boundary.ts';
 import { publishBoqPricingOfficialOutputs } from './tender-boq-pricing-md.ts';
 import { resourceScheduleArtifactPaths } from './tender-resource-schedule.ts';
+import { copyFileIfNewer, tenderOfficialOutputsDir } from './tender-official-outputs.ts';
+import { projectCharacteristicsEvidenceOfficialPath } from './tender-project-characteristics-evidence.ts';
 
 export type TenderDeliverableKind = 'pack' | 'markdown' | 'summary' | 'report';
 export type TenderDeliverablePresence = 'present' | 'missing' | 'thin';
@@ -73,21 +83,7 @@ function probeFile(filePath: string, softMarkdown = false): TenderDeliverablePre
 }
 
 function copyIfNeeded(sourcePath: string, destinationPath: string): boolean {
-  if (!existsSync(sourcePath)) return false;
-  mkdirSync(dirname(destinationPath), { recursive: true });
-  if (existsSync(destinationPath)) {
-    try {
-      const sourceStat = statSync(sourcePath);
-      const destStat = statSync(destinationPath);
-      if (destStat.mtimeMs >= sourceStat.mtimeMs && destStat.size === sourceStat.size) {
-        return false;
-      }
-    } catch {
-      // fall through
-    }
-  }
-  copyFileSync(sourcePath, destinationPath);
-  return true;
+  return copyFileIfNewer(sourcePath, destinationPath);
 }
 
 export function stageDeliverablesCatalogPath(projectDirectory: string, stageId: string): string {
@@ -129,10 +125,10 @@ function buildDocumentAnalysisItems(input: {
   });
 
   const officialDir = input.parentSessionId
-    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'document-analysis')
+    ? tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'document-analysis')
     : undefined;
   const summaryPath = input.parentSessionId
-    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'document-analysis-summary.md')
+    ? join(tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId), 'document-analysis-summary.md')
     : undefined;
   if (summaryPath) {
     const presence = probeFile(summaryPath, true);
@@ -143,6 +139,31 @@ function buildDocumentAnalysisItems(input: {
       path: summaryPath,
       presence,
       citable: presence === 'present',
+    });
+  }
+
+  if (input.parentSessionId) {
+    const characteristicsPath = projectCharacteristicsMarkdownPath(input.projectRoot, input.parentSessionId);
+    const presence = probeFile(characteristicsPath, true);
+    items.push({
+      id: 'md:project_characteristics',
+      kind: 'markdown',
+      label: '项目特征.md',
+      path: characteristicsPath,
+      presence,
+      citable: presence === 'present',
+      publishedPath: characteristicsPath,
+    });
+    const evidencePath = projectCharacteristicsEvidenceOfficialPath(input.projectRoot, input.parentSessionId);
+    const evidencePresence = probeFile(evidencePath);
+    items.push({
+      id: 'json:project_characteristics_evidence',
+      kind: 'report',
+      label: '项目特征-证据.json',
+      path: evidencePath,
+      presence: evidencePresence,
+      citable: evidencePresence === 'present',
+      publishedPath: evidencePath,
     });
   }
 
@@ -193,10 +214,7 @@ function buildProjectBoundaryItems(input: {
 
   if (input.parentSessionId) {
     const mdPath = join(
-      input.projectRoot,
-      'Agent Pi Outputs',
-      input.parentSessionId,
-      'project-boundary',
+      tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'project-boundary'),
       '项目边界条件.md',
     );
     const presence = probeFile(mdPath, true);
@@ -212,7 +230,7 @@ function buildProjectBoundaryItems(input: {
   }
 
   const officialDir = input.parentSessionId
-    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary')
+    ? tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'project-boundary')
     : undefined;
   for (const batch of input.manifest?.batches ?? []) {
     const projectMd = batch.markdownPath;
@@ -261,10 +279,10 @@ function buildBoqItems(input: {
   });
 
   const officialDir = input.parentSessionId
-    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing')
+    ? tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'boq-pricing')
     : undefined;
   const summaryPath = input.parentSessionId
-    ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing-summary.md')
+    ? join(tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId), 'boq-pricing-summary.md')
     : undefined;
   if (summaryPath) {
     const presence = probeFile(summaryPath, true);
@@ -279,7 +297,10 @@ function buildBoqItems(input: {
     });
   }
 
-  const schedule = resourceScheduleArtifactPaths(input.projectRoot, input.projectId);
+  const schedule = resourceScheduleArtifactPaths(
+    input.projectRoot,
+    input.parentSessionId ?? input.projectId,
+  );
   const publishedSchedule = officialDir
     ? join(officialDir, '施工资源消耗总表.md')
     : undefined;
@@ -383,7 +404,7 @@ export function buildStageDeliverablesCatalog(input: {
       manifest: input.documentManifest,
     });
     const summaryPath = input.parentSessionId
-      ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'document-analysis-summary.md')
+      ? join(tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId), 'document-analysis-summary.md')
       : undefined;
     return finalizeCatalog({
       projectId: input.projectId,
@@ -402,7 +423,7 @@ export function buildStageDeliverablesCatalog(input: {
       manifest: input.boundaryManifest,
     });
     const summaryPath = input.parentSessionId
-      ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary', '项目边界条件.md')
+      ? join(tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'project-boundary'), '项目边界条件.md')
       : undefined;
     return finalizeCatalog({
       projectId: input.projectId,
@@ -422,7 +443,7 @@ export function buildStageDeliverablesCatalog(input: {
       manifest: input.boqManifest,
     });
     const summaryPath = input.parentSessionId
-      ? join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'boq-pricing-summary.md')
+      ? join(tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId), 'boq-pricing-summary.md')
       : undefined;
     return finalizeCatalog({
       projectId: input.projectId,
@@ -460,6 +481,23 @@ export function organizeStageDeliverables(input: {
   let published = 0;
 
   if (input.stageId === 'tender-document-analysis' && input.documentManifest && input.parentSessionId) {
+    const packPath = join(input.projectDirectory, 'packs', 'document-analysis.json');
+    if (existsSync(packPath)) {
+      try {
+        const envelope = parseTenderCapabilityEnvelope(JSON.parse(readFileSync(packPath, 'utf8')));
+        const data = parseTenderDocumentAnalysisData(envelope.data);
+        writeDocumentAnalysisOfficialMarkdown(data, {
+          projectId: input.projectId,
+          parentSessionId: input.parentSessionId,
+          workingDirectory: input.projectRoot,
+          manifest: input.documentManifest,
+          projectDirectory: input.projectDirectory,
+        });
+        published += 1;
+      } catch {
+        // Pack may be incomplete during early polls — catalog still lists missing files.
+      }
+    }
     const publish = publishDocumentAnalysisArtifactsToOfficialOutputs(
       input.projectRoot,
       input.parentSessionId,
@@ -483,7 +521,7 @@ export function organizeStageDeliverables(input: {
       });
       published += 1;
     }
-    const destDir = join(input.projectRoot, 'Agent Pi Outputs', input.parentSessionId, 'project-boundary');
+    const destDir = tenderOfficialOutputsDir(input.projectRoot, input.parentSessionId, 'project-boundary');
     for (const batch of input.boundaryManifest?.batches ?? []) {
       if (batch.status !== 'complete') continue;
       const dest = join(destDir, basename(batch.markdownPath));

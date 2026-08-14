@@ -137,7 +137,7 @@ For a normal request, produce:
 
 ## Tender workbench (Agent Pi stage 4-B)
 
-When producing the tender programme under `Agent Pi Outputs/<projectId>/planning/`, **always emit both**:
+When producing the tender programme under `Agent Pi Outputs/<parentSessionId>/planning/` (Official Outputs), **always emit both**:
 
 - `tender-programme.msp.xml` — Microsoft Project XML (`Project` root / MSP namespace)
 - `tender-programme.p6.xml` — Primavera P6 BusinessObjects XML (`APIBusinessObjects` root)

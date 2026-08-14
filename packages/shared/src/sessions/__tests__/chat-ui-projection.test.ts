@@ -94,4 +94,20 @@ describe('projectSessionForChatUi', () => {
     expect(projected.messages[0]).toBe(messages[0])
     expect(projected.messages[1]?.toolResult?.length).toBeLessThan(messages[1]!.toolResult!.length)
   })
+
+  it('keeps full assistant markdown so in-chat preview blocks still parse', () => {
+    const fence = [
+      '```datatable',
+      JSON.stringify({
+        title: '按类别统计（合并后）',
+        src: 'C:\\\\tender\\\\stats.json',
+        rows: Array.from({ length: 200 }, (_, index) => ({ id: index, name: 'n'.repeat(80) })),
+      }),
+      '```',
+    ].join('\n')
+    const original = message({ content: fence })
+    expect(fence.length).toBeGreaterThan(CHAT_UI_MAX_TEXT_CHARS)
+    expect(projectMessageForChatUi(original)).toBe(original)
+    expect(projectMessageForChatUi(original).content).toBe(fence)
+  })
 })

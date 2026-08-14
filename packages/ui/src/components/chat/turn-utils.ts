@@ -52,7 +52,7 @@ export function humanizeRuntimeError(content: string | undefined): string | unde
     const limit = match?.[2] ?? '4'
     return `Sub-agent spawn limit reached (${current}/${limit} active). Wait for existing children to finish or stop them before spawning more — this is not a model failure.`
   }
-  if (/spawn_session blocked by memory guard/i.test(content) || /spawn_session blocked: (main process memory|total working set)/i.test(content)) {
+  if (/spawn_session blocked by memory guard/i.test(content) || /spawn_session blocked: (main process memory|total working set|total private memory)/i.test(content)) {
     return `Sub-agent spawn blocked by memory pressure. Finish or stop existing children before spawning more.`
   }
   if (/Nested spawn_session is disabled/i.test(content)) {

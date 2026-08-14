@@ -78,16 +78,26 @@ class SessionPersistenceQueue {
    * Queue a lazily materialized session snapshot. Rapid state updates replace
    * the producer without repeatedly cloning a large message history; only the
    * latest producer is evaluated when the debounce window is flushed.
+   *
+   * `stickyTimer`: keep the original debounce window so a busy large transcript
+   * cannot reset the timer forever (tool events every <500ms used to starve writes
+   * or, after a reset, stringify the whole JSONL on every pause).
    */
-  enqueueLazy(sessionId: string, produce: () => StoredSession): void {
+  enqueueLazy(
+    sessionId: string,
+    produce: () => StoredSession,
+    options?: { debounceMs?: number; stickyTimer?: boolean },
+  ): void {
     const existing = this.pending.get(sessionId)
     if (existing) {
+      existing.produce = produce
+      if (options?.stickyTimer) return
       clearTimeout(existing.timer)
     }
 
     const timer = setTimeout(() => {
       void this.startWrite(sessionId)
-    }, this.debounceMs)
+    }, options?.debounceMs ?? this.debounceMs)
 
     this.pending.set(sessionId, { produce, timer })
   }
@@ -239,6 +249,11 @@ class SessionPersistenceQueue {
    */
   getLastWrittenSignature(sessionId: string): string | undefined {
     return this.lastWrittenHeaderSignature.get(sessionId)
+  }
+
+  /** Keep watcher self-write detection in sync with header-only JSONL patches. */
+  recordWrittenHeader(sessionId: string, header: SessionHeader): void {
+    this.lastWrittenHeaderSignature.set(sessionId, getHeaderMetadataSignature(header))
   }
 
   /**

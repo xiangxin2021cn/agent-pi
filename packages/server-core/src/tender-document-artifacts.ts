@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tenderOfficialOutputOwnerId, tenderOfficialOutputsDir } from './tender-official-outputs.ts';
 
 export type TenderDocumentHumanReview = 'pending' | 'accepted' | 'rejected';
 
@@ -37,18 +38,19 @@ export function safeDocumentFileStem(name: string): string {
     .slice(0, 80) || 'document';
 }
 
+export function documentArtifactFileName(documentId: string, sourceName: string): string {
+  return `${documentId}__${safeDocumentFileStem(sourceName)}.md`;
+}
+
 export function documentArtifactPath(
   projectRoot: string,
-  projectId: string,
+  officialOwnerId: string,
   documentId: string,
   sourceName: string,
 ): string {
   return join(
-    projectRoot,
-    'Agent Pi Outputs',
-    projectId,
-    'document-analysis',
-    `${documentId}__${safeDocumentFileStem(sourceName)}.md`,
+    tenderOfficialOutputsDir(projectRoot, officialOwnerId, 'document-analysis'),
+    documentArtifactFileName(documentId, sourceName),
   );
 }
 
@@ -76,12 +78,18 @@ export function ensureDocumentReviewEntries(
   projectId: string,
   projectRoot: string,
   documents: Array<{ documentId: string; name: string }>,
+  parentSessionId?: string,
 ): TenderDocumentReviewLedger {
   const previous = readDocumentReviewLedger(projectDirectory, projectId);
   const byId = new Map(previous.documents.map((entry) => [entry.documentId, entry]));
   const now = new Date().toISOString();
   const nextDocuments = documents.map((document) => {
-    const artifactPath = documentArtifactPath(projectRoot, projectId, document.documentId, document.name);
+    const artifactPath = documentArtifactPath(
+      projectRoot,
+      tenderOfficialOutputOwnerId(parentSessionId, projectId),
+      document.documentId,
+      document.name,
+    );
     const existing = byId.get(document.documentId);
     if (existing) {
       return { ...existing, artifactPath };
@@ -110,6 +118,7 @@ export function markDocumentHumanReview(options: {
   humanReview: Exclude<TenderDocumentHumanReview, 'pending'>;
   sourceName?: string;
   notes?: string;
+  parentSessionId?: string;
 }): TenderDocumentReviewLedger {
   const ledger = readDocumentReviewLedger(options.projectDirectory, options.projectId);
   const now = new Date().toISOString();
@@ -117,7 +126,7 @@ export function markDocumentHumanReview(options: {
   const artifactPath = existing?.artifactPath
     ?? documentArtifactPath(
       options.projectRoot,
-      options.projectId,
+      tenderOfficialOutputOwnerId(options.parentSessionId, options.projectId),
       options.documentId,
       options.sourceName ?? options.documentId,
     );

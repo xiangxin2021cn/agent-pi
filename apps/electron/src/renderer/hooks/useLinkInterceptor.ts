@@ -156,6 +156,7 @@ interface LinkInterceptorResult {
 
 export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterceptorResult {
   const [previewState, setPreviewState] = useState<FilePreviewState | null>(null)
+  const previewSeqRef = useRef(0)
 
   // Use refs for options so callbacks remain referentially stable.
   // Without this, every render creates a new options object → new callbacks → cascading
@@ -173,24 +174,24 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
    * Classifies the file by extension, then either opens a preview overlay
    * or falls back to opening externally.
    *
-   * For text-based files (code, markdown, json, text), reads the content BEFORE
-   * showing the overlay — local filesystem reads are near-instant, so no loading
-   * state is needed. This avoids null-content issues in overlay components
-   * (e.g., @uiw/react-json-view crashes on null value).
+   * Text-based overlays open immediately with content=null (loading), then fill
+   * in after readFilePreview returns. Waiting on IPC first makes clicks look
+   * dead when the main process is under memory pressure. Do not use an empty
+   * string as the pending placeholder — the markdown overlay treats that as
+   * "no preview content was returned".
    */
   const handleOpenFile = useCallback(async (path: string, options?: FilePreviewOpenOptions) => {
     const classification = classifyFile(path)
     const previewOptions = normalizeFilePreviewOpenOptions(options)
+    const seq = ++previewSeqRef.current
 
     if (!classification.canPreview || !classification.type) {
-      // No preview available — open in default external app
       optionsRef.current.openFileExternal(path)
       return
     }
 
     const type = classification.type
 
-    // For image/pdf: set state immediately — the overlay handles its own async loading
     if (type === 'image') {
       setPreviewState({ type, filePath: path })
       return
@@ -204,19 +205,25 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     if (type === 'spreadsheet') {
       try {
         const preview = await optionsRef.current.readSpreadsheetPreview(path)
+        if (seq !== previewSeqRef.current) return
         setPreviewState({ type, filePath: path, preview, ...previewOptions })
       } catch (err) {
+        if (seq !== previewSeqRef.current) return
         const errorMsg = err instanceof Error ? err.message : 'Failed to read spreadsheet'
         setPreviewState({ type, filePath: path, preview: null, error: errorMsg, ...previewOptions })
       }
       return
     }
 
-    // For text-based files: read content first, then show overlay with content ready.
-    // Local filesystem reads are near-instant — no loading state needed.
+    setPreviewState({
+      ...buildInitialTextState(type, path),
+      ...previewOptions,
+    } as FilePreviewState)
+
     try {
       const previewPath = type === 'office' && previewOptions.markdownPath ? previewOptions.markdownPath : path
       const { preview, usedPath } = await readFilePreviewWithFallback(previewPath, path, optionsRef.current.readFilePreview)
+      if (seq !== previewSeqRef.current) return
       const emptyPreviewError = getEmptyPreviewError(usedPath, preview.content, preview.originalSize)
       if (type === 'markdown') {
         setPreviewState({
@@ -241,6 +248,7 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
       const state = buildInitialTextState(type, path)
       setPreviewState({ ...state, content: preview.content, ...previewOptions, mtimeMs: preview.mtimeMs, error: emptyPreviewError } as FilePreviewState)
     } catch (err) {
+      if (seq !== previewSeqRef.current) return
       const errorMsg = err instanceof Error ? err.message : 'Failed to read file'
       const state = buildInitialTextState(type, path)
       setPreviewState({ ...state, content: '', ...previewOptions, error: errorMsg } as FilePreviewState)
@@ -259,6 +267,7 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
   }, []) // Stable: uses optionsRef
 
   const closePreview = useCallback(() => {
+    previewSeqRef.current += 1
     setPreviewState(null)
   }, [])
 
@@ -298,6 +307,20 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
     revealCurrentInFinder,
     readFileDataUrl,
     readFileBinary,
+  }
+}
+
+export function isPendingTextFilePreview(state: FilePreviewState): boolean {
+  switch (state.type) {
+    case 'code':
+    case 'text':
+    case 'markdown':
+    case 'json':
+    case 'html':
+    case 'office':
+      return state.content === null
+    default:
+      return false
   }
 }
 

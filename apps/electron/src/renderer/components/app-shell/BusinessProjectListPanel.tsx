@@ -36,7 +36,7 @@ import {
   startTenderStageLaunch,
   summarizeTenderStage,
 } from '@/pages/business-tender-stage'
-import { getBusinessWorkflow } from '@/pages/business-workflows'
+import { businessStageLabel, businessWorkflowLabel, getBusinessWorkflow } from '@/pages/business-workflows'
 import { cn } from '@/lib/utils'
 import { getStateIcon, getStateIconStyle, getStateLabel } from '@/config/session-status-config'
 import { getSessionStatus } from '@/utils/session'
@@ -137,7 +137,7 @@ export function BusinessProjectListPanel({
     const inputPaths = [...new Set([...project.inputPaths, ...result.attachments.map((item) => item.path)])]
     await window.electronAPI.updateBusinessProjectInputs({ workspaceRootPath, module: moduleId, projectId: project.projectId, inputPaths })
     window.dispatchEvent(new CustomEvent('craft:business-projects-changed', { detail: { moduleId } }))
-    toast.success(`已登记 ${inputPaths.length} 个项目资料文件`)
+    toast.success(t('businessProjects.toastFilesRegistered', { count: inputPaths.length }))
   }
 
   const handleDeleteProject = async (project: BusinessProjectRecord) => {
@@ -190,7 +190,7 @@ export function BusinessProjectListPanel({
           const parentId = status.projectParentSessionId ?? resolveStageParentSessionId(status)
           if (parentId && sessionMetaMap.has(parentId)) {
             onSessionClick(project.projectId, parentId)
-            toast.success('已打开项目主会话')
+            toast.success(t('businessProjects.toastOpenedParent'))
             return
           }
           if (parentId && !sessionMetaMap.has(parentId)) {
@@ -221,7 +221,7 @@ export function BusinessProjectListPanel({
           // Still open the live root even if rebind fails.
         }
         onSessionClick(project.projectId, liveRoot.id)
-        toast.success('已打开项目主会话（已重绑旧指针）')
+        toast.success(t('businessProjects.toastOpenedParentRebound'))
         return
       }
     }
@@ -233,11 +233,13 @@ export function BusinessProjectListPanel({
       : undefined
     if (launch && !launch.ok) {
       const summary = summarizeTenderStage(launch.result)
-      toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+      toast.error(t('businessProjects.toastStageNotReady', {
+        detail: summary.missingLabel ?? summary.statusLabel,
+      }))
       return
     }
     const parentSession = await openNewChat?.({
-      name: moduleId === 'tender' ? project.name : `${project.name} · ${firstStage.label}`,
+      name: moduleId === 'tender' ? project.name : `${project.name} · ${businessStageLabel(firstStage)}`,
       workingDirectory: project.rootPath,
       businessContext: { module: moduleId, projectId: project.projectId, workflowId: project.workflowId, stageId: firstStage.id },
       input: buildBusinessTaskDraft(moduleId, project, firstStage, launch?.result),
@@ -248,7 +250,9 @@ export function BusinessProjectListPanel({
       }, parentSession.id)
       if (!started.ok) {
         const summary = summarizeTenderStage(started.result)
-        toast.error(`阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+        toast.error(t('businessProjects.toastStageStartFailed', {
+          detail: summary.missingLabel ?? summary.statusLabel,
+        }))
       }
     }
   }
@@ -256,8 +260,8 @@ export function BusinessProjectListPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="text-sm font-semibold">{workflow.label}</span>
-        <Button type="button" variant="ghost" size="icon" title="新建专业项目" disabled={!workspaceRootPath} onClick={() => setDialogOpen(true)}>
+        <span className="text-sm font-semibold">{businessWorkflowLabel(workflow)}</span>
+        <Button type="button" variant="ghost" size="icon" title={t('businessProjects.newSpecialistProject')} disabled={!workspaceRootPath} onClick={() => setDialogOpen(true)}>
           <Plus className="size-4" />
         </Button>
       </div>
@@ -265,9 +269,9 @@ export function BusinessProjectListPanel({
         {error && <p className="p-2 text-sm text-destructive">{error}</p>}
         {!error && projects.length === 0 && (
           <div className="px-2 py-8 text-center text-sm text-muted-foreground">
-            <p>尚无{workflow.label}项目</p>
+            <p>{t('businessProjects.emptyProjects', { workflow: businessWorkflowLabel(workflow) })}</p>
             <Button type="button" variant="outline" size="sm" className="mt-3" disabled={!workspaceRootPath} onClick={() => setDialogOpen(true)}>
-              <Plus className="size-4" />新建项目
+              <Plus className="size-4" />{t('businessProjects.newProject')}
             </Button>
           </div>
         )}
@@ -284,11 +288,11 @@ export function BusinessProjectListPanel({
             const isThreadCollapsed = collapsedSessionThreads.has(session.id)
             const statusId = getSessionStatus(session)
             const statusLabel = session.isProcessing
-              ? '运行中'
+              ? t('businessProjects.sessionRunning')
               : session.hasUnread
-                ? '有新输出'
+                ? t('businessProjects.hasNewOutput')
                 : getStateLabel(statusId, availableSessionStatuses)
-            const messageLabel = session.messageCount ? ` · ${session.messageCount} 条消息` : ''
+            const messageLabel = session.messageCount ? t('businessProjects.messageCount', { count: session.messageCount }) : ''
 
             return (
               <React.Fragment key={session.id}>
@@ -308,7 +312,9 @@ export function BusinessProjectListPanel({
                           variant="ghost"
                           size="icon"
                           className="size-6 shrink-0"
-                          title={isThreadCollapsed ? `展开 ${descendantCount} 个子智能体` : `折叠 ${descendantCount} 个子智能体`}
+                          title={isThreadCollapsed
+                            ? t('businessProjects.expandAgents', { count: descendantCount })
+                            : t('businessProjects.collapseAgents', { count: descendantCount })}
                           onClick={() => toggleSessionThread(session.id)}
                         >
                           {isThreadCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
@@ -330,13 +336,13 @@ export function BusinessProjectListPanel({
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate text-sm">{session.name || session.preview || '未命名任务'}</span>
+                            <span className="truncate text-sm">{session.name || session.preview || t('businessProjects.unnamedTask')}</span>
                             {session.parentSessionKind === 'spawn' && (
-                              <Bot className="size-3.5 shrink-0 text-success" aria-label="子智能体" />
+                              <Bot className="size-3.5 shrink-0 text-success" aria-label={t('businessProjects.childAgent')} />
                             )}
                           </span>
                           <span className={cn('block truncate text-xs text-muted-foreground', session.isProcessing && 'text-accent')}>
-                            {session.parentSessionKind === 'spawn' ? '子智能体 · ' : ''}{statusLabel}{messageLabel}
+                            {session.parentSessionKind === 'spawn' ? t('businessProjects.childAgentPrefix') : ''}{statusLabel}{messageLabel}
                           </span>
                         </span>
                       </button>
@@ -345,7 +351,7 @@ export function BusinessProjectListPanel({
                   <StyledContextMenuContent>
                     <StyledContextMenuItem onSelect={() => onSessionClick(project.projectId, session.id)}>
                       <MessageSquarePlus className="size-3.5" />
-                      打开对话
+                      {t('businessProjects.openChat')}
                     </StyledContextMenuItem>
                     {!session.isArchived && (
                       <StyledContextMenuItem onSelect={() => onArchiveSession(session.id)}>
@@ -377,7 +383,7 @@ export function BusinessProjectListPanel({
               <ContextMenu modal>
                 <ContextMenuTrigger asChild>
                   <div className={cn('group flex items-center gap-1 rounded px-1 py-1', selectedProjectId === project.projectId && 'bg-muted')}>
-                    <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0" title={isExpanded ? '折叠' : '展开'} onClick={() => toggleProject(project.projectId)}>
+                    <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0" title={isExpanded ? t('businessProjects.collapse') : t('businessProjects.expand')} onClick={() => toggleProject(project.projectId)}>
                       {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                     </Button>
                     <button type="button" onClick={() => onProjectClick(project.projectId)} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">
@@ -385,15 +391,18 @@ export function BusinessProjectListPanel({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{project.name}</span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {project.inputPaths.length} 份资料 · {sessionHierarchy.rootItems.length} 个任务
-                          {childSessionCount > 0 ? ` · ${childSessionCount} 个子智能体` : ''}
+                          {t('businessProjects.filesAndTasks', {
+                            files: project.inputPaths.length,
+                            tasks: sessionHierarchy.rootItems.length,
+                          })}
+                          {childSessionCount > 0 ? t('businessProjects.childAgentCount', { count: childSessionCount }) : ''}
                         </span>
                       </span>
                     </button>
-                    <Button type="button" variant="ghost" size="icon" className="size-7 opacity-70 group-hover:opacity-100" title="添加项目资料" onClick={() => void handleAddInputs(project)}>
+                    <Button type="button" variant="ghost" size="icon" className="size-7 opacity-70 group-hover:opacity-100" title={t('businessProjects.addProjectFiles')} onClick={() => void handleAddInputs(project)}>
                       <FilePlus2 className="size-4" />
                     </Button>
-                    <Button type="button" variant="ghost" size="icon" className="size-7 opacity-70 group-hover:opacity-100" title="新建项目任务" onClick={() => void handleNewTask(project)}>
+                    <Button type="button" variant="ghost" size="icon" className="size-7 opacity-70 group-hover:opacity-100" title={t('businessProjects.newProjectTask')} onClick={() => void handleNewTask(project)}>
                       <MessageSquarePlus className="size-4" />
                     </Button>
                   </div>
@@ -401,15 +410,15 @@ export function BusinessProjectListPanel({
                 <StyledContextMenuContent>
                   <StyledContextMenuItem onSelect={() => onProjectClick(project.projectId)}>
                     <FolderKanban className="size-3.5" />
-                    打开项目
+                    {t('businessProjects.openProject')}
                   </StyledContextMenuItem>
                   <StyledContextMenuItem onSelect={() => window.electronAPI.showInFolder(project.rootPath)}>
                     <FolderOpen className="size-3.5" />
-                    在文件管理器中显示
+                    {t('businessProjects.showInFolder')}
                   </StyledContextMenuItem>
                   <StyledContextMenuItem onSelect={() => void handleAddInputs(project)}>
                     <FilePlus2 className="size-3.5" />
-                    添加资料
+                    {t('businessProjects.addFiles')}
                   </StyledContextMenuItem>
                   <StyledContextMenuSeparator />
                   <StyledContextMenuItem
@@ -423,7 +432,7 @@ export function BusinessProjectListPanel({
               </ContextMenu>
               {isExpanded && (
                 <div className="ml-8 border-l pl-2">
-                  {sessionHierarchy.rootItems.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">暂无任务</p>}
+                  {sessionHierarchy.rootItems.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">{t('businessProjects.noTasksYet')}</p>}
                   {renderSessions(sessionHierarchy.rootItems)}
                 </div>
               )}

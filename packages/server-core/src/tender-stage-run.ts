@@ -91,6 +91,14 @@ import {
   type TenderStageTaskBoard,
   type TenderStageTaskRecord,
 } from './tender-stage-executor.ts';
+import {
+  PROJECT_CHARACTERISTICS_EVIDENCE_GATE,
+  authorizeProjectCharacteristicsWebDiligence,
+  projectCharacteristicsEvidenceMissingItems,
+  resolveLiveProjectCharacteristicsEvidence,
+  toProjectCharacteristicsEvidenceDto,
+  type ProjectCharacteristicsEvidenceLedger,
+} from './tender-project-characteristics-evidence.ts';
 
 export type TenderStageRunAction =
   | 'preflight'
@@ -179,6 +187,19 @@ export interface TenderStageRunResult {
   missingItems: string[];
   /** User-waived missing-item gates; status ignores these items. */
   userForcePass?: { at: string; waivedItems: string[] };
+  /** Project-characteristic evidence gaps; BOQ/planning must not invent missing facts. */
+  characteristicsEvidence?: {
+    blocking: boolean;
+    webDiligenceAuthorized: boolean;
+    evidenceFileNames: string[];
+    gaps: Array<{
+      chapterId: string;
+      title: string;
+      blocking: boolean;
+      detail: string;
+      suggestedUpload: string;
+    }>;
+  };
   batchProgress?: {
     batchType: 'document_analysis' | 'boq_five_step_pricing' | 'project_boundary';
     itemCount: number;
@@ -272,13 +293,14 @@ const STAGES: TenderStageDefinition[] = [
     producedCapabilities: ['document_analysis', 'boq_reconciliation'],
   },
   {
+    // Hidden from the workbench UI; kept so leftover RPC/old sessions still resolve.
     id: 'project-boundary-conditions',
     requiredCapabilities: ['document_analysis'],
     producedCapabilities: ['project_boundary'],
   },
   {
     id: 'boq-five-step-pricing',
-    requiredCapabilities: ['document_analysis', 'project_boundary'],
+    requiredCapabilities: ['document_analysis'],
     producedCapabilities: ['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'],
   },
   {
@@ -433,6 +455,7 @@ async function runTenderStageUnlocked(
   }
   let capabilityIndexLive: TenderCapabilityIndex = capabilityIndex;
   let generatedPacks = listReadyPacks(capabilityIndexLive);
+  const readableParentSessionId = boardParentSessionId ?? projectParentSessionId;
   const documentBatchManifest = stage.id === 'tender-document-analysis'
     ? await createOrRefreshDocumentAnalysisBatchManifest(
         paths.projectDirectory,
@@ -446,7 +469,7 @@ async function runTenderStageUnlocked(
             kind: file.kind,
             priority: file.priority,
           })),
-        { projectRoot: project.rootPath },
+        { projectRoot: project.rootPath, parentSessionId: readableParentSessionId },
       )
     : undefined;
   if (stage.id === 'tender-document-analysis') {
@@ -457,6 +480,7 @@ async function runTenderStageUnlocked(
       sourceBoundary.files
         .filter((file) => file.status === 'registered')
         .map((file) => ({ documentId: file.documentId, name: file.name })),
+      readableParentSessionId,
     );
   }
   if (request.documentReview && stage.id === 'tender-document-analysis') {
@@ -469,6 +493,7 @@ async function runTenderStageUnlocked(
       humanReview: request.documentReview.humanReview,
       sourceName: source?.name,
       notes: request.documentReview.notes,
+      parentSessionId: readableParentSessionId,
     });
   }
   if (
@@ -482,10 +507,11 @@ async function runTenderStageUnlocked(
       projectRoot: project.rootPath,
       humanReview: request.planningReview.humanReview,
       notes: request.planningReview.notes,
+      parentSessionId: readableParentSessionId,
     });
   }
   const boqBatchManifest = stage.id === 'boq-five-step-pricing'
-    ? loadBoqBatchManifest(paths, project.projectId, generatedPacks, sourceBoundary, project.rootPath)
+    ? loadBoqBatchManifest(paths, project.projectId, generatedPacks, sourceBoundary, project.rootPath, readableParentSessionId)
     : undefined;
 
   if (request.action === 'register_boundary_sources' && Array.isArray(request.boundarySources)) {
@@ -515,7 +541,7 @@ async function runTenderStageUnlocked(
         paths.projectDirectory,
         project.projectId,
         boundaryRegistry.sources,
-        { projectRoot: project.rootPath },
+        { projectRoot: project.rootPath, parentSessionId: readableParentSessionId },
       )
     : undefined;
 
@@ -719,6 +745,7 @@ async function runTenderStageUnlocked(
         paths,
         projectId: project.projectId,
         projectRoot: project.rootPath,
+        parentSessionId: deliverablesParentId,
       });
       resourceScheduleRuntimeErrors.push(...scheduleResult.errors);
     }
@@ -759,8 +786,23 @@ async function runTenderStageUnlocked(
     if (!boqBatchManifest) baseMissingItems.push('boq-batches:manifest-unavailable');
     else if (boqBatchManifest.itemCount === 0) baseMissingItems.push('boq-batches:no-items');
   }
+  let characteristicsEvidenceLedger: ProjectCharacteristicsEvidenceLedger | undefined;
   if (
-    (stage.id === 'project-boundary-conditions' || stage.id === 'boq-five-step-pricing')
+    stage.id === 'boq-five-step-pricing'
+    || stage.id === 'planning-and-submission'
+    || stage.id === 'tender-document-analysis'
+  ) {
+    characteristicsEvidenceLedger = resolveLiveProjectCharacteristicsEvidence({
+      projectDirectory: paths.projectDirectory,
+      projectId: project.projectId,
+      sourceFiles: sourceBoundary.files,
+    });
+  }
+  if (stage.id === 'boq-five-step-pricing' || stage.id === 'planning-and-submission') {
+    baseMissingItems.push(...projectCharacteristicsEvidenceMissingItems(characteristicsEvidenceLedger));
+  }
+  if (
+    stage.id === 'project-boundary-conditions'
     && !isCapabilitySatisfied('project_boundary', capabilityIndexLive, paths, documentBatchManifest, boqBatchManifest)
   ) {
     const suggestion = suggestProjectBoundaryDraftFromBindings({
@@ -872,13 +914,23 @@ async function runTenderStageUnlocked(
     }
     if (stage.id === 'planning-and-submission') {
       completionMissingItems.push(
-        ...assertPlanningSubstepGate(project.rootPath, paths.projectDirectory, project.projectId),
+        ...assertPlanningSubstepGate(
+          project.rootPath,
+          paths.projectDirectory,
+          project.projectId,
+          deliverablesParentId,
+        ),
       );
     }
   }
 
   const planningSubsteps = stage.id === 'planning-and-submission'
-    ? evaluatePlanningSubsteps(project.rootPath, paths.projectDirectory, project.projectId)
+    ? evaluatePlanningSubsteps(
+        project.rootPath,
+        paths.projectDirectory,
+        project.projectId,
+        deliverablesParentId,
+      )
     : undefined;
 
   let organizeResult: OrganizeStageDeliverablesResult | undefined;
@@ -926,6 +978,20 @@ async function runTenderStageUnlocked(
         waivedItems: uniqueUnion(previousForcePass?.waivedItems, baseMissingItems),
       }
     : previousForcePass;
+  if (
+    request.action === 'force_pass'
+    && characteristicsEvidenceLedger
+    && baseMissingItems.includes(PROJECT_CHARACTERISTICS_EVIDENCE_GATE)
+  ) {
+    characteristicsEvidenceLedger = authorizeProjectCharacteristicsWebDiligence({
+      projectDirectory: paths.projectDirectory,
+      projectId: project.projectId,
+      at: now,
+      workingDirectory: project.rootPath,
+      parentSessionId: deliverablesParentId,
+      sourceFiles: sourceBoundary.files,
+    });
+  }
   const waivedSet = new Set(userForcePass?.waivedItems ?? []);
   const autoRelaxBoundary = shouldAutoRelaxProjectBoundaryGate({
     requiredCapabilities: stage.requiredCapabilities,
@@ -965,6 +1031,9 @@ async function runTenderStageUnlocked(
     generatedPacks,
     missingItems: [...new Set(missingItems)],
     ...(userForcePass && userForcePass.waivedItems.length > 0 ? { userForcePass } : {}),
+    ...(characteristicsEvidenceLedger
+      ? { characteristicsEvidence: toProjectCharacteristicsEvidenceDto(characteristicsEvidenceLedger) }
+      : {}),
     batchProgress: documentBatchManifest
       ? documentBatchProgress(documentBatchManifest, taskBoard)
       : boqBatchManifest
@@ -1101,6 +1170,7 @@ function loadBoqBatchManifest(
   generatedPacks: TenderCapabilityId[],
   sourceBoundary: TenderSourceBoundary,
   projectRoot: string,
+  parentSessionId?: string,
 ): TenderBoqBatchManifest | undefined {
   if (!generatedPacks.includes('boq_reconciliation')) return undefined;
   const modelPath = join(paths.projectDirectory, 'packs', 'boq-reconciliation.json');
@@ -1117,7 +1187,7 @@ function loadBoqBatchManifest(
     projectId,
     boq,
     sourcePathByDocumentId,
-    { projectRoot },
+    { projectRoot, parentSessionId },
   );
 }
 
@@ -1262,12 +1332,14 @@ async function ensureResourceSchedulePack(input: {
   paths: ReturnType<typeof resolvePaths>;
   projectId: string;
   projectRoot: string;
+  parentSessionId?: string;
 }): Promise<{ errors: string[] }> {
   const pricingPackPath = join(input.paths.projectDirectory, 'packs', 'boq-five-step-pricing.json');
   const artifacts = writeConstructionResourceScheduleArtifacts({
     projectRoot: input.projectRoot,
     projectId: input.projectId,
     pricingPackPath,
+    parentSessionId: input.parentSessionId,
   });
   if ('errors' in artifacts) return { errors: artifacts.errors };
 
@@ -1313,6 +1385,7 @@ async function ensureDocumentAnalysisPackMerged(input: {
         parentSessionId: input.parentSessionId,
         workingDirectory: input.workingDirectory,
         manifest: input.manifest,
+        projectDirectory: input.paths.projectDirectory,
       });
       publishDocumentAnalysisArtifactsToOfficialOutputs(
         input.workingDirectory,
@@ -1350,6 +1423,7 @@ async function ensureDocumentAnalysisPackMerged(input: {
       parentSessionId: input.parentSessionId,
       workingDirectory: input.workingDirectory,
       manifest: input.manifest,
+      projectDirectory: input.paths.projectDirectory,
     });
     publishDocumentAnalysisArtifactsToOfficialOutputs(
       input.workingDirectory,

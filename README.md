@@ -51,15 +51,43 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.3.**
+**Current release: V2.6.5.**
 
-**当前发布版：V2.6.3。**
+**当前发布版：V2.6.5。**
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.5 Project Characteristics + Markdown Preview / V2.6.5 项目特征与 Markdown 预览
+
+V2.6.5 compiles bid-binding **project characteristics** after document analysis (no separate boundary desk), blocks later pricing/planning from inventing missing specs or site facts, keeps Markdown preview on a loading state until the file is read, and switches workbench chrome with the app language.
+
+V2.6.5 在招标文件解析后汇总「项目特征」（不再单独设边界条件栏）；组价/策划缺规范或地质等原文时须补传或强制放行尽调，禁止臆造。点击大 Markdown 保持加载直到读完，不再把空占位当成「无预览内容」。投标/实施/投资工作台界面随语言切换。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Tender stages | Parse → `项目特征.md` → BOQ / planning. | 解析后出项目特征，再组价/策划。 |
+| Evidence gate | Upload sources or force-pass for web diligence; never invent. | 补传原文或放行尽调，禁止用模型记忆填空。 |
+| Loading state | Pending preview uses `content=null`, not `""`. | 加载中不再用空字符串占位。 |
+| Timeout | `file:readPreview` waits until the read finishes. | 预览读取等到完成，不再 30 秒掐掉。 |
+| Render | Same formatted Markdown as before. | 仍用原来的 Markdown 预览。 |
+| Workbench i18n | Stage names, overview, dialogs, toasts follow locale. | 阶段名、总览、对话框、提示随语言切换。 |
+
+### V2.6.4 Windows Spawn Memory + Chat Preview / V2.6.4 Windows spawn 内存门与对话预览
+
+V2.6.4 stops Windows spawn from treating shared-DLL working set as process cost, keeps overflowed tender chapter agents queued instead of failed, and no longer truncates assistant markdown that in-chat table/preview blocks need.
+
+V2.6.4 修正 Windows 上 spawn 内存误判（不再把共享 DLL 的 working set 加总），投标超限批次保持排队而不是失败，并停止截断助手正文，避免对话里的表格/Markdown 预览解析失败。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Spawn cap | Windows compares `privateBytes`; default cap is 35% of RAM (floor 1.5 GiB). | Windows 按独占内存设顶，默认物理内存 35%。 |
+| Tender queue | Capacity-guard spawn errors stay `pending`, not `failed`. | 内存门挡住的章节任务保持排队。 |
+| Chat preview | GET_MESSAGES keeps full `message.content`; only tool payloads are truncated. | 助手正文完整保留；只截断工具结果。 |
+| Transcripts | Idle dispose may drop unused in-memory messages; switching chat does not unload others. | 空闲 dispose 后可释放；切会话不卸其它 transcript。 |
 
 ### V2.6.3 Stray `nul` File Hotfix / V2.6.3 工作目录 `nul` 文件热修
 

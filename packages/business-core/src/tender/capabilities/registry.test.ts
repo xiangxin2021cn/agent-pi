@@ -18,7 +18,6 @@ describe('tender capability registry', () => {
       'core',
       'document_analysis',
       'boq_reconciliation',
-      'project_boundary',
     ]);
     expect(dependencies('bidder_commitments')).toEqual([
       'core',

@@ -16,6 +16,8 @@ Use this skill for stage **招标文件解析** (`tender-document-analysis`). Th
 - Child agents must **not** call `spawn_session`.
 - Each child writes **both** the structured JSON handoff (`reportPath`) and the customer-facing Markdown (`markdownPath`). Readable MD is the first-class deliverable — **never** ask the parent to author per-document MD.
 - Honor `brief.projectIndustry` and `brief.documentRole` (and the professional `objective`) — write in sector jargon for that role.
+- Extract bid-binding **project characteristics** into the matching section kinds so the runtime can compile Official Outputs `项目特征.md` after merge: contract form and particular conditions; governing specs and clause amendments; duration, site, geology, climate; working hours and holidays; subcontracting and localisation; employer-imposed construction sequence.
+- If the assigned file does not state a characteristic, record it as a **gap**. Do **not** fill geology, spec clauses, working hours, or contract form from model memory or uncited web pages.
 - `tender_workspace` document registration is owned by the stage source-boundary sync; do not re-`upsert_documents` unless the user is still in project-setup.
 - Children inherit `businessContext` as a **spawn-time snapshot**; in-flight children may keep the old `stageId` until they finish — that is expected.
 - Write **one Markdown file per registered document** at `brief.markdownPath` (project-scoped Official Outputs tree).
@@ -30,8 +32,8 @@ Write like an estimator / technical / commercial tender memo:
 
 1. **One-line header** — source filename only (at most once). Do not center the report on `documentId`, absolute paths, `Agent Pi Outputs`, Working Folder, or “analysis scope” boilerplate.
 2. **Bid-relevant summary** — what this document decides for price, method, programme, or compliance.
-3. **Hard constraints** — mandatory requirements that bind the bid (use industry jargon from `projectIndustry` / `documentRole`).
-4. **Implications for pricing / method / programme** — what the next stages must carry forward.
+3. **Hard constraints** — mandatory requirements that bind the bid (use industry jargon from `projectIndustry` / `documentRole`). Call out contract form / particular conditions, spec amendments, duration, site/geology/climate, working hours/holidays, subcontracting/localisation, and employer-imposed sequence when this file states them.
+4. **Implications for pricing / method / programme** — what BOQ pricing must carry forward from this file's project characteristics.
 5. **Risks, gaps, clarifications needed** — open questions for the employer or internal assumptions.
 6. **Useful locators only** — page / clause / sheet when they help a human verify; empty sourceRefs are accepted in JSON.
 
@@ -46,8 +48,8 @@ Write like an estimator / technical / commercial tender memo:
    - Structured sections JSON → `brief.reportPath`
    - Professional MD → `brief.markdownPath` (body per section above)
 3. Batch completion requires both artifacts; missing MD keeps the batch `invalid`. Parent must not regenerate child MD.
-4. When every batch report is complete, prefer letting stage status/resume drive the deterministic `document_analysis` merge. Never hand-compress packs into the tool call.
+4. When every batch report is complete, prefer letting stage status/resume drive the deterministic `document_analysis` merge. The runtime compiles Official Outputs `项目特征.md` (and a matching chapter in the parse synopsis) from merged sections — do not hand-write those files. Never hand-compress packs into the tool call.
 
 ## Completion
 
-Report: documents covered, MD paths written, batch status, whether `document_analysis` / `boq_reconciliation` packs exist, and any optional `evaluation_strategy` notes. Do not claim the stage is complete until soft gates (usable MD + merge) pass.
+Report: documents covered, MD paths written, batch status, whether `document_analysis` / `boq_reconciliation` packs exist, whether Official Outputs `项目特征.md` was compiled, and any optional `evaluation_strategy` notes. Do not claim the stage is complete until soft gates (usable MD + merge) pass.

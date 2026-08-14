@@ -163,7 +163,7 @@ describe('tender stage task-board executor', () => {
       tasks: fixture.tasks, execution, maxConcurrency: 1,
     });
     expect(retried.tasks[0]?.status).toBe('running');
-    expect(retried.tasks[0]?.attemptCount).toBe(2);
+    expect(retried.tasks[0]?.attemptCount).toBe(1);
     expect(attempt).toBe(2);
   });
 
@@ -196,6 +196,35 @@ describe('tender stage task-board executor', () => {
     expect(advanced.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
     expect(calls).toBe(3);
     expect(isTenderStageCapacityError(new Error('spawn_session active handoff limit reached (5/4). Return control and let the runtime monitor existing handoffs before spawning more.'))).toBe(true);
+  });
+
+  test('keeps memory-guarded spawns queued instead of failing them', async () => {
+    const fixture = createTasks(4);
+    const execution = {
+      spawnSession: async () => {
+        throw new Error('spawn_session blocked: total working set is 3.60 GiB (limit 3.50 GiB). Finish or stop existing sub-agents before spawning more.');
+      },
+      getSession: async () => ({ id: 'x', isProcessing: false, sessionStatus: 'todo' }),
+    };
+
+    await updateTenderStageTaskBoard({
+      action: 'start', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+    const advanced = await updateTenderStageTaskBoard({
+      action: 'advance', projectDirectory: fixture.projectDirectory, projectId: 'n3',
+      stageId: 'document-analysis', workingDirectory: root, parentSessionId: 'parent-1',
+      tasks: fixture.tasks, execution, maxConcurrency: 4,
+    });
+    expect(advanced.tasks.filter((task) => task.status === 'failed')).toHaveLength(0);
+    expect(advanced.tasks.filter((task) => task.status === 'pending')).toHaveLength(4);
+    expect(isTenderStageCapacityError(new Error(
+      'spawn_session blocked: total working set is 3.60 GiB (limit 3.50 GiB). Finish or stop existing sub-agents before spawning more.',
+    ))).toBe(true);
+    expect(isTenderStageCapacityError(new Error(
+      'spawn_session blocked: total private memory is 12.10 GiB (limit 11.20 GiB). Finish or stop existing sub-agents before spawning more.',
+    ))).toBe(true);
   });
 
   test('continues idle child sessions on resume instead of spawning duplicates', async () => {

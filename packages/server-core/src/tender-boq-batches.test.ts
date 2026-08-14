@@ -47,7 +47,11 @@ describe('tender BOQ batch manifest', () => {
     expect(brief.markdownPath).toContain('boq-pricing');
     expect(brief.qualityStandard.id).toBe('generic_direct_cost_v1');
     expect(brief.objective).toContain('pricingStandard');
-    expect(brief.objective).toContain('projectBoundary');
+    expect(brief.objective).toContain('项目特征.md');
+    expect(brief.objective).toContain('evidencePolicy');
+    expect(brief.evidencePolicy?.rule).toContain('model memory');
+    expect(brief.evidencePolicy?.blocking).toBe(true);
+    expect(brief.objective).not.toContain('projectBoundary fence');
     expect(brief.objective).toContain('Read [skill:tender-formal-writing] then honor writingContract');
     expect(brief.writingContract).toContain('THIS tender');
     expect(brief.writingContract).toContain('综上所述');
@@ -135,8 +139,8 @@ describe('tender BOQ batch manifest', () => {
     expect(brief.projectBoundary?.extractedInventory?.plant).toEqual(['14H grader']);
     expect(brief.projectBoundary?.fence).toContain('14H grader');
     expect(brief.projectBoundary?.fence).toContain('Do not invent');
-    expect(brief.qualityStandard.rules.some((rule) => rule.includes('projectBoundary fence'))).toBe(true);
-    expect(brief.objective).toContain('projectBoundary fence');
+    expect(brief.qualityStandard.rules.some((rule) => rule.includes('项目特征.md'))).toBe(true);
+    expect(brief.objective).toContain('项目特征.md');
   });
 
   test('marks a batch complete only when its report covers every assigned item and no extras', () => {

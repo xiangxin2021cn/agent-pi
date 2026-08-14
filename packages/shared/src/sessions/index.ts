@@ -132,6 +132,7 @@ export {
   // Metadata updates
   updateSessionSdkId,
   updateSessionMetadata,
+  patchSessionHeaderFromSource,
   setSessionBusinessStage,
   canUpdateSdkCwd,
   flagSession,
@@ -174,6 +175,7 @@ export {
   readSessionJsonl,
   readSessionJsonlAsync,
   writeSessionJsonl,
+  patchSessionJsonlHeader,
   createSessionHeader,
 } from './jsonl.ts';
 

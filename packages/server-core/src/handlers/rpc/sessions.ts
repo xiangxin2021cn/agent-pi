@@ -22,7 +22,7 @@ import type { StoredAttachment } from '@craft-agent/core/types'
 import { CONFIG_DIR, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf, pathStartsWith } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
-import { PROJECT_MEMORY_ENTRIES_FILE_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath, projectSessionForChatUi, type ProjectMemoryScope } from '@craft-agent/shared/sessions'
+import { PROJECT_MEMORY_ENTRIES_FILE_NAME, FORMAL_OUTPUTS_DIR_NAME, getProjectBrainPath, getSessionOutputPathFromSessionPath, projectSessionForChatUi, type ProjectMemoryScope } from '@craft-agent/shared/sessions'
 import { validateStdioMcpConnection as validateStdioMcpConnectionImpl } from '@craft-agent/shared/mcp'
 import {
   handleFileMemorySourceCreate,
@@ -222,6 +222,9 @@ async function scanSessionDirectory(
   for (const entry of entries) {
     // Skip internal and hidden files
     if (!isVisibleSessionFileName(entry.name)) continue
+    // Official Outputs has its own Session Files node. Do not also list
+    // `Agent Pi Outputs` under Working Folder.
+    if (options.sourceOverride === 'working-directory' && entry.name === FORMAL_OUTPUTS_DIR_NAME) continue
 
     const fullPath = join(dirPath, entry.name)
     const relativePath = relative(rootPath, fullPath)
@@ -318,6 +321,24 @@ function resolveTenderWorkspacePaths(
   }
 }
 
+function collapsedBrowseRoot(
+  name: string,
+  path: string,
+  source: SessionFileSource,
+): SessionFile {
+  return {
+    name,
+    path,
+    type: 'directory',
+    source,
+    relativePath: '',
+    promoted: source === 'official-output',
+    children: [],
+    childrenLoaded: false,
+    hasMoreChildren: true,
+  }
+}
+
 async function scanTenderWorkspaceTrees(
   projectPaths: string[],
   maxDepth = SESSION_FILES_INITIAL_SCAN_DEPTH,
@@ -325,6 +346,10 @@ async function scanTenderWorkspaceTrees(
   const trees: SessionFile[] = []
   for (const projectPath of projectPaths) {
     if (!await pathExists(projectPath)) continue
+    if (maxDepth <= 0) {
+      trees.push(collapsedBrowseRoot(`Tender Workspace · ${basename(projectPath)}`, projectPath, 'tender-workspace'))
+      continue
+    }
     const children = await scanSessionDirectory(projectPath, projectPath, {
       sourceOverride: 'tender-workspace',
       maxDepth,
@@ -350,6 +375,13 @@ async function scanWorkingDirectoryTree(
 ): Promise<SessionFile | null> {
   if (!workingDirectory?.trim()) return null
   if (!await pathExists(workingDirectory)) return null
+  if (maxDepth <= 0) {
+    return collapsedBrowseRoot(
+      basename(workingDirectory) || 'Working Directory',
+      workingDirectory,
+      'working-directory',
+    )
+  }
   const children = await scanSessionDirectory(workingDirectory, workingDirectory, {
     sourceOverride: 'working-directory',
     maxDepth,
@@ -601,7 +633,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (_ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
     const session = await sessionManager.getSession(sessionId)
-    // Display projection only — SessionManager retains the full transcript for the agent.
+    // Display projection only. Idle sessions drop their in-memory transcript after
+    // the user navigates away; GET_MESSAGES lazy-loads from JSONL again.
     const projected = session ? projectSessionForChatUi(session) : session
     end()
     return projected
@@ -888,10 +921,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     if (!sessionPath) return []
 
     try {
-      const session = sessionManager.getSessions().find(s => s.id === sessionId)
-      const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
-      const tenderWorkspacePaths = resolveTenderWorkspacePaths(session?.workingDirectory, session?.businessContext)
-      const workingDirectory = session?.workingDirectory
+      const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+      const outputPath = getSessionOutputPathFromSessionPath(sessionPath, browse?.workingDirectory)
+      const tenderWorkspacePaths = resolveTenderWorkspacePaths(browse?.workingDirectory, browse?.businessContext)
+      const workingDirectory = browse?.workingDirectory
       const requestedParentPath = typeof options?.parentPath === 'string' && options.parentPath.trim().length > 0
         ? options.parentPath
         : null
@@ -914,9 +947,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         if (!await pathExists(target.path)) {
           return []
         }
+        const browseRoot = target.sourceOverride === 'working-directory'
+          || target.sourceOverride === 'tender-workspace'
         return await scanSessionDirectory(target.path, target.rootPath, {
           sourceOverride: target.sourceOverride,
-          maxDepth: scanDepth,
+          maxDepth: browseRoot ? 0 : scanDepth,
           includeEmptyDirectories: target.sourceOverride === 'working-directory',
         })
       }
@@ -958,8 +993,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) return null
 
-    const session = sessionManager.getSessions().find(s => s.id === sessionId)
-    const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
+    const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+    const outputPath = getSessionOutputPathFromSessionPath(sessionPath, browse?.workingDirectory)
     return {
       path: outputPath,
       scope: getOutputScope(sessionPath, outputPath),
@@ -968,32 +1003,32 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   server.handle(RPC_CHANNELS.sessions.GET_PROJECT_MEMORY_STATUS, async (_ctx, sessionId: string): Promise<ProjectMemorySessionStatusResult | null> => {
-    const session = sessionManager.getSessions().find(s => s.id === sessionId)
-    if (!session) return null
-    return getProjectMemoryStatusForWorkingDirectory(session.workingDirectory, {
+    const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+    if (!browse) return null
+    return getProjectMemoryStatusForWorkingDirectory(browse.workingDirectory, {
       sessionId,
-      businessContext: session.businessContext,
+      businessContext: browse.businessContext,
     })
   })
 
   server.handle(RPC_CHANNELS.sessions.RESET_PROJECT_MEMORY_QUALITY_TELEMETRY, async (_ctx, sessionId: string): Promise<ProjectMemoryQualityTelemetryResetResult | null> => {
-    const session = sessionManager.getSessions().find(s => s.id === sessionId)
-    if (!session) return null
-    if (!session.workingDirectory) {
+    const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+    if (!browse) return null
+    if (!browse.workingDirectory) {
       return {
         status: 'missing_working_directory',
         message: 'No working directory is bound to this session.',
       }
     }
 
-    const result = await resetProjectMemoryQualityTelemetry(session.workingDirectory, {
+    const result = await resetProjectMemoryQualityTelemetry(browse.workingDirectory, {
       sessionId,
-      businessContext: session.businessContext,
+      businessContext: browse.businessContext,
     })
     return {
       status: 'reset',
       message: `Reset ${result.removedCount} learned quality telemetry facts.`,
-      workingDirectory: session.workingDirectory,
+      workingDirectory: browse.workingDirectory,
       projectBrainPath: result.brainPath,
       factsPath: result.factsPath,
       removedCount: result.removedCount,
@@ -1008,8 +1043,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
 
     const sourcePath = assertPromotableSessionPath(sessionPath, filePath)
-    const session = sessionManager.getSessions().find(s => s.id === sessionId)
-    const outputDir = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
+    const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+    const outputDir = getSessionOutputPathFromSessionPath(sessionPath, browse?.workingDirectory)
     if (pathStartsWith(sourcePath, outputDir)) {
       throw new Error('This file is already in the formal output directory')
     }
@@ -1023,12 +1058,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     } else {
       await copyFile(sourcePath, outputPath)
     }
-    if (session?.workingDirectory) {
+    if (browse?.workingDirectory) {
       try {
         await recordProjectMemoryFormalOutput({
-          workingDirectory: session.workingDirectory,
+          workingDirectory: browse.workingDirectory,
           sessionId,
-          businessContext: session.businessContext,
+          businessContext: browse.businessContext,
           sourcePath,
           outputPath,
           reason: 'user_promoted',
@@ -1141,19 +1176,19 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
       state.watchers.push(watch(sessionPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
 
-      const session = sessionManager.getSessions().find(s => s.id === sessionId)
-      const outputPath = getSessionOutputPathFromSessionPath(sessionPath, session?.workingDirectory)
+      const browse = sessionManager.getSessionBrowseContext?.(sessionId)
+      const outputPath = getSessionOutputPathFromSessionPath(sessionPath, browse?.workingDirectory)
       if (!pathStartsWith(outputPath, sessionPath) && await pathExists(outputPath)) {
         state.watchers.push(watch(outputPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
       }
 
-      for (const tenderPath of resolveTenderWorkspacePaths(session?.workingDirectory, session?.businessContext)) {
+      for (const tenderPath of resolveTenderWorkspacePaths(browse?.workingDirectory, browse?.businessContext)) {
         if (await pathExists(tenderPath)) {
           state.watchers.push(watch(tenderPath, { recursive: true }, (_eventType, filename) => notifyChanged(filename)))
         }
       }
 
-      const workingDirectory = session?.workingDirectory
+      const workingDirectory = browse?.workingDirectory
       if (
         workingDirectory
         && !pathStartsWith(workingDirectory, sessionPath)

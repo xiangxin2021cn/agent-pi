@@ -11,7 +11,8 @@ import {
   mergeDocumentAnalysisBatchReports as mergeDocumentAnalysisBatchReportsCore,
   validateDocumentAnalysisBatchMerge as validateDocumentAnalysisBatchMergeCore,
 } from '@craft-agent/session-tools-core';
-import { artifactLooksAcceptable, documentArtifactPath } from './tender-document-artifacts.ts';
+import { artifactLooksAcceptable, documentArtifactFileName } from './tender-document-artifacts.ts';
+import { tenderOfficialOutputOwnerId, tenderOfficialOutputsDir } from './tender-official-outputs.ts';
 import {
   buildProfessionalDocumentAnalysisObjective,
   inferDocumentRole,
@@ -43,7 +44,7 @@ export interface TenderDocumentAnalysisBatchBrief {
     kind: string;
     priority: number;
   };
-  /** Draft industry for professional writing (boundary stage may override later). */
+  /** Draft industry for professional writing (project characteristics compiled after merge). */
   projectIndustry: TenderProjectIndustry;
   /** Draft document role for report body shape. */
   documentRole: TenderDocumentRole;
@@ -96,7 +97,7 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
   projectDirectory: string,
   projectId: string,
   sources: TenderDocumentBatchSource[],
-  options: { projectRoot?: string } = {},
+  options: { projectRoot?: string; parentSessionId?: string } = {},
 ): Promise<TenderDocumentAnalysisBatchManifest> {
   const projectRoot = options.projectRoot ?? inferProjectRoot(projectDirectory);
   const briefDirectory = join(projectDirectory, 'orchestration', 'briefs', 'document-analysis');
@@ -114,7 +115,14 @@ export async function createOrRefreshDocumentAnalysisBatchManifest(
     const batchId = `document-${createHash('sha256').update(`${source.documentId}\u0000${source.path}`).digest('hex').slice(0, 12)}`;
     const briefPath = join(briefDirectory, `${batchId}.json`);
     const reportPath = join(reportDirectory, `${batchId}.json`);
-    const markdownPath = documentArtifactPath(projectRoot, projectId, source.documentId, source.name);
+    const markdownPath = join(
+      tenderOfficialOutputsDir(
+        projectRoot,
+        tenderOfficialOutputOwnerId(options.parentSessionId, projectId),
+        'document-analysis',
+      ),
+      documentArtifactFileName(source.documentId, source.name),
+    );
     const documentRole = inferDocumentRole({
       name: source.name,
       path: source.path,

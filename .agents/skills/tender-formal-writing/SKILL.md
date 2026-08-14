@@ -9,7 +9,7 @@ Write as an estimator / QS / construction planner would write overnight paper fo
 
 ## When
 
-Every customer-facing tender artifact: parse memos, BOQ workpapers, project-boundary notes, methodology, programme/resource narratives, cash-flow notes, formal returnables, and stage summaries a bid team will read.
+Every customer-facing tender artifact: parse memos, BOQ workpapers, project-characteristics notes, methodology, programme/resource narratives, cash-flow notes, formal returnables, and stage summaries a bid team will read.
 
 Not for ordinary chat, code, or non-tender research reports (`professional-report`).
 

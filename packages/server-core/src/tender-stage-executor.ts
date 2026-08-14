@@ -1,15 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { SpawnSessionRequest, SpawnSessionResult } from '@craft-agent/shared/agent';
+import { isSpawnCapacityError } from './sessions/runtime-memory-guard';
 
 export type TenderStageTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'blocked';
 
 /** Capacity / backpressure signals — keep the task queued, do not mark failed. */
 export function isTenderStageCapacityError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /active handoff limit reached/i.test(message)
-    || /spawn_session blocked by memory guard/i.test(message)
-    || /Return control and let the runtime monitor existing handoffs/i.test(message);
+  return isSpawnCapacityError(error);
 }
 
 export interface TenderStageBatchTaskSpec {

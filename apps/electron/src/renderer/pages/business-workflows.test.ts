@@ -1,5 +1,11 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test, beforeAll } from 'bun:test'
+import { setupI18n, i18n } from '@craft-agent/shared/i18n'
 import { getBusinessWorkflow } from './business-workflows.ts'
+
+beforeAll(async () => {
+  setupI18n()
+  await i18n.changeLanguage('en')
+})
 
 describe('business workflows', () => {
   test('tender workflow is the controllable pipeline with a writing contract on every stage', () => {
@@ -9,12 +15,13 @@ describe('business workflows', () => {
     expect(stageIds).toEqual([
       'project-setup',
       'tender-document-analysis',
-      'project-boundary-conditions',
       'boq-five-step-pricing',
       'planning-and-submission',
     ])
-    expect(workflow.stages.find((stage) => stage.id === 'project-setup')?.label).toBe('项目资料登记')
-    expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.label).toBe('招标文件解析')
+    expect(workflow.stages.find((stage) => stage.id === 'project-setup')?.labelKey)
+      .toBe('businessProjects.stageTenderProjectSetup')
+    expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.labelKey)
+      .toBe('businessProjects.stageTenderDocumentAnalysis')
     expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.producesCapabilities)
       .toEqual(['document_analysis', 'boq_reconciliation'])
     expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.producesCapabilities)
@@ -23,14 +30,15 @@ describe('business workflows', () => {
       .toBe('tender-document-parsing')
     expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.skillSlugs)
       .toContain('tender-formal-writing')
+    expect(workflow.stages.find((stage) => stage.id === 'tender-document-analysis')?.prompt)
+      .toContain('项目特征')
     expect(workflow.stages.find((stage) => stage.id === 'project-setup')?.skillSlug).toBeUndefined()
     expect(workflow.stages.find((stage) => stage.id === 'project-setup')?.skillSlugs).toBeUndefined()
-    expect(workflow.stages.find((stage) => stage.id === 'project-boundary-conditions')?.producesCapabilities)
-      .toEqual(['project_boundary'])
-    expect(workflow.stages.find((stage) => stage.id === 'project-boundary-conditions')?.dispatchPolicy)
-      .toBe('controlled-subagents')
+    expect(workflow.stages.find((stage) => stage.id === 'project-boundary-conditions')).toBeUndefined()
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.requiredCapabilities)
-      .toEqual(['document_analysis', 'project_boundary'])
+      .toEqual(['document_analysis'])
+    expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.prompt)
+      .toContain('项目特征')
     expect(workflow.stages.find((stage) => stage.id === 'boq-five-step-pricing')?.producesCapabilities)
       .toEqual(['boq_five_step_pricing', 'construction_resource_schedule', 'bidder_commitments'])
     expect(workflow.stages.find((stage) => stage.id === 'planning-and-submission')?.requiredCapabilities)

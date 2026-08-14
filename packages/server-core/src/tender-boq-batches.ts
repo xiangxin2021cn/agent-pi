@@ -15,9 +15,15 @@ import {
 } from '@agent-pi/business-core/tender';
 import { resolveTenderMethodStandardPath, readTenderBindings } from './tender-bindings.ts';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
+import { tenderOfficialOutputOwnerId, tenderOfficialOutputsDir } from './tender-official-outputs.ts';
 import { readStageDeliverablesCatalog } from './tender-stage-deliverables.ts';
 import { looksLikeSanralBoundProject, readProjectBoundaryPack } from './tender-project-boundary.ts';
 import { TENDER_FORMAL_WRITING_SKILL_SLUG, TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
+import {
+  buildProjectCharacteristicsEvidencePolicy,
+  resolveLiveProjectCharacteristicsEvidence,
+  type ProjectCharacteristicsEvidencePolicy,
+} from './tender-project-characteristics-evidence.ts';
 
 export interface TenderBoqBatchBrief {
   schemaVersion: 1;
@@ -74,6 +80,8 @@ export interface TenderBoqBatchBrief {
   markdownPath: string;
   /** Upstream document-analysis deliverables the child may cite (from stage catalog). */
   upstreamDeliverables?: Array<{ id: string; kind: string; path: string; label: string }>;
+  /** Whether the child may web-diligence missing project-characteristic facts. */
+  evidencePolicy?: ProjectCharacteristicsEvidencePolicy;
   spawnPolicy: 'forbidden';
   finalArtifactPolicy: 'report-and-markdown';
 }
@@ -124,7 +132,9 @@ const C51_QUALITY_RULES = [
   'Step 5 must reconcile unit rate and item total, state duration, and record item-specific optimistic/base/pessimistic risk sensitivity.',
   'Indirect cost, overhead, profit, general contingency, and escalation belong downstream and must not enter the item direct unit rate.',
   'Every numeric fact is sourced, an explicit scenario, or unverified. Numbers are plain decimals without thousands separators; allocation weights are 0-1 fractions (0.85, not 85). Mark an item "reviewed" only when its core records carry no unverified values; otherwise keep it "draft".',
-  'Do not invent plant, labour, materials, camp, or methods outside the projectBoundary fence (allowedSourceIds / extractedInventory / registered knowledge slugs).',
+  'Honour 项目特征.md compiled after document analysis: contract form and particular conditions, governing specs and clause amendments, duration, site/geology/climate, working hours and holidays, subcontracting/localisation, and employer-imposed sequence.',
+  'Do not invent plant, labour, materials, camp, or methods that contradict 项目特征.md or registered tender sources.',
+  'If 项目特征.md or evidencePolicy lists a gap, do not fill it from model memory. Web diligence of those gaps is allowed only when evidencePolicy.webDiligenceAuthorized is true, and every hit must record url + accessedAt. Market-rate webEvidence is separate and remains required for key rates.',
   'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff — customers review the MD first.',
 ];
 
@@ -133,8 +143,9 @@ const GENERIC_QUALITY_RULES = [
   'Follow the five-step direct-cost structure; cite tender measurement/specification clauses when available (no COTO ritual required).',
   'State method, productivity scenarios, and resource consumption for priced measured items.',
   'Verify key market rates online with webEvidence when required by the project boundary; otherwise mark unverified — never invent rates.',
-  'Honour projectBoundary.pricingStandard, currency, tax stance, and organization outline assumptions.',
-  'Do not invent plant, labour, materials, camp, or methods outside the projectBoundary fence (allowedSourceIds / extractedInventory / registered knowledge slugs).',
+  'Honour 项目特征.md, plus any optional projectBoundary.pricingStandard / currency / tax stance when a legacy pack exists.',
+  'Do not invent plant, labour, materials, camp, or methods that contradict 项目特征.md or registered tender sources.',
+  'Do not fill project-characteristic gaps from model memory. Web diligence of those gaps requires evidencePolicy.webDiligenceAuthorized and url + accessedAt.',
   'Write the human-readable Markdown at markdownPath in the same turn as the JSON handoff.',
 ];
 
@@ -194,7 +205,7 @@ export function createOrRefreshBoqBatchManifest(
   projectId: string,
   boq: TenderBoqReconciliationData,
   sourcePathByDocumentId: ReadonlyMap<string, string> = new Map(),
-  options: { projectRoot?: string } = {},
+  options: { projectRoot?: string; parentSessionId?: string } = {},
 ): TenderBoqBatchManifest {
   const projectRoot = options.projectRoot ?? resolveProjectRootFromTenderDir(projectDirectory);
   const briefDirectory = join(projectDirectory, 'orchestration', 'briefs', 'boq-pricing');
@@ -223,9 +234,12 @@ export function createOrRefreshBoqBatchManifest(
   const batches: TenderBoqBatchRecord[] = [];
   const upstreamDeliverables = [
     ...loadUpstreamDocumentAnalysisDeliverables(projectDirectory),
-    ...loadUpstreamProjectBoundaryDeliverables(projectDirectory),
+    ...loadUpstreamProjectCharacteristicsDeliverables(projectDirectory),
   ];
   const quality = resolveBoqQualityStandard(projectDirectory);
+  const evidencePolicy = buildProjectCharacteristicsEvidencePolicy(
+    resolveLiveProjectCharacteristicsEvidence({ projectDirectory, projectId }),
+  );
   for (const items of grouped.values()) {
     const chunks = segmentIntoChapterBatches(items);
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
@@ -237,7 +251,14 @@ export function createOrRefreshBoqBatchManifest(
       const batchId = createBatchId(first.source.documentId, sheet, batchNumber);
       const briefPath = join(briefDirectory, `${batchId}.json`);
       const reportPath = join(reportDirectory, `${batchId}.json`);
-      const markdownPath = boqChapterArtifactPath(projectRoot, projectId, batchId, sheet);
+      const markdownPath = join(
+        tenderOfficialOutputsDir(
+          projectRoot,
+          tenderOfficialOutputOwnerId(options.parentSessionId, projectId),
+          'boq-pricing',
+        ),
+        boqChapterArtifactFileName(batchId, sheet),
+      );
       const itemIds = chunk.map((item) => item.id);
       const allowedDocumentIds = collectAllowedDocumentIds(chunk, scopeLinkByItemId);
       const scope = {
@@ -264,8 +285,9 @@ export function createOrRefreshBoqBatchManifest(
         objective:
           `Price the assigned BOQ items under pricingStandard ${quality.id}. `
           + 'Write JSON to reportPath and readable Markdown to markdownPath when practical. '
-          + 'Prefer substance over format ritual. Cite upstreamDeliverables and projectBoundary when helpful. '
-          + 'Stay inside the projectBoundary fence — do not invent plant, labour, materials, or methods outside registered sources. '
+          + 'Prefer substance over format ritual. Cite upstreamDeliverables — especially 项目特征.md — when helpful. '
+          + 'Do not invent plant, labour, materials, or methods that contradict project characteristics or registered tender sources. '
+          + 'Do not fill project-characteristic gaps from model memory. Follow evidencePolicy: web diligence of missing specs/geology is allowed only when webDiligenceAuthorized is true, and then only with url + accessedAt. '
           + 'Verify market rates via web when possible; otherwise mark unverified — never invent rates. '
           + 'Read [skill:tender-formal-writing] then honor writingContract.',
         writingContract: TENDER_WRITING_CONTRACT_BRIEF,
@@ -283,6 +305,7 @@ export function createOrRefreshBoqBatchManifest(
           ...(sourcePathByDocumentId.get(documentId) ? { path: sourcePathByDocumentId.get(documentId) } : {}),
         })),
         ...(upstreamDeliverables.length > 0 ? { upstreamDeliverables } : {}),
+        evidencePolicy,
         qualityStandard: {
           id: quality.id,
           rules: quality.rules,
@@ -541,23 +564,24 @@ function validateBatchReport(
   }
 }
 
-export function boqChapterArtifactPath(
-  projectRoot: string,
-  projectId: string,
-  batchId: string,
-  sheet: string,
-): string {
+export function boqChapterArtifactFileName(batchId: string, sheet: string): string {
   const sheetStem = sheet
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48) || 'chapter';
+  return `${batchId}__${sheetStem}.md`;
+}
+
+export function boqChapterArtifactPath(
+  projectRoot: string,
+  officialOwnerId: string,
+  batchId: string,
+  sheet: string,
+): string {
   return join(
-    projectRoot,
-    'Agent Pi Outputs',
-    projectId,
-    'boq-pricing',
-    `${batchId}__${sheetStem}.md`,
+    tenderOfficialOutputsDir(projectRoot, officialOwnerId, 'boq-pricing'),
+    boqChapterArtifactFileName(batchId, sheet),
   );
 }
 
@@ -1086,9 +1110,24 @@ function loadUpstreamDocumentAnalysisDeliverables(
     }));
 }
 
-function loadUpstreamProjectBoundaryDeliverables(
+function loadUpstreamProjectCharacteristicsDeliverables(
   projectDirectory: string,
 ): Array<{ id: string; kind: string; path: string; label: string }> {
+  const analysisCatalog = readStageDeliverablesCatalog(projectDirectory, 'tender-document-analysis');
+  const fromAnalysis = (analysisCatalog?.items ?? [])
+    .filter((item) => item.citable && (
+      item.id === 'md:project_characteristics'
+      || item.label === '项目特征.md'
+      || item.path.replace(/\\/g, '/').endsWith('/项目特征.md')
+    ))
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      path: item.path,
+      label: item.label,
+    }));
+  if (fromAnalysis.length > 0) return fromAnalysis.slice(0, 4);
+
   const catalog = readStageDeliverablesCatalog(projectDirectory, 'project-boundary-conditions');
   if (!catalog) {
     const packPath = join(projectDirectory, 'packs', 'project-boundary.json');

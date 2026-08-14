@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { closeSync, constants as FS_CONSTANTS, existsSync, openSync, readFileSync, readSync, statSync } from 'fs'
 import { access, open, readFile, stat, writeFile, mkdir } from 'fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
+import { totalmem } from 'node:os'
 import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary, type SpawnSessionRequest, type SpawnSessionResult } from '@craft-agent/shared/agent'
 import {
   resolveSessionConnection,
@@ -50,6 +51,7 @@ import {
   createSession as createStoredSession,
   deleteSession as deleteStoredSession,
   updateSessionMetadata,
+  patchSessionHeaderFromSource,
   setSessionBusinessStage,
   canUpdateSdkCwd,
   setPendingPlanExecution as setStoredPendingPlanExecution,
@@ -132,6 +134,7 @@ import { getAgentSessionStatusGateError } from './goal-completion-gate'
 import {
   decideSpawnMemoryGuard,
   readSpawnMemoryGuardEnvLimits,
+  resolveSpawnTotalLimitKb,
   type SpawnMemoryGuardDecision,
 } from './runtime-memory-guard'
 import { decideTenderParentSpawnGate } from './tender-spawn-gate'
@@ -1420,6 +1423,10 @@ const SESSION_GOAL_CRITERION_KINDS = new Set<SessionGoalCriterionKind>([
 
 const SPAWN_SESSION_ACTIVE_HANDOFF_LIMIT = 4
 const SPAWN_HANDOFF_MONITOR_INTERVAL_MS = 5_000
+/** Full JSONL rewrite of a tender parent every 500ms freezes the Electron UI. */
+const LARGE_TRANSCRIPT_PERSIST_DEBOUNCE_MS = 8_000
+const LARGE_TRANSCRIPT_MESSAGE_COUNT = 80
+const LARGE_TRANSCRIPT_TEXT_CHARS = 100_000
 
 export const SPAWNED_CHILD_SEND_OPTIONS = Object.freeze({
   goalLoopMode: 'off',
@@ -2242,6 +2249,11 @@ export class SessionManager implements ISessionManager {
   }> = new Map()
   // Promise deduplication for lazy-loading messages (prevents race conditions)
   private messageLoadingPromises: Map<string, Promise<void>> = new Map()
+  /** Cold sessions marked read before JSONL hydrate — persist after lazy load. */
+  private pendingReadPersist = new Set<string>()
+  /** persistSession while JSONL is already lazy-loading — enqueue after hydrate. */
+  private pendingPersistAfterLoad = new Set<string>()
+  private inactiveMessageRelease: Promise<void> = Promise.resolve()
   /**
    * Track which session the user is actively viewing (per workspace).
    * Map of workspaceId -> sessionId. Used to determine if a session should be
@@ -2479,6 +2491,9 @@ export class SessionManager implements ISessionManager {
   private runtimeMemoryProbe?: () => {
     mainRssBytes: number
     totalWorkingSetKb?: number
+    totalPrivateKb?: number
+    physicalMemoryBytes?: number
+    platform?: NodeJS.Platform
   }
 
   /**
@@ -2542,7 +2557,13 @@ export class SessionManager implements ISessionManager {
   }
 
   setRuntimeMemoryProbe(
-    probe: (() => { mainRssBytes: number; totalWorkingSetKb?: number }) | null,
+    probe: (() => {
+      mainRssBytes: number
+      totalWorkingSetKb?: number
+      totalPrivateKb?: number
+      physicalMemoryBytes?: number
+      platform?: NodeJS.Platform
+    }) | null,
   ): void {
     this.runtimeMemoryProbe = probe ?? undefined
   }
@@ -3364,49 +3385,29 @@ export class SessionManager implements ISessionManager {
   /**
    * Persist a session to disk (async, with debouncing in the persistence queue).
    *
-   * Cold-session path: if messages haven't been lazy-loaded yet, hydrate them
-   * synchronously from the JSONL first — otherwise the snapshot we enqueue
-   * would write `messages: []` over the real messages on disk. Hydration
-   * deliberately does NOT touch persistent metadata fields (name, labels,
-   * sessionStatus, llmConnection, ...) because the caller may have just
-   * mutated them; the in-memory mutation must win over what's on disk.
-   * `loadStoredSession` is synchronous (sync fs reads), so the entire path
-   * stays sync — no microtask race window between the load and the enqueue.
+   * Cold-session path: never parse/rewrite the transcript. Header-only patch
+   * keeps status/labels/unread/child links durable without blocking GET_MESSAGES
+   * on a multi-MB tender JSONL. Message mutations require messagesLoaded=true.
    */
   private persistSession(managed: ManagedSession): void {
     if (!managed.messagesLoaded) {
-      this.hydrateMessagesForColdPersist(managed)
+      if (this.messageLoadingPromises.has(managed.id)) {
+        this.pendingPersistAfterLoad.add(managed.id)
+        return
+      }
+      patchSessionHeaderFromSource(managed.workspace.rootPath, managed.id, managed)
+      return
     }
     this.enqueuePersist(managed)
   }
 
-  // Cold-persist hydration. Mirrors the messages/queue-recovery half of
-  // loadMessagesFromDisk but skips the metadata field syncs. Sets
-  // messagesLoaded=true so subsequent persistSession calls take the fast path.
-  // Subsequent ensureMessagesLoaded calls also short-circuit, which is fine —
-  // interrupted queue recovery has already run here.
-  private hydrateMessagesForColdPersist(managed: ManagedSession): void {
-    sessionLog.debug(`Cold-load triggered for persistSession on ${managed.id}`)
-    const stored = loadStoredSession(managed.workspace.rootPath, managed.id)
-    if (stored) {
-      managed.messages = (stored.messages || []).map(storedToMessage)
-      managed.tokenUsage = stored.tokenUsage
-      // Deferred-load fields (intentionally undefined after startup, see
-      // loadSessionsFromDisk). Populate from disk only if not already set in
-      // memory — a caller may have mutated them via setSessionSources etc.
-      if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
-      if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
-      if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
-      if (managed.goalState === undefined) managed.goalState = recoverStaleGoalStateOnRestore(stored.goalState)
-      if (managed.sharedUrl === undefined) managed.sharedUrl = stored.sharedUrl
-      if (managed.sharedId === undefined) managed.sharedId = stored.sharedId
-      if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
-      if (managed.transferredSessionSummaryApplied === undefined) managed.transferredSessionSummaryApplied = stored.transferredSessionSummaryApplied
-
-      this.recoverInterruptedQueuedMessages(managed)
-      sessionLog.debug(`Cold-hydrated ${managed.messages.length} messages for session ${managed.id}`)
-    }
-    managed.messagesLoaded = true
+  private isLargeTranscript(managed: ManagedSession): boolean {
+    if (!managed.messagesLoaded) return false
+    if (managed.messages.length >= LARGE_TRANSCRIPT_MESSAGE_COUNT) return true
+    return managed.messages.some((message) => (
+      (message.content?.length ?? 0) > LARGE_TRANSCRIPT_TEXT_CHARS
+      || (message.toolResult?.length ?? 0) > LARGE_TRANSCRIPT_TEXT_CHARS
+    ))
   }
 
   /**
@@ -3442,6 +3443,7 @@ export class SessionManager implements ISessionManager {
       // Materialize only the latest debounced snapshot. Building StoredSession
       // eagerly on every tool event repeatedly cloned the entire message history
       // and could exhaust the main process heap during polling-heavy turns.
+      const large = this.isLargeTranscript(managed)
       sessionPersistenceQueue.enqueueLazy(managed.id, () => {
         // Filter out transient status messages (progress indicators like "Compacting...")
         // Error messages are now persisted with rich fields for diagnostics
@@ -3457,18 +3459,22 @@ export class SessionManager implements ISessionManager {
           messages: persistableMessages.map(messageToStored),
           tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
         } as StoredSession
-      })
+      }, large
+        ? { debounceMs: LARGE_TRANSCRIPT_PERSIST_DEBOUNCE_MS, stickyTimer: true }
+        : undefined)
     } catch (error) {
       sessionLog.error(`Failed to queue session ${managed.id} for persistence:`, error)
     }
   }
 
   // Flush a specific session immediately (call on session close/switch).
-  // Cold-persist hydration is synchronous, so by the time we reach here the
-  // queue already has an entry whenever persistSession was just called.
+  // Cold metadata persists are header-patched synchronously; loaded sessions
+  // may still have a queued full JSONL rewrite.
   async flushSession(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed?.pendingProjectMemoryWrites.size) await waitForProjectMemoryWrites(managed.pendingProjectMemoryWrites)
+    const loading = this.messageLoadingPromises.get(sessionId)
+    if (loading) await loading
     await sessionPersistenceQueue.flush(sessionId)
   }
 
@@ -3868,6 +3874,18 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  getSessionBrowseContext(sessionId: string): {
+    workingDirectory?: string
+    businessContext?: Session['businessContext']
+  } | null {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return null
+    return {
+      workingDirectory: managed.workingDirectory,
+      businessContext: managed.businessContext,
+    }
+  }
+
   hasLiveAgentRuntime(sessionId: string): boolean {
     return Boolean(this.sessions.get(sessionId)?.agent)
   }
@@ -3900,15 +3918,28 @@ export class SessionManager implements ISessionManager {
   /**
    * Internal: Load messages from disk storage into the managed session.
    */
+  private finishPendingLoadPersist(managed: ManagedSession, extra = false): void {
+    const shouldFullPersist = extra || this.pendingPersistAfterLoad.has(managed.id)
+    this.pendingReadPersist.delete(managed.id)
+    this.pendingPersistAfterLoad.delete(managed.id)
+    if (shouldFullPersist) this.enqueuePersist(managed)
+  }
+
   private async loadMessagesFromDisk(managed: ManagedSession): Promise<void> {
+    const preserveRead = this.pendingReadPersist.has(managed.id)
+    const preservedLastRead = managed.lastReadMessageId
+    const preservedUnread = managed.hasUnread
     const storedSession = await loadStoredSessionAsync(managed.workspace.rootPath, managed.id)
     // persistSession may have sync-hydrated while we awaited disk I/O.
-    if (managed.messagesLoaded) return
+    if (managed.messagesLoaded) {
+      this.finishPendingLoadPersist(managed)
+      return
+    }
     if (storedSession) {
       managed.messages = (storedSession.messages || []).map(storedToMessage)
       managed.tokenUsage = storedSession.tokenUsage
-      managed.lastReadMessageId = storedSession.lastReadMessageId
-      managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
+      managed.lastReadMessageId = preserveRead ? preservedLastRead : storedSession.lastReadMessageId
+      managed.hasUnread = preserveRead ? preservedUnread : storedSession.hasUnread
       managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
       managed.goalState = recoverStaleGoalStateOnRestore(storedSession.goalState)
       managed.sharedUrl = storedSession.sharedUrl
@@ -3929,12 +3960,69 @@ export class SessionManager implements ISessionManager {
 
       const recoveredQueuedCount = this.recoverInterruptedQueuedMessages(managed)
       managed.messagesLoaded = true
-      if (recoveredQueuedCount > 0) {
-        this.enqueuePersist(managed)
-      }
+      this.finishPendingLoadPersist(managed, recoveredQueuedCount > 0)
       return
     }
     managed.messagesLoaded = true
+    this.pendingReadPersist.delete(managed.id)
+    this.pendingPersistAfterLoad.delete(managed.id)
+  }
+
+  private isSessionViewedInAnyWorkspace(sessionId: string): boolean {
+    for (const viewedId of this.activeViewingSession.values()) {
+      if (viewedId === sessionId) return true
+    }
+    return false
+  }
+
+  private isSessionMessagePinned(managed: ManagedSession): boolean {
+    if (managed.isProcessing) return true
+    if (managed.messageQueue.length > 0) return true
+    if (managed.agent) return true
+    if (managed.spawnHandoffWait) return true
+    if (managed.pendingAuthRequest) return true
+    if (this.messageLoadingPromises.has(managed.id)) return true
+    const goalStatus = managed.goalState?.status
+    if (goalStatus === 'running' || goalStatus === 'improving' || goalStatus === 'auditing') return true
+    if (this.isSessionViewedInAnyWorkspace(managed.id)) return true
+    return false
+  }
+
+  private canReleaseSessionMessages(managed: ManagedSession): boolean {
+    if (!managed.messagesLoaded) return false
+    if (managed.messages.length === 0) return false
+    return !this.isSessionMessagePinned(managed)
+  }
+
+  /**
+   * Drop in-memory transcripts after an idle runtime is gone.
+   * Do not flush JSONL here — a forced rewrite on session switch starved
+   * `file:read` for in-chat datatable / markdown-preview blocks.
+   * Skip sessions that still have a pending persist; they will be released
+   * on a later idle dispose once the queue is quiet.
+   */
+  private releaseInactiveSessionMessages(): Promise<void> {
+    const next = this.inactiveMessageRelease.then(
+      () => this.releaseInactiveSessionMessagesOnce(),
+      () => this.releaseInactiveSessionMessagesOnce(),
+    )
+    this.inactiveMessageRelease = next.then(() => undefined, (error) => {
+      sessionLog.warn(
+        `Failed to release inactive session messages: ${error instanceof Error ? error.message : error}`,
+      )
+    })
+    return next
+  }
+
+  private releaseInactiveSessionMessagesOnce(): void {
+    for (const managed of this.sessions.values()) {
+      if (!this.canReleaseSessionMessages(managed)) continue
+      if (sessionPersistenceQueue.hasPending(managed.id)) continue
+      const released = managed.messages.length
+      managed.messagesLoaded = false
+      managed.messages = []
+      sessionLog.debug(`Released ${released} in-memory message(s) for idle session ${managed.id}`)
+    }
   }
 
   /**
@@ -4443,6 +4531,11 @@ export class SessionManager implements ISessionManager {
     managed.backendRuntimeSignature = undefined
     managed.backendRestartSignature = undefined
     unregisterSessionScopedToolCallbacks(sessionId)
+    void this.releaseInactiveSessionMessages().catch((error) => {
+      sessionLog.warn(
+        `Failed to release messages after disposing ${sessionId}: ${error instanceof Error ? error.message : error}`,
+      )
+    })
   }
 
   /**
@@ -4644,6 +4737,10 @@ export class SessionManager implements ISessionManager {
     const restartSignature = buildRestartRequiredSignature(sigInput)
 
     if (!managed.agent) {
+      // Creating a Pi/Claude backend is RSS-heavy. The spawn_session gate already
+      // uses this cap; continuing or resuming extra children used to bypass it and
+      // freeze the main process (sendMessage / file-tree RPCs time out, then OOM).
+      this.assertSpawnMemoryAvailable()
       const end = perf.start('agent.create', { sessionId: managed.id })
 
       // Lock the connection after first resolution
@@ -6638,11 +6735,19 @@ export class SessionManager implements ISessionManager {
       mainRssBytes: process.memoryUsage().rss,
     }
     const limits = readSpawnMemoryGuardEnvLimits()
+    const physicalMemoryBytes = snapshot.physicalMemoryBytes ?? totalmem()
     return decideSpawnMemoryGuard({
       mainRssBytes: snapshot.mainRssBytes,
       totalWorkingSetKb: snapshot.totalWorkingSetKb,
+      totalPrivateKb: snapshot.totalPrivateKb,
+      physicalMemoryBytes,
+      platform: snapshot.platform ?? process.platform,
       mainRssLimitBytes: limits.mainRssLimitBytes,
-      totalWorkingSetLimitKb: limits.totalWorkingSetLimitKb,
+      totalLimitKb: resolveSpawnTotalLimitKb({
+        physicalMemoryBytes,
+        explicitLimitKb: limits.explicitTotalLimitKb,
+        memoryFraction: limits.memoryFraction,
+      }),
     })
   }
 
@@ -7220,34 +7325,33 @@ export class SessionManager implements ISessionManager {
   async markSessionRead(sessionId: string): Promise<void> {
     if (!this.sessions.has(sessionId)) return
 
-    const persistOperations: Promise<void>[] = []
+    let changed = false
     for (const threadSessionId of collectSessionThreadIds(sessionId, this.sessions.values())) {
       const managed = this.sessions.get(threadSessionId)
       if (!managed || managed.isProcessing) continue
 
-      const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
       const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages) ?? managed.lastFinalMessageId
+      let dirty = false
       if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
         managed.lastReadMessageId = lastFinalId
-        updates.lastReadMessageId = lastFinalId
+        dirty = true
       }
 
       if (managed.hasUnread) {
         managed.hasUnread = false
-        updates.hasUnread = false
+        dirty = true
       }
 
-      if (Object.keys(updates).length > 0) {
-        persistOperations.push(
-          updateSessionMetadata(managed.workspace.rootPath, managed.id, updates),
-        )
-      }
+      if (!dirty) continue
+      changed = true
+      this.pendingReadPersist.add(managed.id)
+      void updateSessionMetadata(managed.workspace.rootPath, managed.id, {
+        lastReadMessageId: managed.lastReadMessageId,
+        hasUnread: managed.hasUnread,
+      })
     }
 
-    if (persistOperations.length > 0) {
-      await Promise.all(persistOperations)
-      this.emitUnreadSummaryChanged()
-    }
+    if (changed) this.emitUnreadSummaryChanged()
   }
 
   /**

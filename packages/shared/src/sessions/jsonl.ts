@@ -132,15 +132,22 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
   }
 }
 
+const JSONL_ASYNC_PARSE_YIELD_EVERY = 32
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 /**
  * Non-blocking JSONL read for lazy session open. Tender parent transcripts can
  * be hundreds of MB; a sync readFile+parse starves every other IPC (chat switch
- * looks frozen). Disk I/O yields; parse still runs on this turn afterward.
+ * looks frozen). Disk I/O yields; message parse also yields so mark-read / file
+ * tree RPCs can run during a large open.
  */
 export async function readSessionJsonlAsync(sessionFile: string): Promise<StoredSession | null> {
   try {
     const content = await readFile(sessionFile, 'utf-8');
-    return parseSessionJsonlContent(content, sessionFile);
+    return await parseSessionJsonlContentAsync(content, sessionFile);
   } catch (error) {
     debug('[jsonl] Failed to read session async:', sessionFile, error);
     return null;
@@ -148,8 +155,45 @@ export async function readSessionJsonlAsync(sessionFile: string): Promise<Stored
 }
 
 function parseSessionJsonlContent(content: string, sessionFile: string): StoredSession | null {
-  const lines = content.split('\n').filter(Boolean);
+  return buildStoredSessionFromJsonlLines(content.split('\n').filter(Boolean), sessionFile);
+}
 
+async function parseSessionJsonlContentAsync(content: string, sessionFile: string): Promise<StoredSession | null> {
+  const lines = content.split('\n').filter(Boolean);
+  const firstLine = lines[0];
+  if (!firstLine) return null;
+
+  const sessionDir = dirname(sessionFile);
+  const header = normalizeHeaderPermissionModes(
+    safeJsonParse(expandSessionPath(firstLine, sessionDir)) as SessionHeader
+  );
+  const messages: StoredMessage[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const expanded = expandSessionPath(lines[i], sessionDir);
+    try {
+      messages.push(JSON.parse(expanded) as StoredMessage);
+    } catch {
+      debug('[jsonl] Skipping corrupted message line (truncated?):', expanded.substring(0, 100));
+    }
+    if (i % JSONL_ASYNC_PARSE_YIELD_EVERY === 0) {
+      await yieldToEventLoop();
+    }
+  }
+
+  const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
+  const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
+
+  return {
+    ...pickSessionFields(header),
+    workspaceRootPath: expandPath(header.workspaceRootPath),
+    workingDirectory: workingDir,
+    sdkCwd,
+    messages,
+    tokenUsage: header.tokenUsage,
+  } as StoredSession;
+}
+
+function buildStoredSessionFromJsonlLines(lines: string[], sessionFile: string): StoredSession | null {
   const firstLine = lines[0];
   if (!firstLine) return null;
 
@@ -181,12 +225,45 @@ function parseSessionJsonlContent(content: string, sessionFile: string): StoredS
 }
 
 /**
+ * Rewrite JSONL line 1 (header) without parsing message lines.
+ * Tender parent transcripts can be tens of MB; loadSession()+saveSession()
+ * on metadata/plan fields froze session switches on the main process.
+ */
+export function patchSessionJsonlHeader(
+  sessionFile: string,
+  mutate: (header: SessionHeader) => void,
+): boolean {
+  try {
+    const buf = readFileSync(sessionFile);
+    const newlineIndex = buf.indexOf(0x0a);
+    if (newlineIndex < 0) return false;
+
+    const sessionDir = dirname(sessionFile);
+    const header = normalizeHeaderPermissionModes(
+      safeJsonParse(expandSessionPath(buf.subarray(0, newlineIndex).toString('utf8'), sessionDir)) as SessionHeader
+    );
+    if (!header || typeof header !== 'object') return false;
+
+    mutate(header);
+
+    const headerLine = makeSessionPathPortable(JSON.stringify(header), sessionDir);
+    const tmpFile = sessionFile + '.tmp';
+    writeFileSync(tmpFile, Buffer.concat([
+      Buffer.from(`${headerLine}\n`, 'utf8'),
+      buf.subarray(newlineIndex + 1),
+    ]));
+    try { unlinkSync(sessionFile); } catch { /* ignore if doesn't exist */ }
+    renameSync(tmpFile, sessionFile);
+    return true;
+  } catch (error) {
+    debug('[jsonl] Failed to patch session header:', sessionFile, error);
+    return false;
+  }
+}
+
+/**
  * Write session to JSONL format using atomic write (write-to-temp-then-rename).
- * Prevents file corruption if the process crashes mid-write: either the old
- * file remains intact or the new file is fully written. Never a partial file.
- *
- * Line 1: Header with pre-computed metadata
- * Lines 2+: Messages (one per line)
+ * Line 1: Header with pre-computed metadata. Lines 2+: Messages.
  */
 export function writeSessionJsonl(sessionFile: string, session: StoredSession): void {
   const header = createSessionHeader(session);

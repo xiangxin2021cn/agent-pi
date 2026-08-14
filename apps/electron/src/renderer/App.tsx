@@ -31,7 +31,7 @@ import { navigate, routes } from './lib/navigate'
 import { attachmentFromContentRef, toDraftRef } from './lib/drafts'
 import { stripMarkdown } from './utils/text'
 import { coerceInputText } from './lib/input-text'
-import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
+import { getPermissionReconcileSessionIds, getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
 import {
   buildMarkdownSelectionRewritePrompt,
@@ -72,9 +72,10 @@ import {
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
   HTMLPreviewOverlay,
+  PreviewOverlay,
   type MarkdownSidecarActionsProps,
 } from '@craft-agent/ui'
-import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
+import { useLinkInterceptor, isPendingTextFilePreview, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
@@ -83,6 +84,7 @@ import { rendererLog } from '@/lib/logger'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
 import { toLocalPreviewUrl } from '../shared/local-preview-url'
+import { FileText } from 'lucide-react'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
 
@@ -120,23 +122,6 @@ function workspaceDistribution(sessions: Iterable<{ workspaceId?: string }>): Re
     distribution[key] = (distribution[key] ?? 0) + 1
   }
   return distribution
-}
-
-function getPermissionReconcileSessionIds(sessions: Session[], selectedSessionId?: string | null): string[] {
-  const knownIds = new Set(sessions.map(session => session.id))
-  const ids = new Set<string>()
-
-  if (selectedSessionId && knownIds.has(selectedSessionId)) {
-    ids.add(selectedSessionId)
-  }
-
-  for (const session of sessions) {
-    if (session.isProcessing || (session.permissionMode && session.permissionMode !== defaultSessionOptions.permissionMode)) {
-      ids.add(session.id)
-    }
-  }
-
-  return Array.from(ids)
 }
 
 /**
@@ -558,9 +543,13 @@ export default function App() {
       }
       setSessionOptions(optionsMap)
 
-      await Promise.allSettled(
-        getPermissionReconcileSessionIds(loadedSessions, initialSessionId).map(reconcilePermissionModeState)
-      )
+      const reconcileIds = getPermissionReconcileSessionIds(loadedSessions, initialSessionId)
+      rendererLog.info('[ModeSync] reconciling permission modes after session load', {
+        count: reconcileIds.length,
+        totalSessions: loadedSessions.length,
+        ids: reconcileIds,
+      })
+      await Promise.allSettled(reconcileIds.map(reconcilePermissionModeState))
 
       setSessionsLoaded(true)
 
@@ -630,13 +619,21 @@ export default function App() {
       // consistent update instead of intermediate states.
       const nextMetaMap = store.set(refreshSessionsMetadataAtom, { sessions, loadedSessionIds, removeMissing })
 
-      // Sync app-level state (React hooks / non-atom concerns) after the atom transaction
+      // Sync app-level state (React hooks / non-atom concerns) after the atom transaction.
+      // Only the sessions we would reconcile — never all 781 idle allow-all sessions.
       for (const session of sessions) {
-        syncSessionOptionsFromSession(session)
+        if (session.id === selectedSessionId || session.isProcessing) {
+          syncSessionOptionsFromSession(session)
+        }
       }
-      await Promise.allSettled(
-        getPermissionReconcileSessionIds(sessions, selectedSessionId).map(reconcilePermissionModeState)
-      )
+      const reconcileIds = getPermissionReconcileSessionIds(sessions, selectedSessionId)
+      rendererLog.info('[ModeSync] reconciling permission modes after list refresh', {
+        reason,
+        count: reconcileIds.length,
+        totalSessions: sessions.length,
+        ids: reconcileIds,
+      })
+      await Promise.allSettled(reconcileIds.map(reconcilePermissionModeState))
 
       return nextMetaMap
     } catch (err) {
@@ -2383,6 +2380,27 @@ function FilePreviewRenderer({
 }) {
   const { t } = useTranslation()
   const theme = isDark ? 'dark' : 'light' as const
+  if (isPendingTextFilePreview(state)) {
+    return (
+      <PreviewOverlay
+        isOpen
+        onClose={onClose}
+        filePath={state.filePath}
+        theme={theme}
+        typeBadge={{
+          icon: FileText,
+          label: t('preview.loadingFile'),
+          variant: 'blue',
+        }}
+      >
+        <div className="min-h-full flex items-center justify-center px-6 py-16">
+          <div className="rounded-[8px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
+            {t('preview.loadingFile')}
+          </div>
+        </div>
+      </PreviewOverlay>
+    )
+  }
   const getMarkdownSidecarActions = (markdownPath?: string): Omit<MarkdownSidecarActionsProps, 'onStatus' | 'onError'> | undefined => {
     if (!markdownPath) return undefined
     return {

@@ -15,6 +15,12 @@ describe('humanizeRuntimeError', () => {
       'spawn_session blocked by memory guard (main_rss). Finish or stop existing sub-agents before spawning more.',
     )
     expect(result).toContain('memory pressure')
+    expect(humanizeRuntimeError(
+      'spawn_session blocked: total working set is 3.60 GiB (limit 3.50 GiB). Finish or stop existing sub-agents before spawning more.',
+    )).toContain('memory pressure')
+    expect(humanizeRuntimeError(
+      'spawn_session blocked: total private memory is 12.10 GiB (limit 11.20 GiB). Finish or stop existing sub-agents before spawning more.',
+    )).toContain('memory pressure')
   })
 
   it('rewrites nested spawn blocks', () => {

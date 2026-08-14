@@ -1,6 +1,6 @@
 /**
  * Infer project industry and document role for professional tender analysis briefs.
- * Heuristics only — boundary stage may override later.
+ * Heuristics only — merged 项目特征.md is the downstream pricing brief.
  */
 
 export const TENDER_PROJECT_INDUSTRIES = [
@@ -135,6 +135,7 @@ export function buildProfessionalDocumentAnalysisObjective(input: {
     `Project industry draft: ${input.projectIndustry}. ${industryWritingGuidance(input.projectIndustry)}`,
     `Document role draft: ${input.documentRole}. ${documentRoleWritingGuidance(input.documentRole)}`,
     'Write structured JSON sections to reportPath and a customer-facing Markdown report to markdownPath.',
+    'Extract bid-binding project characteristics into the matching section kinds: contract form and particular conditions; governing specs and clause amendments; duration, site location, geology, and climate; working hours and holidays; subcontracting and localisation limits; employer-imposed construction sequence.',
     'Markdown must read like a tender working memo: hard constraints, bid implications, risks/gaps, clarifications needed.',
     'Do NOT center the report on filenames, documentId, absolute paths, Agent Pi Outputs, or “analysis scope” boilerplate.',
     'Put source filename at most once in a one-line header; body uses industry jargon and clause/page cites only where useful.',

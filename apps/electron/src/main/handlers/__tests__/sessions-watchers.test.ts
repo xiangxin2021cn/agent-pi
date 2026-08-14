@@ -54,6 +54,10 @@ describe('sessions file watchers', () => {
           if (sessionId === 'session-b') return sessionDirB
           return null
         },
+        getSessionBrowseContext: (sessionId: string) => {
+          const workingDirectory = sessionWorkingDirectories[sessionId]
+          return workingDirectory ? { workingDirectory } : null
+        },
         getSessions: () => [
           { id: 'session-a', workingDirectory: sessionWorkingDirectories['session-a'] },
           { id: 'session-b', workingDirectory: sessionWorkingDirectories['session-b'] },
@@ -198,7 +202,16 @@ describe('sessions file watchers', () => {
     expect(JSON.stringify(initial)).not.toContain('pricing-agent-1.md')
 
     const working = initial.find((file: any) => file.source === 'working-directory')
-    const nodeModules = working?.children?.find((file: any) => file.name === 'node_modules')
+    expect(working?.childrenLoaded).toBe(false)
+    expect(working?.hasMoreChildren).toBe(true)
+    expect(JSON.stringify(working ?? {})).not.toContain('left-pad')
+
+    const workingChildren = await getFiles!({ clientId: 'client-a' }, 'session-a', {
+      parentPath: workingDirectory,
+      maxDepth: 1,
+    })
+    expect(workingChildren.map((file: any) => file.name)).not.toContain('Agent Pi Outputs')
+    const nodeModules = workingChildren.find((file: any) => file.name === 'node_modules')
     expect(nodeModules?.childrenLoaded).toBe(false)
     expect(JSON.stringify(nodeModules ?? {})).not.toContain('left-pad')
 

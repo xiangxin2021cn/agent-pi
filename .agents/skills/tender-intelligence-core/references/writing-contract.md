@@ -2,7 +2,7 @@
 
 Operational skill: `tender-formal-writing`. This file remains the full writing-contract reference.
 
-Applies to **every** tender-workbench stage: document-parse memos, BOQ workpapers, project-boundary notes, methodology, programme/resource narratives, cash-flow notes, formal returnables (Work Plan DOCX and the like), and any chat summary a bid team will read.
+Applies to **every** tender-workbench stage: document-parse memos, BOQ workpapers, project-characteristics notes, methodology, programme/resource narratives, cash-flow notes, formal returnables (Work Plan DOCX and the like), and any chat summary a bid team will read.
 
 This is a writing contract, not a completeness waiver. Source locators, validation, and readiness gates still apply.
 

@@ -20,10 +20,9 @@ import { SessionManager, createManagedSession } from './SessionManager.ts'
 //   changes on sessions the user hadn't opened since restart were never
 //   written to disk and were lost on the next restart.
 //
-// The fix routes cold-session persists through ensureMessagesLoaded so the
-// existing JSONL messages are loaded first, then the full record (with the
-// new metadata) is enqueued. flushSession awaits the in-flight load+enqueue
-// so durability holds for sync mutate-then-flush callers.
+// The fix header-patches JSONL line 1 so status/label/rename changes on
+// sessions the user hadn't opened since restart are durable without parsing
+// the transcript. Message lines stay untouched until getSession() lazy-loads.
 
 describe('cold-session metadata persistence', () => {
   let tmpRoot: string
@@ -308,6 +307,6 @@ describe('cold-session metadata persistence', () => {
     await waitForImmediate()
 
     expect(replayed).toEqual([])
-    expect(readDiskMessages(sessionId).find(message => message.id === 'queued-2')?.isQueued).toBe(false)
+    expect(readDiskMessages(sessionId).find(message => message.id === 'queued-2')?.isQueued).toBe(true)
   })
 })

@@ -29,5 +29,6 @@ describe('tender-document-roles', () => {
     expect(objective).toContain('markdownPath');
     expect(objective).toContain('Read [skill:tender-formal-writing] then honor writingContract');
     expect(objective).toContain('AI filler');
+    expect(objective).toContain('project characteristics');
   });
 });

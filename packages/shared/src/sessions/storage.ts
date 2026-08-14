@@ -42,8 +42,9 @@ import type { Plan } from '../agent/plan-types.ts';
 import { validateSessionStatus } from '../statuses/validation.ts';
 import { debug } from '../utils/debug.ts';
 import { getStatusCategory } from '../statuses/storage.ts';
-import { readSessionHeader, readSessionJsonl, readSessionJsonlAsync } from './jsonl.ts';
+import { readSessionHeader, readSessionJsonl, readSessionJsonlAsync, patchSessionJsonlHeader } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
+import { pickSessionFields } from './utils.ts';
 
 // Re-export types for convenience
 export type { SessionConfig } from './types.ts';
@@ -708,6 +709,35 @@ export async function getOrCreateLatestSession(workspaceRootPath: string): Promi
 // Session Metadata Updates
 // ============================================================
 
+function patchStoredSessionHeader(
+  workspaceRootPath: string,
+  sessionId: string,
+  mutate: (header: SessionHeader) => void,
+): boolean {
+  const jsonlPath = getSessionFilePath(workspaceRootPath, sessionId);
+  if (!existsSync(jsonlPath)) return false;
+  if (!patchSessionJsonlHeader(jsonlPath, mutate)) return false;
+  const header = readSessionHeader(jsonlPath);
+  if (header) sessionPersistenceQueue.recordWrittenHeader(sessionId, header);
+  return true;
+}
+
+/**
+ * Rewrite JSONL line 1 from in-memory session fields without parsing messages.
+ * Used when a session is still cold (messages not lazy-loaded) so status/labels/
+ * unread/child-link updates cannot freeze the UI on a multi-MB transcript.
+ */
+export function patchSessionHeaderFromSource(
+  workspaceRootPath: string,
+  sessionId: string,
+  source: object,
+): boolean {
+  return patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    Object.assign(header, pickSessionFields(source));
+    header.lastUsedAt = Date.now();
+  });
+}
+
 /**
  * Update SDK session ID for a session
  */
@@ -716,11 +746,9 @@ export async function updateSessionSdkId(
   sessionId: string,
   sdkSessionId: string
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (session) {
-    session.sdkSessionId = sdkSessionId;
-    await saveSession(session);
-  }
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    header.sdkSessionId = sdkSessionId;
+  });
 }
 
 /**
@@ -765,28 +793,25 @@ export async function updateSessionMetadata(
     | 'businessContext'
   >>
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session) return;
-
-  if (updates.isFlagged !== undefined) session.isFlagged = updates.isFlagged;
-  if (updates.name !== undefined) session.name = updates.name;
-  if (updates.sessionStatus !== undefined) session.sessionStatus = updates.sessionStatus;
-  if (updates.labels !== undefined) session.labels = updates.labels;
-  if (updates.enabledSourceSlugs !== undefined) session.enabledSourceSlugs = updates.enabledSourceSlugs;
-  if (updates.workingDirectory !== undefined) session.workingDirectory = updates.workingDirectory;
-  if (updates.sdkCwd !== undefined) session.sdkCwd = updates.sdkCwd;
-  if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;
-  if ('lastReadMessageId' in updates) session.lastReadMessageId = updates.lastReadMessageId;
-  if ('hasUnread' in updates) session.hasUnread = updates.hasUnread;
-  if ('sharedUrl' in updates) session.sharedUrl = updates.sharedUrl;
-  if ('sharedId' in updates) session.sharedId = updates.sharedId;
-  if (updates.model !== undefined) session.model = updates.model;
-  if (updates.llmConnection !== undefined) session.llmConnection = updates.llmConnection;
-  if (updates.isArchived !== undefined) session.isArchived = updates.isArchived;
-  if ('archivedAt' in updates) session.archivedAt = updates.archivedAt;
-  if (updates.businessContext !== undefined) session.businessContext = updates.businessContext;
-
-  await saveSession(session);
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    if (updates.isFlagged !== undefined) header.isFlagged = updates.isFlagged;
+    if (updates.name !== undefined) header.name = updates.name;
+    if (updates.sessionStatus !== undefined) header.sessionStatus = updates.sessionStatus;
+    if (updates.labels !== undefined) header.labels = updates.labels;
+    if (updates.enabledSourceSlugs !== undefined) header.enabledSourceSlugs = updates.enabledSourceSlugs;
+    if (updates.workingDirectory !== undefined) header.workingDirectory = updates.workingDirectory;
+    if (updates.sdkCwd !== undefined) header.sdkCwd = updates.sdkCwd;
+    if (updates.permissionMode !== undefined) header.permissionMode = updates.permissionMode;
+    if ('lastReadMessageId' in updates) header.lastReadMessageId = updates.lastReadMessageId;
+    if ('hasUnread' in updates) header.hasUnread = updates.hasUnread;
+    if ('sharedUrl' in updates) header.sharedUrl = updates.sharedUrl;
+    if ('sharedId' in updates) header.sharedId = updates.sharedId;
+    if (updates.model !== undefined) header.model = updates.model;
+    if (updates.llmConnection !== undefined) header.llmConnection = updates.llmConnection;
+    if (updates.isArchived !== undefined) header.isArchived = updates.isArchived;
+    if ('archivedAt' in updates) header.archivedAt = updates.archivedAt;
+    if (updates.businessContext !== undefined) header.businessContext = updates.businessContext;
+  });
 }
 
 /**
@@ -798,10 +823,12 @@ export async function setSessionBusinessStage(
   sessionId: string,
   stageId: string,
 ): Promise<SessionConfig['businessContext'] | undefined> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session?.businessContext || session.businessContext.module !== 'tender') return undefined;
+  const jsonlPath = getSessionFilePath(workspaceRootPath, sessionId);
+  if (!existsSync(jsonlPath)) return undefined;
+  const header = readSessionHeader(jsonlPath);
+  if (!header?.businessContext || header.businessContext.module !== 'tender') return undefined;
   const next = {
-    ...session.businessContext,
+    ...header.businessContext,
     stageId,
   };
   await updateSessionMetadata(workspaceRootPath, sessionId, { businessContext: next });
@@ -879,16 +906,14 @@ export async function setPendingPlanExecution(
   planPath: string,
   draftInputSnapshot?: string,
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session) return;
-
-  session.pendingPlanExecution = {
-    planPath,
-    draftInputSnapshot,
-    awaitingCompaction: true,
-    executionDispatched: false,
-  };
-  await saveSession(session);
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    header.pendingPlanExecution = {
+      planPath,
+      draftInputSnapshot,
+      awaitingCompaction: true,
+      executionDispatched: false,
+    };
+  });
 }
 
 /**
@@ -900,11 +925,10 @@ export async function markCompactionComplete(
   workspaceRootPath: string,
   sessionId: string
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session?.pendingPlanExecution) return;
-
-  session.pendingPlanExecution.awaitingCompaction = false;
-  await saveSession(session);
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    if (!header.pendingPlanExecution) return;
+    header.pendingPlanExecution.awaitingCompaction = false;
+  });
 }
 
 /**
@@ -916,11 +940,10 @@ export async function markPendingPlanExecutionDispatched(
   workspaceRootPath: string,
   sessionId: string
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session?.pendingPlanExecution) return;
-
-  session.pendingPlanExecution.executionDispatched = true;
-  await saveSession(session);
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    if (!header.pendingPlanExecution) return;
+    header.pendingPlanExecution.executionDispatched = true;
+  });
 }
 
 /**
@@ -932,26 +955,26 @@ export async function clearPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string
 ): Promise<void> {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session) return;
-
-  delete session.pendingPlanExecution;
-  await saveSession(session);
+  patchStoredSessionHeader(workspaceRootPath, sessionId, (header) => {
+    delete header.pendingPlanExecution;
+  });
 }
 
 /**
  * Get pending plan execution state for a session.
- * Used on reload to check if we need to resume plan execution.
+ * Header-only — must not parse the transcript (session switch hot path).
  */
 export function getPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string
 ): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
-  const session = loadSession(workspaceRootPath, sessionId);
-  if (!session?.pendingPlanExecution) return null;
+  const jsonlPath = getSessionFilePath(workspaceRootPath, sessionId);
+  if (!existsSync(jsonlPath)) return null;
+  const header = readSessionHeader(jsonlPath);
+  if (!header?.pendingPlanExecution) return null;
   return {
-    ...session.pendingPlanExecution,
-    executionDispatched: session.pendingPlanExecution.executionDispatched === true,
+    ...header.pendingPlanExecution,
+    executionDispatched: header.pendingPlanExecution.executionDispatched === true,
   };
 }
 

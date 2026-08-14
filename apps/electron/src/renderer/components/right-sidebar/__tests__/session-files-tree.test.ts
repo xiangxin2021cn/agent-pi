@@ -116,6 +116,22 @@ describe('session-files-tree', () => {
     expect(fetched).toEqual([briefs.path])
   })
 
+  it('does not auto-hydrate working-directory or tender-workspace roots', async () => {
+    const working = dir('C:\\proj\\tender-pack', { source: 'working-directory' })
+    const tender = dir('C:\\proj\\.agent-pi\\business\\tender\\p1', { source: 'tender-workspace' })
+    const fetched: string[] = []
+    await hydrateExpandedDirectories(
+      [working, tender],
+      new Set([working.path, tender.path]),
+      async (directoryPath) => {
+        fetched.push(directoryPath)
+        return []
+      },
+      () => {},
+    )
+    expect(fetched).toEqual([])
+  })
+
   it('times out a hung folder fetch so the loading pill can clear', async () => {
     await expect(withTimeout(
       new Promise(() => {}),

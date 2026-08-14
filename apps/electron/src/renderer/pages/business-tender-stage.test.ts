@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test, beforeAll } from 'bun:test'
+import { setupI18n, i18n } from '@craft-agent/shared/i18n'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import {
   resolveProjectParentSessionId,
@@ -7,6 +8,11 @@ import {
   shouldOpenNewProjectParentSession,
   summarizeTenderStage,
 } from './business-tender-stage.ts'
+
+beforeAll(async () => {
+  setupI18n()
+  await i18n.changeLanguage('en')
+})
 
 function stubRun(partial: Partial<TenderStageRunResultDto> = {}): TenderStageRunResultDto {
   return {
@@ -94,7 +100,7 @@ describe('business tender stage helpers', () => {
     const summary = summarizeTenderStage(stubRun({
       missingItems: ['project-parent:mismatch:parent-x'],
     }))
-    expect(summary.missingLabel).toContain('项目主会话')
+    expect(summary.missingLabel).toContain('project chat')
     expect(summary.missingLabel).toContain('parent-x')
   })
 
@@ -102,16 +108,24 @@ describe('business tender stage helpers', () => {
     const summary = summarizeTenderStage(stubRun({
       missingItems: ['document-review:pending:book1', 'document-review:missing-md:book2'],
     }))
-    expect(summary.missingLabel).toContain('待人审解析稿：book1')
-    expect(summary.missingLabel).toContain('缺少可读解析 MD：book2')
+    expect(summary.missingLabel).toContain('Parse draft awaiting review: book1')
+    expect(summary.missingLabel).toContain('Missing readable parse MD: book2')
   })
 
   test('summarize formats project boundary confirmation and parse gates', () => {
     const summary = summarizeTenderStage(stubRun({
       missingItems: ['project_boundary:unconfirmed', 'project_boundary:parse-incomplete'],
     }))
-    expect(summary.missingLabel).toContain('尚未人工确认')
-    expect(summary.missingLabel).toContain('界限来源解析批次未完成')
+    expect(summary.missingLabel).toContain('not human-confirmed')
+    expect(summary.missingLabel).toContain('Boundary-source parse batches are incomplete')
+  })
+
+  test('summarize formats project characteristics evidence gap', () => {
+    const summary = summarizeTenderStage(stubRun({
+      missingItems: ['project-characteristics:evidence-gap'],
+    }))
+    expect(summary.missingLabel).toContain('upload and re-parse')
+    expect(summary.missingLabel).toContain('force-pass')
   })
 
   test('summarize formats planning-substep missing items', () => {
@@ -119,7 +133,20 @@ describe('business tender stage helpers', () => {
       stageId: 'planning-and-submission',
       missingItems: ['planning-substep:plan-methodology:methodology-review:pending'],
     }))
-    expect(summary.missingLabel).toContain('4-A 施工策划')
+    expect(summary.missingLabel).toContain('4-A Methodology')
     expect(summary.missingLabel).toContain('methodology-review:pending')
+  })
+
+  test('summarize uses Chinese copy when the UI language is zh-Hans', async () => {
+    await i18n.changeLanguage('zh-Hans')
+    try {
+      const summary = summarizeTenderStage(stubRun({
+        missingItems: ['project-characteristics:evidence-gap'],
+      }))
+      expect(summary.missingLabel).toContain('补传并重新解析')
+      expect(summary.missingLabel).toContain('强制放行')
+    } finally {
+      await i18n.changeLanguage('en')
+    }
   })
 })

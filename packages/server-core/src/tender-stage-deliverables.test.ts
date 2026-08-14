@@ -30,8 +30,22 @@ describe('tender stage deliverables', () => {
       JSON.stringify({
         schemaVersion: 1,
         capability: 'document_analysis',
+        projectId: '573',
         revision: 1,
-        data: { sections: [{ id: 's1', kind: 'other', title: 'T', summary: 'ok', sourceRefs: [], status: 'draft', documentId: 'document-a' }] },
+        coreRevision: 1,
+        upstream: [{ capability: 'core', revision: 1 }],
+        updatedAt: '2026-08-14T00:00:00.000Z',
+        data: {
+          sections: [{
+            id: 's1',
+            kind: 'special_conditions',
+            title: 'FIDIC Red Book particular conditions',
+            summary: 'Employer amends Sub-Clause 8.2 time for completion.',
+            sourceRefs: [{ documentId: 'document-a', clause: '8.2' }],
+            status: 'reviewed',
+            documentId: 'document-a',
+          }],
+        },
       }),
       'utf8',
     );
@@ -61,6 +75,11 @@ describe('tender stage deliverables', () => {
     expect(readFileSync(published, 'utf8')).toContain('# Book');
     expect(existsCatalog(result.catalog.catalogPath)).toBe(true);
     expect(result.catalog.items.some((item) => item.id === 'md:document-a')).toBe(true);
+    expect(result.catalog.items.some((item) => item.id === 'md:project_characteristics' && item.presence === 'present')).toBe(true);
+    expect(result.catalog.items.some((item) => item.id === 'json:project_characteristics_evidence')).toBe(true);
+    const characteristicsPath = join(projectRoot, 'Agent Pi Outputs', '260811-fair-moon', '项目特征.md');
+    expect(readFileSync(characteristicsPath, 'utf8')).toContain('FIDIC');
+    expect(readFileSync(characteristicsPath, 'utf8')).toContain('合同制式与专用条款');
 
     const rebuilt = buildStageDeliverablesCatalog({
       projectRoot,

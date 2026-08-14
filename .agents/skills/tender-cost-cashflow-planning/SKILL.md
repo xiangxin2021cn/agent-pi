@@ -13,7 +13,7 @@ commercial narratives. Use `tender_capability` as the cost-cash-flow system of r
 - Use only user-selected sources and registered Tender Workspace records.
 - Do not scan the working directory.
 - Require ready, non-stale `boq_reconciliation`, `schedule_resources`, and `construction_resource_schedule` packs.
-- Emit `S-Curve_Cash_Flow_Chart.html` under `Agent Pi Outputs/<projectId>/planning/` (stage 4-B gate). Prefer the bound cash-flow HTML template from project `bindings.json`.
+- Emit `S-Curve_Cash_Flow_Chart.html` under `Agent Pi Outputs/<parentSessionId>/planning/` (Official Outputs; stage 4-B gate). Prefer the bound cash-flow HTML template from project `bindings.json`.
 - Do not use JavaScript floating-point arithmetic for financial reconciliation.
 - Every sourced rate needs a registered source, currency, and effective date.
 - Label unsupported values as `scenario` or `unverified`; do not present them as sourced facts.

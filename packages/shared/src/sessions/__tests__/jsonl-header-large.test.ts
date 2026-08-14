@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { readSessionHeader, readSessionJsonl, readSessionJsonlAsync, writeSessionJsonl } from '../jsonl.ts';
+import { patchSessionJsonlHeader, readSessionHeader, readSessionJsonl, readSessionJsonlAsync, writeSessionJsonl } from '../jsonl.ts';
 import type { StoredSession } from '../types.ts';
 
 describe('jsonl header loading', () => {
@@ -90,6 +90,72 @@ describe('jsonl header loading', () => {
 
       expect(asyncLoaded?.id).toBe(sync?.id);
       expect(asyncLoaded?.messages).toEqual(sync?.messages);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('async JSONL parse yields across many message lines', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-jsonl-yield-'));
+    try {
+      const sessionDir = join(root, 'sessions', 'session-1');
+      const sessionFile = join(sessionDir, 'session.jsonl');
+      mkdirSync(sessionDir, { recursive: true });
+      const messages = Array.from({ length: 80 }, (_, i) => ({
+        id: `m${i}`,
+        type: i % 2 === 0 ? 'user' : 'assistant',
+        content: `line ${i}`,
+        timestamp: i + 1,
+      }));
+      const session: StoredSession = {
+        id: 'session-1',
+        workspaceRootPath: root,
+        createdAt: 1,
+        lastUsedAt: 2,
+        messages,
+      };
+
+      writeSessionJsonl(sessionFile, session);
+      const loaded = await readSessionJsonlAsync(sessionFile);
+      expect(loaded?.messages).toHaveLength(80);
+      expect(loaded?.messages[79]?.id).toBe('m79');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('patches the JSONL header without rewriting parsed messages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-pi-jsonl-patch-'));
+    try {
+      const sessionDir = join(root, 'sessions', 'session-1');
+      const sessionFile = join(sessionDir, 'session.jsonl');
+      mkdirSync(sessionDir, { recursive: true });
+      const messages = Array.from({ length: 40 }, (_, i) => ({
+        id: `m${i}`,
+        type: i % 2 === 0 ? 'user' : 'assistant',
+        content: `payload ${i} ${'x'.repeat(200)}`,
+        timestamp: i + 1,
+      }));
+      const session: StoredSession = {
+        id: 'session-1',
+        workspaceRootPath: root,
+        createdAt: 1,
+        lastUsedAt: 2,
+        messages,
+        hasUnread: true,
+      };
+
+      writeSessionJsonl(sessionFile, session);
+      expect(patchSessionJsonlHeader(sessionFile, (header) => {
+        header.hasUnread = false;
+        header.name = 'patched';
+      })).toBe(true);
+
+      const loaded = readSessionJsonl(sessionFile);
+      expect(loaded?.name).toBe('patched');
+      expect(loaded?.hasUnread).toBe(false);
+      expect(loaded?.messages).toHaveLength(40);
+      expect(loaded?.messages[39]?.id).toBe('m39');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -5,7 +5,7 @@ loadShellEnv()
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell } from 'electron'
 import { createHash, randomUUID } from 'crypto'
-import { hostname, homedir } from 'os'
+import { hostname, homedir, totalmem } from 'os'
 import * as Sentry from '@sentry/electron/main'
 
 // Initialize Sentry error tracking as early as possible after app import.
@@ -821,6 +821,7 @@ app.whenReady().then(async () => {
       moduleClientResolver = resolveClientId
 
       // Soft-block new spawn_session calls when Electron memory is already near crash levels.
+      // Windows uses summed privateBytes (not working set) so shared DLLs are not double-counted.
       sessionManager.setRuntimeMemoryProbe(() => {
         const mainRssBytes = process.memoryUsage().rss
         try {
@@ -828,9 +829,12 @@ app.whenReady().then(async () => {
           return {
             mainRssBytes,
             totalWorkingSetKb: summary.totalWorkingSetKb,
+            totalPrivateKb: summary.totalPrivateBytes,
+            physicalMemoryBytes: totalmem(),
+            platform: process.platform,
           }
         } catch {
-          return { mainRssBytes }
+          return { mainRssBytes, physicalMemoryBytes: totalmem(), platform: process.platform }
         }
       })
 

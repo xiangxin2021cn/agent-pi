@@ -48,6 +48,21 @@ describe('tender document analysis batch manifest', () => {
     expect(brief.writingSkillSlug).toBe('tender-formal-writing');
   });
 
+  test('writes customer-facing markdown into Official Outputs under the parent session', async () => {
+    root = mkdtempSync(join(tmpdir(), 'tender-document-batches-official-'));
+    const sources = [
+      { documentId: 'tender-data', path: 'C:/inputs/Tender Data.pdf', name: 'Tender Data.pdf', kind: 'tender_data', priority: 1 },
+    ];
+    const manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, '573', sources, {
+      projectRoot: root,
+      parentSessionId: '260812-still-clover',
+    });
+    expect(manifest.batches[0]?.markdownPath).toContain(
+      join('Agent Pi Outputs', '260812-still-clover', 'document-analysis'),
+    );
+    expect(manifest.batches[0]?.markdownPath).not.toContain(join('Agent Pi Outputs', '573', 'document-analysis'));
+  });
+
   test('accepts only schema-valid reports that cite the assigned document and include MD', async () => {
     root = mkdtempSync(join(tmpdir(), 'tender-document-batches-'));
     let manifest = await createOrRefreshDocumentAnalysisBatchManifest(root, 'n3', [

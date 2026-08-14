@@ -729,13 +729,8 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     setOutputDirectory(null)
     setIsLoading(true)
 
-    const fallback = window.setTimeout(() => {
-      void loadFiles()
-    }, 8_000)
-
     return () => {
       loadGenerationRef.current += 1
-      window.clearTimeout(fallback)
     }
   }, [sessionId, workingDirectoryKey, messagesLoaded, loadFiles])
 
@@ -744,6 +739,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     if (filesSessionIdRef.current !== sessionId) return
     const unloaded = collectExpandedUnloadedDirectories(files, expandedPaths)
     for (const directory of unloaded) {
+      if (directory.source === 'working-directory' || directory.source === 'tender-workspace') continue
       if (failedDirectoriesRef.current.has(directory.path)) continue
       void loadDirectoryChildren(directory)
     }

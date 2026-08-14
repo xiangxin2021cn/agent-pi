@@ -90,6 +90,7 @@ export async function hydrateExpandedDirectories(
   const visit = async (nodes: SessionFile[]) => {
     for (const node of nodes) {
       if (node.type !== 'directory' || !setHasSessionFilePath(expanded, node.path)) continue
+      if (node.source === 'working-directory' || node.source === 'tender-workspace') continue
       if (node.childrenLoaded === true) {
         if (node.children?.length) await visit(node.children)
         continue

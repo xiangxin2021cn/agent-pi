@@ -1,3 +1,4 @@
+import { i18n } from '@craft-agent/shared/i18n'
 import type {
   TenderStageRunRequest,
   TenderStageRunResultDto,
@@ -136,6 +137,17 @@ export async function enterTenderStageInProjectParent(
   return startAndAdvanceTenderStageLaunch(run, target, parentSessionId)
 }
 
+const PLANNING_SUBSTEP_KEYS: Record<string, string> = {
+  'plan-methodology': 'businessProjects.substepPlanMethodology',
+  'plan-programme-resources-cashflow': 'businessProjects.substepPlanProgramme',
+  'plan-submission': 'businessProjects.substepPlanSubmission',
+}
+
+export function planningSubstepLabel(substepId: string): string {
+  const key = PLANNING_SUBSTEP_KEYS[substepId]
+  return key ? i18n.t(key) : substepId
+}
+
 export function summarizeTenderStage(result: TenderStageRunResultDto): {
   statusLabel: string
   upstreamLabel?: string
@@ -145,85 +157,138 @@ export function summarizeTenderStage(result: TenderStageRunResultDto): {
   packsLabel?: string
 } {
   const statusLabel = {
-    blocked: '阻塞',
-    ready: '可开始',
-    running: '进行中',
-    complete: '已完成',
+    blocked: i18n.t('businessProjects.statusBlocked'),
+    ready: i18n.t('businessProjects.statusReady'),
+    running: i18n.t('businessProjects.statusRunning'),
+    complete: i18n.t('businessProjects.statusComplete'),
   }[result.status]
   const readyUpstreamCount = result.requiredCapabilities
     .filter((capability) => result.generatedPacks.includes(capability)).length
   const upstreamLabel = result.requiredCapabilities.length > 0
-    ? `上游能力 ${readyUpstreamCount}/${result.requiredCapabilities.length}`
+    ? i18n.t('businessProjects.summaryUpstream', {
+      ready: readyUpstreamCount,
+      total: result.requiredCapabilities.length,
+    })
     : undefined
-  const sourceLabel = `已登记资料 ${result.sourceBoundary.registeredCount} 份`
-  const batchUnit = result.batchProgress?.batchType === 'document_analysis' ? '份资料' : '项'
+  const sourceLabel = i18n.t('businessProjects.summarySources', {
+    count: result.sourceBoundary.registeredCount,
+  })
+  const batchUnit = result.batchProgress?.batchType === 'document_analysis'
+    ? i18n.t('businessProjects.summaryUnitDocs')
+    : i18n.t('businessProjects.summaryUnitItems')
   const batchLabel = result.batchProgress
     ? [
-        `批次 ${result.batchProgress.completedBatches}/${result.batchProgress.batchCount}`,
-        result.batchProgress.runningBatches > 0 ? `运行 ${result.batchProgress.runningBatches}` : undefined,
-        result.batchProgress.pendingBatches > 0 ? `排队 ${result.batchProgress.pendingBatches}` : undefined,
-        result.batchProgress.failedBatches > 0 ? `失败 ${result.batchProgress.failedBatches}` : undefined,
-        result.batchProgress.blockedBatches > 0 ? `阻塞 ${result.batchProgress.blockedBatches}` : undefined,
-        `待覆盖 ${result.batchProgress.missingItemCount} ${batchUnit}`,
+        i18n.t('businessProjects.summaryBatches', {
+          completed: result.batchProgress.completedBatches,
+          total: result.batchProgress.batchCount,
+        }),
+        result.batchProgress.runningBatches > 0
+          ? i18n.t('businessProjects.summaryRunningCount', { count: result.batchProgress.runningBatches })
+          : undefined,
+        result.batchProgress.pendingBatches > 0
+          ? i18n.t('businessProjects.summaryPendingCount', { count: result.batchProgress.pendingBatches })
+          : undefined,
+        result.batchProgress.failedBatches > 0
+          ? i18n.t('businessProjects.summaryFailedCount', { count: result.batchProgress.failedBatches })
+          : undefined,
+        result.batchProgress.blockedBatches > 0
+          ? i18n.t('businessProjects.summaryBlockedCount', { count: result.batchProgress.blockedBatches })
+          : undefined,
+        i18n.t('businessProjects.summaryRemaining', {
+          count: result.batchProgress.missingItemCount,
+          unit: batchUnit,
+        }),
       ].filter(Boolean).join(' · ')
     : undefined
   const missingLabel = result.missingItems.length > 0
-    ? result.missingItems.map(formatMissingItem).join('；')
+    ? result.missingItems.map(formatTenderMissingItem).join(i18n.t('businessProjects.missingJoin'))
     : undefined
   const packsLabel = result.generatedPacks.length > 0
-    ? `已有能力包：${result.generatedPacks.join(', ')}`
+    ? i18n.t('businessProjects.summaryPacks', { packs: result.generatedPacks.join(', ') })
     : undefined
   return { statusLabel, upstreamLabel, sourceLabel, batchLabel, missingLabel, packsLabel }
 }
 
-function formatMissingItem(item: string): string {
-  if (item === 'document-batches:incomplete') return '资料分析批次未完成'
-  if (item === 'document-batches:no-documents') return '没有可分析的已登记资料'
-  if (item === 'document-batches:manifest-unavailable') return '资料分析批次清单尚未生成'
-  if (item.startsWith('document-merge:')) return `资料分析合并校验失败：${item.slice('document-merge:'.length)}`
+export function formatTenderMissingItem(item: string): string {
+  if (item === 'document-batches:incomplete') return i18n.t('businessProjects.missingDocumentIncomplete')
+  if (item === 'document-batches:no-documents') return i18n.t('businessProjects.missingDocumentNoDocs')
+  if (item === 'document-batches:manifest-unavailable') return i18n.t('businessProjects.missingDocumentManifest')
+  if (item.startsWith('document-merge:')) {
+    return i18n.t('businessProjects.missingDocumentMerge', { detail: item.slice('document-merge:'.length) })
+  }
   if (item.startsWith('document-review:missing-md:')) {
-    return `缺少可读解析 MD：${item.slice('document-review:missing-md:'.length)}`
+    return i18n.t('businessProjects.missingDocumentReviewMd', {
+      detail: item.slice('document-review:missing-md:'.length),
+    })
   }
   if (item.startsWith('document-review:pending:')) {
-    return `待人审解析稿：${item.slice('document-review:pending:'.length)}`
+    return i18n.t('businessProjects.missingDocumentReviewPending', {
+      detail: item.slice('document-review:pending:'.length),
+    })
   }
-  if (item.startsWith('document-review:')) return `资料人审未通过：${item.slice('document-review:'.length)}`
-  if (item === 'boq-batches:incomplete') return 'BOQ 批次未完成'
-  if (item === 'boq-batches:no-items') return 'BOQ 能力包没有清单项'
-  if (item === 'boq-batches:manifest-unavailable') return 'BOQ 批次清单尚未生成'
-  if (item.startsWith('boq-merge:')) return `BOQ 合并校验失败：${item.slice('boq-merge:'.length)}`
-  if (item.startsWith('resource-schedule:')) return `施工资源消耗总表：${item.slice('resource-schedule:'.length)}`
+  if (item.startsWith('document-review:')) {
+    return i18n.t('businessProjects.missingDocumentReview', { detail: item.slice('document-review:'.length) })
+  }
+  if (item === 'boq-batches:incomplete') return i18n.t('businessProjects.missingBoqIncomplete')
+  if (item === 'boq-batches:no-items') return i18n.t('businessProjects.missingBoqNoItems')
+  if (item === 'boq-batches:manifest-unavailable') return i18n.t('businessProjects.missingBoqManifest')
+  if (item.startsWith('boq-merge:')) {
+    return i18n.t('businessProjects.missingBoqMerge', { detail: item.slice('boq-merge:'.length) })
+  }
+  if (item.startsWith('resource-schedule:')) {
+    return i18n.t('businessProjects.missingResourceSchedule', {
+      detail: item.slice('resource-schedule:'.length),
+    })
+  }
   if (item.startsWith('project-parent:mismatch:')) {
-    return `请使用项目主会话（${item.slice('project-parent:mismatch:'.length)}），不要另开阶段主对话`
+    return i18n.t('businessProjects.missingParentMismatch', {
+      detail: item.slice('project-parent:mismatch:'.length),
+    })
   }
   if (item.startsWith('planning-substep:')) {
     const rest = item.slice('planning-substep:'.length)
     const [substepId, ...parts] = rest.split(':')
-    const detail = parts.join(':')
-    const labels: Record<string, string> = {
-      'plan-methodology': '4-A 施工策划',
-      'plan-programme-resources-cashflow': '4-B 进度·资源·现金流',
-      'plan-submission': '4-C 正式出稿',
-    }
-    return `${labels[substepId ?? ''] ?? substepId}：${detail}`
+    return i18n.t('businessProjects.missingPlanningSubstep', {
+      substep: planningSubstepLabel(substepId ?? ''),
+      detail: parts.join(':'),
+    })
   }
-  if (item === 'task-board:parent-session-required') return '必须先创建可见的阶段主会话'
-  if (item.startsWith('task-board:failed:')) return `子任务失败 ${item.slice('task-board:failed:'.length)} 个，可重试`
-  if (item.startsWith('task-board:blocked:')) return `子任务阻塞 ${item.slice('task-board:blocked:'.length)} 个`
-  if (item === 'source:registered-file-required') return '至少登记一份有效资料'
-  if (item.startsWith('source:')) return `资料缺失：${item.slice('source:'.length)}`
-  if (item.startsWith('capability:')) return `缺少上游能力包：${item.slice('capability:'.length)}`
-  if (item.startsWith('output:')) return `尚未生成能力包：${item.slice('output:'.length)}`
-  if (item === 'project_boundary:sa-draft-available') return '可从 SANRAL 绑定生成边界草稿（需人工确认）'
-  if (item === 'project_boundary:generic-draft-available') return '可生成通用边界草稿（需填写大纲并确认）'
-  if (item === 'project_boundary:missing') return '缺少项目边界条件包'
-  if (item === 'project_boundary:outline') return '组织策划大纲过短或为空'
-  if (item === 'project_boundary:measurement') return '未确认计量标准'
-  if (item === 'project_boundary:pricingStandard') return '未选定组价标准'
-  if (item === 'project_boundary:currency') return '未确认项目币种'
-  if (item === 'project_boundary:unconfirmed') return '项目边界尚未人工确认，不能作为组价围栏'
-  if (item === 'project_boundary:parse-incomplete') return '界限来源解析批次未完成'
-  if (item === 'project_boundary:no-sources') return '尚未登记知识库/自有文件/本标规范来源'
-  if (item.startsWith('project_boundary:merge:')) return `边界解析合并：${item.slice('project_boundary:merge:'.length)}`
+  if (item === 'task-board:parent-session-required') return i18n.t('businessProjects.missingTaskBoardParent')
+  if (item.startsWith('task-board:failed:')) {
+    return i18n.t('businessProjects.missingTaskBoardFailed', {
+      count: item.slice('task-board:failed:'.length),
+    })
+  }
+  if (item.startsWith('task-board:blocked:')) {
+    return i18n.t('businessProjects.missingTaskBoardBlocked', {
+      count: item.slice('task-board:blocked:'.length),
+    })
+  }
+  if (item === 'source:registered-file-required') return i18n.t('businessProjects.missingSourceRequired')
+  if (item.startsWith('source:')) {
+    return i18n.t('businessProjects.missingSource', { detail: item.slice('source:'.length) })
+  }
+  if (item.startsWith('capability:')) {
+    return i18n.t('businessProjects.missingCapability', { detail: item.slice('capability:'.length) })
+  }
+  if (item.startsWith('output:')) {
+    return i18n.t('businessProjects.missingOutput', { detail: item.slice('output:'.length) })
+  }
+  if (item === 'project_boundary:sa-draft-available') return i18n.t('businessProjects.missingBoundarySaDraft')
+  if (item === 'project_boundary:generic-draft-available') return i18n.t('businessProjects.missingBoundaryGenericDraft')
+  if (item === 'project_boundary:missing') return i18n.t('businessProjects.missingBoundaryMissing')
+  if (item === 'project_boundary:outline') return i18n.t('businessProjects.missingBoundaryOutline')
+  if (item === 'project_boundary:measurement') return i18n.t('businessProjects.missingBoundaryMeasurement')
+  if (item === 'project_boundary:pricingStandard') return i18n.t('businessProjects.missingBoundaryPricingStandard')
+  if (item === 'project_boundary:currency') return i18n.t('businessProjects.missingBoundaryCurrency')
+  if (item === 'project_boundary:unconfirmed') return i18n.t('businessProjects.missingBoundaryUnconfirmed')
+  if (item === 'project_boundary:parse-incomplete') return i18n.t('businessProjects.missingBoundaryParseIncomplete')
+  if (item === 'project_boundary:no-sources') return i18n.t('businessProjects.missingBoundaryNoSources')
+  if (item.startsWith('project_boundary:merge:')) {
+    return i18n.t('businessProjects.missingBoundaryMerge', {
+      detail: item.slice('project_boundary:merge:'.length),
+    })
+  }
+  if (item === 'project-characteristics:evidence-gap') return i18n.t('businessProjects.missingEvidenceGap')
   return item
 }

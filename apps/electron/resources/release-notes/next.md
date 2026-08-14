@@ -8,6 +8,8 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Bug Fixes
 
+<!-- Folded into 2.6.5.md: markdown preview loading; project characteristics after parse; evidence gate vs invention; Official Outputs session files; workbench UI i18n -->
+<!-- Folded into 2.6.4.md: Windows privateBytes spawn cap, capacity-error pending, full assistant markdown, idle transcript drop -->
 <!-- Folded into 2.6.3.md: Git Bash 2>nul created a cwd file named nul -->
 <!-- Folded into 2.6.2.md: session files loading pill + working-folder scan depth -->
 <!-- Folded into 2.6.1.md: formal report writing skills, Claude SDK 0.3.229 -->

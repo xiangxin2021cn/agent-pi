@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { ArrowRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { SessionBusinessContext } from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import { toast } from 'sonner'
@@ -14,7 +15,7 @@ import {
   startTenderStageLaunch,
   summarizeTenderStage,
 } from '@/pages/business-tender-stage'
-import { getBusinessWorkflow, type BusinessWorkflowStage } from '@/pages/business-workflows'
+import { getBusinessWorkflow, businessStageLabel, type BusinessWorkflowStage } from '@/pages/business-workflows'
 import { routes } from '../../../shared/routes'
 import { cn } from '@/lib/utils'
 
@@ -26,6 +27,7 @@ interface BusinessWorkflowBarProps {
 }
 
 export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: BusinessWorkflowBarProps) {
+  const { t } = useTranslation()
   const { activeWorkspaceId, workspaces, openNewChat } = useAppShellContext()
   const { navigate } = useNavigation()
   const [stageRuns, setStageRuns] = React.useState<Record<string, TenderStageRunResultDto>>({})
@@ -80,7 +82,9 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
         setStageRuns((current) => ({ ...current, [stage.id]: launch.result }))
         if (!launch.ok) {
           const summary = summarizeTenderStage(launch.result)
-          toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+          toast.error(t('businessProjects.toastStageNotReady', {
+            detail: summary.missingLabel ?? summary.statusLabel,
+          }))
           return
         }
 
@@ -91,7 +95,7 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
         if (projectParentId) {
           if (sessionId && projectParentId !== sessionId) {
             navigate(routes.view.tenderWorkspaces(project.projectId, projectParentId))
-            toast.message('已切换到项目主会话；阶段在主会话推进')
+            toast.message(t('businessProjects.toastSwitchedParent'))
           }
           const advanced = await enterTenderStageInProjectParent(window.electronAPI.runTenderStage, {
             workspaceRootPath, projectId: project.projectId, stageId: stage.id,
@@ -110,13 +114,15 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
               console.warn('[BusinessWorkflowBar] failed to send stage handoff', cause)
             }
           }
-          toast.success(advanced.ok ? '已在项目主会话进入本阶段' : '阶段已绑定主会话，请查看门禁提示')
+          toast.success(advanced.ok
+            ? t('businessProjects.toastEnteredStage')
+            : t('businessProjects.toastBoundSeeGates'))
           return
         }
       }
 
       const parentSession = await openNewChat?.({
-        name: context.module === 'tender' ? project.name : `${project.name} · ${stage.label}`,
+        name: context.module === 'tender' ? project.name : `${project.name} · ${businessStageLabel(stage)}`,
         workingDirectory: project.rootPath || workingDirectory,
         businessContext: { ...context, stageId: stage.id },
         input: buildBusinessTaskDraft(context.module, project, stage, stageRun),
@@ -128,7 +134,9 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
         setStageRuns((current) => ({ ...current, [stage.id]: launch.result }))
         if (!launch.ok) {
           const summary = summarizeTenderStage(launch.result)
-          toast.error(`阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+          toast.error(t('businessProjects.toastStageStartFailed', {
+            detail: summary.missingLabel ?? summary.statusLabel,
+          }))
         }
       }
     } finally {
@@ -147,7 +155,7 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
             <button
               key={stage.id}
               type="button"
-              title={stage.prompt}
+              title={t(stage.hintKey)}
               disabled={startingStageId !== null || stageRuns[stage.id]?.status === 'blocked'}
               onClick={() => stage.id !== context.stageId && void startStage(stage)}
               className={cn(
@@ -158,7 +166,7 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
                 stageRuns[stage.id]?.status === 'complete' && 'text-success',
               )}
             >
-              {index + 1}. {stage.label}
+              {index + 1}. {t(stage.labelKey)}
             </button>
           ))}
         </div>
@@ -186,7 +194,7 @@ export function BusinessWorkflowBar({ context, workingDirectory, sessionId }: Bu
           disabled={startingStageId !== null || stageRuns[nextStage.id]?.status === 'blocked'}
           onClick={() => void startStage(nextStage)}
         >
-          {startingStageId === nextStage.id ? '启动中…' : '下一阶段'}<ArrowRight className="size-4" />
+          {startingStageId === nextStage.id ? t('businessProjects.starting') : t('businessProjects.nextStage')}<ArrowRight className="size-4" />
         </Button>
       )}
     </div>

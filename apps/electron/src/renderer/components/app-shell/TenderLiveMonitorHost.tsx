@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useAtom } from 'jotai'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
 import { tenderLiveMonitorAtom } from '@/atoms/tender-monitor'
@@ -44,6 +45,7 @@ function stageNeedsStatus(run?: TenderStageRunResultDto): boolean {
  * 2. resume only stages that still have pending fill-up slots
  */
 export function TenderLiveMonitorHost() {
+  const { t } = useTranslation()
   const navState = useNavigationState()
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const [monitor, setMonitor] = useAtom(tenderLiveMonitorAtom)
@@ -74,7 +76,7 @@ export function TenderLiveMonitorHost() {
       inFlight.current = true
       try {
         const byStage: Record<string, TenderStageRunResultDto> = { ...lastRunsRef.current }
-        const stagesToStatus = coldStartRef.current
+        const stagesToStatus = coldStartRef.current && !viewingSession
           ? workflow.stages
           : workflow.stages.filter((stage) => stageNeedsStatus(byStage[stage.id]))
         coldStartRef.current = false
@@ -157,9 +159,9 @@ export function TenderLiveMonitorHost() {
     }
     if (wasActive.current && monitor && !monitor.active && isTenderNavigation(navState) && navState.details?.sessionId) {
       wasActive.current = false
-      toast.message('流程监控已结束：当前没有运行中/排队中的批次')
+      toast.message(t('businessProjects.toastMonitorIdle'))
     }
-  }, [monitor, navState])
+  }, [monitor, navState, t])
 
   return null
 }

@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Download, Eye, Pencil, Save, ListTodo, Sparkles, X } from 'lucide-react'
 import type { MarkdownExportFormat } from '@craft-agent/shared/protocol'
 import { Markdown, TiptapMarkdownEditor } from '../markdown'
@@ -21,6 +22,10 @@ import type { ExternalOpenAnnotationRequest } from '../annotations/use-annotatio
 import { FullscreenOverlayBase } from './FullscreenOverlayBase'
 import type { OverlayTypeBadge } from './FullscreenOverlayBaseHeader'
 import { AnnotatableMarkdownDocument } from './AnnotatableMarkdownDocument'
+import {
+  isPreviewContentPending,
+  shouldShowMissingPreviewMessage,
+} from './markdown-preview-limits'
 
 export interface MarkdownSelectionRewriteRequest {
   selectedText: string
@@ -30,8 +35,8 @@ export interface MarkdownSelectionRewriteRequest {
 }
 
 export interface DocumentFormattedMarkdownOverlayProps {
-  /** The content to display (markdown) */
-  content: string
+  /** The content to display (markdown). `null` means the file is still loading. */
+  content: string | null
   /** Whether the overlay is open */
   isOpen: boolean
   /** Called when overlay should close */
@@ -135,10 +140,12 @@ export function DocumentFormattedMarkdownOverlay({
   onExport,
   onRewriteSelection,
 }: DocumentFormattedMarkdownOverlayProps) {
-  const canEdit = editable && isEditableMarkdownPath(filePath) && !!onSave
+  const { t } = useTranslation()
+  const pending = isPreviewContentPending(content)
+  const canEdit = !pending && editable && isEditableMarkdownPath(filePath) && !!onSave
   const [mode, setMode] = useState<'preview' | 'edit'>('preview')
-  const [draftContent, setDraftContent] = useState(content)
-  const [savedContent, setSavedContent] = useState(content)
+  const [draftContent, setDraftContent] = useState(content ?? '')
+  const [savedContent, setSavedContent] = useState(content ?? '')
   const [lastMtimeMs, setLastMtimeMs] = useState(sourceMtimeMs)
   const [isSaving, setIsSaving] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
@@ -149,14 +156,14 @@ export function DocumentFormattedMarkdownOverlay({
   const [rewriteInstruction, setRewriteInstruction] = useState('')
   const [rewritePreview, setRewritePreview] = useState<string | null>(null)
   const [isRewritingSelection, setIsRewritingSelection] = useState(false)
-  const visibleContent = canEdit ? draftContent : content
-  const hasContent = visibleContent.trim().length > 0
+  const visibleContent = canEdit ? draftContent : (content ?? '')
+  const showMissingPreview = shouldShowMissingPreviewMessage(pending ? null : visibleContent, error || localError)
   const isDirty = canEdit && draftContent !== savedContent
   const canRewriteSelection = canEdit && mode === 'edit' && !!onRewriteSelection
 
   useEffect(() => {
-    setDraftContent(content)
-    setSavedContent(content)
+    setDraftContent(content ?? '')
+    setSavedContent(content ?? '')
     setLastMtimeMs(sourceMtimeMs)
     setMode('preview')
     setLocalError(undefined)
@@ -287,7 +294,7 @@ export function DocumentFormattedMarkdownOverlay({
     setStatusMessage('Selection updated')
   }
 
-  const headerActions = canEdit || onDownload || onExport ? (
+  const headerActions = !pending && (canEdit || onDownload || onExport) ? (
     <div className="flex items-center gap-1">
       {canEdit && (
         <>
@@ -354,9 +361,13 @@ export function DocumentFormattedMarkdownOverlay({
               </div>
             )}
             <div className="text-sm">
-              {!hasContent ? (
+              {pending ? (
                 <div className="rounded-[8px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-                  No preview content was returned for this file.
+                  {t('preview.loadingFile')}
+                </div>
+              ) : showMissingPreview ? (
+                <div className="rounded-[8px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
+                  {t('preview.noContent')}
                 </div>
               ) : canEdit && mode === 'edit' ? (
                 <TiptapMarkdownEditor

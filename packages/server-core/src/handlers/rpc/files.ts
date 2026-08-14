@@ -1482,7 +1482,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       deps.platform.logger.error('readFilePreview error:', path, message)
       throw new Error(`Failed to read file preview: ${message}`)
     }
-  })
+  }, { timeoutMs: 0 })
 
   server.handle(RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW, async (ctx, path: string): Promise<SpreadsheetPreviewResult> => {
     try {
@@ -1518,7 +1518,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       deps.platform.logger.error('readSpreadsheetPreview error:', path, message)
       throw new Error(`Failed to read spreadsheet preview: ${message}`)
     }
-  })
+  }, { timeoutMs: 0 })
 
   server.handle(RPC_CHANNELS.file.WRITE_TEXT, async (ctx, path: string, content: string, options?: FileWriteTextOptions): Promise<FileWriteTextResult> => {
     try {

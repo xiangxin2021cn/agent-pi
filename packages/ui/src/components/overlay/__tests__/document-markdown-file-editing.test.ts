@@ -22,4 +22,15 @@ describe('DocumentFormattedMarkdownOverlay file editing', () => {
     expect(source).toContain('Proposed')
     expect(source).toContain("rewritePreview == null ? 'Preview' : 'Apply'")
   })
+
+  it('shows a loading state instead of treating empty pending content as a missing file', () => {
+    const source = readFileSync(join(__dirname, '../DocumentFormattedMarkdownOverlay.tsx'), 'utf8')
+    expect(source).toContain('preview.loadingFile')
+    expect(source).toContain('preview.noContent')
+    expect(source).toContain('isPreviewContentPending')
+    expect(source).toContain('shouldShowMissingPreviewMessage')
+    expect(source).not.toContain('isMarkdownTooHeavyForRichPreview')
+    expect(source).not.toContain('preview.largeFilePlain')
+    expect(source).not.toContain('No preview content was returned for this file.')
+  })
 })

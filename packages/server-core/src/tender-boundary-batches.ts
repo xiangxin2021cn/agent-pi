@@ -10,6 +10,7 @@ import type {
 import { TENDER_FORMAL_WRITING_SKILL_SLUG, TENDER_WRITING_CONTRACT_BRIEF } from '@craft-agent/shared/business-projects';
 import { artifactLooksAcceptable } from './tender-document-artifacts.ts';
 import { parseableBoundarySources } from './tender-boundary-sources.ts';
+import { tenderOfficialOutputOwnerId, tenderOfficialOutputsDir } from './tender-official-outputs.ts';
 
 export interface TenderBoundaryBatchBrief {
   schemaVersion: 1;
@@ -87,13 +88,22 @@ function safeStem(name: string): string {
     .slice(0, 80) || 'source';
 }
 
-export function boundaryParseMarkdownPath(
-  projectRoot: string,
-  projectId: string,
+export function boundaryParseMarkdownFileName(
   source: TenderProjectBoundarySource,
 ): string {
   const stem = safeStem(source.title || source.path || source.id);
-  return join(projectRoot, 'Agent Pi Outputs', projectId, 'project-boundary', `${source.id}__${stem}.md`);
+  return `${source.id}__${stem}.md`;
+}
+
+export function boundaryParseMarkdownPath(
+  projectRoot: string,
+  officialOwnerId: string,
+  source: TenderProjectBoundarySource,
+): string {
+  return join(
+    tenderOfficialOutputsDir(projectRoot, officialOwnerId, 'project-boundary'),
+    boundaryParseMarkdownFileName(source),
+  );
 }
 
 function reportSchema(batchId: string, sourceId: string): Record<string, unknown> {
@@ -161,7 +171,7 @@ export function createOrRefreshBoundaryBatchManifest(
   projectDirectory: string,
   projectId: string,
   sources: TenderProjectBoundarySource[],
-  options: { projectRoot?: string } = {},
+  options: { projectRoot?: string; parentSessionId?: string } = {},
 ): TenderBoundaryBatchManifest {
   const projectRoot = options.projectRoot ?? projectDirectory;
   const parseable = parseableBoundarySources(sources);
@@ -176,7 +186,14 @@ export function createOrRefreshBoundaryBatchManifest(
     const briefPath = join(briefDirectory, `${batchId}.json`);
     const reportPath = join(reportDirectory, `${batchId}.json`);
     const markdownPath = source.markdownPath
-      ?? boundaryParseMarkdownPath(projectRoot, projectId, source);
+      ?? join(
+        tenderOfficialOutputsDir(
+          projectRoot,
+          tenderOfficialOutputOwnerId(options.parentSessionId, projectId),
+          'project-boundary',
+        ),
+        boundaryParseMarkdownFileName(source),
+      );
     const brief: TenderBoundaryBatchBrief = {
       schemaVersion: 1,
       projectId,

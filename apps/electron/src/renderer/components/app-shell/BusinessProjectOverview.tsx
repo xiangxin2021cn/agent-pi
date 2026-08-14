@@ -5,6 +5,7 @@ import { FilePlus2, FolderOpen, MessageSquarePlus, RefreshCw, PlayCircle, Search
 import { toast } from 'sonner'
 import type { BusinessModuleId, BusinessProjectRecord } from '@craft-agent/shared/business-projects'
 import type { TenderStageRunResultDto } from '@craft-agent/shared/protocol'
+import { i18n } from '@craft-agent/shared/i18n'
 import { Button } from '@/components/ui/button'
 import {
   businessProjectsCacheAtom,
@@ -21,6 +22,8 @@ import {
   advanceTenderStageLaunch,
   enterTenderStageInProjectParent,
   forcePassTenderStage,
+  formatTenderMissingItem,
+  planningSubstepLabel,
   preflightTenderStageLaunch,
   resetTenderStageOrchestration,
   resolveProjectParentSessionId,
@@ -32,7 +35,6 @@ import {
   summarizeTenderStage,
 } from '@/pages/business-tender-stage'
 import { getBusinessWorkflow, type BusinessWorkflowStage } from '@/pages/business-workflows'
-import { ProjectBoundaryEditorDialog } from '@/components/app-shell/ProjectBoundaryEditorDialog'
 import { routes } from '../../../shared/routes'
 import { cn } from '@/lib/utils'
 
@@ -106,9 +108,14 @@ function formatElapsed(fromIso: string | undefined, nowMs: number): string | nul
   const hours = Math.floor(elapsedSec / 3600)
   const minutes = Math.floor((elapsedSec % 3600) / 60)
   const seconds = elapsedSec % 60
-  if (hours > 0) return `${hours}时${minutes}分`
-  if (minutes > 0) return `${minutes}分${seconds.toString().padStart(2, '0')}秒`
-  return `${seconds}秒`
+  if (hours > 0) return i18n.t('businessProjects.durationHoursMinutes', { hours, minutes })
+  if (minutes > 0) {
+    return i18n.t('businessProjects.durationMinutesSeconds', {
+      minutes,
+      seconds: seconds.toString().padStart(2, '0'),
+    })
+  }
+  return i18n.t('businessProjects.durationSeconds', { seconds })
 }
 
 function formatClock(iso: string | undefined): string {
@@ -124,7 +131,7 @@ function linkedSessionId(task: StageTask): string | undefined {
 
 export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId }: BusinessProjectOverviewProps) {
   const { t } = useTranslation()
-  const { openNewChat, onOpenFile, activeWorkspaceId } = useAppShellContext()
+  const { openNewChat, onOpenFile } = useAppShellContext()
   const { navigate } = useNavigation()
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const sessionMetaMapRef = React.useRef(sessionMetaMap)
@@ -149,7 +156,6 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
   const [refreshing, setRefreshing] = React.useState(false)
   const [nowMs, setNowMs] = React.useState(() => Date.now())
   const [expandedStageIds, setExpandedStageIds] = React.useState<Record<string, boolean>>({})
-  const [boundaryEditorOpen, setBoundaryEditorOpen] = React.useState(false)
   /** Survives chat navigation via tenderLiveMonitorAtom (host keeps resume polling). */
   const monitoringActive = moduleId === 'tender'
     && isTenderMonitorActiveFor(liveMonitor, projectId, workspaceRootPath)
@@ -393,7 +399,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
 
   const handleInspect = async () => {
     await refresh({ force: true, action: 'status' })
-    toast.success('已检查：已与左侧会话状态对齐，未自动调度')
+    toast.success(t('businessProjects.toastInspected'))
   }
 
   const handleResumeUnfinished = async () => {
@@ -403,7 +409,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       const inspected = await refresh({ force: true, action: 'status' })
       const targets = workflow.stages.filter((stage) => stageHasResumableWork(inspected[stage.id]))
       if (targets.length === 0) {
-        toast.message('没有可恢复的未完批次；请先进入阶段或重试失败批次')
+        toast.message(t('businessProjects.toastNothingToResume'))
         return
       }
       for (const stage of targets) {
@@ -414,7 +420,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       }
       await refresh({ force: true, action: 'resume', stages: targets })
       setMonitoringActive(true, { dispatchPaused: false })
-      toast.success('已接续未完任务（优先同一子会话），并开启补位监控')
+      toast.success(t('businessProjects.toastResumedUnfinished'))
     } finally {
       setStartingStageId(null)
     }
@@ -436,7 +442,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       }
       setMonitoringDispatchPaused(true)
       await refresh({ force: true, action: 'status', stages: targets.length > 0 ? targets : undefined })
-      toast.message('已暂停补位：只读状态，不会新建或续跑子会话')
+      toast.message(t('businessProjects.toastPausedFill'))
     } finally {
       setStartingStageId(null)
     }
@@ -459,7 +465,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       if (targets.length > 0) {
         await refresh({ force: true, action: 'resume', stages: targets })
       }
-      toast.success('已恢复补位：空闲子会话将接续，缺席槽位才会新建')
+      toast.success(t('businessProjects.toastResumedFill'))
     } finally {
       setStartingStageId(null)
     }
@@ -473,7 +479,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     const updated = await window.electronAPI.updateBusinessProjectInputs({ workspaceRootPath, module: moduleId, projectId, inputPaths })
     setProject(updated)
     window.dispatchEvent(new CustomEvent('craft:business-projects-changed', { detail: { moduleId } }))
-    toast.success(`已登记 ${updated.inputPaths.length} 个项目资料文件`)
+    toast.success(t('businessProjects.toastFilesRegistered', { count: updated.inputPaths.length }))
     void refresh({ force: true, action: 'status' })
   }
 
@@ -512,10 +518,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       })
       setStageRuns((current) => ({ ...current, 'project-setup': completed }))
       if (completed.status === 'complete') {
-        toast.success('资料齐套已确认，可进入招标文件解析')
+        toast.success(t('businessProjects.toastSetupComplete'))
       } else {
         const summary = summarizeTenderStage(completed)
-        toast.error(`尚不能确认齐套：${summary.missingLabel ?? summary.statusLabel}`)
+        toast.error(t('businessProjects.toastSetupBlocked', { detail: summary.missingLabel ?? summary.statusLabel }))
       }
     } finally {
       setStartingStageId(null)
@@ -533,7 +539,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         stageId: 'planning-and-submission',
       })
       setStageRuns((current) => ({ ...current, 'planning-and-submission': accepted.result }))
-      toast.success('已接受 4-A 施工策划报告，可继续进度/资源/现金流')
+      toast.success(t('businessProjects.toastMethodologyAccepted'))
     } finally {
       setStartingStageId(null)
       void refresh({ force: true, action: 'status' })
@@ -551,7 +557,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       await window.electronAPI.sendMessage(parentSessionId, draft, [], [], {})
     } catch (cause) {
       console.warn('[BusinessProjectOverview] failed to send stage handoff', cause)
-      toast.message('主会话已切到本阶段；请在对话中发送阶段说明或点「进入阶段」重试交接')
+      toast.message(t('businessProjects.toastHandoffFallback'))
     }
   }
 
@@ -560,18 +566,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       if (!parentId) return false
       if (!sessionMetaMap.has(parentId)) return false
       openLinkedSession(parentId)
-      toast.success('已打开项目主会话')
+      toast.success(t('businessProjects.toastOpenedParent'))
       return true
     }
 
     if (openIfLive(resolveProjectParentSessionId(stageRuns))) return
 
     // Old projects may still advertise a deleted pointer — status heals it.
-    toast.message('主会话指针可能已失效，正在修复…')
+    toast.message(t('businessProjects.toastHealingParent'))
     const next = await refresh({ force: true, action: 'status' })
     if (openIfLive(resolveProjectParentSessionId(next))) return
 
-    toast.error('找不到存活的项目主会话。请从左侧打开当前 Todo 主会话，或对解析阶段使用「重置编排」后重试。')
+    toast.error(t('businessProjects.toastParentMissing'))
   }
 
   const handleStartStage = async (stage: BusinessWorkflowStage) => {
@@ -591,7 +597,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         setStageRuns((current) => ({ ...current, [stage.id]: launch.result }))
         if (!launch.ok) {
           const summary = summarizeTenderStage(launch.result)
-          toast.error(`阶段尚未就绪：${summary.missingLabel ?? summary.statusLabel}`)
+          toast.error(t('businessProjects.toastStageNotReady', { detail: summary.missingLabel ?? summary.statusLabel }))
           return
         }
 
@@ -620,10 +626,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
           const progress = advanced.result.batchProgress
           toast.success(
             progress
-              ? `已在项目主会话派发：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
+              ? t('businessProjects.toastDispatched', { running: progress.runningBatches, pending: progress.pendingBatches })
               : alreadyActive
-                ? '已打开项目主会话'
-                : '已在项目主会话进入本阶段',
+                ? t('businessProjects.toastOpenedParent')
+                : t('businessProjects.toastEnteredStage'),
           )
           return
         }
@@ -643,7 +649,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         setExpandedStageIds((current) => ({ ...current, [stage.id]: true }))
         if (!launch.ok) {
           const summary = summarizeTenderStage(launch.result)
-          toast.error(`阶段启动失败：${summary.missingLabel ?? summary.statusLabel}`)
+          toast.error(t('businessProjects.toastStageStartFailed', { detail: summary.missingLabel ?? summary.statusLabel }))
         } else {
           setMonitoringActive(true)
         }
@@ -658,11 +664,11 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
     const index = workflow.stages.findIndex((entry) => entry.id === fromStage.id)
     const next = index >= 0 ? workflow.stages[index + 1] : undefined
     if (!next) {
-      toast.message('已是最后阶段')
+      toast.message(t('businessProjects.toastLastStage'))
       return
     }
     if (stageHasLiveWork(stageRuns[fromStage.id])) {
-      toast.error('当前阶段仍有运行中任务，请先等待完成或「停止派发」后再进入下一阶段')
+      toast.error(t('businessProjects.toastWaitBeforeNext'))
       return
     }
     await handleStartStage(next)
@@ -683,7 +689,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       ?? resolveStageParentSessionId(stageRuns[stage.id])
       ?? resolveProjectParentSessionId(stageRuns)
     if (!parentSessionId) {
-      toast.error('找不到项目主会话，请先打开左侧主会话或点「打开项目主会话」修复指针')
+      toast.error(t('businessProjects.toastNeedParent'))
       return
     }
     setStartingStageId(stage.id)
@@ -704,11 +710,11 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       const progress = result.batchProgress
       toast.success(
         progress
-          ? `已重试 ${ids.length} 个批次：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
-          : `已重试 ${ids.length} 个批次`,
+          ? t('businessProjects.toastRetriedBatches', { count: ids.length, running: progress.runningBatches, pending: progress.pendingBatches })
+          : t('businessProjects.toastRetriedBatchesSimple', { count: ids.length }),
       )
     } catch (cause) {
-      toast.error(`重试失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      toast.error(t('businessProjects.toastResumeFailed', { detail: cause instanceof Error ? cause.message : String(cause) }))
     } finally {
       setStartingStageId(null)
       setRetryingBatchId(null)
@@ -748,13 +754,13 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         setMonitoringActive(true)
         toast.success(
           progress
-            ? `已重新调度：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
-            : '已重新调度失败批次',
+            ? t('businessProjects.toastRescheduled', { running: progress.runningBatches, pending: progress.pendingBatches })
+            : t('businessProjects.toastRescheduledSimple'),
         )
         return
       }
       const summary = summarizeTenderStage(advanced.result)
-      toast.error(`重试失败：${summary.missingLabel ?? summary.statusLabel}`)
+      toast.error(t('businessProjects.toastResumeFailed', { detail: summary.missingLabel ?? summary.statusLabel }))
     } finally {
       setStartingStageId(null)
       void refresh({ force: true, action: 'status' })
@@ -778,8 +784,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       const progress = resumed.result.batchProgress
       toast.success(
         progress
-          ? `已恢复调度：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
-          : '已恢复未完任务',
+          ? t('businessProjects.toastResumed', { running: progress.runningBatches, pending: progress.pendingBatches })
+          : t('businessProjects.toastResumedSimple'),
       )
     } finally {
       setStartingStageId(null)
@@ -810,8 +816,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       const progress = advanced.result.batchProgress
       toast.success(
         progress
-          ? `已派发下一步：运行 ${progress.runningBatches} · 排队 ${progress.pendingBatches}`
-          : '已派发下一步',
+          ? t('businessProjects.toastAdvanced', { running: progress.runningBatches, pending: progress.pendingBatches })
+          : t('businessProjects.toastAdvancedSimple'),
       )
     } finally {
       setStartingStageId(null)
@@ -826,21 +832,21 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       }, false)
       setStageRuns((current) => ({ ...current, [stage.id]: stopped.result }))
       setMonitoringDispatchPaused(true)
-      toast.message('已停止本阶段派发；监控改为只读，不会新建子会话')
+      toast.message(t('businessProjects.toastStoppedDispatch'))
     } finally {
       setStartingStageId(null)
     }
   }
 
   const handleResetOrchestration = async (stage: BusinessWorkflowStage) => {
-    if (!window.confirm(`重置「${stage.label}」编排状态？已验收的解析 MD / 能力包默认保留。`)) return
+    if (!window.confirm(t('businessProjects.confirmResetOrchestration', { stage: t(stage.labelKey) }))) return
     setStartingStageId(stage.id)
     try {
       const reset = await resetTenderStageOrchestration(window.electronAPI.runTenderStage, {
         workspaceRootPath, projectId, stageId: stage.id,
       })
       setStageRuns((current) => ({ ...current, [stage.id]: reset.result }))
-      toast.success('已重置本阶段编排队列')
+      toast.success(t('businessProjects.toastResetOrchestration'))
     } finally {
       setStartingStageId(null)
       void refresh({ force: true, action: 'status' })
@@ -863,16 +869,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       if (passed.ok) {
         setMonitoringActive(true)
         toast.success(
-          passed.result.status === 'running'
-            ? '已强制放行，继续使用已有成果'
-            : '已强制放行当前缺件门槛',
+          passed.result.userForcePass?.waivedItems.includes('project-characteristics:evidence-gap')
+            ? t('businessProjects.toastForcePassDiligence')
+            : passed.result.status === 'running'
+              ? t('businessProjects.toastForcePassContinue')
+              : t('businessProjects.toastForcePassGeneric'),
         )
       } else {
         const summary = summarizeTenderStage(passed.result)
-        toast.error(`强制放行后仍阻塞：${summary.missingLabel ?? summary.statusLabel}`)
+        toast.error(t('businessProjects.toastForcePassStillBlocked', { detail: summary.missingLabel ?? summary.statusLabel }))
       }
     } catch (cause) {
-      toast.error(`强制放行失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      toast.error(t('businessProjects.toastForcePassFailed', { detail: cause instanceof Error ? cause.message : String(cause) }))
     } finally {
       setStartingStageId(null)
       void refresh({ force: true, action: 'status' })
@@ -895,17 +903,17 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
       setStageRuns((current) => ({ ...current, [stage.id]: result }))
       const d = result.deliverables
       if (!d) {
-        toast.message('已完成成果质检')
+        toast.message(t('businessProjects.toastOrganizeDone'))
         return
       }
       toast.success(
-        `成果质检：齐套 ${d.presentCount} · 缺失 ${d.missingCount} · 偏薄 ${d.thinCount}`
+        t('businessProjects.toastOrganizeSummary', { present: d.presentCount, missing: d.missingCount, thin: d.thinCount })
         + (d.published != null || d.healed != null
-          ? `（整理发布 ${d.published ?? 0} · 补齐 ${d.healed ?? 0}）`
+          ? t('businessProjects.toastOrganizeHeal', { published: d.published ?? 0, healed: d.healed ?? 0 })
           : ''),
       )
     } catch (cause) {
-      toast.error(`成果质检失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      toast.error(t('businessProjects.toastOrganizeFailed', { detail: cause instanceof Error ? cause.message : String(cause) }))
     } finally {
       setStartingStageId(null)
     }
@@ -924,10 +932,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
 
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>
   if (projectLoadState === 'loading' || (refreshing && !project)) {
-    return <div className="p-6 text-sm text-muted-foreground">正在加载项目监控…</div>
+    return <div className="p-6 text-sm text-muted-foreground">{t('businessProjects.loadingMonitor')}</div>
   }
   if (!project || projectLoadState === 'missing') {
-    return <div className="p-6 text-sm text-muted-foreground">未找到该项目，请从左侧项目列表重新选择。</div>
+    return <div className="p-6 text-sm text-muted-foreground">{t('businessProjects.projectNotFound')}</div>
   }
 
   return (
@@ -941,7 +949,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button type="button" variant="outline" onClick={() => void handleAddInputs()}><FilePlus2 className="size-4" />添加资料</Button>
+            <Button type="button" variant="outline" onClick={() => void handleAddInputs()}><FilePlus2 className="size-4" />{t('businessProjects.addFiles')}</Button>
             <Button type="button" onClick={() => {
               if (moduleId === 'tender' && resolveProjectParentSessionId(stageRuns)) {
                 void handleOpenProjectParent()
@@ -950,7 +958,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
               void handleStartStage(workflow.stages[0]!)
             }}>
               <MessageSquarePlus className="size-4" />
-              {moduleId === 'tender' && resolveProjectParentSessionId(stageRuns) ? '打开项目主会话' : '新建任务'}
+              {moduleId === 'tender' && resolveProjectParentSessionId(stageRuns) ? t('businessProjects.openProjectParent') : t('businessProjects.newTask')}
             </Button>
             <Button type="button" variant="ghost" onClick={() => void handleRemoveProject()} title={t('businessProjects.deleteProject')}>
               <Trash2 className="size-4" />
@@ -962,17 +970,16 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
 
       {moduleId === 'tender' && Object.values(stageRuns).some((run) => run?.migratedFromLegacy) && (
         <div className="border-b bg-muted/40 px-6 py-3 text-xs text-muted-foreground">
-          已合并为单一项目主会话（含旧版多阶段主会话选举）。旧阶段会话仍保留在侧栏（可只读回顾）；请在主会话继续。若子会话或批次队列异常，可对对应阶段使用「重置编排」（已验收的解析 MD 会保留）。
+          {t('businessProjects.legacyMergedNotice')}
         </div>
       )}
 
       <section className="border-b px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold">流程监控</h2>
+            <h2 className="text-sm font-semibold">{t('businessProjects.monitorTitle')}</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              打开项目仅快照检查。恢复/下一步会优先接续已有子会话，不会因刷新盲目新建。
-              「暂停补位」后只读状态；「恢复补位」再继续。失败批次请点任务行「重试」。
+              {t('businessProjects.monitorHelp')}
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -987,16 +994,16 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
               )} />
               {monitoringActive
                 ? (monitoringDispatchPaused
-                  ? '监控暂停补位（只读状态）'
-                  : `监控补位中 ${LIVE_POLL_MS / 1000}s（含对话页）`)
-                : '监控未开启'}
+                  ? t('businessProjects.monitorPaused')
+                  : t('businessProjects.monitorLive', { seconds: LIVE_POLL_MS / 1000 }))
+                : t('businessProjects.monitorOff')}
             </span>
             <span title={lastRefreshAt ? new Date(lastRefreshAt).toLocaleString() : undefined}>
-              检查于 {lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—'}
+              {t('businessProjects.checkedAt', { time: lastRefreshAt ? formatClock(new Date(lastRefreshAt).toISOString()) : '—' })}
             </span>
             <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={() => void handleInspect()}>
               <SearchCheck className={cn('size-3.5', refreshing && !monitoringActive && 'animate-pulse')} />
-              检查
+              {t('businessProjects.inspect')}
             </Button>
             {moduleId === 'tender' && (
               <Button
@@ -1005,7 +1012,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                 size="sm"
                 disabled={startingStageId !== null || !forcePassTarget}
                 title={forcePassTarget
-                  ? `${t('businessProjects.forcePass')} · ${forcePassTarget.label}`
+                  ? `${t('businessProjects.forcePass')} · ${t(forcePassTarget.labelKey)}`
                   : t('businessProjects.forcePassUnavailable')}
                 onClick={() => {
                   if (!forcePassTarget) return
@@ -1024,10 +1031,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
             >
               <PlayCircle className="size-3.5" />
               {startingStageId === '__resume__'
-                ? '恢复中…'
+                ? t('businessProjects.resuming')
                 : monitoringBusy
-                  ? '未完成任务正在进行中…'
-                  : '恢复未完任务'}
+                  ? t('businessProjects.resumeBusy')
+                  : t('businessProjects.resumeUnfinished')}
             </Button>
             {monitoringActive && !monitoringDispatchPaused ? (
               <Button
@@ -1038,7 +1045,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                 onClick={() => void handlePauseMonitorDispatch()}
               >
                 <Square className="size-3.5" />
-                {startingStageId === '__pause__' ? '暂停中…' : '暂停补位'}
+                {startingStageId === '__pause__' ? t('businessProjects.pausing') : t('businessProjects.pauseFill')}
               </Button>
             ) : null}
             {monitoringActive && monitoringDispatchPaused ? (
@@ -1050,18 +1057,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                 onClick={() => void handleResumeMonitorDispatch()}
               >
                 <PlayCircle className="size-3.5" />
-                {startingStageId === '__resume_dispatch__' ? '恢复中…' : '恢复补位'}
+                {startingStageId === '__resume_dispatch__' ? t('businessProjects.resuming') : t('businessProjects.resumeFill')}
               </Button>
             ) : null}
             {monitoringActive ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => setMonitoringActive(false)}>
                 <Square className="size-3.5" />
-                停止监控
+                {t('businessProjects.stopMonitor')}
               </Button>
             ) : (
               <Button type="button" variant="ghost" size="sm" disabled={refreshing} onClick={() => void refresh({ force: true, action: 'status' })}>
                 <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
-                刷新快照
+                {t('businessProjects.refreshSnapshot')}
               </Button>
             )}
           </div>
@@ -1088,10 +1095,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                   <span className="mt-0.5 w-6 text-sm text-muted-foreground">{index + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium">{stage.label}</p>
-                      {monitoredLive && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">监控中</span>}
+                      <p className="text-sm font-medium">{t(stage.labelKey)}</p>
+                      {monitoredLive && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">{t('businessProjects.monitoring')}</span>}
                       {!live && resumable && (
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">有未完任务</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{t('businessProjects.hasUnfinished')}</span>
                       )}
                       {run?.userForcePass && run.userForcePass.waivedItems.length > 0 && (
                         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -1099,7 +1106,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{stage.prompt}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{t(stage.hintKey)}</p>
                     {summary && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className={cn(
@@ -1117,7 +1124,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     )}
                     {run?.substeps?.length ? (
                       <div className="mt-2 space-y-1.5 rounded-md border px-3 py-2 text-xs">
-                        <p className="font-medium text-foreground">策划子步骤门禁</p>
+                        <p className="font-medium text-foreground">{t('businessProjects.planningGates')}</p>
                         {run.substeps.map((substep) => (
                           <div key={substep.id} className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
@@ -1128,17 +1135,17 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                 substep.status === 'blocked' && 'text-destructive',
                                 substep.status === 'pending' && 'text-muted-foreground',
                               )}>
-                                {substep.label}
+                                {planningSubstepLabel(substep.id)}
                                 <span className="ml-2 font-normal text-muted-foreground">
-                                  {substep.status === 'complete' ? '完成'
-                                    : substep.status === 'ready' ? '待人审'
-                                      : substep.status === 'blocked' ? '缺件'
-                                        : '等待前置'}
+                                  {substep.status === 'complete' ? t('businessProjects.substepComplete')
+                                    : substep.status === 'ready' ? t('businessProjects.substepAwaitingReview')
+                                      : substep.status === 'blocked' ? t('businessProjects.substepMissingItems')
+                                        : t('businessProjects.substepWaitingPrior')}
                                 </span>
                               </p>
                               {substep.missingItems.length > 0 && (
-                                <p className="truncate text-muted-foreground" title={substep.missingItems.join('；')}>
-                                  {substep.missingItems.join('；')}
+                                <p className="truncate text-muted-foreground" title={substep.missingItems.map(formatTenderMissingItem).join(t('businessProjects.missingJoin'))}>
+                                  {substep.missingItems.map(formatTenderMissingItem).join(t('businessProjects.missingJoin'))}
                                 </p>
                               )}
                             </div>
@@ -1149,7 +1156,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                 variant="outline"
                                 disabled={startingStageId !== null}
                                 onClick={() => void handleAcceptMethodologyReview()}
-                              >接受策划稿</Button>
+                              >{t('businessProjects.acceptMethodology')}</Button>
                             )}
                           </div>
                         ))}
@@ -1158,10 +1165,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     {progress && total > 0 && (
                       <div className="mt-2">
                         <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span>批次进度 {completed}/{total}（{percent}%）</span>
+                          <span>{t('businessProjects.batchProgress', { completed, total, percent })}</span>
                           <span>
-                            运行 {progress.runningBatches} · 排队 {progress.pendingBatches}
-                            {failed > 0 ? ` · 失败 ${failed}` : ''}
+                            {t('businessProjects.batchRunningQueued', { running: progress.runningBatches, pending: progress.pendingBatches })}
+                            {failed > 0 ? t('businessProjects.batchFailedSuffix', { count: failed }) : ''}
                           </span>
                         </div>
                         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -1174,22 +1181,22 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     )}
                     {deliverables && (
                       <div className="mt-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
-                        <p className="font-medium text-foreground">阶段成果目录</p>
+                        <p className="font-medium text-foreground">{t('businessProjects.deliverablesTitle')}</p>
                         <p className="mt-0.5">
-                          齐套 {deliverables.presentCount}
-                          {deliverables.missingCount > 0 ? ` · 缺失 ${deliverables.missingCount}` : ''}
-                          {deliverables.thinCount > 0 ? ` · 偏薄 ${deliverables.thinCount}` : ''}
-                          {deliverables.publishedToOfficial ? ' · 已镜像正式输出' : ' · 正式输出未齐'}
+                          {t('businessProjects.deliverablesPresent', { count: deliverables.presentCount })}
+                          {deliverables.missingCount > 0 ? t('businessProjects.deliverablesMissing', { count: deliverables.missingCount }) : ''}
+                          {deliverables.thinCount > 0 ? t('businessProjects.deliverablesThin', { count: deliverables.thinCount }) : ''}
+                          {deliverables.publishedToOfficial ? t('businessProjects.deliverablesMirrored') : t('businessProjects.deliverablesNotReady')}
                         </p>
                         {deliverables.summaryPath && (
-                          <p className="mt-0.5 truncate" title={deliverables.summaryPath}>摘要 {deliverables.summaryPath}</p>
+                          <p className="mt-0.5 truncate" title={deliverables.summaryPath}>{t('businessProjects.deliverablesSummary', { path: deliverables.summaryPath })}</p>
                         )}
                       </div>
                     )}
                     {invalidActionable.length > 0 ? (
                       <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
                         <div className="flex items-start justify-between gap-3">
-                          <p className="font-medium text-destructive">报告未通过验收（{invalidActionable.length} 批）</p>
+                          <p className="font-medium text-destructive">{t('businessProjects.invalidReports', { count: invalidActionable.length })}</p>
                           <Button
                             type="button"
                             size="sm"
@@ -1202,8 +1209,8 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             )}
                           >
                             {startingStageId === stage.id && retryingBatchId === '__multi__'
-                              ? '重试中…'
-                              : '重试未通过批次'}
+                              ? t('businessProjects.retrying')
+                              : t('businessProjects.retryInvalidBatches')}
                           </Button>
                         </div>
                         <ul className="mt-1 space-y-1 text-muted-foreground">
@@ -1223,7 +1230,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                 disabled={startingStageId !== null || live}
                                 onClick={() => void handleRetryBatches(stage, [batch.batchId])}
                               >
-                                {retryingBatchId === batch.batchId ? '…' : '重试'}
+                                {retryingBatchId === batch.batchId ? '…' : t('common.retry')}
                               </Button>
                             </li>
                           ))}
@@ -1232,12 +1239,15 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                     ) : null}
                     {(progress?.validationWarningCount ?? 0) > 0 && (
                       <p className="mt-1.5 text-[11px] text-muted-foreground">
-                        {progress!.validationWarningCount} 条格式归一化提示已记录（非阻塞，供人工复核）
+                        {t('businessProjects.validationWarnings', { count: progress!.validationWarningCount })}
                       </p>
                     )}
                     {progress?.skippedItems?.length ? (
                       <p className="mt-1.5 text-[11px] text-muted-foreground" title={progress.skippedItems.map((item) => `${item.code}: ${item.reason}`).join('\n')}>
-                        {progress.skippedItems.length} 条对账行不进入组价（汇总行/人造组合）：{progress.skippedItems.slice(0, 3).map((item) => item.code).join('、')}{progress.skippedItems.length > 3 ? '…' : ''}
+                        {t('businessProjects.skippedItems', {
+                          count: progress.skippedItems.length,
+                          codes: `${progress.skippedItems.slice(0, 3).map((item) => item.code).join(', ')}${progress.skippedItems.length > 3 ? '…' : ''}`,
+                        })}
                       </p>
                     ) : null}
                     {progress?.tasks.length ? (
@@ -1247,7 +1257,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                           className="cursor-pointer text-muted-foreground hover:text-foreground"
                           onClick={() => setExpandedStageIds((current) => ({ ...current, [stage.id]: !expanded }))}
                         >
-                          {expanded ? '收起批次任务' : '查看批次任务'}（{progress.tasks.length}）
+                          {expanded ? t('businessProjects.collapseBatches') : t('businessProjects.expandBatches')}（{progress.tasks.length}）
                         </button>
                         {expanded && (
                           <div className="mt-2 max-h-80 overflow-auto divide-y border-y">
@@ -1281,7 +1291,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                       <button
                                         type="button"
                                         className="block w-full truncate text-left text-foreground hover:text-primary hover:underline"
-                                        title={`打开左侧会话 ${sessionId}`}
+                                        title={t('businessProjects.openLinkedSession', { id: sessionId })}
                                         onClick={() => openLinkedSession(sessionId)}
                                       >
                                         {task.name}
@@ -1292,16 +1302,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                     <p className="truncate text-muted-foreground" title={midFlight ? undefined : (task.error ?? task.reportPath)}>
                                       {(midFlight ? null : task.error)
                                         ?? [
-                                          sessionMissing ? `原会话已不在左侧 · ${sessionId}` : null,
+                                          sessionMissing ? t('businessProjects.sessionGone', { id: sessionId }) : null,
                                           sessionId && !sessionMissing
-                                            ? (idleLinked ? `左侧空闲 · ${sessionId}` : `会话 ${sessionId}${liveProcessing ? ' · 运行中' : ''}`)
+                                            ? (idleLinked
+                                              ? t('businessProjects.sessionIdle', { id: sessionId })
+                                              : `${t('businessProjects.sessionLive', { id: sessionId })}${liveProcessing ? t('businessProjects.sessionLiveRunning') : ''}`)
                                             : null,
                                           (meta?.sessionStatus ?? task.linkedSessionStatus)
-                                            ? `状态 ${meta?.sessionStatus ?? task.linkedSessionStatus}`
+                                            ? t('businessProjects.sessionStatus', { status: meta?.sessionStatus ?? task.linkedSessionStatus })
                                             : null,
-                                          `尝试 ${task.attemptCount}`,
-                                          duration ? (midFlight ? `已运行 ${duration}` : `耗时 ${duration}`) : null,
-                                          task.updatedAt ? `更新 ${formatClock(task.updatedAt)}` : null,
+                                          t('businessProjects.attemptCount', { count: task.attemptCount }),
+                                          duration ? (midFlight ? t('businessProjects.elapsedRunning', { duration }) : t('businessProjects.elapsedDone', { duration })) : null,
+                                          task.updatedAt ? t('businessProjects.updatedAt', { time: formatClock(task.updatedAt) }) : null,
                                         ].filter(Boolean).join(' · ')}
                                     </p>
                                   </div>
@@ -1314,7 +1326,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                                       disabled={startingStageId !== null}
                                       onClick={() => void handleRetryBatches(stage, [task.batchId])}
                                     >
-                                      {retryingBatchId === task.batchId ? '重试中…' : '重试'}
+                                      {retryingBatchId === task.batchId ? t('businessProjects.retrying') : t('common.retry')}
                                     </Button>
                                   )}
                                 </div>
@@ -1337,19 +1349,19 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                               ?? resolveStageParentSessionId(run)
                             if (parentId) {
                               openLinkedSession(parentId)
-                              toast.success('资料登记完成，已打开项目主会话')
+                              toast.success(t('businessProjects.setupDoneOpen'))
                               return
                             }
-                            toast.message(`资料登记完成（已登记 ${project?.inputPaths.length ?? 0} 份），可在下方「项目资料」查看`)
+                            toast.message(t('businessProjects.setupDoneToast', { count: project?.inputPaths.length ?? 0 }))
                           }}
-                        >资料登记完成，点击可查看结果</Button>
+                        >{t('businessProjects.setupDoneButton')}</Button>
                       ) : (
                         <Button
                           type="button"
                           size="sm"
                           disabled={startingStageId !== null}
                           onClick={() => void handleCompleteSetupStage()}
-                        >{startingStageId === stage.id ? '确认中…' : '资料齐套，进入解析'}</Button>
+                        >{startingStageId === stage.id ? t('businessProjects.confirming') : t('businessProjects.confirmComplete')}</Button>
                       )
                     ) : (
                       <>
@@ -1360,10 +1372,10 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             disabled={startingStageId !== null || live}
                             onClick={() => void handleAdvanceStage(stage)}
                           >{startingStageId === stage.id
-                              ? '派发中…'
+                              ? t('businessProjects.dispatching')
                               : live
-                                ? '正在进行，请稍后…'
-                                : '下一步'}</Button>
+                                ? t('businessProjects.pleaseWait')
+                                : t('businessProjects.nextStep')}</Button>
                         )}
                         {resumable && !failed && !live && (
                           <Button
@@ -1372,7 +1384,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             size="sm"
                             disabled={startingStageId !== null}
                             onClick={() => void handleResumeStage(stage)}
-                          >{startingStageId === stage.id ? '恢复中…' : '恢复本阶段'}</Button>
+                          >{startingStageId === stage.id ? t('businessProjects.resuming') : t('businessProjects.resumeStage')}</Button>
                         )}
                         {(live || resumable) && (
                           <Button
@@ -1381,28 +1393,18 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             size="sm"
                             disabled={startingStageId !== null}
                             onClick={() => void handleStopDispatch(stage)}
-                          >停止派发</Button>
+                          >{t('businessProjects.stopDispatch')}</Button>
                         )}
                         {(stage.id === 'tender-document-analysis'
-                          || stage.id === 'boq-five-step-pricing'
-                          || stage.id === 'project-boundary-conditions') && (
+                          || stage.id === 'boq-five-step-pricing') && (
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             disabled={startingStageId !== null}
-                            title="检查主会话/子会话成果路径，缺的补到正式输出并刷新成果目录"
+                            title={t('businessProjects.organizeTitle')}
                             onClick={() => void handleOrganizeDeliverables(stage)}
-                          >{startingStageId === `${stage.id}::organize` ? '质检中…' : '成果质检并整理'}</Button>
-                        )}
-                        {stage.id === 'project-boundary-conditions' && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={startingStageId !== null}
-                            onClick={() => setBoundaryEditorOpen(true)}
-                          >打开边界登记/确认</Button>
+                          >{startingStageId === `${stage.id}::organize` ? t('businessProjects.organizing') : t('businessProjects.organizeDeliverables')}</Button>
                         )}
                         {stageCanForcePass(run) && (
                           <Button
@@ -1412,7 +1414,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                             title={t('businessProjects.forcePassConfirm')}
                             onClick={() => void handleForcePass(stage)}
                           >{startingStageId === `${stage.id}::force_pass`
-                              ? '放行中…'
+                              ? t('businessProjects.forcePassing')
                               : t('businessProjects.forcePass')}</Button>
                         )}
                         <Button
@@ -1421,25 +1423,25 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                           size="sm"
                           disabled={startingStageId !== null || (live && !failed)}
                           title={live && !failed
-                            ? '阶段有运行中任务 — 请稍候或点「停止派发」'
+                            ? t('businessProjects.startBusyTitle')
                             : run?.status === 'blocked' && !resumable ? summary?.missingLabel : undefined}
                           onClick={() => void (failed ? handleRetryStage(stage) : handleStartStage(stage))}
                         >{startingStageId === stage.id
-                            ? '处理中…'
+                            ? t('businessProjects.processing')
                             : failed
-                              ? '重试失败批次'
+                              ? t('businessProjects.retryFailedBatches')
                               : resolveProjectParentSessionId(stageRuns) || resolveStageParentSessionId(run)
-                                ? '打开项目主会话'
-                                : '进入阶段'}</Button>
+                                ? t('businessProjects.openProjectParent')
+                                : t('businessProjects.enterStage')}</Button>
                         {run?.status === 'complete' && index < workflow.stages.length - 1 && (
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             disabled={startingStageId !== null || live}
-                            title={live ? '请先等待本阶段运行中任务结束' : undefined}
+                            title={live ? t('businessProjects.waitBeforeNext') : undefined}
                             onClick={() => void handleEnterNextStage(stage)}
-                          >进入下一阶段</Button>
+                          >{t('businessProjects.enterNextStage')}</Button>
                         )}
                         <Button
                           type="button"
@@ -1447,7 +1449,7 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
                           size="sm"
                           disabled={startingStageId !== null}
                           onClick={() => void handleResetOrchestration(stage)}
-                        >重置编排</Button>
+                        >{t('businessProjects.resetOrchestration')}</Button>
                       </>
                     )}
                   </div>
@@ -1458,25 +1460,13 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
         </div>
       </section>
 
-      <ProjectBoundaryEditorDialog
-        open={boundaryEditorOpen}
-        onOpenChange={setBoundaryEditorOpen}
-        workspaceRootPath={workspaceRootPath}
-        projectId={projectId}
-        parentSessionId={resolveProjectParentSessionId(stageRuns)}
-        workspaceId={activeWorkspaceId ?? undefined}
-        onSaved={() => {
-          void refresh({ force: true, action: 'status', stages: workflow.stages.filter((stage) => stage.id === 'project-boundary-conditions') })
-        }}
-      />
-
       <section className="px-6 py-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">项目资料</h2>
-          <span className="text-xs text-muted-foreground">仅限用户明确登记的文件</span>
+          <h2 className="text-sm font-semibold">{t('businessProjects.projectFiles')}</h2>
+          <span className="text-xs text-muted-foreground">{t('businessProjects.projectFilesHint')}</span>
         </div>
         <div className="mt-3 divide-y">
-          {project.inputPaths.length === 0 && <p className="py-6 text-sm text-muted-foreground">尚未登记资料。</p>}
+          {project.inputPaths.length === 0 && <p className="py-6 text-sm text-muted-foreground">{t('businessProjects.noFilesYet')}</p>}
           {project.inputPaths.map((path) => (
             <button key={path} type="button" onClick={() => onOpenFile(path)} className="block w-full truncate py-2 text-left text-sm hover:text-primary" title={path}>
               {path.split(/[\\/]/).pop() || path}
@@ -1489,12 +1479,14 @@ export function BusinessProjectOverview({ moduleId, workspaceRootPath, projectId
 }
 
 function taskStatusLabel(status: StageTask['status'], midFlight = false): string {
-  if (midFlight && status !== 'running' && status !== 'complete') return '重试中'
+  if (midFlight && status !== 'running' && status !== 'complete') {
+    return i18n.t('businessProjects.taskRetrying')
+  }
   return {
-    pending: '排队',
-    running: '运行',
-    complete: '完成',
-    failed: '失败',
-    blocked: '阻塞',
+    pending: i18n.t('businessProjects.taskPending'),
+    running: i18n.t('businessProjects.taskRunning'),
+    complete: i18n.t('businessProjects.taskComplete'),
+    failed: i18n.t('businessProjects.taskFailed'),
+    blocked: i18n.t('businessProjects.taskBlocked'),
   }[status]
 }

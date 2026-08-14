@@ -611,6 +611,19 @@ export interface TenderStageRunResultDto {
   missingItems: string[];
   /** User-waived missing-item gates; status ignores these items. */
   userForcePass?: { at: string; waivedItems: string[] };
+  /** Project-characteristic evidence gaps shown to the parent session. */
+  characteristicsEvidence?: {
+    blocking: boolean;
+    webDiligenceAuthorized: boolean;
+    evidenceFileNames: string[];
+    gaps: Array<{
+      chapterId: string;
+      title: string;
+      blocking: boolean;
+      detail: string;
+      suggestedUpload: string;
+    }>;
+  };
   substeps?: Array<{
     id: 'plan-methodology' | 'plan-programme-resources-cashflow' | 'plan-submission';
     label: string;

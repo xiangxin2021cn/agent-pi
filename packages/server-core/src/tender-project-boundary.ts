@@ -10,6 +10,7 @@ import {
 } from '@agent-pi/business-core/tender';
 import { readTenderBindings, type TenderKnowledgeBindings, pricingStandardForProfile } from './tender-bindings.ts';
 import { normalizeBoundarySource } from './tender-boundary-sources.ts';
+import { tenderOfficialOutputsDir } from './tender-official-outputs.ts';
 
 const SA_METHOD_MARKERS = [
   'tender-sa-sanral',
@@ -26,7 +27,7 @@ export function projectBoundaryMarkdownPath(
   projectRoot: string,
   parentSessionId: string,
 ): string {
-  return join(projectRoot, 'Agent Pi Outputs', parentSessionId, 'project-boundary', '项目边界条件.md');
+  return join(tenderOfficialOutputsDir(projectRoot, parentSessionId, 'project-boundary'), '项目边界条件.md');
 }
 
 export function formatProjectBoundaryMarkdown(pack: TenderProjectBoundaryPack): string {

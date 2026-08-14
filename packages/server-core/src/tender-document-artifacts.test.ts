@@ -26,7 +26,6 @@ describe('tender document artifacts / human review', () => {
     ]);
     expect(assertDocumentParseGate(ledger, ['book1'])).toEqual([
       'document-review:missing-md:book1',
-      'document-review:pending:book1',
     ]);
 
     const artifactPath = documentArtifactPath(root, 'n3', 'book1', 'Book 1.pdf');

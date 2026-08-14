@@ -90,8 +90,8 @@ export const CHANNEL_MAP = {
 
   // File operations
   readFile: invoke(RPC_CHANNELS.file.READ),
-  readFilePreview: invoke(RPC_CHANNELS.file.READ_PREVIEW),
-  readSpreadsheetPreview: invoke(RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW),
+  readFilePreview: invoke(RPC_CHANNELS.file.READ_PREVIEW, undefined, { timeoutMs: 0 }),
+  readSpreadsheetPreview: invoke(RPC_CHANNELS.file.READ_SPREADSHEET_PREVIEW, undefined, { timeoutMs: 0 }),
   writeTextFile: invoke(RPC_CHANNELS.file.WRITE_TEXT),
   exportMarkdown: invoke(RPC_CHANNELS.file.EXPORT_MARKDOWN),
   readFileDataUrl: invoke(RPC_CHANNELS.file.READ_DATA_URL),
