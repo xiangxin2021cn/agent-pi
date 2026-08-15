@@ -4,60 +4,76 @@
   <img src="docs/assets/agent-pi-logo.png" alt="AIPI Always π AI Studio" width="560" />
 </p>
 
-**中文** | Agent π 是基于 Craft Agents OSS 深度改造的 Windows 桌面智能体工作台，面向长周期项目分析、招投标文件处理、工程资料研究、多智能体协作和可追溯成果沉淀。
+> **Agent π 3.0 已发布：内核换到 DeepSeek Harness。**
+> 执行更利落，同样的长任务更省 token。这不是一次界面改版，而是发动机整机更换。
+> **请手动下载 3.0 安装包。** 2.6.5 不会自动覆盖成 3.0；经典版可继续用，也可和 3.0 同时安装。
+>
+> [下载 Agent π 3.0](https://github.com/xiangxin2021cn/agent-pi/releases/latest) · [留下 2.6.5 经典版](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5)
+>
+> **Agent π 3.0 is out: the engine is now DeepSeek Harness.**
+> Agents run tighter and cost less on the same long jobs. This is a new engine, not a reskin.
+> **Download 3.0 yourself.** 2.6.5 will not auto-update onto 3.0. Classic 2.x can stay installed beside it.
+>
+> [Download Agent π 3.0](https://github.com/xiangxin2021cn/agent-pi/releases/latest) · [Keep Classic 2.6.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5)
 
-**English** | Agent Pi is a Windows desktop agent workbench forked and deeply adapted from Craft Agents OSS. It is designed for long-running project analysis, tender/document production, engineering research, multi-agent workflows, and traceable project outputs.
+**中文** | Agent π 是面向招投标、实施交付和投资研究的 Windows 桌面智能体工作台。打开项目工作区就能干活：读资料、跑技能、出可追溯的正式成果，写回 `Agent Pi Outputs`。
 
-Agent π 的目标不是做一个普通聊天壳，而是把智能体升级为真实项目作业里的 **超级工作台**：主会话按工作目录组织，分支智能体折叠到主会话下，正式成果落回项目工作目录，过程文件可在应用内预览、编辑、导出，长任务由 Goal Loop 做自我审查和纠偏。
+**English** | Agent Pi is a Windows desktop agent workbench for tendering, project delivery, and investment research. Open a project folder and work: read sources, run skills, and write traceable deliverables back to `Agent Pi Outputs`.
 
-Agent Pi is not a thin chat wrapper. It is a project workbench: conversations are organized by working directory, spawned agents fold under the parent session, formal deliverables are written back to the project folder, files can be previewed/edited/exported inside the app, and Goal Loop reviews long tasks before accepting them as done.
+3.0 把智能体循环换成 **DeepSeek Harness**。工具调用、并行子任务、会话和权限由这台内核直接驱动，不再经过旧版自研 SessionManager / Goal Loop 那一层。同样的招标解析、组价、策划，回合更短，空转更少，费用更可控。
 
-## Dual Runtime, One Control Plane / 双运行时、统一控制面
+Harness 的另一条企业能力：业务要什么，就可以按企业所需做成插件。投标、实施、投资已经是第一批；往后合同、分包、物资、财务尽调都可以继续往上加。流程和插件随业务增长高度可定制，不必为了新工序去换一套产品。
 
-Agent Pi's execution strength comes from **Claude Agent SDK or Pi as the model runtime, plus Agent Pi's own provider-independent control plane**. Claude Agent SDK and Pi both contribute to the product, but they do not normally generate the same turn together: one turn uses one selected LLM connection and one backend. This is a dual-runtime architecture, not an implicit mixture-of-agents.
+3.0 runs the agent loop on **DeepSeek Harness**. Tool calls, parallel sub-tasks, sessions, and permissions are driven by that engine — not the old in-house SessionManager / Goal Loop. The same bid parsing, pricing, and planning jobs take fewer wasted turns and cost less.
 
-Agent π 的强执行能力来自 **Claude Agent SDK 或 Pi 模型运行时，加上 Agent π 自有的、与模型供应商无关的统一控制面**。Claude Agent SDK 与 Pi 都是产品能力的重要基础，但通常不会在同一轮共同生成答案：每轮只使用一个选定的 LLM 连接和一个后端。这是“双运行时架构”，并不等同于默认启用多模型混合推理。
+The other enterprise property of Harness: you can add plugins for what the company actually needs. Tender, delivery, and investment are the first set. Contracts, subcontracting, materials, and financial diligence can be added the same way. Workflows and plugins stay highly customizable as the business grows — you do not replace the product for every new procedure.
 
-```mermaid
-flowchart LR
-    U["User task / 用户任务"] --> R["Connection router / 连接路由"]
-    R -->|"Direct Anthropic"| C["Claude Agent SDK"]
-    R -->|"DeepSeek, OpenAI, Copilot, Bedrock, private endpoints"| P["Pi runtime"]
-    C --> E["Normalized AgentEvent stream / 统一事件流"]
-    P --> E
-    E --> A["Agent Pi control plane / Agent π 控制面"]
-    A --> T["Tools, MCP, knowledge, files / 工具与来源"]
-    A --> G["Task contract, Plan/Audit/Merge, Goal Loop"]
-    G -->|"Pass"| D["Formal deliverable / 正式成果"]
-    G -->|"Fail or uncertain"| F["Correct, pause, or request review / 纠偏、暂停或人工复核"]
-```
+工作台还在：投标 / 实施 / 投资、证据门禁、正式成果目录、右侧资源文件。默认路径仍是 **选工作区，直接说任务**。工作台是加速器，不是闸门。
 
-| Layer / 层 | English | 中文 |
-| --- | --- | --- |
-| Claude Agent SDK runtime | Direct Anthropic connections use Claude-native streaming, tool execution, hooks, session continuation, and model lifecycle semantics. | Anthropic 直连使用 Claude 原生流式响应、工具执行、Hooks、会话延续和模型生命周期语义。 |
-| Pi runtime | DeepSeek, OpenAI/Codex, GitHub Copilot, Bedrock, compatible endpoints, and private models use Pi's unified provider layer, isolated agent subprocess with JSONL RPC, steering, retry, and context-compaction handling. | DeepSeek、OpenAI/Codex、GitHub Copilot、Bedrock、兼容端点和私有模型使用 Pi 的统一供应商层、通过 JSONL RPC 通信的隔离智能体子进程、动态引导、重试和上下文压缩处理。 |
-| Normalized event contract | Backend-specific messages, tool calls, results, usage, errors, and terminal signals are converted into one `AgentEvent` stream. | 不同后端的消息、工具调用、结果、用量、错误和终态信号被转换为统一的 `AgentEvent` 事件流。 |
-| Agent Pi control plane | A shared `SessionManager` applies source boundaries, permissions, working-directory isolation, MCP/API tools, task contracts, governed sub-agents, transactional artifacts, Plan/Audit/Merge, Goal Loop, and document-quality checks. | 统一 `SessionManager` 负责来源硬边界、权限、工作目录隔离、MCP/API 工具、任务契约、受控子智能体、事务化成果、Plan/Audit/Merge、Goal Loop 和文档质量检查。 |
+The workbench remains: tender / delivery / investment, the evidence gate, Official Outputs, and the files rail. The default path is still **pick a workspace and talk**. The workbench accelerates work; it does not gate it.
 
-`@anthropic-ai/sdk` is the lower-level Anthropic API client dependency; the Claude agent loop described above is provided by `@anthropic-ai/claude-agent-sdk`. / `@anthropic-ai/sdk` 是底层 Anthropic API 客户端依赖；上述 Claude 智能体循环由 `@anthropic-ai/claude-agent-sdk` 提供。
+下一步已经对准用户现场：按你反复纠正的用法，沉淀自己的经验和工作环，让智能体越用越像你们项目上的人。这一块指日可待，会按真实需求持续自改进，而不是一次发完就停。
 
-The runtime first lets the selected model reason and call tools; Agent Pi then decides whether the task is actually complete. A backend `complete` event only means that the model turn stopped. Formal completion still requires application-level evidence, output, format, source, and quality gates to pass. If a gate fails, Agent Pi can continue correction, pause for confirmation, or move the task to review.
-
-运行时先让所选模型推理并调用工具，随后由 Agent π 判断任务是否真正完成。后端发出 `complete` 只代表模型本轮停止，并不代表任务已经合格；正式完成仍须通过应用层的证据、产物、格式、来源和质量门禁。门禁失败时，Agent π 可以继续纠偏、暂停等待确认，或把任务转入待审查。
-
-This separation allows the same enterprise workflow to run on Anthropic models, DeepSeek, compatible domestic models, or privately deployed endpoints without rewriting business logic. It improves bounded autonomy for weaker models, but it does not erase model capability differences: professional accuracy still depends on authoritative sources, deterministic tools, verification, and human approval where required.
-
-这种分层让同一套企业工作流可以运行在 Anthropic、DeepSeek、兼容国产模型或私有化端点上，而无需重写业务逻辑；它能提升较弱模型的受控自治能力，但不会消除模型本身的能力差异。专业准确性仍然依赖权威来源、确定性工具、校验以及必要的人工批准。
+Next, Agent π will keep improving itself from how you actually work: your corrections become project experience and work loops, so the agent starts to feel like someone on your job. That layer is close. It will keep evolving from real use, not freeze after one release.
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.5.**
+**当前发布版：V3.0.0**（DeepSeek Harness 内核，Windows x64）  
+**Current release: V3.0.0** (DeepSeek Harness engine, Windows x64)
 
-**当前发布版：V2.6.5。**
+- 3.0 Windows x64：[Releases / latest](https://github.com/xiangxin2021cn/agent-pi/releases/latest) → `Agent-Pi-3.0.0-x64.exe`
+- 2.6.5 经典版（自动更新通道停在这里；macOS / Linux 仍用这一版）：[v2.6.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5)
 
-GitHub Releases / 发布页:
+未签名安装包：Windows SmartScreen 可能拦截，选「仍要运行」。  
+The installer is unsigned. If SmartScreen blocks it, choose Run anyway.
 
-[https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
+3.0 **不会**从 2.x 自动升级。旧会话和旧模型连接不会迁移；项目工作目录和 `Agent Pi Outputs` 可以接着用。
+
+3.0 **will not** auto-update from 2.x. Old sessions and model connections do not migrate. Your project folder and `Agent Pi Outputs` still do.
+
+## 3.0 vs 2.x
+
+| | 2.x 经典版 / Classic | 3.0 |
+| --- | --- | --- |
+| 内核 / Engine | Claude Agent SDK + Pi + 自研控制面 | **DeepSeek Harness** |
+| 企业扩展 / Extensibility | 改控制面才能加流程 | 按企业所需做插件；流程随业务增长可高度定制 |
+| 长任务 / Long jobs | Goal Loop 审查回合 | 内核原生 subagent / workflow，少绕一层 |
+| 费用 / Cost | 控制面和循环更容易空转 | 同样活，回合更短，token 更省 |
+| 图片 / Images | 先识图再塞进对话 | 视觉模型走原生多模态；PDF 当文件读 |
+| 数据目录 / Data | `~/.agent-pi` | `%APPDATA%\agent-pi-dsh-desktop` |
+| 更新 / Updates | GitHub 自动更新到 2.6.5 | 先手动下载 3.0 |
+
+## Enterprise plugins / 企业插件
+
+Harness 不是把流程焊死在桌面里。企业缺哪一段作业，就按自己的制度做成插件：技能、工具、工作台页、验收门禁都可以加。投标三件套只是第一批；后面的工序用同一套装配方式往上叠。
+
+Harness does not weld one workflow into the desktop. Missing procedures become plugins — skills, tools, workbench views, and gates — fitted to the company’s own rules. The tender suite is the first set; later procedures stack on the same assembly.
+
+## Classic 2.x notes / 经典版说明
+
+2.x 使用 Claude Agent SDK 或 Pi 作为模型运行时，外加 Agent π 自有控制面（SessionManager、Goal Loop）。该架构仍可在 [v2.6.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) 使用，并继续提供 macOS / Linux 安装包。
+
+2.x uses Claude Agent SDK or Pi plus Agent Pi’s control plane. That stack remains available in Classic 2.6.5, including macOS and Linux installers.
 
 ## Recent Changes / 最近三次变更
 
@@ -264,10 +280,15 @@ Installers are published from GitHub Releases after validation:
 
 Release assets / 发布资产:
 
-- Windows x64: `Agent-Pi-x64.exe`, `Agent-Pi-x64.exe.blockmap`, `latest.yml`
-- macOS Apple Silicon: `Agent-Pi-arm64.dmg`, `Agent-Pi-arm64.zip`
-- macOS Intel: `Agent-Pi-x64.dmg`, `Agent-Pi-x64.zip`, shared `latest-mac.yml`
-- Linux x64: `Agent-Pi-x64.AppImage`, `latest-linux.yml`
+- **3.0 Windows x64:** `Agent-Pi-3.0.0-x64.exe`（本版先发 Windows；**不**附带 `latest.yml`，避免 2.6.5 被自动覆盖）
+- **2.6.5 Classic Windows:** `Agent-Pi-x64.exe`, `Agent-Pi-x64.exe.blockmap`, `latest.yml`
+- **2.6.5 macOS Apple Silicon:** `Agent-Pi-arm64.dmg`, `Agent-Pi-arm64.zip`
+- **2.6.5 macOS Intel:** `Agent-Pi-x64.dmg`, `Agent-Pi-x64.zip`, shared `latest-mac.yml`
+- **2.6.5 Linux x64:** `Agent-Pi-x64.AppImage`, `latest-linux.yml`
+
+3.0 的 DeepSeek Harness 运行时目前按 Windows 装配（`node.exe`、资源管理器、安装脚本）。macOS 安装包不能在 Windows 上交叉编译；Linux/mac 包也无法在本机启动验收。其他平台会在 runtime 按系统拆开后单独发。
+
+3.0 currently ships Windows x64 only. The Harness runtime is assembled for Windows. macOS cannot be built from Windows, and Linux/mac packages cannot be launched for sign-off on this machine.
 
 ## User Manual / 用户手册
 
