@@ -98,7 +98,9 @@ jobs:
         working-directory: payload/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --${{ matrix.platform }}
+        # --publish never: GH_TOKEN in the environment flips electron-builder
+        # into publish mode, which fails because the payload is not a git repo.
+        run: npx electron-builder --${{ matrix.platform }} --publish never
 
       - name: Upload release assets
         run: |
