@@ -1,6 +1,21 @@
 name: Build Installers
 
+# Classic 2.x: local Windows exe is uploaded to a GitHub Release, then this
+# workflow builds macOS DMG/ZIP and Linux AppImage on GitHub runners.
+#
+# Triggers:
+#   - release published (gh release create with the Windows installer)
+#   - repository_dispatch windows-installer-uploaded (after gh release upload)
+#   - workflow_dispatch (manual, same as before)
+#
+# v3.* (DeepSeek Harness) is Windows-first. Those tags do not get Classic
+# linux/mac assets attached, so a 3.0 download page cannot ship a 2.x engine.
+
 on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [windows-installer-uploaded]
   workflow_dispatch:
     inputs:
       upload_to_release:
@@ -11,18 +26,78 @@ on:
         description: Existing release tag to upload to when upload_to_release is enabled
         type: string
         required: false
-        default: v2.2.4
+        default: ""
 
 permissions:
   contents: write
 
 concurrency:
-  group: build-installers-${{ github.ref }}
+  group: build-installers-${{ github.event.release.tag_name || github.event.client_payload.tag || inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  configure:
+    name: Resolve release target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.cfg.outputs.tag }}
+      upload: ${{ steps.cfg.outputs.upload }}
+      classic: ${{ steps.cfg.outputs.classic }}
+    steps:
+      - id: cfg
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_UPLOAD: ${{ inputs.upload_to_release }}
+        run: |
+          set -euo pipefail
+          TAG=""
+          UPLOAD="false"
+          if [ "$EVENT" = "release" ]; then
+            TAG="$RELEASE_TAG"
+            UPLOAD="true"
+          elif [ "$EVENT" = "repository_dispatch" ]; then
+            TAG="$DISPATCH_TAG"
+            UPLOAD="true"
+          else
+            TAG="$INPUT_TAG"
+            if [ "$INPUT_UPLOAD" = "true" ]; then
+              UPLOAD="true"
+            fi
+          fi
+          CLASSIC="false"
+          case "$TAG" in
+            v0.*|v1.*|v2.*) CLASSIC="true" ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "upload=$UPLOAD" >> "$GITHUB_OUTPUT"
+          echo "classic=$CLASSIC" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG upload=$UPLOAD classic=$CLASSIC event=$EVENT"
+
+  skip-dsh:
+    name: v3 Windows-only notice
+    needs: configure
+    if: ${{ needs.configure.outputs.classic != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain why Classic linux/mac are not attached
+        env:
+          TAG: ${{ needs.configure.outputs.tag }}
+        run: |
+          echo "Tag ${TAG:-<none>} is not a Classic v0/v1/v2 release."
+          echo "Agent Pi 3.x uses DeepSeek Harness with a Windows runtime (node.exe, junctions)."
+          echo "GitHub linux/mac jobs still build the Classic 2.x engine and must not be uploaded onto a 3.x Release."
+          echo "macOS/Linux users should keep https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5"
+          echo "Classic linux/mac auto-build still runs when a v2.* Release is published or when this workflow is dispatched with a v2 tag."
+
   macos:
     name: macOS DMG (${{ matrix.arch }})
+    needs: configure
+    if: ${{ needs.configure.outputs.classic == 'true' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -37,6 +112,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.configure.outputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -52,7 +129,7 @@ jobs:
           apps/electron/scripts/build-dmg.sh "${{ matrix.arch }}"
 
       - name: Upload workflow artifact
-        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
+        if: ${{ needs.configure.outputs.upload != 'true' || needs.configure.outputs.tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-macos-${{ matrix.arch }}
@@ -66,10 +143,10 @@ jobs:
             apps/electron/release/latest-mac.yml
 
       - name: Upload to GitHub Release
-        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        if: ${{ needs.configure.outputs.upload == 'true' && needs.configure.outputs.tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ needs.configure.outputs.tag }}
           ARCH: ${{ matrix.arch }}
         run: |
           cp apps/electron/release/latest-mac.yml "apps/electron/release/latest-mac-${ARCH}.yml"
@@ -85,13 +162,16 @@ jobs:
 
   macos-update-metadata:
     name: macOS update metadata
-    needs: macos
+    needs: [configure, macos]
+    if: ${{ needs.configure.outputs.classic == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.configure.outputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -102,24 +182,24 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download arm64 build metadata
-        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
+        if: ${{ needs.configure.outputs.upload != 'true' || needs.configure.outputs.tag == '' }}
         uses: actions/download-artifact@v4
         with:
           name: agent-pi-macos-arm64
           path: macos-artifacts/arm64
 
       - name: Download x64 build metadata
-        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
+        if: ${{ needs.configure.outputs.upload != 'true' || needs.configure.outputs.tag == '' }}
         uses: actions/download-artifact@v4
         with:
           name: agent-pi-macos-x64
           path: macos-artifacts/x64
 
       - name: Download release build metadata
-        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        if: ${{ needs.configure.outputs.upload == 'true' && needs.configure.outputs.tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ needs.configure.outputs.tag }}
         run: |
           mkdir -p macos-artifacts/arm64 macos-artifacts/x64
           gh release download "$RELEASE_TAG" --pattern latest-mac-arm64.yml --dir macos-artifacts/arm64
@@ -135,7 +215,7 @@ jobs:
             macos-update/latest-mac.yml
 
       - name: Upload workflow artifact
-        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
+        if: ${{ needs.configure.outputs.upload != 'true' || needs.configure.outputs.tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-macos-update-metadata
@@ -144,20 +224,24 @@ jobs:
           path: macos-update/latest-mac.yml
 
       - name: Upload to GitHub Release
-        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        if: ${{ needs.configure.outputs.upload == 'true' && needs.configure.outputs.tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ needs.configure.outputs.tag }}
         run: gh release upload "$RELEASE_TAG" macos-update/latest-mac.yml --clobber
 
   linux:
     name: Linux AppImage (x64)
+    needs: configure
+    if: ${{ needs.configure.outputs.classic == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.configure.outputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -177,7 +261,7 @@ jobs:
           apps/electron/scripts/build-linux.sh x64
 
       - name: Upload workflow artifact
-        if: ${{ !inputs.upload_to_release || inputs.release_tag == '' }}
+        if: ${{ needs.configure.outputs.upload != 'true' || needs.configure.outputs.tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: agent-pi-linux-x64
@@ -188,10 +272,10 @@ jobs:
             apps/electron/release/latest-linux.yml
 
       - name: Upload to GitHub Release
-        if: ${{ inputs.upload_to_release && inputs.release_tag != '' }}
+        if: ${{ needs.configure.outputs.upload == 'true' && needs.configure.outputs.tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ needs.configure.outputs.tag }}
         run: |
           shopt -s nullglob
           assets=(

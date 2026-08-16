@@ -6,6 +6,8 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Improvements
 
+- **Classic linux/mac installers build after a Windows Release upload** — `Build Installers` now also runs on `release: published` and `repository_dispatch` (`windows-installer-uploaded`). v0/v1/v2 tags still get macOS DMG/ZIP and Linux AppImage uploaded to that Release. v3.x DeepSeek Harness releases stay Windows-only so Classic 2.x packages are not attached to a 3.0 download page.
+
 ## Bug Fixes
 
 <!-- Folded into 2.6.5.md: markdown preview loading; project characteristics after parse; evidence gate vs invention; Official Outputs session files; workbench UI i18n -->
