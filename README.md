@@ -4,6 +4,18 @@
   <img src="docs/assets/agent-pi-logo.png" alt="AIPI Always π AI Studio" width="560" />
 </p>
 
+> [!IMPORTANT]
+> ## v3.1.0 已发布 — 内核已更换为 DeepSeek Harness / New engine: DeepSeek Harness
+>
+> 从 3.0 起，Agent π 的执行内核由 Craft Agents OSS 整体迁移到 **DeepSeek Harness**（"一切皆插件"的智能体框架），3.1.0 在新内核上完成专业工作台的体系化强化：一句话蒸馏领域模块、本地知识库、统一成果树、阶段流程监控、J-Space 认知套件。
+> Since 3.0 the runtime has been transplanted from Craft Agents OSS to **DeepSeek Harness** (an everything-is-a-plugin agent framework). 3.1.0 adds module distillation, a local knowledge base, a unified deliverable tree, stage-level process monitoring, and the J-Space cognition suite on top of the new engine.
+>
+> **[⬇ 下载 / Download](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.1.0 更新说明 / Release notes](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.0)
+>
+> 注：本仓库 main 分支源码为 2.x 世代（Craft Agents OSS 架构）；3.x 桌面端以 Release 安装包发布。
+> Note: the source on `main` is the 2.x generation (Craft Agents OSS); the 3.x desktop app ships as release installers.
+
+
 **中文** | Agent π 是基于 Craft Agents OSS 深度改造的 Windows 桌面智能体工作台，面向长周期项目分析、招投标文件处理、工程资料研究、多智能体协作和可追溯成果沉淀。
 
 **English** | Agent Pi is a Windows desktop agent workbench forked and deeply adapted from Craft Agents OSS. It is designed for long-running project analysis, tender/document production, engineering research, multi-agent workflows, and traceable project outputs.
