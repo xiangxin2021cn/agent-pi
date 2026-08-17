@@ -74,6 +74,13 @@ jobs:
         run: |
           (cd payload/product/packages/business-core && npm install --omit=dev --no-fund --no-audit)
           (cd payload/product/bundles/tender-host && npm install --omit=dev --no-fund --no-audit)
+          # dsh-vision-router ships vendored without node_modules; install its
+          # runtime deps and the platform-correct sharp binary. --legacy-peer-deps
+          # skips @deepseek-ai/* peers (init-tender-profile wires them to the DSH
+          # checkout at app start).
+          (cd payload/product/vendor/dsh-vision-router \
+            && npm install --omit=dev --ignore-scripts --legacy-peer-deps --no-fund --no-audit \
+            && npm install --no-save --omit=dev --ignore-scripts --legacy-peer-deps --no-fund --no-audit 'sharp@^0.35.3')
 
       - name: Download Node runtime binary
         run: |
