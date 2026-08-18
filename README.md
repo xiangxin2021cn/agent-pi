@@ -9,15 +9,23 @@
 A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
 
 > [!IMPORTANT]
-> ## v3.2.0 已发布 — DeepSeek Harness `0.1.0-rc.7`
+> ## v3.2.1 已发布 — 预装 GenUI、抓页、AnySearch
 >
-> 3.0 把发动机换成 **DeepSeek Harness**。3.1 把工作台做成可沉淀经验的队伍。**3.2.0** 再升内核，并收口现场最扎手的几件事：崩溃后只救还没递交的工人；正文里的引用是出处芯片；设置页插件能正常加载；右侧「资源文件」栏不再丢。
+> 在 3.2.0 内核之上，出厂带上 **dsh-genui**、**web_fetch**、**AnySearch**。装不上社区插件不是应用拦网；对话里也不用接 Chrome CDP。
 >
-> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.0 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0)
+> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.1 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1)
 >
-> 安装包：`Agent-Pi-DSH-3.2.0-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
+> 安装包：`Agent-Pi-DSH-3.2.1-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
 >
 > `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
+
+---
+
+## 3.2.1 这版你能感到什么
+
+助手回复里可以渲染交互 UI（`dsh-ui` 围栏）。模型可以用 `web_fetch` 取页面和图片地址，再写成 Markdown 图。网络搜索走 AnySearch。社区市场若仍从 GitHub 装插件，点确认就会预写正确的 pnpm 构建放行键。对话里后来装的 bundle 插件，重启后会保留。
+
+`web-fetch-http` 不会出现在市场的依赖列表里——overlay 加载才是正确方式。市场若写「校验失败」，是误报。
 
 ---
 
@@ -74,7 +82,7 @@ flowchart LR
 
 ## 安装
 
-1. 下载 [`Agent-Pi-DSH-3.2.0-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+1. 下载 [`Agent-Pi-DSH-3.2.1-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 2. 未签名：SmartScreen 选「仍要运行」
 3. 打开 **Agent π**，选择项目工作区
 4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
@@ -98,6 +106,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 
 | 版本 | 一句话 |
 | --- | --- |
+| [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | 预装 dsh-genui、web_fetch、AnySearch；市场放行写对 pnpm 包名 |
 | [3.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0) | 内核 `0.1.0-rc.7`；崩溃只救未递交工人；引用变出处芯片；能启动；资源文件栏不再丢 |
 | [3.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.3) | 冷子代理历史不再扫全部兄弟 |
 | [3.1.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.2) | 运行中子代理历史加载热修 |
