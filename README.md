@@ -9,17 +9,21 @@
 A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
 
 > [!IMPORTANT]
-> ## v3.2.1 已发布 — 预装 GenUI、抓页、AnySearch
+> ## v3.2.2 已发布 — 卸掉 J-Space
 >
-> 在 3.2.0 内核之上，出厂带上 **dsh-genui**、**web_fetch**、**AnySearch**。装不上社区插件不是应用拦网；对话里也不用接 Chrome CDP。
+> J-Space 不是市场插件，设置里卸不掉，却会先劫持模型。**3.2.2** 从出厂技能和系统提示里拿掉它。投标 / 实施 / 投资工作台仍在框架里。
 >
-> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.1 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1)
+> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.2 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2)
 >
-> 安装包：`Agent-Pi-DSH-3.2.1-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
+> 安装包：`Agent-Pi-DSH-3.2.2-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
 >
 > `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
 
 ---
+
+## 3.2.2 这版你能感到什么
+
+J-Space 不再出现在技能目录，也不会再被系统提示点名。复杂投标 / 实施 / 投资仍走原来的领域技能和内核并行工人。
 
 ## 3.2.1 这版你能感到什么
 
@@ -76,13 +80,13 @@ flowchart LR
 | 阶段准备、证据门禁、成果树 | 工作台插件 |
 | 并行拆活 | 内核原生 `subagent` / `workflow` |
 
-3.1 已经具备：一句话把本单活蒸馏成领域模块、本地知识库、统一成果树与阶段总报告、掌控型质检、J-Space 深推理协议。3.2 在这条线上把内核和长任务收口做稳。
+3.1 已经具备：一句话把本单活蒸馏成领域模块、本地知识库、统一成果树与阶段总报告、掌控型质检。3.2 把内核和长任务收口做稳；3.2.2 卸掉会扰乱 DSH 循环的 J-Space 技能。
 
 ---
 
 ## 安装
 
-1. 下载 [`Agent-Pi-DSH-3.2.1-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+1. 下载 [`Agent-Pi-DSH-3.2.2-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 2. 未签名：SmartScreen 选「仍要运行」
 3. 打开 **Agent π**，选择项目工作区
 4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
@@ -106,6 +110,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 
 | 版本 | 一句话 |
 | --- | --- |
+| [3.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2) | 卸掉 J-Space 出厂技能；不再劫持 DSH 循环 |
 | [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | 预装 dsh-genui、web_fetch、AnySearch；市场放行写对 pnpm 包名 |
 | [3.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0) | 内核 `0.1.0-rc.7`；崩溃只救未递交工人；引用变出处芯片；能启动；资源文件栏不再丢 |
 | [3.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.3) | 冷子代理历史不再扫全部兄弟 |
