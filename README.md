@@ -9,17 +9,21 @@
 A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
 
 > [!IMPORTANT]
-> ## v3.2.2 已发布 — 卸掉 J-Space
+> ## v3.2.3 已发布 — 文件夹只给地址
 >
-> J-Space 不是市场插件，设置里卸不掉，却会先劫持模型。**3.2.2** 从出厂技能和系统提示里拿掉它。投标 / 实施 / 投资工作台仍在框架里。
+> 输入框文件夹按钮只挂路径芯片，不再整夹上传。右侧资源文件右键恢复 **注入对话**。
 >
-> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.2 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2)
+> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.3 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3)
 >
-> 安装包：`Agent-Pi-DSH-3.2.2-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
+> 安装包：`Agent-Pi-DSH-3.2.3-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
 >
 > `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
 
 ---
+
+## 3.2.3 这版你能感到什么
+
+输入框旁边的文件夹只提供地址：芯片上是文件夹图标和名称。模型按路径自己列目录、按需读文件。右侧「资源文件」右键再次出现「注入对话」。
 
 ## 3.2.2 这版你能感到什么
 
@@ -86,7 +90,7 @@ flowchart LR
 
 ## 安装
 
-1. 下载 [`Agent-Pi-DSH-3.2.2-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+1. 下载 [`Agent-Pi-DSH-3.2.3-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 2. 未签名：SmartScreen 选「仍要运行」
 3. 打开 **Agent π**，选择项目工作区
 4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
@@ -110,6 +114,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 
 | 版本 | 一句话 |
 | --- | --- |
+| [3.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3) | 对话框文件夹只给路径；右键恢复注入对话 |
 | [3.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2) | 卸掉 J-Space 出厂技能；不再劫持 DSH 循环 |
 | [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | 预装 dsh-genui、web_fetch、AnySearch；市场放行写对 pnpm 包名 |
 | [3.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0) | 内核 `0.1.0-rc.7`；崩溃只救未递交工人；引用变出处芯片；能启动；资源文件栏不再丢 |
