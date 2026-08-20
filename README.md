@@ -9,17 +9,27 @@
 A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
 
 > [!IMPORTANT]
-> ## v3.2.3 已发布 — 文件夹只给地址
+> ## v3.3.0 已发布 — 内核 rc.8，识图只留工具
 >
-> 输入框文件夹按钮只挂路径芯片，不再整夹上传。右侧资源文件右键恢复 **注入对话**。
+> 钉住 DeepSeek Harness **`dsh-v0.1.0-rc.8`**。vision-router 不再劫持官方 DeepSeek 路由；图纸和扫描页仍用 `vision_*`。V4 还是纯文本。
 >
-> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.2.3 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3)
+> **SQLite 会话库格式不兼容。** 覆盖安装前请完全退出，并视需要备份 `%APPDATA%\agent-pi-dsh-desktop\dsh-home`。
 >
-> 安装包：`Agent-Pi-DSH-3.2.3-x64.exe`。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
+> **[⬇ 下载 Windows x64](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.3.0 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.0)
+>
+> 安装包：`Agent-Pi-DSH-3.3.0-x64.exe`。未签名：SmartScreen 选「仍要运行」。
 >
 > `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
 
 ---
+
+## 3.3.0 这版你能感到什么
+
+钉住上游 DeepSeek Harness **`dsh-v0.1.0-rc.8`**。官方补了原生图片管道、持久 PowerShell、并发搜索；默认 V4 仍不会看图。vision-router 关掉 stealth，只留 `vision_*` 工具。识图插件没有卸。
+
+**SQLite 会话库与 rc.7 不兼容。** 项目目录和正式成果不受影响。需要旧聊天时先备份 `$DSH_HOME`。
+
+3.1.x 历史与审批覆盖层、`web_fetch`、AnySearch、GenUI、文件夹路径芯片、右键注入对话都还在。
 
 ## 3.2.3 这版你能感到什么
 
@@ -84,19 +94,19 @@ flowchart LR
 | 阶段准备、证据门禁、成果树 | 工作台插件 |
 | 并行拆活 | 内核原生 `subagent` / `workflow` |
 
-3.1 已经具备：一句话把本单活蒸馏成领域模块、本地知识库、统一成果树与阶段总报告、掌控型质检。3.2 把内核和长任务收口做稳；3.2.2 卸掉会扰乱 DSH 循环的 J-Space 技能。
+3.1 已经具备：一句话把本单活蒸馏成领域模块、本地知识库、统一成果树与阶段总报告、掌控型质检。3.2 把内核和长任务收口做稳；3.2.2 卸掉 J-Space；3.3.0 把内核升到 rc.8，识图只留工具。
 
 ---
 
 ## 安装
 
-1. 下载 [`Agent-Pi-DSH-3.2.3-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+1. 下载 [`Agent-Pi-DSH-3.3.0-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 2. 未签名：SmartScreen 选「仍要运行」
 3. 打开 **Agent π**，选择项目工作区
-4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
+4. 配置 DeepSeek。V4 仍是纯文本；图纸和扫描页用 `vision_*`
 5. 回形针上传资料后直接下任务
 
-PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正常多模态链路。
+PDF 当文件读（能抽文本的不先转图）。贴图不会让 V4 看见画面。
 
 | | |
 | --- | --- |
@@ -106,7 +116,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 | 可并存 | 3.x 与 [v2.6.5 经典版](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) 可同时装 |
 | 覆盖层仍在 | 上百工人的父会话：点开某一个孩子的历史不应再把整窗打死；目录菜单仍可能慢 |
 
-官方 DeepSeek 仍是纯文本。需要看图时在设置里换视觉模型。
+官方 DeepSeek V4 仍是纯文本。看图走 `vision_*`，不要卸视觉插件。覆盖安装后旧 SQLite 会话库可能打不开。
 
 ---
 
@@ -114,6 +124,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 
 | 版本 | 一句话 |
 | --- | --- |
+| [3.3.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.0) | 内核 `0.1.0-rc.8`；关 stealth，识图只留工具 |
 | [3.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3) | 对话框文件夹只给路径；右键恢复注入对话 |
 | [3.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2) | 卸掉 J-Space 出厂技能；不再劫持 DSH 循环 |
 | [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | 预装 dsh-genui、web_fetch、AnySearch；市场放行写对 pnpm 包名 |
