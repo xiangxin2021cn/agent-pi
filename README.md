@@ -9,17 +9,25 @@
 A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
 
 > [!IMPORTANT]
-> ## v3.3.0 已发布 — 内核 rc.8，知识库本页解析
+> ## v3.3.2 已发布 — 知识库完善，内核 0.1.1-rc.2
 >
-> DeepSeek Harness 升到 **`dsh-v0.1.0-rc.8`**。知识库在本页选 PDF/Word/Excel/PPT/图片即可解析入库，扫描件走 MinerU。列表与上传文件齐名。
+> 这版把**本地知识库做成能日常用的工作台**：左侧独立入口、先落盘再解析、对话整理成知识包、用户模板、分类子目录、`.apkb` 传递、MinerU 表格能看。内核钉在 **`dsh-v0.1.1-rc.2`**。`dsh-genui` 不再出厂预装。
 >
-> **[⬇ 下载](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.3.0 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.0)
+> **[⬇ 下载](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.3.2 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.2)
 >
-> Windows：`Agent-Pi-DSH-3.3.0-x64.exe`。macOS arm64 / Linux x64 已挂在同一 Release。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
+> Windows：`Agent-Pi-DSH-3.3.2-x64.exe`。macOS arm64 / Linux x64 由同一 Release 上的 CI 回传。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
 >
 > `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
 
 ---
+
+## 3.3.2 这版你能感到什么
+
+左侧「专业化工作台」下面新增 **知识库**，两边进同一页。本页选文件先落入原始文档区，再点「解析入库」。对话里贴上 PDF 后发送「把这个 PDF 准确整理完整内容，做成知识包再入库。」只贴文件不说话不会进库。把自己编好的好文档入库为 **用户模板** 并勾选后，新稿复刻格式和大纲，不抄模板里的项目事实。分类下可建子目录；已入库条目、子目录、本机技能可导出 `.apkb`。MinerU 预览是 Markdown 表，不是满屏 HTML。
+
+内核钉到 `dsh-v0.1.1-rc.2`。新会话默认 **DeepSeek-V4-Flash-Vision-Exp**。贴图走官方 Files API；盘上的图用 `read_image`，不要 `vision_*`。第 3 阶段在 md 总报告后再出一份带公式的组价 xlsx（出厂预置 Univer）。
+
+覆盖安装前请完全退出。已有知识库不会被安装程序清掉。没有新的会话库格式断裂。
 
 ## 3.3.0 这版你能感到什么
 
@@ -98,7 +106,7 @@ flowchart LR
 
 ## 安装
 
-1. 下载 [`Agent-Pi-DSH-3.3.0-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+1. 下载 [`Agent-Pi-DSH-3.3.2-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
 2. 未签名：SmartScreen 选「仍要运行」
 3. 打开 **Agent π**，选择项目工作区
 4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
@@ -122,6 +130,7 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 
 | 版本 | 一句话 |
 | --- | --- |
+| [3.3.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.2) | 知识库完善：独立入口、知识包、用户模板、子目录、`.apkb`、MinerU 转表；内核 `0.1.1-rc.2` |
 | [3.3.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.0) | 内核 rc.8；知识库本页解析，列表与上传齐名 |
 | [3.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3) | 对话框文件夹只给路径；右键恢复注入对话 |
 | [3.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2) | 卸掉 J-Space 出厂技能；不再劫持 DSH 循环 |
