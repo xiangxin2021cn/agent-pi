@@ -1,96 +1,124 @@
 <p align="center">
-  <img src="docs/assets/agent-pi-logo.png" width="160" alt="Agent π">
+  <img src="docs/assets/hero-light.jpg" alt="Agent Pi DSH — engineering light theme" width="100%">
 </p>
 
-# Agent π / Agent Pi
+<p align="center">
+  <img src="docs/assets/logo-mark.png" width="88" alt="Agent π">
+</p>
 
-招投标、实施、投资的桌面超级工作台。打开项目就能下任务：并行工人、证据门禁、正式成果、可点击出处，都在同一扇窗里。
+<h1 align="center">Agent Pi DSH</h1>
 
-A desktop workbench for tender, delivery, and investment jobs. Open a project and talk — parallel workers, evidence gates, Official Outputs, and clickable citations live in one window.
+<p align="center">
+  <b>工程企业的垂直智能体</b><br>
+  <strong>长程任务，一次跑完</strong>
+</p>
+
+<p align="center">
+  The vertical agent for engineering enterprises — tender, delivery, investment.<br>
+  Long-horizon jobs, finished in one run.
+</p>
+
+<p align="center">
+  <a href="https://www.agent-pi.app"><img src="https://img.shields.io/badge/官网-agent--pi.app-2f6df0?style=flat-square" alt="Website"></a>
+  <a href="https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.2"><img src="https://img.shields.io/badge/v3.3.2-DSH%20dsh--v0.1.1--rc.2-2f6df0?style=flat-square" alt="v3.3.2"></a>
+  <a href="https://www.agent-pi.app/docs.html"><img src="https://img.shields.io/badge/文档-Docs-0fb5c9?style=flat-square" alt="Docs"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-see%20repo-8593ab?style=flat-square" alt="License"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-x64.exe"><b>Windows x64</b></a>
+  ·
+  <a href="https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-mac-arm64.dmg"><b>macOS arm64</b></a>
+  ·
+  <a href="https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-linux-x86_64.AppImage"><b>Linux AppImage</b></a>
+  ·
+  <a href="https://www.agent-pi.app">官网</a>
+  ·
+  <a href="https://www.agent-pi.app/docs.html">文档</a>
+</p>
+
+通用办公助手陪你聊天，**Agent Pi DSH 替你干活**：吃透投标、实施、投资的垂直作业系统。长程任务不断档、目标不偏离、证据可追溯——数十份标书文件一次搞定，数千条 BOQ 逐项推导，成果直接落盘为正式文档。
 
 > [!IMPORTANT]
-> ## v3.3.2 已发布 — 知识库完善，内核 0.1.1-rc.2
+> **v3.3.2** 已发布 · 内核钉在 **`dsh-v0.1.1-rc.2`** · 新会话默认 `deepseek-v4-flash-vision-exp`
 >
-> 这版把**本地知识库做成能日常用的工作台**：左侧独立入口、先落盘再解析、对话整理成知识包、用户模板、分类子目录、`.apkb` 传递、MinerU 表格能看。内核钉在 **`dsh-v0.1.1-rc.2`**。`dsh-genui` 不再出厂预装。
->
-> **[⬇ 下载](https://github.com/xiangxin2021cn/agent-pi/releases/latest)** ｜ [3.3.2 说明](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.2)
->
-> Windows：`Agent-Pi-DSH-3.3.2-x64.exe`。macOS arm64 / Linux x64 由同一 Release 上的 CI 回传。未签名：SmartScreen 选「仍要运行」。升级请完全退出再打开（不要只关到托盘）。
->
-> `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 Release 安装包发布。**
+> `main` 分支源码仍是 2.x（Craft Agents OSS）。**3.x 桌面版以 [Release 安装包](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.2) 发布。** 完整产品页：[www.agent-pi.app](https://www.agent-pi.app)
+
+<p align="center">
+  <img src="docs/assets/screenshot-market.jpg" alt="Agent Pi DSH 插件市场 · 亮色工作台" width="92%">
+</p>
 
 ---
 
-## 3.3.2 这版你能感到什么
+## 不是又一个聊天助手
 
-左侧「专业化工作台」下面新增 **知识库**，两边进同一页。本页选文件先落入原始文档区，再点「解析入库」。对话里贴上 PDF 后发送「把这个 PDF 准确整理完整内容，做成知识包再入库。」只贴文件不说话不会进库。把自己编好的好文档入库为 **用户模板** 并勾选后，新稿复刻格式和大纲，不抄模板里的项目事实。分类下可建子目录；已入库条目、子目录、本机技能可导出 `.apkb`。MinerU 预览是 Markdown 表，不是满屏 HTML。
+豆包、通义办公、WorkBuddy 面向所有人的日常事务。Agent Pi DSH 只为工程企业的重活而生。
 
-内核钉到 `dsh-v0.1.1-rc.2`。新会话默认 **DeepSeek-V4-Flash-Vision-Exp**。贴图走官方 Files API；盘上的图用 `read_image`，不要 `vision_*`。第 3 阶段在 md 总报告后再出一份带公式的组价 xlsx（出厂预置 Univer）。
-
-覆盖安装前请完全退出。已有知识库不会被安装程序清掉。没有新的会话库格式断裂。
-
-## 3.3.0 这版你能感到什么
-
-知识库不再先去对话里转 Markdown：本页选完文件就解析、切块、入库。扫描件默认走 MinerU OCR。列表一行一份原文档，名称与上传齐名；点开改的是解析稿，源 PDF/Word 用「打开源文件」。
-
-内核钉到 `dsh-v0.1.0-rc.8`。识图插件还在，只提供 `vision_*` 工具，不再劫持官方 DeepSeek 路由。文件夹路径芯片和右键「注入对话」都还在。
-
-覆盖安装前请完全退出。rc.7 的 SQLite 会话库不能直接接着用；项目目录和知识库不受影响。
-
-## 3.2.3 这版你能感到什么
-
-输入框旁边的文件夹只提供地址：芯片上是文件夹图标和名称。模型按路径自己列目录、按需读文件。右侧「资源文件」右键再次出现「注入对话」。
-
-## 3.2.2 这版你能感到什么
-
-J-Space 不再出现在技能目录，也不会再被系统提示点名。复杂投标 / 实施 / 投资仍走原来的领域技能和内核并行工人。
-
-## 3.2.1 这版你能感到什么
-
-助手回复里可以渲染交互 UI（`dsh-ui` 围栏）。模型可以用 `web_fetch` 取页面和图片地址，再写成 Markdown 图。网络搜索走 AnySearch。社区市场若仍从 GitHub 装插件，点确认就会预写正确的 pnpm 构建放行键。对话里后来装的 bundle 插件，重启后会保留。
-
-`web-fetch-http` 不会出现在市场的依赖列表里——overlay 加载才是正确方式。市场若写「校验失败」，是误报。
+| 维度 | 通用办公助手 | Agent Pi DSH |
+| --- | --- | --- |
+| 任务尺度 | 几十轮对话就断片、跑题 | 小时级长程任务一次跑完；崩溃只救未完工的部分 |
+| 目标控制 | 聊到哪算哪 | 阶段门禁 + 成果树锁定目标 |
+| 事实可靠性 | 凭模型记忆编 | 证据门禁：查不到出处就不放行 |
+| 专业深度 | 通用模板 | 投标 / 实施 / 投资垂直技能；规范、FIDIC 进知识库 |
+| 数据处理 | 长文档读不动，大表格丢行 | 数千条 BOQ 逐项处理，每条带规范出处 |
+| 成果形态 | 一段聊天记录 | 落盘的正式成果：版式、带公式报表、出处芯片 |
 
 ---
 
-## 3.2.0 这版你能感到什么
+## 投标全流程
 
-### 内核更快、更稳
+一次长程任务，从标书到标稿。中间材料全程不丢，每一步都可核对出处。
 
-钉住上游 DeepSeek Harness **`v0.1.0-rc.7`**。投标场景里大量持久 Bash 不再先卡三秒多才出字；大历史分页不再栈溢出；提问卡片可折叠留草稿；推理强度可调到 `low` 省成本。3.1.x 针对上百个工人的历史与审批覆盖层全部保留。
+1. **标书全量解析，规范入库存起来** — 规范、FIDIC 与特别条款修订逐条对照
+2. **数千条 BOQ，逐项界定工作范围** — 不靠印象，每条都有出处芯片
+3. **五步推导，算出每一条单价** — 企业数据 + 工法工效 + 实地资源价格
+4. **资源汇总与成本推定** — 带公式的组价测算表可以直接改
+5. **按项目特征做施工推演** — 可执行的施工策划稿，不是套话
+6. **照你的模板编制正式投标文档** — 复刻版式与深度，项目事实永远来自本项目
 
-### 崩溃只救没递交的工人
-
-工人正常写完并回推，父会话照常收口。父会话崩了或你把应用重启后：
-
-- **已经落到 Official Outputs 的任务不再重读 JSON、不再重派、不再重解析源文件**
-- 只找回还没递交成果的工人：能续跑就续跑，续不上再下派这一条
-- 不会把整个阶段当新任务重开
-- 你在正式稿上改的字留在父会话里，不会把已完工工人叫醒
-
-### 引用是出处，不是摘抄
-
-Markdown 里的引用令牌显示成短芯片。点一下只看到：**源文件、页或行、题目或段落**，需要时再打开源文件。写作合同禁止把证据正文贴进稿里。
-
-### 能启动，右边文件栏还在
-
-DSH `rc.7` 把设置页插件槽改成按命名空间 keyed。本版给钉住的 `dsh-vision-router` 补上 `key`，否则一开应用就 Failed to load plugins。「资源文件」挂在根 overlay 上，会话行晚一点才带路径时不再整栏消失；顶栏文件夹按钮重新打开这一栏。
+中标之后，投标阶段的详尽基础资料直接服务实施——成本策划有据可依。
 
 ---
 
-## 这是什么
+## 核心能力
 
-Agent π 不是聊天壳。它把智能体放进真实项目作业：**投标解析与组价、实施策划、投资研究**。默认路径仍是打开工作区说话；工作台是加速器，不是闸门。
+| | |
+| --- | --- |
+| **内核原生并行工人** | 工具、子任务、会话、权限由 DeepSeek Harness 直接跑，不隔一层自研调度器 |
+| **证据门禁** | 项目特征缺口不能用模型记忆填：找到出处，或由你尽调后授权放行 |
+| **Official Outputs** | 统一成果树与阶段总报告写回 `Agent Pi Outputs`；已落盘的成果重启后不再重做 |
+| **出处芯片** | 只显示源文件、页或行、题目；证据正文不贴进正式稿 |
+| **本地知识库** | 两条入库路、按文档章节切条款、MinerU 转可读表、用户模板、`.apkb` 传递包 |
+| **崩溃只救没递交的工人** | 已完工任务不重读、不重派；只找回还没递交成果的工人 |
+| **企业级插件** | 技能、工具、工作台页、验收门禁都可以加；预置 Univer 预览 / 改组价表 |
 
-从 3.0 起，循环交给 DeepSeek Harness：工具、并行子任务、会话、权限由内核直接跑。投标 / 实施 / 投资、证据门禁、正式成果仍是 Agent π 的工作台，只是不再隔着一层自研 SessionManager / Goal Loop。
+---
+
+## 三个业务域，一套工作台
+
+| 01 / TENDER | 02 / DELIVERY | 03 / INVESTMENT |
+| --- | --- | --- |
+| **投标** | **实施交付** | **投资研究** |
+| 招标解析 · 项目边界 | 合同范围 · 计划进度 | 任务筛选 · 市场承购 |
+| BOQ 五步组价 · 量价核对 | 成本商务 · 现金流 | 技术尽调 · 法务 ESG |
+| 评审策略 · 正式写作 | 资源采购 · 风险变更 | 财务估值 |
+| 递交文件与递交前审计 | 报告审计 · 工期计划器 | 交易决策 |
+
+---
+
+## 架构
+
+发动机是 **DeepSeek Harness**，工作台是 **Agent Pi**。从 3.0 起，循环交给内核；投标 / 实施 / 投资、证据门禁、正式成果仍是本产品的工作台。
 
 ```mermaid
 flowchart LR
-    U["打开项目下任务"] --> W["工作台"]
+    U["打开项目下任务"] --> W["工作台 tender-host"]
     W --> K["DeepSeek Harness 内核"]
-    K --> S["并行工人"]
+    K --> S["subagent / workflow"]
     S --> O["Official Outputs"]
     O --> C["出处芯片"]
+    W --> G["证据门禁"]
+    K --> B["本地知识库"]
 ```
 
 | 层 | 做什么 |
@@ -99,30 +127,30 @@ flowchart LR
 | 投标 / 实施 / 投资工作台 | 对话页页签 + 建项目 |
 | 阶段准备、证据门禁、成果树 | 工作台插件 |
 | 并行拆活 | 内核原生 `subagent` / `workflow` |
-
-3.1 已经具备：一句话把本单活蒸馏成领域模块、本地知识库、统一成果树与阶段总报告、掌控型质检。3.2 把内核和长任务收口做稳；3.2.2 卸掉会扰乱 DSH 循环的 J-Space 技能。
+| 桌面壳 | Electron 43.4.1 |
 
 ---
 
-## 安装
+## 下载与安装
 
-1. 下载 [`Agent-Pi-DSH-3.3.2-x64.exe`](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
-2. 未签名：SmartScreen 选「仍要运行」
-3. 打开 **Agent π**，选择项目工作区
-4. 配置 DeepSeek；若要看图，换带图片输入的视觉模型
+| 平台 | 文件 |
+| --- | --- |
+| Windows x64 | [Agent-Pi-DSH-3.3.2-x64.exe](https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-x64.exe) |
+| macOS Apple Silicon | [Agent-Pi-DSH-3.3.2-mac-arm64.dmg](https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-mac-arm64.dmg) · [zip](https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-mac-arm64.zip) |
+| Linux x64 | [AppImage](https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-linux-x86_64.AppImage) · [deb](https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-linux-amd64.deb) |
+| 2.6.5 经典版 | [可与 3.x 并存](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) |
+
+国内镜像（Windows）：[gh-proxy.com](https://gh-proxy.com/https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-x64.exe) · [ghfast.top](https://ghfast.top/https://github.com/xiangxin2021cn/agent-pi/releases/download/v3.3.2/Agent-Pi-DSH-3.3.2-x64.exe)
+
+Windows SHA256：`00e2552dfe17c2a2cc5cb694d2174e5afc28fd43efab44d1059f71b0bda610b7`
+
+1. 下载对应平台安装包
+2. 未签名：SmartScreen / Gatekeeper 选「仍要运行」
+3. 打开 **Agent Pi DSH**，选择项目工作区
+4. 配置 DeepSeek；看图请用带图片输入的视觉模型
 5. 回形针上传资料后直接下任务
 
-PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正常多模态链路。
-
-| | |
-| --- | --- |
-| 不会自动升级 | 2.x 停在 2.6.5，避免把旧引擎静默换成新内核 |
-| 项目还在 | 工作目录和 `Agent Pi Outputs` 接着用 |
-| 会话不从 2.x 迁移 | 旧聊天、旧模型连接不会进 3.x |
-| 可并存 | 3.x 与 [v2.6.5 经典版](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) 可同时装 |
-| 覆盖层仍在 | 上百工人的父会话：点开某一个孩子的历史不应再把整窗打死；目录菜单仍可能慢 |
-
-官方 DeepSeek 仍是纯文本。需要看图时在设置里换视觉模型。
+覆盖安装前请**完全退出**（不要只关到托盘）。工作目录和 `Agent Pi Outputs` 接着用。会话不从 2.x 迁移。
 
 ---
 
@@ -134,10 +162,16 @@ PDF 当文件读（能抽文本的不先转图）。图片走视觉模型的正�
 | [3.3.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.3.0) | 内核 rc.8；知识库本页解析，列表与上传齐名 |
 | [3.2.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.3) | 对话框文件夹只给路径；右键恢复注入对话 |
 | [3.2.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.2) | 卸掉 J-Space 出厂技能；不再劫持 DSH 循环 |
-| [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | 预装 dsh-genui、web_fetch、AnySearch；市场放行写对 pnpm 包名 |
-| [3.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0) | 内核 `0.1.0-rc.7`；崩溃只救未递交工人；引用变出处芯片；能启动；资源文件栏不再丢 |
-| [3.1.3](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.3) | 冷子代理历史不再扫全部兄弟 |
-| [3.1.2](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.2) | 运行中子代理历史加载热修 |
-| [3.1.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.0) | 蒸馏模块、知识库、成果树、质检、J-Space |
+| [3.2.1](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.1) | web_fetch、AnySearch；市场放行写对 pnpm 包名 |
+| [3.2.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.2.0) | 内核 `0.1.0-rc.7`；崩溃只救未递交工人；引用变出处芯片 |
+| [3.1.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.1.0) | 蒸馏模块、知识库、成果树、质检 |
 | [3.0.0](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v3.0.0) | 发动机换成 DeepSeek Harness |
 | [2.6.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) | 经典版（Craft Agents OSS / Goal Loop），可并存 |
+
+---
+
+<p align="center">
+  <a href="https://www.agent-pi.app"><b>www.agent-pi.app</b></a>
+  · Always π AI Studio
+  · pinned: dsh-v0.1.1-rc.2
+</p>
