@@ -75,13 +75,11 @@ jobs:
           (cd payload/product/packages/business-core && npm install --omit=dev --no-fund --no-audit)
           (cd payload/product/bundles/tender-host && npm install --omit=dev --no-fund --no-audit)
           # vision-router is retired from the factory; do not cd into it.
-          # Univer ships without node_modules. Native bindings (libsql, rust)
-          # must be installed on the runner OS. --legacy-peer-deps skips
-          # @deepseek-ai/* peers (init-tender-profile junctions them at boot).
-          if [ -d payload/product/vendor/dsh-univer-office ]; then
-            (cd payload/product/vendor/dsh-univer-office \
-              && npm install --omit=dev --ignore-scripts --legacy-peer-deps --no-fund --no-audit)
-          fi
+          # dsh-univer-office ships Gateway/Viewer/Worker in artifacts/. A
+          # full npm install still pulls @univer-cli/* insiders packages that
+          # are not on registry.npmjs.org (failed run 32619205147). Skip it
+          # here, same as the Windows pack. First boot installs the public
+          # marketplace copy with OS-correct natives.
 
       - name: Download Node runtime binary
         run: |
