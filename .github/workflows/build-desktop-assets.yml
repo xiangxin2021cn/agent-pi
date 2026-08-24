@@ -98,7 +98,13 @@ jobs:
 
       - name: Install desktop shell dependencies
         working-directory: payload/desktop
-        run: npm install --no-fund --no-audit
+        run: |
+          npm install --no-fund --no-audit
+          # package.json pins electronDist to node_modules/electron/dist.
+          # npm install on CI often skips the Electron zip (run 32699235307
+          # added 284 packages in 7s and left dist/ missing). Force it.
+          node node_modules/electron/install.js
+          test -d node_modules/electron/dist
 
       - name: Build desktop package
         working-directory: payload/desktop
