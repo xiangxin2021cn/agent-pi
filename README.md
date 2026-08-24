@@ -2,6 +2,10 @@
   <img src="docs/assets/hero-flow-light.webp" alt="Agent Pi DSH — 亮色工程流场循环动画" width="100%">
 </p>
 
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Agent Pi" width="140">
+</p>
+
 <h1 align="center">Agent Pi DSH</h1>
 
 <p align="center">
@@ -165,6 +169,10 @@ Windows SHA256：`00e2552dfe17c2a2cc5cb694d2174e5afc28fd43efab44d1059f71b0bda610
 | [2.6.5](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.5) | 经典版（Craft Agents OSS / Goal Loop），可并存 |
 
 ---
+
+<p align="center">
+  <img src="docs/assets/studio-logo.png" alt="Always π AI Studio" width="180">
+</p>
 
 <p align="center">
   <a href="https://www.agent-pi.app"><b>www.agent-pi.app</b></a>
