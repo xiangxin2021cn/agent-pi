@@ -6,10 +6,9 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Improvements
 
-- **Classic linux/mac installers build after a Windows Release upload** — `Build Installers` now also runs on `release: published` and `repository_dispatch` (`windows-installer-uploaded`). v0/v1/v2 tags still get macOS DMG/ZIP and Linux AppImage uploaded to that Release. v3.x DeepSeek Harness releases stay Windows-only so Classic 2.x packages are not attached to a 3.0 download page.
-
 ## Bug Fixes
 
+<!-- Folded into 2.6.6.md: Opus 4.6 selectable again; Claude SDK 0.3.241 + Pi 0.84.2; Explore blockWithReason continue:true; Classic linux/mac after Windows Release -->
 <!-- Folded into 2.6.5.md: markdown preview loading; project characteristics after parse; evidence gate vs invention; Official Outputs session files; workbench UI i18n -->
 <!-- Folded into 2.6.4.md: Windows privateBytes spawn cap, capacity-error pending, full assistant markdown, idle transcript drop -->
 <!-- Folded into 2.6.3.md: Git Bash 2>nul created a cwd file named nul -->

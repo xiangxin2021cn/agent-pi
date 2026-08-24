@@ -51,15 +51,32 @@ This separation allows the same enterprise workflow to run on Anthropic models, 
 
 ## Latest Version / 最新版本
 
-**Current release: V2.6.5.**
+**Classic 2.x current release: V2.6.6 (Claude Agent SDK + Pi — not DeepSeek Harness).**
 
-**当前发布版：V2.6.5。**
+**经典 2.x 当前发布版：V2.6.6（Claude Agent SDK + Pi，非 DSH / 非 3.x）。**
+
+This tag is a Classic 2.x maintenance update. GitHub’s Latest badge currently points at the separate 3.x DeepSeek Harness line. Download 2.6.6 from [v2.6.6](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.6), not from `/releases/latest`.
+
+本标签是非 DSH 架构的老版更新。GitHub Latest 徽章指向独立的 3.x DeepSeek Harness 产品线。请从 [v2.6.6](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.6) 下载，不要从 Latest 下 DSH 包。
 
 GitHub Releases / 发布页:
 
 [https://github.com/xiangxin2021cn/agent-pi/releases](https://github.com/xiangxin2021cn/agent-pi/releases)
 
 ## Recent Changes / 最近三次变更
+
+### V2.6.6 Classic Runtime + Opus 4.6 / V2.6.6 经典运行时与 Opus 4.6
+
+V2.6.6 is **not** DeepSeek Harness. It restores Claude Opus 4.6 as a selectable model, uplifts Claude Agent SDK **0.3.229 → 0.3.241** and Pi **0.84.1 → 0.84.2**, and stops Explore mode from going silent when a tool is blocked.
+
+V2.6.6 **不是** DSH / 3.x。重新开放 Claude Opus 4.6，升级 Claude Agent SDK 与 Pi，并修复探索模式遇到拦截工具后整轮哑火。
+
+| Area / 模块 | English | 中文 |
+| --- | --- | --- |
+| Architecture | Classic Claude Agent SDK + Pi control plane. | 经典 Claude Agent SDK + Pi，非 DSH。 |
+| Opus 4.6 | Selectable again; one-shot restore; default stays 4.8. | 可再选；一次性加回；默认仍是 4.8。 |
+| Runtimes | Claude SDK 0.3.241; Pi 0.84.2. | Claude 0.3.241；Pi 0.84.2。 |
+| Explore | Blocked tools keep `continue: true`. | 拦截后模型仍看得到原因。 |
 
 ### V2.6.5 Project Characteristics + Markdown Preview / V2.6.5 项目特征与 Markdown 预览
 
@@ -260,7 +277,11 @@ Installers are published from GitHub Releases after validation:
 
 安装包会在验证通过后发布到 GitHub Releases：
 
-[https://github.com/xiangxin2021cn/agent-pi/releases/latest](https://github.com/xiangxin2021cn/agent-pi/releases/latest)
+[https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.6](https://github.com/xiangxin2021cn/agent-pi/releases/tag/v2.6.6)
+
+`/releases/latest` is the 3.x DeepSeek Harness line. Classic 2.x installers live on the v2.6.6 tag.
+
+`/releases/latest` 是 3.x DSH 产品线。经典 2.x 安装包在 v2.6.6 标签页。
 
 Release assets / 发布资产:
 
