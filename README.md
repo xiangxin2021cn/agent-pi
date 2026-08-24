@@ -1,21 +1,17 @@
 <p align="center">
-  <img src="docs/assets/hero-light.jpg" alt="Agent Pi DSH — engineering light theme" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/assets/logo-mark.png" width="88" alt="Agent π">
+  <img src="docs/assets/hero-flow-light.webp" alt="Agent Pi DSH — 亮色工程流场循环动画" width="100%">
 </p>
 
 <h1 align="center">Agent Pi DSH</h1>
 
 <p align="center">
-  <b>工程企业的垂直智能体</b><br>
+  工程企业的垂直智能体<br>
   <strong>长程任务，一次跑完</strong>
 </p>
 
 <p align="center">
-  The vertical agent for engineering enterprises — tender, delivery, investment.<br>
-  Long-horizon jobs, finished in one run.
+  The vertical agent for engineering enterprises.<br>
+  Tender · delivery · investment — long-horizon jobs, finished in one run.
 </p>
 
 <p align="center">
